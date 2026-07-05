@@ -6,7 +6,7 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-05T17:34:58Z",
+  "generated_at_utc": "2026-07-05T18:15:59Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
   "queue": [
@@ -34,7 +34,7 @@
         "attached_tp_proof": true,
         "daily_stability_floor": true,
         "forecast_executable_proof": false,
-        "fresh_744h_replay": true,
+        "fresh_744h_replay": false,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
         "live_order_gateway_pass": false,
@@ -44,14 +44,14 @@
         "positive_day_rate_floor": true,
         "residual_family_absence": true,
         "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": true,
+        "s5_bidask_spread_included_replay": false,
         "sample_count_floor": true
       },
       "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
       "order_type": "LIMIT",
       "pair": "GBP_USD",
       "proof_classification": "HISTORICAL_ONLY",
-      "proof_distance": 6,
+      "proof_distance": 8,
       "side": "LONG"
     },
     {
@@ -79,7 +79,7 @@
         "attached_tp_proof": true,
         "daily_stability_floor": true,
         "forecast_executable_proof": false,
-        "fresh_744h_replay": true,
+        "fresh_744h_replay": false,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
         "live_order_gateway_pass": false,
@@ -89,14 +89,14 @@
         "positive_day_rate_floor": true,
         "residual_family_absence": true,
         "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": true,
+        "s5_bidask_spread_included_replay": false,
         "sample_count_floor": true
       },
       "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
       "order_type": "STOP-ENTRY",
       "pair": "AUD_JPY",
       "proof_classification": "HISTORICAL_ONLY",
-      "proof_distance": 6,
+      "proof_distance": 8,
       "side": "SHORT"
     },
     {
@@ -133,14 +133,14 @@
         "positive_day_rate_floor": true,
         "residual_family_absence": true,
         "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": true,
+        "s5_bidask_spread_included_replay": false,
         "sample_count_floor": true
       },
       "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
       "order_type": "STOP-ENTRY",
       "pair": "AUD_JPY",
       "proof_classification": "REPAIR_REQUIRED",
-      "proof_distance": 7,
+      "proof_distance": 8,
       "side": "SHORT"
     },
     {
@@ -174,14 +174,14 @@
         "positive_day_rate_floor": true,
         "residual_family_absence": true,
         "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": true,
+        "s5_bidask_spread_included_replay": false,
         "sample_count_floor": true
       },
       "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
       "order_type": "LIMIT",
       "pair": "AUD_JPY",
       "proof_classification": "REPAIR_REQUIRED",
-      "proof_distance": 7,
+      "proof_distance": 8,
       "side": "SHORT"
     }
   ],
@@ -195,6 +195,6 @@
     "can_create_live_permission_count": 0,
     "proof_ready_count": 0,
     "queue_count": 4,
-    "remaining_p0_rows": 5
+    "remaining_p0_rows": 4
   }
 }

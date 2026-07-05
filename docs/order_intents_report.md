@@ -1,6 +1,6 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-07-05T16:23:00.721047+00:00`
+- Generated at UTC: `2026-07-05T18:08:52.301482+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
 - Snapshot: `data/broker_snapshot.json`
 - Results: `73`
@@ -17,7 +17,7 @@
   - forecast: direction=`RANGE` confidence=`0.9207` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.40` spread=`15.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_CHF quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_CHF quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_CHF spread 15.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.40x is below 0.60x (regime=TREND_DOWN)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW AUD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.40x below 1.00x; wait for alignment or demand at least 1R.
@@ -26,7 +26,7 @@
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT AUD_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=39.3; chart_bias=SHORT, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_CHF LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.25, avg_final=-2.52pip, avg_MAE=5.68pip over 529 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_CHF quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_CHF quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_CHF LONG is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -35,10 +35,10 @@
   - live blocker: equity-derived loss budget can only fund 165u for AUD_CHF at the current 126.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: AUD_CHF LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.25, avg_final=-2.52pip, avg_MAE=5.68pip over 529 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_CHF quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_CHF quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: AUD_CHF quote is stale: 156232.6s > 20s
+  - live blocker: AUD_CHF quote is stale: 162584.1s > 20s
   - live blocker: AUD_CHF spread 15.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.40x is below 0.60x (regime=TREND_DOWN)
   - live blocker: AUD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.40x below 1.00x; wait for alignment or demand at least 1R.
@@ -49,7 +49,7 @@
   - forecast: direction=`RANGE` confidence=`0.9207` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.16` spread=`15.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_CHF quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_CHF quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_CHF spread 15.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.16x is below 0.60x (regime=TREND_DOWN)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW AUD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.16x below 1.00x; wait for alignment or demand at least 1R.
@@ -58,7 +58,7 @@
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT AUD_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=39.3; chart_bias=SHORT, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_CHF LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.25, avg_final=-2.52pip, avg_MAE=5.68pip over 529 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_CHF quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_CHF quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_CHF LONG is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -68,10 +68,10 @@
   - live blocker: equity-derived loss budget can only fund 165u for AUD_CHF at the current 126.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: AUD_CHF LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.25, avg_final=-2.52pip, avg_MAE=5.68pip over 529 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_CHF quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_CHF quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: AUD_CHF quote is stale: 156232.6s > 20s
+  - live blocker: AUD_CHF quote is stale: 162584.1s > 20s
   - live blocker: AUD_CHF spread 15.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.16x is below 0.60x (regime=TREND_DOWN)
   - live blocker: AUD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.16x below 1.00x; wait for alignment or demand at least 1R.
@@ -82,7 +82,7 @@
   - forecast: direction=`RANGE` confidence=`0.5867` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.54` spread=`24.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.54x is below 0.60x (regime=UNCLEAR)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW AUD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.54x below 1.00x; wait for alignment or demand at least 1R.
@@ -91,7 +91,7 @@
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT AUD_JPY SHORT conflicts with current M5 range direction bias=LONG (long_score=0.875, short_score=0.125); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -100,10 +100,10 @@
   - live blocker: equity-derived loss budget can only fund 223u for AUD_JPY at the current 187.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.54x is below 0.60x (regime=UNCLEAR)
   - live blocker: AUD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.54x below 1.00x; wait for alignment or demand at least 1R.
@@ -114,7 +114,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -123,7 +123,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=1.00, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -136,11 +136,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `range_trader:CHF_JPY:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -149,7 +149,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL CHF_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -159,7 +159,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=0.99, p7d=0.33); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -172,11 +172,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
@@ -185,7 +185,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -193,7 +193,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=1.00, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -206,11 +206,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
@@ -219,7 +219,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -227,7 +227,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=0.99, p7d=0.33); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -240,11 +240,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED`
@@ -253,7 +253,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -261,7 +261,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=0.99, p7d=0.33); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -274,11 +274,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `trend_trader:CHF_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
@@ -287,7 +287,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -295,7 +295,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=0.99, p7d=0.33); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -308,11 +308,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `trend_trader:CHF_JPY:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -321,7 +321,7 @@
   - forecast: direction=`UP` confidence=`0.2605` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`30.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE CHF_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 166u for CHF_JPY at the current 252.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -330,7 +330,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE CHF_JPY LONG chases a move already 4.60× typical hourly range over 24h (p24h=0.99, p7d=0.33); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
@@ -343,11 +343,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: CHF_JPY LONG is a watch-only forecast candidate (UP conf=0.26); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: CHF_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: CHF_JPY LONG is labeled as a watch-only forecast lane (UP conf=0.26); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.26 < live floor 0.55, raw forecast confidence 0.62
-  - live blocker: CHF_JPY quote is stale: 156232.6s > 20s
+  - live blocker: CHF_JPY quote is stale: 162584.1s > 20s
   - live blocker: CHF_JPY spread 30.0pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: CHF_JPY LONG forecast UP matches S5 bid/ask negative replay bucket CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-6.35pip, avg_MAE=16.13pip over 1127 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `range_trader:EUR_AUD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
@@ -356,7 +356,7 @@
   - forecast: direction=`RANGE` confidence=`1.0000` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.31` spread=`39.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_AUD spread 39.3pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.31x is below 0.60x (regime=UNCLEAR)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW EUR_AUD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.31x below 1.00x; wait for alignment or demand at least 1R.
@@ -365,7 +365,7 @@
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT EUR_AUD SHORT RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_UP ADX=33.1; chart_bias=LONG, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_AUD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.75pip, avg_MAE=14.30pip over 388 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_PROFILE_MISSING EUR_AUD SHORT is absent from the mined strategy profile
@@ -374,10 +374,10 @@
   - live blocker: equity-derived loss budget can only fund 122u for EUR_AUD at the current 306.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_AUD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.75pip, avg_MAE=14.30pip over 388 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_AUD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_AUD quote is stale: 162584.1s > 20s
   - live blocker: EUR_AUD spread 39.3pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.31x is below 0.60x (regime=UNCLEAR)
   - live blocker: EUR_AUD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.31x below 1.00x; wait for alignment or demand at least 1R.
@@ -388,7 +388,7 @@
   - forecast: direction=`RANGE` confidence=`1.0000` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.05` spread=`39.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_AUD spread 39.3pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.05x is below 0.60x (regime=UNCLEAR)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW EUR_AUD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.05x below 1.00x; wait for alignment or demand at least 1R.
@@ -397,7 +397,7 @@
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT EUR_AUD SHORT RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_UP ADX=33.1; chart_bias=LONG, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_AUD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.75pip, avg_MAE=14.30pip over 388 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_PROFILE_MISSING EUR_AUD SHORT is absent from the mined strategy profile
@@ -407,10 +407,10 @@
   - live blocker: equity-derived loss budget can only fund 122u for EUR_AUD at the current 306.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_AUD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.75pip, avg_MAE=14.30pip over 388 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_AUD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_AUD quote is stale: 162584.1s > 20s
   - live blocker: EUR_AUD spread 39.3pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.05x is below 0.60x (regime=UNCLEAR)
   - live blocker: EUR_AUD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.05x below 1.00x; wait for alignment or demand at least 1R.
@@ -421,14 +421,14 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.62` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 138u for GBP_AUD at the current 270.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_PHASE_NOT_ROTATION GBP_AUD SHORT RANGE_ROTATION is invalid in range_phase=BREAKOUT_DOWN; wait during pending squeeze or use the confirmed breakout-side continuation lane.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -441,11 +441,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `range_trader:GBP_AUD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -454,7 +454,7 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.62` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 138u for GBP_AUD at the current 270.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL GBP_AUD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -462,7 +462,7 @@
   - risk BLOCK: RANGE_PHASE_NOT_ROTATION GBP_AUD SHORT RANGE_ROTATION is invalid in range_phase=BREAKOUT_DOWN; wait during pending squeeze or use the confirmed breakout-side continuation lane.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -475,11 +475,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
@@ -488,7 +488,7 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 106u for GBP_AUD at the current 351.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -496,7 +496,7 @@
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING GBP_AUD SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 1.91685 is only 183.8pip away (< 225.0pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 351.1pip exceeds 10.0× operating ATR 6.3pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -509,11 +509,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
@@ -522,7 +522,7 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 106u for GBP_AUD at the current 351.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -530,7 +530,7 @@
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING GBP_AUD SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 1.91032 is only 24.1pip away (< 225.0pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 351.1pip exceeds 10.0× operating ATR 6.3pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -543,11 +543,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED`
@@ -556,7 +556,7 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 106u for GBP_AUD at the current 351.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -564,7 +564,7 @@
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING GBP_AUD SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 1.91685 is only 48.8pip away (< 225.0pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 351.1pip exceeds 10.0× operating ATR 6.3pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -577,11 +577,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
@@ -590,14 +590,14 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 106u for GBP_AUD at the current 351.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: CHART_DIRECTION_CONFLICT GBP_AUD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.7458, short_score=0.2225); trend-continuation hard gate: dominant_regime_state=TREND_UP points against SHORT; decisive pair_charts bias=LONG (|score_gap|=0.523 >= 0.100). Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -610,11 +610,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -623,7 +623,7 @@
   - forecast: direction=`DOWN` confidence=`0.3860` horizon_min=`60` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`45.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_AUD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 106u for GBP_AUD at the current 351.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -631,7 +631,7 @@
   - risk BLOCK: TREND_MARKET_NOT_OPERATING_TREND GBP_AUD SHORT MARKET trend-continuation needs M5 TREND_DOWN; current M5 regime is RANGE. Use a pending trigger instead of chasing inside chop/range.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
@@ -644,11 +644,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: GBP_AUD SHORT is a watch-only forecast candidate (DOWN conf=0.39); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_AUD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_AUD SHORT is labeled as a watch-only forecast lane (DOWN conf=0.39); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: forecast watch-only candidate: calibrated confidence 0.39 < live floor 0.55, raw forecast confidence 1.00
-  - live blocker: GBP_AUD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_AUD quote is stale: 162584.1s > 20s
   - live blocker: GBP_AUD spread 45.0pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_AUD SHORT forecast DOWN matches S5 bid/ask negative replay bucket GBP_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.70pip, avg_MAE=18.04pip over 532 sample(s). Do not send inside a proven bid/ask losing pair-direction.
 - `range_trader:USD_CAD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
@@ -657,14 +657,14 @@
   - forecast: direction=`RANGE` confidence=`0.5885` horizon_min=`120` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.28` spread=`13.4pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_CAD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE USD_CAD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_CAD spread 13.4pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.28x is below 0.60x (regime=TREND_DOWN)
   - risk BLOCK: TARGET_TOO_THIN_FOR_SPREAD target 28.9pip is less than 5.0x spread 13.4pip
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 351u for USD_CAD at the current 104.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_CAD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_CAD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-2.81pip, avg_MAE=7.43pip over 290 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_CAD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_CAD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_PROFILE_MISSING USD_CAD SHORT is absent from the mined strategy profile
@@ -673,10 +673,10 @@
   - live blocker: equity-derived loss budget can only fund 351u for USD_CAD at the current 104.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_CAD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_CAD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-2.81pip, avg_MAE=7.43pip over 290 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_CAD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_CAD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: USD_CAD quote is stale: 156232.6s > 20s
+  - live blocker: USD_CAD quote is stale: 162584.1s > 20s
   - live blocker: USD_CAD spread 13.4pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.28x is below 0.60x (regime=TREND_DOWN)
   - live blocker: target 28.9pip is less than 5.0x spread 13.4pip
@@ -686,7 +686,7 @@
   - forecast: direction=`RANGE` confidence=`0.5885` horizon_min=`120` watch_only=`True`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.02` spread=`13.4pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_CAD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE USD_CAD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_CAD spread 13.4pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.02x is below 0.60x (regime=TREND_DOWN)
   - risk BLOCK: TARGET_TOO_THIN_FOR_SPREAD target 2.1pip is less than 5.0x spread 13.4pip
@@ -696,7 +696,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE USD_CAD SHORT chases a move already 6.17× typical hourly range over 24h (p24h=0.18, p7d=0.78); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_CAD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_CAD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-2.81pip, avg_MAE=7.43pip over 290 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - risk WARN: FORECAST_WATCH_ONLY USD_CAD SHORT is a watch-only forecast candidate (RANGE conf=0.59); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_CAD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_CAD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: FORECAST_WATCH_ONLY USD_CAD SHORT is labeled as a watch-only forecast lane (RANGE conf=0.59); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate.
@@ -708,11 +708,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_CAD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_CAD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-2.81pip, avg_MAE=7.43pip over 290 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
   - live blocker: USD_CAD SHORT is a watch-only forecast candidate (RANGE conf=0.59); dry-run geometry is exposed for review, but live send is blocked until a fresh calibrated forecast clears the entry floor. Reason: RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate.
-  - live blocker: USD_CAD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_CAD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: USD_CAD SHORT is labeled as a watch-only forecast lane (RANGE conf=0.59); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate.
-  - live blocker: USD_CAD quote is stale: 156232.6s > 20s
+  - live blocker: USD_CAD quote is stale: 162584.1s > 20s
   - live blocker: USD_CAD spread 13.4pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.02x is below 0.60x (regime=TREND_DOWN)
   - live blocker: target 2.1pip is less than 5.0x spread 13.4pip
@@ -722,24 +722,24 @@
   - forecast: direction=`RANGE` confidence=`0.5867` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`1872.0 JPY` reward=`5054.0 JPY` rr=`2.70` spread=`24.0pip` margin=`4503.6 JPY` margin_after=`83.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING AUD_JPY SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 112.448 is only 14.1pip away (< 120.0pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 187.3pip exceeds 10.0× operating ATR 4.7pip
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, HARVEST_TP_STRUCTURE_MISSING, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -747,7 +747,7 @@
   - forecast: direction=`RANGE` confidence=`0.5867` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`1872.0 JPY` reward=`5054.0 JPY` rr=`2.70` spread=`24.0pip` margin=`4455.6 JPY` margin_after=`83.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
   - risk BLOCK: BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE AUD_JPY SHORT BREAKOUT_FAILURE STOP_ENTRY is a lower-half/support sell-stop (M5 pos=0.01 support -60.4p resistance +7.8p). Use the upper-half resistance retest/LIMIT or a true TREND_CONTINUATION breakout lane; do not arm a failed-break stop that sells the low or buys the high.
@@ -756,18 +756,18 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE AUD_JPY SHORT chases a move already 4.82× typical hourly range over 24h (p24h=0.36, p7d=0.11); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -776,14 +776,14 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.70` spread=`24.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 223u for AUD_JPY at the current 187.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: PATTERN_REVERSAL_CHASE AUD_JPY SHORT STOP-ENTRY TREND_CONTINUATION chases into LONG failed-break/reversal candle evidence (LONG=22.5, SHORT=0.0): M5 failed_breakout: M5 CHOCH_DOWN@111.339 wick-only (close_confirmed=False) → trap fade UP; H1 failed_breakout: H1 BOS_DOWN@111.38 wick-only (close_confirmed=False) → trap fade UP. Wait for M5/M15 close-confirmed SHORT BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE AUD_JPY SHORT chases a move already 4.82× typical hourly range over 24h (p24h=0.36, p7d=0.11); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -793,11 +793,11 @@
   - live blocker: equity-derived loss budget can only fund 223u for AUD_JPY at the current 187.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: AUD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.35, avg_final=-3.37pip, avg_MAE=11.78pip over 1361 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -805,24 +805,24 @@
   - forecast: direction=`RANGE` confidence=`0.6780` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`1927.5 JPY` reward=`507.8 JPY` rr=`0.26` spread=`2.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk WARN: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.26x is below 1.00x (regime=TREND_DOWN)
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_USD LONG chases a move already 4.41× typical hourly range over 24h (p24h=1.00, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk WARN: POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT positive-rotation evidence sample is below today's target pace (tp_trades=20, target_trades_per_day=30); keep trading only the TP-proven HARVEST shape while treating the 5-10% daily target as unproven firepower, not as a reason to block the positive edge
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live blocker codes: STALE_QUOTE, SPREAD_TOO_WIDE, REWARD_RISK_TOO_LOW, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.26x is below 1.00x (regime=TREND_DOWN)
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
@@ -831,7 +831,7 @@
   - forecast: direction=`RANGE` confidence=`0.6780` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`2299.5 JPY` reward=`5979.9 JPY` rr=`2.60` spread=`2.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk WARN: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: PATTERN_REVERSAL_CHASE EUR_USD LONG STOP-ENTRY BREAKOUT_FAILURE chases into SHORT failed-break/reversal candle evidence (LONG=18.4, SHORT=22.5): M30 failed_breakout: M30 CHOCH_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 BOS_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_USD LONG BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 1.14475 is only 4.2pip away (< 11.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 71.2pip exceeds 10.0× operating ATR 2.6pip
@@ -839,17 +839,17 @@
   - risk WARN: POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT positive-rotation evidence sample is below today's target pace (tp_trades=20, target_trades_per_day=30); keep trading only the TP-proven HARVEST shape while treating the 5-10% daily target as unproven firepower, not as a reason to block the positive edge
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live blocker codes: STALE_QUOTE, SPREAD_TOO_WIDE, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -857,7 +857,7 @@
   - forecast: direction=`RANGE` confidence=`0.6780` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`2.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 434u for EUR_USD at the current 59.6pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -865,7 +865,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_USD LONG chases a move already 4.41× typical hourly range over 24h (p24h=1.00, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2333.82 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2333.8215, loss_closes=1)
@@ -877,11 +877,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2333.82 JPY)
   - live blocker: EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2333.8215, loss_closes=1)
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -890,7 +890,7 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`2.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 364u for EUR_USD at the current 71.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -898,7 +898,7 @@
   - risk BLOCK: PATTERN_REVERSAL_CHASE EUR_USD LONG STOP-ENTRY TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=18.4, SHORT=22.5): M30 failed_breakout: M30 CHOCH_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 BOS_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_USD LONG chases a move already 4.41× typical hourly range over 24h (p24h=0.86, p7d=0.19); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -908,11 +908,11 @@
   - live blocker: equity-derived loss budget can only fund 364u for EUR_USD at the current 71.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-2.89pip, avg_MAE=7.62pip over 1383 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -920,14 +920,14 @@
   - forecast: direction=`RANGE` confidence=`0.6647` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`2307.5 JPY` reward=`6000.9 JPY` rr=`2.60` spread=`18.3pip` margin=`8607.8 JPY` margin_after=`85.0%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING GBP_USD LONG BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 1.33247 is only 16.9pip away (< 91.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 142.8pip exceeds 10.0× operating ATR 3.0pip
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_USD LONG chases a move already 4.93× typical hourly range over 24h (p24h=1.00, p7d=0.59); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, loss_closes=1, repair_replay_net=-2981.90 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, repair_replay_pl_jpy=-2981.8961, loss_closes=1)
@@ -936,12 +936,12 @@
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, loss_closes=1, repair_replay_net=-2981.90 JPY)
   - live blocker: GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, repair_replay_pl_jpy=-2981.8961, loss_closes=1)
   - live blocker: GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -950,7 +950,7 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`18.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 118u for GBP_USD at the current 218.9pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
@@ -958,7 +958,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_USD LONG chases a move already 4.93× typical hourly range over 24h (p24h=0.76, p7d=0.20); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, loss_closes=1, repair_replay_net=-2981.90 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, repair_replay_pl_jpy=-2981.8961, loss_closes=1)
@@ -968,12 +968,12 @@
   - live blocker: equity-derived loss budget can only fund 118u for GBP_USD at the current 218.9pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, loss_closes=1, repair_replay_net=-2981.90 JPY)
   - live blocker: GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, repair_replay_pl_jpy=-2981.8961, loss_closes=1)
   - live blocker: GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -981,14 +981,14 @@
   - forecast: direction=`RANGE` confidence=`0.6647` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`18.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE GBP_USD LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.76, p7d=0.20). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_USD LONG chases a move already 4.93× typical hourly range over 24h (p24h=1.00, p7d=0.59); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -998,10 +998,10 @@
   - live blocker: equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1010,14 +1010,14 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.60` spread=`18.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 118u for GBP_USD at the current 218.9pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: TREND_CONTINUATION_DIRECTION_CONFLICT GBP_USD LONG trend-continuation hard gate: dominant_regime_state=TREND_DOWN points against LONG. Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_USD LONG chases a move already 4.93× typical hourly range over 24h (p24h=0.76, p7d=0.20); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_USD LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1027,11 +1027,11 @@
   - live blocker: equity-derived loss budget can only fund 118u for GBP_USD at the current 218.9pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-5.91pip, avg_MAE=11.95pip over 1420 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `range_trader:USD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1039,13 +1039,13 @@
   - forecast: direction=`RANGE` confidence=`0.6031` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE USD_JPY LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1054,10 +1054,10 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `range_trader:USD_JPY:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1065,14 +1065,14 @@
   - forecast: direction=`RANGE` confidence=`0.6031` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL USD_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE USD_JPY LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1082,10 +1082,10 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `range_trader:AUD_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1093,7 +1093,7 @@
   - forecast: direction=`RANGE` confidence=`0.6331` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`14.5pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 229u for AUD_USD at the current 113.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1101,7 +1101,7 @@
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE AUD_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.43, p7d=0.06). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1705.67 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_USD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.39, avg_final=-1.15pip, avg_MAE=11.04pip over 972 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-1705.6738, loss_closes=1)
@@ -1112,11 +1112,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1705.67 JPY)
   - live blocker: AUD_USD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.39, avg_final=-1.15pip, avg_MAE=11.04pip over 972 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-1705.6738, loss_closes=1)
-  - live blocker: AUD_USD quote is stale: 156232.6s > 20s
+  - live blocker: AUD_USD quote is stale: 162584.1s > 20s
   - live blocker: AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `range_trader:AUD_USD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1124,7 +1124,7 @@
   - forecast: direction=`RANGE` confidence=`0.6331` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`14.5pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 229u for AUD_USD at the current 113.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL AUD_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1134,7 +1134,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE AUD_USD SHORT chases a move already 5.27× typical hourly range over 24h (p24h=0.43, p7d=0.06); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1705.67 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_USD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.39, avg_final=-1.15pip, avg_MAE=11.04pip over 972 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-1705.6738, loss_closes=1)
@@ -1146,18 +1146,18 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1705.67 JPY)
   - live blocker: AUD_USD SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.39, avg_final=-1.15pip, avg_MAE=11.04pip over 972 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-1705.6738, loss_closes=1)
-  - live blocker: AUD_USD quote is stale: 156232.6s > 20s
+  - live blocker: AUD_USD quote is stale: 162584.1s > 20s
   - live blocker: AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `AUD_JPY LONG LIMIT` units=2000 entry=110.79 tp=111.947 sl=109.633
   - forecast: direction=`RANGE` confidence=`0.5867` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`2314.0 JPY` reward=`2314.0 JPY` rr=`1.00` spread=`24.0pip` margin=`8863.2 JPY` margin_after=`85.1%/92.0%`
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_ASYMMETRY_GUARD_EXCEEDED planned worst-case loss 2314 JPY exceeds the observed average winner cap 418 JPY while capture_economics status=NEGATIVE_EXPECTANCY and avg_loss=1064 JPY; size down or repair TP/exit payoff before adding fresh one-way risk.
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW AUD_JPY LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 1.00x below 1.00x; wait for alignment or demand at least 1R.
@@ -1165,17 +1165,17 @@
   - risk BLOCK: STOP_TOO_THIN_FOR_SPREAD stop 115.7pip is less than 5.0x spread 24.0pip
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-4.15pip, avg_MAE=10.84pip over 1246 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
   - live blocker codes: STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_ASYMMETRY_GUARD_EXCEEDED, RANGE_COUNTERTREND_RR_TOO_LOW, TARGET_TOO_THIN_FOR_SPREAD, STOP_TOO_THIN_FOR_SPREAD, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: AUD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-4.15pip, avg_MAE=10.84pip over 1246 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned worst-case loss 2314 JPY exceeds the observed average winner cap 418 JPY while capture_economics status=NEGATIVE_EXPECTANCY and avg_loss=1064 JPY; size down or repair TP/exit payoff before adding fresh one-way risk.
   - live blocker: target 115.7pip is less than 5.0x spread 24.0pip
@@ -1186,14 +1186,14 @@
   - forecast: direction=`RANGE` confidence=`0.5867` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`2.70` spread=`24.0pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 223u for AUD_JPY at the current 187.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL AUD_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT AUD_JPY LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=35.4; chart_bias=SHORT, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-4.15pip, avg_MAE=10.84pip over 1246 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE AUD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1203,10 +1203,10 @@
   - live blocker: equity-derived loss budget can only fund 223u for AUD_JPY at the current 187.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: AUD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.30, avg_final=-4.15pip, avg_MAE=10.84pip over 1246 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: AUD_JPY quote is stale: 156232.6s > 20s
+  - live blocker: AUD_JPY quote is stale: 162584.1s > 20s
   - live blocker: AUD_JPY spread 24.0pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1215,12 +1215,12 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1229,11 +1229,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1242,13 +1242,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: TREND_MARKET_NOT_OPERATING_TREND EUR_JPY SHORT MARKET trend-continuation needs M5 TREND_DOWN; current M5 regime is RANGE. Use a pending trigger instead of chasing inside chop/range.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1258,11 +1258,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `range_trader:GBP_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1270,12 +1270,12 @@
   - forecast: direction=`RANGE` confidence=`0.6647` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.95` spread=`18.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT GBP_USD SHORT conflicts with current M5 range direction bias=LONG (long_score=0.625, short_score=0.25); wait for this side to dominate or choose the aligned lane.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_USD SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1283,10 +1283,10 @@
   - live blocker codes: STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `range_trader:GBP_USD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1294,14 +1294,14 @@
   - forecast: direction=`RANGE` confidence=`0.6647` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.95` spread=`18.3pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL GBP_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT GBP_USD SHORT conflicts with current M5 range direction bias=LONG (long_score=0.625, short_score=0.25); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE GBP_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.76, p7d=0.20). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_USD SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1310,10 +1310,10 @@
   - live blocker: GBP_USD SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - live blocker: equity-derived loss budget can only fund 181u for GBP_USD at the current 142.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
-  - live blocker: GBP_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: GBP_USD quote is stale: 156232.6s > 20s
+  - live blocker: GBP_USD quote is stale: 162584.1s > 20s
   - live blocker: GBP_USD spread 18.3pip exceeds 2.50x normal 0.9pip (policy=2.5x, session_mult=1.00)
 - `range_trader:GBP_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1321,14 +1321,14 @@
   - forecast: direction=`RANGE` confidence=`0.9201` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.90` spread=`39.7pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.90x below 1.00x; wait for alignment or demand at least 1R.
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT GBP_JPY SHORT conflicts with current M5 range direction bias=LONG (long_score=0.875, short_score=0.125); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.40, avg_final=-2.24pip, avg_MAE=15.66pip over 657 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1337,10 +1337,10 @@
   - live blocker: equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.40, avg_final=-2.24pip, avg_MAE=15.66pip over 657 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: GBP_JPY quote is stale: 156232.6s > 20s
+  - live blocker: GBP_JPY quote is stale: 162584.1s > 20s
   - live blocker: GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.90x below 1.00x; wait for alignment or demand at least 1R.
 - `range_trader:GBP_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -1349,7 +1349,7 @@
   - forecast: direction=`RANGE` confidence=`0.9201` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.90` spread=`39.7pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.90x below 1.00x; wait for alignment or demand at least 1R.
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
@@ -1358,7 +1358,7 @@
   - risk WARN: CHART_DIRECTION_CONFLICT GBP_JPY SHORT conflicts with current M5 range direction bias=LONG (long_score=0.875, short_score=0.125); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE GBP_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.70, p7d=0.38). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.40, avg_final=-2.24pip, avg_MAE=15.66pip over 657 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1368,10 +1368,10 @@
   - live blocker: equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.40, avg_final=-2.24pip, avg_MAE=15.66pip over 657 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: GBP_JPY quote is stale: 156232.6s > 20s
+  - live blocker: GBP_JPY quote is stale: 162584.1s > 20s
   - live blocker: GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.90x below 1.00x; wait for alignment or demand at least 1R.
 - `range_trader:AUD_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
@@ -1380,7 +1380,7 @@
   - forecast: direction=`RANGE` confidence=`0.6331` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`14.5pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 229u for AUD_USD at the current 113.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1389,7 +1389,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE AUD_USD LONG chases a move already 5.27× typical hourly range over 24h (p24h=0.56, p7d=0.10); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2690.70 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.26, avg_final=-3.21pip, avg_MAE=7.24pip over 395 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2690.6967, loss_closes=1)
@@ -1400,11 +1400,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2690.70 JPY)
   - live blocker: AUD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.26, avg_final=-3.21pip, avg_MAE=7.24pip over 395 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2690.6967, loss_closes=1)
-  - live blocker: AUD_USD quote is stale: 156232.6s > 20s
+  - live blocker: AUD_USD quote is stale: 162584.1s > 20s
   - live blocker: AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `range_trader:AUD_USD:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1412,7 +1412,7 @@
   - forecast: direction=`RANGE` confidence=`0.6331` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`3.51` spread=`14.5pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE AUD_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 229u for AUD_USD at the current 113.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL AUD_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1420,7 +1420,7 @@
   - risk BLOCK: RANGE_FORMING_HTF_TREND_CONFLICT AUD_USD LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=46.0; chart_bias=SHORT, matrix_rejects=2); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2690.70 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE AUD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.26, avg_final=-3.21pip, avg_MAE=7.24pip over 395 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2690.6967, loss_closes=1)
@@ -1432,11 +1432,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2690.70 JPY)
   - live blocker: AUD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.26, avg_final=-3.21pip, avg_MAE=7.24pip over 395 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: AUD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: AUD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=AUD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-2690.6967, loss_closes=1)
-  - live blocker: AUD_USD quote is stale: 156232.6s > 20s
+  - live blocker: AUD_USD quote is stale: 162584.1s > 20s
   - live blocker: AUD_USD spread 14.5pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:GBP_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1445,13 +1445,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.90` spread=`39.7pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION GBP_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 119u for GBP_JPY at the current 351.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_JPY LONG chases a move already 4.28× typical hourly range over 24h (p24h=0.70, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.33, avg_final=-5.87pip, avg_MAE=17.84pip over 914 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1460,11 +1460,11 @@
   - live blocker: equity-derived loss budget can only fund 119u for GBP_JPY at the current 351.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.33, avg_final=-5.87pip, avg_MAE=17.84pip over 914 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: GBP_JPY quote is stale: 156232.6s > 20s
+  - live blocker: GBP_JPY quote is stale: 162584.1s > 20s
   - live blocker: GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:GBP_JPY:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1473,14 +1473,14 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`0.90` spread=`39.7pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION GBP_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE GBP_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: TREND_MARKET_NOT_OPERATING_TREND GBP_JPY LONG MARKET trend-continuation needs M5 TREND_UP; current M5 regime is RANGE. Use a pending trigger instead of chasing inside chop/range.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE GBP_JPY LONG chases a move already 4.28× typical hourly range over 24h (p24h=0.70, p7d=0.38); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE GBP_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.33, avg_final=-5.87pip, avg_MAE=17.84pip over 914 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE GBP_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1490,11 +1490,11 @@
   - live blocker: equity-derived loss budget can only fund 135u for GBP_JPY at the current 309.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: GBP_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket GBP_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.33, avg_final=-5.87pip, avg_MAE=17.84pip over 914 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: GBP_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: GBP_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: GBP_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: GBP_JPY quote is stale: 156232.6s > 20s
+  - live blocker: GBP_JPY quote is stale: 162584.1s > 20s
   - live blocker: GBP_JPY spread 39.7pip exceeds 2.50x normal 1.5pip (policy=2.5x, session_mult=1.00)
 - `range_trader:NZD_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1502,7 +1502,7 @@
   - forecast: direction=`RANGE` confidence=`0.7290` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.95` spread=`18.4pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE NZD_USD quote is stale: 156232.7s > 20s
+  - risk BLOCK: STALE_QUOTE NZD_USD quote is stale: 162584.2s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE NZD_USD spread 18.4pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 180u for NZD_USD at the current 143.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1511,7 +1511,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE NZD_USD LONG chases a move already 4.38× typical hourly range over 24h (p24h=1.00, p7d=0.18); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1380.80 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE NZD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.28, avg_final=-3.62pip, avg_MAE=7.27pip over 549 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE NZD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE NZD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1380.8008, loss_closes=1)
@@ -1523,11 +1523,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1380.80 JPY)
   - live blocker: NZD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.28, avg_final=-3.62pip, avg_MAE=7.27pip over 549 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: NZD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: NZD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1380.8008, loss_closes=1)
-  - live blocker: NZD_USD quote is stale: 156232.7s > 20s
+  - live blocker: NZD_USD quote is stale: 162584.2s > 20s
   - live blocker: NZD_USD spread 18.4pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `range_trader:NZD_USD:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1535,7 +1535,7 @@
   - forecast: direction=`RANGE` confidence=`0.7290` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.95` spread=`18.4pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE NZD_USD quote is stale: 156232.7s > 20s
+  - risk BLOCK: STALE_QUOTE NZD_USD quote is stale: 162584.2s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE NZD_USD spread 18.4pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 180u for NZD_USD at the current 143.5pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL NZD_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1545,7 +1545,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE NZD_USD LONG chases a move already 4.38× typical hourly range over 24h (p24h=0.62, p7d=0.08); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1380.80 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE NZD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.28, avg_final=-3.62pip, avg_MAE=7.27pip over 549 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE NZD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE NZD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1380.8008, loss_closes=1)
@@ -1557,11 +1557,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1380.80 JPY)
   - live blocker: NZD_USD LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.28, avg_final=-3.62pip, avg_MAE=7.27pip over 549 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: NZD_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: NZD_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=NZD_USD, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1380.8008, loss_closes=1)
-  - live blocker: NZD_USD quote is stale: 156232.7s > 20s
+  - live blocker: NZD_USD quote is stale: 162584.2s > 20s
   - live blocker: NZD_USD spread 18.4pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:USD_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1570,13 +1570,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION USD_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: PATTERN_REVERSAL_CHASE USD_JPY LONG STOP-ENTRY TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=25.6, SHORT=38.5): M15 failed_breakout: M15 CHOCH_UP@161.825 wick-only (close_confirmed=False) → trap fade DOWN; M30 failed_breakout: M30 CHOCH_UP@161.829 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 BOS_UP@161.842 wick-only (close_confirmed=False) → trap fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1585,11 +1585,11 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: USD_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:USD_JPY:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1598,13 +1598,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION USD_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: PATTERN_REVERSAL_CHASE USD_JPY LONG MARKET TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=25.6, SHORT=38.5): M15 failed_breakout: M15 CHOCH_UP@161.825 wick-only (close_confirmed=False) → trap fade DOWN; M30 failed_breakout: M30 CHOCH_UP@161.829 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 BOS_UP@161.842 wick-only (close_confirmed=False) → trap fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY LONG is BLOCK_UNTIL_NEW_EVIDENCE: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
@@ -1614,11 +1614,11 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.37, avg_final=-1.05pip, avg_MAE=9.26pip over 843 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: USD_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `range_trader:EUR_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1626,13 +1626,13 @@
   - forecast: direction=`RANGE` confidence=`0.5120` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_JPY SHORT conflicts with current M5 range direction bias=LONG (long_score=1.0, short_score=0.0); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1641,10 +1641,10 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `range_trader:EUR_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1652,7 +1652,7 @@
   - forecast: direction=`RANGE` confidence=`0.5120` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL EUR_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1660,7 +1660,7 @@
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_JPY SHORT conflicts with current M5 range direction bias=LONG (long_score=1.0, short_score=0.0); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE EUR_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.85, p7d=0.28). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1670,10 +1670,10 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1682,23 +1682,23 @@
   - risk metrics: risk=`289.5 JPY` reward=`211.8 JPY` rr=`0.73` spread=`2.3pip` margin=`7394.4 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.73x is below 1.20x (regime=TREND_DOWN)
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); trend-continuation hard gate: decisive pair_charts bias=LONG (|score_gap|=0.116 >= 0.100). Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, STALE_QUOTE, SPREAD_TOO_WIDE, REWARD_RISK_TOO_LOW, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, CHART_DIRECTION_CONFLICT, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.73x is below 1.20x (regime=TREND_DOWN)
 - `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -1708,24 +1708,24 @@
   - risk metrics: risk=`289.5 JPY` reward=`286.2 JPY` rr=`0.99` spread=`2.3pip` margin=`7397.3 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.99x is below 1.20x (regime=TREND_DOWN)
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); trend-continuation hard gate: decisive pair_charts bias=LONG (|score_gap|=0.116 >= 0.100). Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
   - risk BLOCK: TREND_MARKET_NOT_OPERATING_TREND EUR_USD SHORT MARKET trend-continuation needs M5 TREND_DOWN; current M5 regime is TREND_UP. Use a pending trigger instead of chasing inside chop/range.
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, STALE_QUOTE, SPREAD_TOO_WIDE, REWARD_RISK_TOO_LOW, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, CHART_DIRECTION_CONFLICT, TREND_MARKET_NOT_OPERATING_TREND, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.99x is below 1.20x (regime=TREND_DOWN)
 - `range_trader:USD_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
@@ -1734,7 +1734,7 @@
   - forecast: direction=`RANGE` confidence=`0.6031` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1742,7 +1742,7 @@
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE USD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE USD_JPY SHORT chases a move already 4.01× typical hourly range over 24h (p24h=0.16, p7d=0.85); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.22, avg_final=-3.71pip, avg_MAE=9.04pip over 525 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1751,10 +1751,10 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.22, avg_final=-3.71pip, avg_MAE=9.04pip over 525 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `range_trader:USD_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1762,7 +1762,7 @@
   - forecast: direction=`RANGE` confidence=`0.6031` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`8.6pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 156232.5s > 20s
+  - risk BLOCK: STALE_QUOTE USD_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL USD_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1771,7 +1771,7 @@
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE USD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE USD_JPY SHORT chases a move already 4.01× typical hourly range over 24h (p24h=0.35, p7d=0.90); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE USD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.22, avg_final=-3.71pip, avg_MAE=9.04pip over 525 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE USD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -1781,10 +1781,10 @@
   - live blocker: equity-derived loss budget can only fund 579u for USD_JPY at the current 72.2pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: USD_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.22, avg_final=-3.71pip, avg_MAE=9.04pip over 525 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: USD_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: USD_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
-  - live blocker: USD_JPY quote is stale: 156232.5s > 20s
+  - live blocker: USD_JPY quote is stale: 162584.1s > 20s
   - live blocker: USD_JPY spread 8.6pip exceeds 2.50x normal 0.4pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1793,23 +1793,23 @@
   - risk metrics: risk=`289.5 JPY` reward=`291.1 JPY` rr=`1.01` spread=`2.3pip` margin=`7401.8 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk WARN: TECHNICAL_HARVEST_REWARD_RISK_FLOOR technical HARVEST uses 1.00x floor instead of default 1.20x; target remains 18.0pip with spread 2.3pip
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); wait for this side to dominate or choose the aligned lane.
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, STALE_QUOTE, SPREAD_TOO_WIDE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1818,23 +1818,23 @@
   - risk metrics: risk=`289.5 JPY` reward=`211.8 JPY` rr=`0.73` spread=`2.3pip` margin=`7394.4 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.73x is below 1.00x (regime=TREND_DOWN)
   - risk WARN: TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY capture_economics is NEGATIVE_EXPECTANCY, but this exact non-market attached-TP HARVEST pair/side/method has a thin positive TP sample with zero TP losses and positive Wilson-stressed expectancy; allow bounded proof collection under the capped loss-asymmetry budget, without claiming the 5-10% daily target is solved
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); wait for this side to dominate or choose the aligned lane.
   - risk WARN: SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE positive-rotation HARVEST lane exposed as the narrow TP_HARVEST_REPAIR exception for acceptance repair; all forecast, strategy, spread, risk, broker-truth, guardian, and gateway gates still apply
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, STALE_QUOTE, SPREAD_TOO_WIDE, REWARD_RISK_TOO_LOW, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.73x is below 1.00x (regime=TREND_DOWN)
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED`
@@ -1844,23 +1844,23 @@
   - risk metrics: risk=`289.5 JPY` reward=`286.2 JPY` rr=`0.99` spread=`2.3pip` margin=`7397.3 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: REWARD_RISK_TOO_LOW planned reward/risk 0.99x is below 1.00x (regime=TREND_DOWN)
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, STALE_QUOTE, SPREAD_TOO_WIDE, REWARD_RISK_TOO_LOW, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: planned reward/risk 0.99x is below 1.00x (regime=TREND_DOWN)
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
@@ -1869,14 +1869,14 @@
   - forecast: direction=`RANGE` confidence=`0.6780` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`289.5 JPY` reward=`186.0 JPY` rr=`0.64` spread=`2.3pip` margin=`7401.8 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW EUR_USD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.64x below 1.00x; wait for alignment or demand at least 1R.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current M5 range direction bias=LONG (long_score=0.875, short_score=0.125); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE EUR_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.86, p7d=0.19). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2181.16 JPY)
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-2181.1565, loss_closes=1)
@@ -1886,12 +1886,12 @@
   - live blocker: EUR_USD SHORT RANGE_ROTATION has no method-specific mined profile; do not reuse another strategy method's evidence for this lane
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2181.16 JPY)
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-2181.1565, loss_closes=1)
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: EUR_USD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.64x below 1.00x; wait for alignment or demand at least 1R.
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
@@ -1900,7 +1900,7 @@
   - forecast: direction=`RANGE` confidence=`0.6780` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`289.5 JPY` reward=`186.0 JPY` rr=`0.64` spread=`2.3pip` margin=`7397.3 JPY` margin_after=`84.5%/92.0%`
   - risk BLOCK: OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: RANGE_COUNTERTREND_RR_TOO_LOW EUR_USD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.64x below 1.00x; wait for alignment or demand at least 1R.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL EUR_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -1908,7 +1908,7 @@
   - risk WARN: CHART_DIRECTION_CONFLICT EUR_USD SHORT conflicts with current M5 range direction bias=LONG (long_score=0.875, short_score=0.125); wait for this side to dominate or choose the aligned lane.
   - risk BLOCK: RANGE_ROTATION_BROADER_LOCATION_CHASE EUR_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.86, p7d=0.19). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2181.16 JPY)
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-2181.1565, loss_closes=1)
@@ -1918,12 +1918,12 @@
   - live blocker: EUR_USD SHORT RANGE_ROTATION has no method-specific mined profile; do not reuse another strategy method's evidence for this lane
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-2181.16 JPY)
-  - live blocker: EUR_USD quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_USD quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_USD, side=SHORT, method=RANGE_ROTATION, repair_replay_pl_jpy=-2181.1565, loss_closes=1)
   - live blocker: operator_manual EUR_USD SHORT trade_id=472987 sets same_theme_auto_add_allowed=false; same-theme bot adds require intent.metadata['operator_authorized_manual_overlap']=true
-  - live blocker: EUR_USD quote is stale: 156232.6s > 20s
+  - live blocker: EUR_USD quote is stale: 162584.1s > 20s
   - live blocker: EUR_USD spread 2.3pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
   - live blocker: EUR_USD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.64x below 1.00x; wait for alignment or demand at least 1R.
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
@@ -1933,25 +1933,25 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY LONG BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.252 is only 3.4pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 110.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=1.00, p7d=0.36); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1960,7 +1960,7 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 340u for EUR_JPY at the current 123.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1968,18 +1968,18 @@
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY LONG BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.942 is only 1.9pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 123.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.85, p7d=0.28); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: equity-derived loss budget can only fund 340u for EUR_JPY at the current 123.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -1988,7 +1988,7 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -1996,18 +1996,18 @@
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY LONG BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.746 is only 10.5pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 110.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.85, p7d=0.28); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker codes: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2015,7 +2015,7 @@
   - forecast: direction=`RANGE` confidence=`0.5120` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -2023,7 +2023,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=1.00, p7d=0.36); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1071.90 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1071.9, loss_closes=1)
@@ -2032,11 +2032,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1071.90 JPY)
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1071.9, loss_closes=1)
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2044,7 +2044,7 @@
   - forecast: direction=`RANGE` confidence=`0.5120` horizon_min=`120` watch_only=`False`
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: RANGE_MARKET_NOT_AT_RAIL EUR_JPY range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
@@ -2053,7 +2053,7 @@
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.85, p7d=0.28); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1071.90 JPY)
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - risk BLOCK: MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1071.9, loss_closes=1)
@@ -2062,11 +2062,11 @@
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, loss_closes=1, repair_replay_net=-1071.90 JPY)
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: month-scale residual family gate blocks this live send until the matching 744h replay residual disappears or the filtered replay is non-negative (pair=EUR_JPY, side=LONG, method=RANGE_ROTATION, repair_replay_pl_jpy=-1071.9, loss_closes=1)
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2075,14 +2075,14 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 340u for EUR_JPY at the current 123.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: PATTERN_REVERSAL_CHASE EUR_JPY LONG STOP-ENTRY TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=22.5, SHORT=31.2): M5 failed_breakout: M5 BOS_UP@183.896 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 CHOCH_UP@184.034 wick-only (close_confirmed=False) → trap fade DOWN; M5 time_exhaustion: M5 5 consecutive bull candles, range shrinking 42% → fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.85, p7d=0.28); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_METHOD_PROFILE_MISSING EUR_JPY LONG TREND_CONTINUATION has no method-specific mined profile; do not reuse another strategy method's evidence for this lane
@@ -2092,11 +2092,11 @@
   - live blocker: equity-derived loss budget can only fund 340u for EUR_JPY at the current 123.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2105,7 +2105,7 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
@@ -2113,7 +2113,7 @@
   - risk BLOCK: PATTERN_REVERSAL_CHASE EUR_JPY LONG MARKET TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=22.5, SHORT=31.2): M5 failed_breakout: M5 BOS_UP@183.896 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 CHOCH_UP@184.034 wick-only (close_confirmed=False) → trap fade DOWN; M5 time_exhaustion: M5 5 consecutive bull candles, range shrinking 42% → fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
   - risk BLOCK: EXHAUSTION_RANGE_CHASE EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.85, p7d=0.28); refuse same-direction entry after the 2.0σ-equivalent extension.
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_METHOD_PROFILE_MISSING EUR_JPY LONG TREND_CONTINUATION has no method-specific mined profile; do not reuse another strategy method's evidence for this lane
@@ -2123,11 +2123,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY LONG entry direction UP under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.27, avg_final=-4.34pip, avg_MAE=11.15pip over 1566 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2136,13 +2136,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.746 is only 17.7pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 110.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -2152,11 +2152,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2165,13 +2165,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.009 is only 20.9pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 110.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -2181,11 +2181,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 - `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
@@ -2194,13 +2194,13 @@
   - risk metrics: risk=`0.0 JPY` reward=`0.0 JPY` rr=`1.50` spread=`14.1pip` margin=`0.0 JPY` margin_after=`81.8%/92.0%`
   - risk BLOCK: BAD_UNITS units must be positive, got 0
   - risk BLOCK: RANGE_FORECAST_REQUIRES_RANGE_ROTATION EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 156232.6s > 20s
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 162584.1s > 20s
   - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
   - risk BLOCK: LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - risk BLOCK: NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - risk BLOCK: HARVEST_TP_STRUCTURE_MISSING EUR_JPY SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 184.387 is only 11.3pip away (< 70.5pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 110.1pip exceeds 10.0× operating ATR 4.5pip
   - risk BLOCK: BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - risk WARN: TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - risk BLOCK: GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - strategy WARN: STRATEGY_NOT_ELIGIBLE EUR_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
@@ -2210,11 +2210,11 @@
   - live blocker: equity-derived loss budget can only fund 380u for EUR_JPY at the current 110.0pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
   - live blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
   - live blocker: EUR_JPY SHORT entry direction DOWN under RANGE forecast matches S5 bid/ask negative replay bucket EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY: hit_rate=0.29, avg_final=-3.84pip, avg_MAE=11.83pip over 1147 sample(s). Do not increase entry frequency inside a proven bid/ask losing pair-direction.
-  - live blocker: EUR_JPY quote is 156233s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
+  - live blocker: EUR_JPY quote is 162584s old versus the 20s live freshness contract; skip forecast_history direction/confidence matching because a same-cycle forecast cannot be recorded from stale price truth.
   - live blocker: operator review required for receipt event=832d2908eeb84b2f action=REDUCE lifecycle=EXPIRED status=OPERATOR_REVIEW_STALE: operator review row is expired
   - live blocker: operator review required for receipt event=aafaf3622a11c9c7 action=REDUCE lifecycle=CURRENT_GUARDIAN_EVENT status=RECEIPT_NOT_HISTORICAL: receipt is not expired/historical; operator review cannot clear it
   - live blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
-  - live blocker: EUR_JPY quote is stale: 156232.6s > 20s
+  - live blocker: EUR_JPY quote is stale: 162584.1s > 20s
   - live blocker: EUR_JPY spread 14.1pip exceeds 2.50x normal 0.8pip (policy=2.5x, session_mult=1.00)
 
 ## Completion Rule

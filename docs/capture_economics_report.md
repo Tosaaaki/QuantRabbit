@@ -1,18 +1,18 @@
 # Capture Economics Report
 
-- Generated at UTC: `2026-06-26T06:39:35.134906+00:00`
+- Generated at UTC: `2026-07-05T18:08:38.642697+00:00`
 - Status: `NEGATIVE_EXPECTANCY`
-- Trades (trader-attributed, realized): `225`
-- Win rate: `60.4%`
-- Avg win / avg loss: `418.0` / `1054.8` JPY
-- Payoff ratio: `0.396` (breakeven at win rate: `0.654`)
-- Expectancy: `-164.6` JPY/trade, net `-37031.0` JPY
+- Trades (trader-attributed, realized): `229`
+- Win rate: `59.8%`
+- Avg win / avg loss: `418.0` / `1063.9` JPY
+- Payoff ratio: `0.393` (breakeven at win rate: `0.672`)
+- Expectancy: `-177.4` JPY/trade, net `-40616.9` JPY
 
 ## Repair Summary
 
-- Dominant loss exit: `MARKET_ORDER_TRADE_CLOSE` net `-74564.8` JPY
+- Dominant loss exit: `MARKET_ORDER_TRADE_CLOSE` net `-74151.8` JPY
 - Strongest positive exit: `TAKE_PROFIT_ORDER` net `48804.8` JPY
-- Payoff gap to breakeven: `0.258`
+- Payoff gap to breakeven: `0.279`
 
 ## Segment Repair Priorities
 
@@ -33,8 +33,8 @@
 
 ## Action Items
 
-- repair exit payoff asymmetry before treating the daily target as arithmetically reachable: payoff_ratio=0.396 breakeven=0.654
-- contain MARKET_ORDER_TRADE_CLOSE drag (-74564.8 JPY): prefer attached TP, TP-rebalance, profit-side TAKE_PROFIT_MARKET, and require hard Gate A/B evidence for loss-side CLOSE
+- repair exit payoff asymmetry before treating the daily target as arithmetically reachable: payoff_ratio=0.393 breakeven=0.672
+- contain MARKET_ORDER_TRADE_CLOSE drag (-74151.8 JPY): prefer attached TP, TP-rebalance, profit-side TAKE_PROFIT_MARKET, and require hard Gate A/B evidence for loss-side CLOSE
 - preserve profitable TAKE_PROFIT_ORDER behavior while repairing negative exit buckets
 
 ## By exit reason
@@ -42,8 +42,8 @@
 | exit_reason | n | win% | avg win | avg loss | net |
 |---|---|---|---|---|---|
 | `MARKET_ORDER_MARGIN_CLOSEOUT` | 4 | 0% | 0.0 | 2358.4 | -9433.7 |
-| `MARKET_ORDER_TRADE_CLOSE` | 97 | 24% | 214.3 | 1074.2 | -74564.8 |
-| `STOP_LOSS_ORDER` | 28 | 61% | 183.2 | 450.2 | -1837.3 |
+| `MARKET_ORDER_TRADE_CLOSE` | 98 | 24% | 222.6 | 1074.2 | -74151.8 |
+| `STOP_LOSS_ORDER` | 31 | 55% | 183.2 | 639.3 | -5836.2 |
 | `TAKE_PROFIT_ORDER` | 96 | 100% | 508.4 | 0.0 | 48804.8 |
 
 ## By ISO week
@@ -57,4 +57,5 @@
 | `2026-W23` | 28 | 68% | 0.24 | -6571.9 |
 | `2026-W24` | 26 | 46% | 1.285 | 555.1 |
 | `2026-W25` | 18 | 61% | 0.413 | -1604.5 |
-| `2026-W26` | 10 | 60% | 0.524 | -707.8 |
+| `2026-W26` | 11 | 64% | 0.52 | -294.8 |
+| `2026-W27` | 3 | 0% | 0.0 | -3998.9 |

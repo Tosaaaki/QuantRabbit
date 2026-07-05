@@ -1,6 +1,6 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-05T17:34:58Z`
+- Generated: `2026-07-05T18:15:59Z`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
@@ -16,7 +16,7 @@
 - Target from rolling start 4x: `685740.2208`
 - Prompt-style current funding-adjusted 4x target: `682961.9928`
 - Remaining to 4x funding-adjusted: `514999.7226`
-- Required calendar daily return: `5.400795`%
+- Required calendar daily return: `5.405806`%
 
 ## Firepower Summary
 
@@ -28,12 +28,11 @@
 - `can_enter_proof_pack_rows`: `2`
 - `as_live_ready_path_exists`: `False`
 - `normal_routing_status`: `BLOCKED`
-- `p0_dependency_count`: `5`
+- `p0_dependency_count`: `4`
 
 ## Remaining P0 Dependency Graph
 
 - `MEMORY_HEALTH_BLOCKED`: `ACTIVE_BLOCKER`; can create permission `False`
-- `TARGET_OPEN_NO_LIVE_READY_LANES`: `ACTIVE_BLOCKER`; can create permission `False`
 - `NEGATIVE_EXPECTANCY_ACTIVE`: `NEGATIVE_EXPECTANCY_REALIZED`; can create permission `False`
 - `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE`: `MARKET_CLOSE_LEAK_FAMILY`; can create permission `False`
 - `MARKET_CLOSE_LEAK_FAMILY_BLOCKED`: `MARKET_CLOSE_LEAK_FAMILY`; can create permission `False`
@@ -42,13 +41,13 @@
 
 - Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE`
 - Classification: `REPAIR_REQUIRED`
-- Proof distance: `7`
+- Proof distance: `8`
 - Can create live permission: `False`
 
 ## Exact Blocker Preventing LIVE_READY
 
 - Primary: `PROFITABILITY_ACCEPTANCE_BLOCKED`
-- P0 rows: `MEMORY_HEALTH_BLOCKED, TARGET_OPEN_NO_LIVE_READY_LANES, NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, MARKET_CLOSE_LEAK_FAMILY_BLOCKED`
+- P0 rows: `MEMORY_HEALTH_BLOCKED, NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, MARKET_CLOSE_LEAK_FAMILY_BLOCKED`
 - Global blockers: `NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, MARKET_CLOSE_LEAK_FAMILY_BLOCKED, SELF_IMPROVEMENT_P0_PRESENT, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE`
 - A/S LIVE_READY stays zero: `True`
 
@@ -62,3 +61,11 @@
 - `docs/rolling_30d_4x_firepower_board.md`
 - `data/as_proof_pack_queue.json`
 - `docs/as_proof_pack_queue.md`
+- `data/post_gate_expectancy_gap_trace.json`
+- `docs/post_gate_expectancy_gap_trace.md`
+- `data/historical_only_to_fresh_proof_replay.json`
+- `docs/historical_only_to_fresh_proof_replay.md`
+- `data/audjpy_short_breakout_failure_repair_proof.json`
+- `docs/audjpy_short_breakout_failure_repair_proof.md`
+- `data/portfolio_4x_path_planner.json`
+- `docs/portfolio_4x_path_planner.md`

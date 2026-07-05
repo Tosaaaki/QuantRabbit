@@ -1,12 +1,12 @@
 # Daily 10% Campaign Plan
 
-- Generated at UTC: `2026-06-26T06:40:02.666097+00:00`
-- Start balance: `173945 JPY`
+- Generated at UTC: `2026-07-05T18:08:49.467463+00:00`
+- Start balance: `287186 JPY`
 - Target return: `10.0%`
-- Target JPY: `17394 JPY`
+- Target JPY: `28719 JPY`
 - Per-trade loss cap: `1739 JPY` (`daily target state /Users/tossaki/App/QuantRabbit/data/daily_target_state.json`)
 - Director verdict: `BUILD_ORDER_INTENTS`
-- Coverage gap: 14 lanes can attempt receipts, but target 17394 JPY still requires actual TP/SL geometry and current tape confirmation.
+- Coverage gap: 25 lanes can attempt receipts, but target 28719 JPY still requires actual TP/SL geometry and current tape confirmation.
 
 ## Operating Rule
 
@@ -14,14 +14,58 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
 
 ## Trader Desks
 
-- `trend_trader` `EUR_JPY SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`5450.9`
-  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_MINIMUM_5_ROUTE_ESTIMATED, vehicle=EUR_JPY|SHORT|trend_continuation|tp1.25_sl1, valid_n=14, win=0.785714, Wilson95_lower=0.524103, PF=3.667461, estimated_daily_return_pct=1.791666
+- `range_trader` `USD_JPY LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`30926.7`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=USD_JPY|LONG|range_reversion|tp1.25_sl1, valid_n=18, win=0.888889, Wilson95_lower=0.671998, PF=14.17712, estimated_daily_return_pct=1.636364
   - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
-  - oanda_firepower: status=VERIFIED_MINIMUM_5_ROUTE_ESTIMATED vehicle=EUR_JPY|SHORT|trend_continuation|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=3.13369 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
-- `range_trader` `EUR_JPY SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`3767.3`
-  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_MINIMUM_5_ROUTE_ESTIMATED, vehicle=EUR_JPY|SHORT|range_reversion|tp1.25_sl1, valid_n=21, win=0.714286, Wilson95_lower=0.500432, PF=2.222948, estimated_daily_return_pct=1.222981
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=USD_JPY|LONG|range_reversion|tp1.25_sl1 vehicle_count=4 estimated_daily_return_pct=10.76887 exit_shapes=tp1.25_sl1,tp1_sl0.75,tp1_sl1,tp0.75_sl0.75 live_permission=false
+- `range_trader` `AUD_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`27490.9`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=AUD_USD|SHORT|range_reversion|tp1.25_sl1, valid_n=15, win=0.866667, Wilson95_lower=0.621175, PF=15.923396, estimated_daily_return_pct=2.646699
   - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
-  - oanda_firepower: status=VERIFIED_MINIMUM_5_ROUTE_ESTIMATED vehicle=EUR_JPY|SHORT|range_reversion|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=2.165786 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=AUD_USD|SHORT|range_reversion|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=9.57251 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `AUD_JPY LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.33` missed_pressure=`18496.3`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=AUD_JPY|LONG|range_reversion|tp1_sl0.75, valid_n=12, win=0.833333, Wilson95_lower=0.551964, PF=6.892009, estimated_daily_return_pct=1.142894
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=AUD_JPY|LONG|range_reversion|tp1_sl0.75 vehicle_count=5 estimated_daily_return_pct=6.440519 exit_shapes=tp1_sl0.75,tp0.75_sl0.75,tp1_sl1,tp1.25_sl1 live_permission=false
+- `trend_trader` `EUR_JPY SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`17879.4`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=EUR_JPY|SHORT|trend_continuation|tp1.25_sl1, valid_n=14, win=0.785714, Wilson95_lower=0.524103, PF=3.667461, estimated_daily_return_pct=1.791666
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=EUR_JPY|SHORT|trend_continuation|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=6.225712 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `GBP_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`14038.6`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=GBP_USD|SHORT|range_reversion|tp1.25_sl1, valid_n=23, win=0.826087, Wilson95_lower=0.628619, PF=5.915026, estimated_daily_return_pct=2.588719
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=GBP_USD|SHORT|range_reversion|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=4.888318 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `GBP_JPY SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.00` missed_pressure=`9972.3`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=GBP_JPY|SHORT|range_reversion|tp1_sl1, valid_n=21, win=0.857143, Wilson95_lower=0.653635, PF=6.22137, estimated_daily_return_pct=0.990431
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=GBP_JPY|SHORT|range_reversion|tp1_sl1 vehicle_count=4 estimated_daily_return_pct=3.47243 exit_shapes=tp1_sl1,tp1.25_sl1,tp1_sl0.75,tp0.75_sl0.75 live_permission=false
+- `range_trader` `AUD_USD LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`9876.8`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=AUD_USD|LONG|range_reversion|tp1.25_sl1, valid_n=15, win=0.8, Wilson95_lower=0.548141, PF=5.255804, estimated_daily_return_pct=1.5
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=AUD_USD|LONG|range_reversion|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=3.439149 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `trend_trader` `GBP_JPY LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`8432.6`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=GBP_JPY|LONG|trend_continuation|tp1.25_sl1, valid_n=24, win=0.708333, Wilson95_lower=0.508319, PF=4.102216, estimated_daily_return_pct=1.541165
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=GBP_JPY|LONG|trend_continuation|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=2.936293 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `NZD_USD LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.00` missed_pressure=`7174.7`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=NZD_USD|LONG|range_reclaim|tp0.75_sl0.75, valid_n=12, win=0.833333, Wilson95_lower=0.551964, PF=4.160228, estimated_daily_return_pct=1.249134
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=NZD_USD|LONG|range_reclaim|tp0.75_sl0.75 vehicle_count=2 estimated_daily_return_pct=2.498268 exit_shapes=tp0.75_sl0.75 live_permission=false
+- `trend_trader` `USD_JPY LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`7137.2`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=USD_JPY|LONG|pullback_continuation|tp1.25_sl1, valid_n=23, win=0.782609, Wilson95_lower=0.580961, PF=4.748882, estimated_daily_return_pct=1.389515
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=USD_JPY|LONG|pullback_continuation|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=2.485224 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `EUR_JPY SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`6219.8`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=EUR_JPY|SHORT|range_reversion|tp1.25_sl1, valid_n=21, win=0.714286, Wilson95_lower=0.500432, PF=2.222948, estimated_daily_return_pct=1.222981
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=EUR_JPY|SHORT|range_reversion|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=2.165786 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.25` missed_pressure=`5417.4`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=EUR_USD|SHORT|pullback_continuation|tp1.25_sl1, valid_n=13, win=0.846154, Wilson95_lower=0.577648, PF=5.282459, estimated_daily_return_pct=1.068182
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=EUR_USD|SHORT|pullback_continuation|tp1.25_sl1 vehicle_count=2 estimated_daily_return_pct=1.886364 exit_shapes=tp1.25_sl1,tp1_sl1 live_permission=false
+- `range_trader` `USD_JPY SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`OANDA_FIREPOWER_ROUTE` target_rr=`1.00` missed_pressure=`2666.7`
+  - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=USD_JPY|SHORT|range_reversion|tp1_sl1, valid_n=14, win=0.785714, Wilson95_lower=0.524103, PF=4.190396, estimated_daily_return_pct=0.928575
+  - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=USD_JPY|SHORT|range_reversion|tp1_sl1 vehicle_count=1 estimated_daily_return_pct=0.928575 exit_shapes=tp1_sl1 live_permission=false
 - `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
   - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=126
   - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.

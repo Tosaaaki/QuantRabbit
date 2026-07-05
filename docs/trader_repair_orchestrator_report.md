@@ -1,6 +1,6 @@
 # Trader Repair Orchestrator Report
 
-- Generated at UTC: `2026-06-26T06:42:36.753218+00:00`
+- Generated at UTC: `2026-07-05T18:09:44.061173+00:00`
 - Status: `ORCHESTRATOR_BLOCKED`
 - Trader request: ``
 - Selected request: `None`
@@ -38,7 +38,7 @@
 
 - Version: `loop_engineering_prompt_v1`
 - Objective: Drive QuantRabbit toward the daily 5% minimum from starting equity by repeatedly selecting the highest-causal blocker, taking only approved code/evidence actions, and verifying that operational reachability improves without bypassing broker truth.
-- Hypothesis: The next blocker is evidence-window work: REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY (RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY). Do not edit gates until the clearance evidence changes.
+- Hypothesis: The next blocker is evidence-window work: REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL (WAITING_FOR_DIRECTIONAL_INVERSION_REPLAY_EVIDENCE). Do not edit gates until the clearance evidence changes.
 - Operational 5pct reachable: `False`
 - Audit 5pct estimated reachable: `True`
 - Live-ready lanes: `0`
@@ -46,25 +46,25 @@
 - Artifact contradictions: ``
 - Actionable: ``
 - Approval required: ``
-- Waiting: `REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY, REVIEW_CLOSE_GATE_EVIDENCE_FAILURES, REPAIR_FRONTIER_LANE_BLOCKER`
-- Next loop: `Treat REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY as waiting for evidence, not implementation.; Run only the listed read-only verification/evidence commands and compare the new artifact against the clearance condition.; If the same blocker repeats unchanged, move to the next actionable request or report the live-evidence wait instead of rewriting the same guard.`
-- Verification: `PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80, PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit, PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot, PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts, PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator`
+- Waiting: `REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL, REPAIR_FRONTIER_LANE_BLOCKER, COLLECT_BIDASK_REPLAY_EVIDENCE`
+- Next loop: `Treat REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL as waiting for evidence, not implementation.; Run only the listed read-only verification/evidence commands and compare the new artifact against the clearance condition.; If the same blocker repeats unchanged, move to the next actionable request or report the live-evidence wait instead of rewriting the same guard.`
+- Verification: `PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot, PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --pairs EUR_USD --granularity S5 --auto-history-min-days 30, PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts, PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast, PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json, PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts, python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --history-dir logs/replay/oanda_history/20260703T072439Z --history-dir logs/replay/oanda_history/20260703T080331Z --history-dir logs/replay/oanda_history/20260703T120929Z --history-dir logs/replay/oanda_history/20260703T123013Z --history-dir logs/replay/oanda_history/20260703T134642Z --history-dir logs/replay/oanda_history/20260703T135559Z --history-dir logs/replay/oanda_history/20260703T142126Z --history-dir logs/replay/oanda_history/20260703T142653Z --history-dir logs/replay/oanda_history/20260703T143956Z --auto-history-min-days 30 --stable-min-active-days 3 --stable-max-daily-sample-share 0.7 --stable-min-positive-day-rate 0.6666666667, PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator`
 
 ```text
 QuantRabbit loop engineering prompt:
 
 Goal: pursue the 5% daily minimum as an audit/repair obligation, not as a promise of market returns.
 Trader request: (none)
-State: orchestrator=ORCHESTRATOR_BLOCKED, target=PURSUE_TARGET, live_ready=0, guardian_active=True, guardian_lock=True, operational_5pct=False, audit_5pct=True.
-Queue: selected=None, waiting_p0=REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY, REVIEW_CLOSE_GATE_EVIDENCE_FAILURES, support_blockers=SELF_IMPROVEMENT_P0_PRESENT, NO_LIVE_READY_LANES, PROFITABILITY_ACCEPTANCE_BLOCKED.
-Execution frontier: repair_top=failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE blocked_by=BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE, PATTERN_REVERSAL_CHASE, EXHAUSTION_RANGE_CHASE proof=TP_PROVEN_HARVEST/tp_trades=20; frontier_blockers=BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE(1): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE co_blocked_by=EXHAUSTION_RANGE_CHASE, PATTERN_REVERSAL_CHASE | EXHAUSTION_RANGE_CHASE(1): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE co_blocked_by=BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE, PATTERN_REVERSAL_CHASE | PATTERN_REVERSAL_CHASE(1): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE co_blocked_by=BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE, EXHAUSTION_RANGE_CHASE.
-Profitability RCA: capture=NEGATIVE_EXPECTANCY; overall_exp_jpy=-164.6; overall_net_jpy=-37031.0; tp_exp_jpy=508.4; tp_net_jpy=48804.8; market_close_exp_jpy=-768.7; market_close_net_jpy=-74564.8; tp_market_close_leak_segments=1; acceptance_blockers=SELF_IMPROVEMENT_P0_PRESENT,NEGATIVE_EXPECTANCY_ACTIVE,MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE,RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK; operational_blockers=SELF_IMPROVEMENT_P0_PRESENT,NO_LIVE_READY_LANES,PROFITABILITY_ACCEPTANCE_BLOCKED,FRESH_ENTRY_SEND_NOT_ALLOWED.
+State: orchestrator=ORCHESTRATOR_BLOCKED, target=PURSUE_TARGET, live_ready=0, guardian_active=True, guardian_lock=False, operational_5pct=False, audit_5pct=True.
+Queue: selected=None, waiting_p0=REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL, support_blockers=GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING, GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING, SELF_IMPROVEMENT_P0_PRESENT, NO_LIVE_READY_LANES, PROFITABILITY_ACCEPTANCE_BLOCKED.
+Execution frontier: repair_top=failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE blocked_by=STALE_QUOTE, SPREAD_TOO_WIDE, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED proof=TP_PROVEN_HARVEST/tp_trades=20; frontier_blockers=STALE_QUOTE(3): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE, range_trader:AUD_JPY:LONG:RANGE_ROTATION co_blocked_by=BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, SPREAD_TOO_WIDE | TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE(3): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE, range_trader:AUD_JPY:LONG:RANGE_ROTATION co_blocked_by=BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, SPREAD_TOO_WIDE | GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED(3): failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE, range_trader:AUD_JPY:LONG:RANGE_ROTATION co_blocked_by=BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, SPREAD_TOO_WIDE, STALE_QUOTE.
+Profitability RCA: capture=NEGATIVE_EXPECTANCY; overall_exp_jpy=-177.4; overall_net_jpy=-40616.9; tp_exp_jpy=508.4; tp_net_jpy=48804.8; market_close_exp_jpy=-756.7; market_close_net_jpy=-74151.8; tp_market_close_leak_segments=1; acceptance_blockers=SELF_IMPROVEMENT_P0_PRESENT,NEGATIVE_EXPECTANCY_ACTIVE,MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE,MARKET_CLOSE_LEAK_FAMILY_BLOCKED; operational_blockers=GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING,GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING,SELF_IMPROVEMENT_P0_PRESENT,NO_LIVE_READY_LANES.
 Approval required details: (none).
 Artifact contradictions: (none).
-Hypothesis: The next blocker is evidence-window work: REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY (RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY). Do not edit gates until the clearance evidence changes.
+Hypothesis: The next blocker is evidence-window work: REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL (WAITING_FOR_DIRECTIONAL_INVERSION_REPLAY_EVIDENCE). Do not edit gates until the clearance evidence changes.
 
 Next loop:
-- Treat REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY as waiting for evidence, not implementation.
+- Treat REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL as waiting for evidence, not implementation.
 - Run only the listed read-only verification/evidence commands and compare the new artifact against the clearance condition.
 - If the same blocker repeats unchanged, move to the next actionable request or report the live-evidence wait instead of rewriting the same guard.
 
@@ -88,17 +88,20 @@ Anti-loop rules:
 - If the top item is waiting for live evidence, collect or wait for the named evidence; do not reimplement the same already-blocking guard.
 
 Verification commands:
-- PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80
-- PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit
 - PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot
+- PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --pairs EUR_USD --granularity S5 --auto-history-min-days 30
 - PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts
+- PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast
+- PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+- PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts
+- python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --history-dir logs/replay/oanda_history/20260703T072439Z --history-dir logs/replay/oanda_history/20260703T080331Z --history-dir logs/replay/oanda_history/20260703T120929Z --history-dir logs/replay/oanda_history/20260703T123013Z --history-dir logs/replay/oanda_history/20260703T134642Z --history-dir logs/replay/oanda_history/20260703T135559Z --history-dir logs/replay/oanda_history/20260703T142126Z --history-dir logs/replay/oanda_history/20260703T142653Z --history-dir logs/replay/oanda_history/20260703T143956Z --auto-history-min-days 30 --stable-min-active-days 3 --stable-max-daily-sample-share 0.7 --stable-min-positive-day-rate 0.6666666667
 - PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator
 ```
 
 ## Queue
 
-| Code | Priority | Automation | Match | Dependency | Verify |
-|---|---|---|---:|---:|---|
-| `REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY` | `P0` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `4` | `PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80` |
-| `REVIEW_CLOSE_GATE_EVIDENCE_FAILURES` | `P0` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `90` | `PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit` |
-| `REPAIR_FRONTIER_LANE_BLOCKER` | `P1` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `5` | `PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot`, `PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts` |
+| Code | Priority | Repair status | Automation | Match | Dependency | Clearance | Verify |
+|---|---|---|---|---:|---:|---|---|
+| `REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL` | `P0` | `WAITING_FOR_DIRECTIONAL_INVERSION_REPLAY_EVIDENCE` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `2` | Build a read-only inversion audit over forecast_history/projection_ledger and spread-included OANDA candles; only repeated pair/side/method evidence may promote an inversion rule. | `PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot`, `PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --pairs EUR_USD --granularity S5 --auto-history-min-days 30` |
+| `REPAIR_FRONTIER_LANE_BLOCKER` | `P1` | `FRONTIER_WAITING_FOR_FRESH_QUOTE` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `5` | STALE_QUOTE clears only after broker snapshot and generated intents use a quote inside the live freshness window. | `PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json`, `PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts` |
+| `COLLECT_BIDASK_REPLAY_EVIDENCE` | `P1` | `BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE` | `WAITING_FOR_LIVE_EVIDENCE_WINDOW` | `0` | `7` | OANDA bid/ask price truth is complete for loaded samples; collect more forecast_history samples across the under-sampled pair-directions, then rerun replay validation and require global all-currency sample coverage to graduate from UNDER_SAMPLED before claiming all-currency high-turn readiness | `python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --history-dir logs/replay/oanda_history/20260703T072439Z --history-dir logs/replay/oanda_history/20260703T080331Z --history-dir logs/replay/oanda_history/20260703T120929Z --history-dir logs/replay/oanda_history/20260703T123013Z --history-dir logs/replay/oanda_history/20260703T134642Z --history-dir logs/replay/oanda_history/20260703T135559Z --history-dir logs/replay/oanda_history/20260703T142126Z --history-dir logs/replay/oanda_history/20260703T142653Z --history-dir logs/replay/oanda_history/20260703T143956Z --auto-history-min-days 30 --stable-min-active-days 3 --stable-max-daily-sample-share 0.7 --stable-min-positive-day-rate 0.6666666667` |

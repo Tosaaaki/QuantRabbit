@@ -1,0 +1,768 @@
+{
+  "classification_values": [
+    "PROOF_READY",
+    "REPAIR_REQUIRED",
+    "EVIDENCE_GAP",
+    "REJECTED",
+    "HISTORICAL_ONLY"
+  ],
+  "execution_timing_744h_summary": {
+    "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
+    "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+    "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+    "lookback_basis": "execution_timing_audit current local artifact",
+    "loss_close_repair_replay_delta_jpy": 18771.7372,
+    "loss_closes_audited": 39,
+    "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
+    "post_repair_live_evidence_loss_closes_audited": 5,
+    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+    "status": "OK"
+  },
+  "fresh_replay_summary": {
+    "adoption_summary": {
+      "has_live_grade_support": false,
+      "has_rank_only_support": true,
+      "live_grade_support_rules": 0,
+      "negative_block_rules": 1,
+      "rank_only_blocker_counts": {
+        "INSUFFICIENT_ACTIVE_DAYS": 2,
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE": 2,
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION": 2,
+        "NEEDS_MORE_ACTIVE_DAYS": 2
+      },
+      "rank_only_support_rules": 2
+    },
+    "forecast_sample_coverage": {
+      "min_active_days_for_daily_stability": 3,
+      "min_directional_samples_for_precision_rule": 30,
+      "pair_count": 2,
+      "pair_direction_count": 4,
+      "pairs": [
+        {
+          "evaluated_samples": 144,
+          "forecast_samples": 156,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 12
+        },
+        {
+          "evaluated_samples": 13,
+          "forecast_samples": 14,
+          "missing_evaluated_samples_to_min_directional": 17,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 1
+        }
+      ],
+      "pending_future_truth_samples": 0,
+      "under_sampled_pair_directions": [
+        {
+          "coverage_gap_reasons": [
+            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "INSUFFICIENT_ACTIVE_DAYS"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 2,
+          "evaluated_samples": 2,
+          "forecast_active_days": 2,
+          "forecast_samples": 2,
+          "missing_active_days": 1,
+          "missing_evaluated_samples": 28,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 0
+        },
+        {
+          "coverage_gap_reasons": [
+            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 5,
+          "evaluated_samples": 9,
+          "forecast_active_days": 6,
+          "forecast_samples": 18,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 21,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 9
+        },
+        {
+          "coverage_gap_reasons": [
+            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 6,
+          "evaluated_samples": 11,
+          "forecast_active_days": 7,
+          "forecast_samples": 12,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 19,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 1
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 6,
+          "evaluated_samples": 135,
+          "forecast_active_days": 7,
+          "forecast_samples": 138,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 3
+        }
+      ],
+      "unscorable_no_market_samples": 13
+    },
+    "generated_at_utc": "2026-07-05T18:07:59.961645Z",
+    "granularity": "S5",
+    "pair_filter": [
+      "AUD_JPY",
+      "GBP_USD"
+    ],
+    "path": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+    "price_truth_coverage": {
+      "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+      "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+      "blockers": [
+        "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
+        "COLLECT_MORE_FORECAST_SAMPLES"
+      ],
+      "candidate_rule_validation_blocked": false,
+      "deduped_directional_rows": 170,
+      "evaluated_rows": 157,
+      "future_price_truth_window_group_count": 0,
+      "global_currency_validation_blocked": true,
+      "history_candles": 49294,
+      "history_fetch_command": null,
+      "history_fetch_command_count": 0,
+      "history_fetch_command_mode": "WINDOWED",
+      "history_fetch_commands": [],
+      "history_files": 2,
+      "missing_pair_directions": [],
+      "missing_pairs": [],
+      "missing_price_truth_samples": 0,
+      "missing_price_window_group_count": 0,
+      "pending_future_truth_rows": 0,
+      "pending_future_truth_window_group_count": 0,
+      "pending_future_truth_window_groups": [],
+      "raw_directional_rows": 1489,
+      "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
+      "required_min_evaluated_rows": 30,
+      "status": "PRICE_TRUTH_OK",
+      "under_sampled_missing_evaluated_samples": 68,
+      "under_sampled_pair_direction_count": 4,
+      "under_sampled_pair_directions": [
+        "GBP_USD:UP",
+        "AUD_JPY:DOWN",
+        "GBP_USD:DOWN",
+        "AUD_JPY:UP"
+      ],
+      "unscorable_no_market_rows": 13,
+      "unscorable_no_market_window_group_count": 2,
+      "unscorable_no_market_window_groups": [
+        {
+          "count": 12,
+          "date": "2026-05-16",
+          "needed_from_utc": "2026-05-16T01:04:43.766664Z",
+          "needed_to_utc": "2026-05-16T07:34:02.100697Z",
+          "pair_directions": [
+            "AUD_JPY:DOWN",
+            "AUD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_JPY"
+          ]
+        },
+        {
+          "count": 1,
+          "date": "2026-06-26",
+          "needed_from_utc": "2026-06-26T05:30:01.386799Z",
+          "needed_to_utc": "2026-06-27T05:40:01.386799Z",
+          "pair_directions": [
+            "GBP_USD:DOWN"
+          ],
+          "pairs": [
+            "GBP_USD"
+          ]
+        }
+      ],
+      "warnings": [
+        "FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW"
+      ]
+    }
+  },
+  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "live_side_effects": [],
+  "mode": "read_only_historical_only_to_fresh_proof_replay",
+  "rolling_30d_target_math": {
+    "capital_flows_30d": 100000.0,
+    "current_equity_raw": 270740.4982,
+    "funding_adjusted_equity": 170740.4982,
+    "pace_state": "BEHIND",
+    "performance_basis": "funding_adjusted",
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682961.9928,
+    "remaining_to_4x_funding_adjusted": 514999.7226,
+    "remaining_to_4x_raw": 414999.7226,
+    "required_active_day_return_funding_adjusted_pct": 7.443193,
+    "required_calendar_daily_profit_jpy": 9229.9001,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
+    "rolling_30d_multiplier_funding_adjusted": 0.995949,
+    "rolling_30d_multiplier_raw": 1.57926,
+    "rolling_30d_start_equity": 171435.0552,
+    "sizing_basis": "raw_nav",
+    "target_equity_from_rolling_start_4x_jpy": 685740.2208
+  },
+  "rows": [
+    {
+      "can_create_live_permission": false,
+      "classification": "HISTORICAL_ONLY",
+      "current_blockers": [
+        "STALE_QUOTE",
+        "SPREAD_TOO_WIDE",
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "STRATEGY_NOT_ELIGIBLE"
+      ],
+      "decision": "rank_repair_work_only_no_live_permission",
+      "estimated_trades_per_day_available": 43.0303,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 8.357,
+      "expected_jpy_per_trade": 331.6,
+      "fresh_744h_replay": {
+        "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+        "lookback_basis": "execution_timing_audit current local artifact",
+        "loss_close_repair_replay_delta_jpy": 18771.7372,
+        "loss_closes_audited": 39,
+        "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
+        "post_repair_live_evidence_loss_closes_audited": 5,
+        "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+        "status": "OK"
+      },
+      "fresh_replay_status": "EVIDENCE_GAP_UNDER_SAMPLED",
+      "fresh_s5_bidask_replay": {
+        "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+        "can_create_live_permission": false,
+        "contrarian_or_rank_only_rules": [],
+        "direct_rules": [],
+        "direction": "UP",
+        "direction_coverage": {
+          "coverage_gap_reasons": [
+            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "INSUFFICIENT_ACTIVE_DAYS"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 2,
+          "evaluated_samples": 2,
+          "forecast_active_days": 2,
+          "forecast_samples": 2,
+          "missing_active_days": 1,
+          "missing_evaluated_samples": 28,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 0
+        },
+        "direction_segment": {},
+        "live_grade_support": false,
+        "pair": "GBP_USD",
+        "pair_coverage": {
+          "evaluated_samples": 13,
+          "forecast_samples": 14,
+          "missing_evaluated_samples_to_min_directional": 17,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 1
+        },
+        "price_truth_blockers": [
+          "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
+          "COLLECT_MORE_FORECAST_SAMPLES"
+        ],
+        "price_truth_status": "PRICE_TRUTH_OK",
+        "status": "EVIDENCE_GAP_UNDER_SAMPLED"
+      },
+      "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+      "margin": {
+        "broker_margin_context": {
+          "broker_margin_free_units": 0,
+          "margin_available_jpy": 49820.6874,
+          "margin_used_jpy": 221485.2
+        },
+        "margin_requirement_realistic_size_jpy": 0.0,
+        "realistic_units": 0,
+        "risk_allowed": false
+      },
+      "meets_4x_required_daily_return_prefilter": true,
+      "method": "RANGE_ROTATION",
+      "missing_proof": {
+        "active_day_floor": true,
+        "attached_tp_proof": true,
+        "daily_stability_floor": true,
+        "forecast_executable_proof": false,
+        "fresh_744h_replay": false,
+        "geometry_proof": false,
+        "gpt_verifier_pass": false,
+        "live_order_gateway_pass": false,
+        "market_close_absence_or_close_gate_proof": true,
+        "no_guardian_operator_review_blocker": false,
+        "no_stale_packaged_rule": true,
+        "positive_day_rate_floor": true,
+        "residual_family_absence": true,
+        "risk_engine_pass": false,
+        "s5_bidask_spread_included_replay": false,
+        "sample_count_floor": true
+      },
+      "order_type": "LIMIT",
+      "packaged_historical_evidence": {
+        "bidask_rule_generated_at_utc": "2026-07-03T14:52:18.653002Z",
+        "bidask_rule_name": "GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "capture_take_profit_scope_key": "GBP_USD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+        "historical_only": true,
+        "positive_rotation_mode": null,
+        "positive_rotation_proof_collection_ready": null
+      },
+      "pair": "GBP_USD",
+      "proof_checks": {
+        "fresh_forecast_executable": false,
+        "geometry_proof": false,
+        "gpt_verifier_pass": false,
+        "guardian_clear": false,
+        "live_order_gateway_pass": false,
+        "margin_and_risk_engine_pass": false,
+        "s5_live_grade": false
+      },
+      "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
+      "side": "LONG"
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "HISTORICAL_ONLY",
+      "current_blockers": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "STALE_QUOTE",
+        "SPREAD_TOO_WIDE",
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+        "PATTERN_REVERSAL_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "STRATEGY_NOT_ELIGIBLE"
+      ],
+      "decision": "rank_repair_work_only_no_live_permission",
+      "estimated_trades_per_day_available": 34.8974,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9303,
+      "expected_jpy_per_trade": 388.0,
+      "fresh_744h_replay": {
+        "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+        "lookback_basis": "execution_timing_audit current local artifact",
+        "loss_close_repair_replay_delta_jpy": 18771.7372,
+        "loss_closes_audited": 39,
+        "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
+        "post_repair_live_evidence_loss_closes_audited": 5,
+        "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+        "status": "OK"
+      },
+      "fresh_replay_status": "EVIDENCE_GAP_UNDER_SAMPLED",
+      "fresh_s5_bidask_replay": {
+        "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+        "can_create_live_permission": false,
+        "contrarian_or_rank_only_rules": [
+          {
+            "active_days": 2,
+            "adoption_blockers": [
+              "INSUFFICIENT_ACTIVE_DAYS",
+              "NEEDS_MORE_ACTIVE_DAYS",
+              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+            ],
+            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "avg_daily_realized_pips": 56.75,
+            "avg_daily_samples": 20.0,
+            "avg_final_pips": 4.8425,
+            "avg_mae_pips": 7.61,
+            "avg_mfe_pips": 10.8475,
+            "best_daily_realized_pips": 117.9,
+            "campaign_timezone": "Asia/Tokyo",
+            "confidence_bucket": "0.75-0.90",
+            "contrarian_edge": true,
+            "daily_stability_gap": {
+              "current_max_daily_sample_share": 0.95,
+              "current_positive_day_rate": 0.5,
+              "max_allowed_daily_sample_share": 0.7,
+              "missing_active_days": 1,
+              "missing_positive_days_at_current_requirement": 2,
+              "reasons": [
+                "NEEDS_MORE_ACTIVE_DAYS",
+                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              ],
+              "required_active_days": 3,
+              "required_positive_day_rate": 0.6667,
+              "required_positive_days_at_current_requirement": 3,
+              "status": "INSUFFICIENT_ACTIVE_DAYS"
+            },
+            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+            "direction": "DOWN",
+            "directional_hit_rate": 0.65,
+            "faded_direction": "UP",
+            "first_day": "2026-05-15",
+            "flat_days": 0,
+            "forecast_direction": "UP",
+            "granularity": "S5",
+            "horizon_bucket": "31-60m",
+            "last_day": "2026-06-02",
+            "live_grade": false,
+            "max_daily_sample_share": 0.95,
+            "max_daily_samples": 38,
+            "max_stop_pips": 7.2,
+            "max_target_pips": 11.0,
+            "median_final_pips": 5.0,
+            "min_daily_samples": 2,
+            "min_target_pips": 9.8,
+            "name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+            "negative_days": 1,
+            "optimized_avg_realized_pips": 2.8375,
+            "optimized_profit_factor": 2.3182,
+            "optimized_stop_loss_pips": 7.0,
+            "optimized_take_profit_pips": 10.0,
+            "optimized_win_rate": 0.625,
+            "pair": "AUD_JPY",
+            "positive_day_rate": 0.5,
+            "positive_days": 1,
+            "samples": 40,
+            "side": "SHORT",
+            "source_avg_final_pips": -9.7425,
+            "source_avg_mae_pips": 15.73,
+            "source_avg_mfe_pips": 3.305,
+            "source_directional_hit_rate": 0.25,
+            "worst_daily_realized_pips": -4.4
+          },
+          {
+            "active_days": 2,
+            "adoption_blockers": [
+              "INSUFFICIENT_ACTIVE_DAYS",
+              "NEEDS_MORE_ACTIVE_DAYS",
+              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+            ],
+            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "avg_daily_realized_pips": 56.75,
+            "avg_daily_samples": 20.0,
+            "avg_final_pips": 4.8425,
+            "avg_mae_pips": 7.61,
+            "avg_mfe_pips": 10.8475,
+            "best_daily_realized_pips": 117.9,
+            "campaign_timezone": "Asia/Tokyo",
+            "confidence_bucket": "0.75-0.90",
+            "contrarian_edge": true,
+            "daily_stability_gap": {
+              "current_max_daily_sample_share": 0.95,
+              "current_positive_day_rate": 0.5,
+              "max_allowed_daily_sample_share": 0.7,
+              "missing_active_days": 1,
+              "missing_positive_days_at_current_requirement": 2,
+              "reasons": [
+                "NEEDS_MORE_ACTIVE_DAYS",
+                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              ],
+              "required_active_days": 3,
+              "required_positive_day_rate": 0.6667,
+              "required_positive_days_at_current_requirement": 3,
+              "status": "INSUFFICIENT_ACTIVE_DAYS"
+            },
+            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+            "direction": "DOWN",
+            "directional_hit_rate": 0.65,
+            "faded_direction": "UP",
+            "first_day": "2026-05-15",
+            "flat_days": 0,
+            "forecast_direction": "UP",
+            "granularity": "S5",
+            "last_day": "2026-06-02",
+            "live_grade": false,
+            "max_daily_sample_share": 0.95,
+            "max_daily_samples": 38,
+            "max_stop_pips": 7.2,
+            "max_target_pips": 11.0,
+            "median_final_pips": 5.0,
+            "min_daily_samples": 2,
+            "min_target_pips": 9.8,
+            "name": "AUD_JPY_UP_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+            "negative_days": 1,
+            "optimized_avg_realized_pips": 2.8375,
+            "optimized_profit_factor": 2.3182,
+            "optimized_stop_loss_pips": 7.0,
+            "optimized_take_profit_pips": 10.0,
+            "optimized_win_rate": 0.625,
+            "pair": "AUD_JPY",
+            "positive_day_rate": 0.5,
+            "positive_days": 1,
+            "samples": 40,
+            "side": "SHORT",
+            "source_avg_final_pips": -9.7425,
+            "source_avg_mae_pips": 15.73,
+            "source_avg_mfe_pips": 3.305,
+            "source_directional_hit_rate": 0.25,
+            "worst_daily_realized_pips": -4.4
+          },
+          {
+            "active_days": 2,
+            "adoption_blockers": [
+              "INSUFFICIENT_ACTIVE_DAYS",
+              "NEEDS_MORE_ACTIVE_DAYS",
+              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+            ],
+            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+            "avg_daily_realized_pips": 56.75,
+            "avg_daily_samples": 20.0,
+            "best_daily_realized_pips": 117.9,
+            "campaign_timezone": "Asia/Tokyo",
+            "confidence_bucket": "0.75-0.90",
+            "daily_stability_gap": {
+              "current_max_daily_sample_share": 0.95,
+              "current_positive_day_rate": 0.5,
+              "max_allowed_daily_sample_share": 0.7,
+              "missing_active_days": 1,
+              "missing_positive_days_at_current_requirement": 2,
+              "reasons": [
+                "NEEDS_MORE_ACTIVE_DAYS",
+                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              ],
+              "required_active_days": 3,
+              "required_positive_day_rate": 0.6667,
+              "required_positive_days_at_current_requirement": 3,
+              "status": "INSUFFICIENT_ACTIVE_DAYS"
+            },
+            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+            "direction": "DOWN",
+            "first_day": "2026-05-15",
+            "flat_days": 0,
+            "forecast_direction": "UP",
+            "last_day": "2026-06-02",
+            "live_grade": false,
+            "max_daily_sample_share": 0.95,
+            "max_daily_samples": 38,
+            "min_daily_samples": 2,
+            "name": "AUD_JPY_UP_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+            "negative_days": 1,
+            "optimized_avg_realized_pips": 2.8375,
+            "optimized_profit_factor": 2.3182,
+            "optimized_win_rate": 0.625,
+            "pair": "AUD_JPY",
+            "positive_day_rate": 0.5,
+            "positive_days": 1,
+            "samples": 40,
+            "worst_daily_realized_pips": -4.4
+          },
+          {
+            "active_days": 2,
+            "adoption_blockers": [
+              "INSUFFICIENT_ACTIVE_DAYS",
+              "NEEDS_MORE_ACTIVE_DAYS",
+              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+            ],
+            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+            "avg_daily_realized_pips": 56.75,
+            "avg_daily_samples": 20.0,
+            "best_daily_realized_pips": 117.9,
+            "campaign_timezone": "Asia/Tokyo",
+            "confidence_bucket": "0.75-0.90",
+            "daily_stability_gap": {
+              "current_max_daily_sample_share": 0.95,
+              "current_positive_day_rate": 0.5,
+              "max_allowed_daily_sample_share": 0.7,
+              "missing_active_days": 1,
+              "missing_positive_days_at_current_requirement": 2,
+              "reasons": [
+                "NEEDS_MORE_ACTIVE_DAYS",
+                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              ],
+              "required_active_days": 3,
+              "required_positive_day_rate": 0.6667,
+              "required_positive_days_at_current_requirement": 3,
+              "status": "INSUFFICIENT_ACTIVE_DAYS"
+            },
+            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+            "direction": "DOWN",
+            "first_day": "2026-05-15",
+            "flat_days": 0,
+            "forecast_direction": "UP",
+            "horizon_bucket": "31-60m",
+            "last_day": "2026-06-02",
+            "live_grade": false,
+            "max_daily_sample_share": 0.95,
+            "max_daily_samples": 38,
+            "min_daily_samples": 2,
+            "name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+            "negative_days": 1,
+            "optimized_avg_realized_pips": 2.8375,
+            "optimized_profit_factor": 2.3182,
+            "optimized_win_rate": 0.625,
+            "pair": "AUD_JPY",
+            "positive_day_rate": 0.5,
+            "positive_days": 1,
+            "samples": 40,
+            "worst_daily_realized_pips": -4.4
+          }
+        ],
+        "direct_rules": [],
+        "direction": "DOWN",
+        "direction_coverage": {
+          "coverage_gap_reasons": [
+            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 5,
+          "evaluated_samples": 9,
+          "forecast_active_days": 6,
+          "forecast_samples": 18,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 21,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 9
+        },
+        "direction_segment": {
+          "adverse_side_invalidation_rate": 1.0,
+          "avg_final_pips": -3.4555555555554758,
+          "avg_mae_pips": 11.888888888888813,
+          "avg_mfe_pips": 6.955555555555293,
+          "direction": "DOWN",
+          "hit_rate": 0.6666666666666666,
+          "invalidation_touch_rate": 0.3333333333333333,
+          "median_final_pips": 2.1000000000000796,
+          "n": 9,
+          "pair": "AUD_JPY",
+          "reward_side_target_rate": 0.6666666666666666,
+          "target_before_invalidation_rate": 0.3333333333333333,
+          "target_touch_rate": 0.3333333333333333
+        },
+        "live_grade_support": false,
+        "pair": "AUD_JPY",
+        "pair_coverage": {
+          "evaluated_samples": 144,
+          "forecast_samples": 156,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 12
+        },
+        "price_truth_blockers": [
+          "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
+          "COLLECT_MORE_FORECAST_SAMPLES"
+        ],
+        "price_truth_status": "PRICE_TRUTH_OK",
+        "status": "EVIDENCE_GAP_UNDER_SAMPLED"
+      },
+      "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
+      "margin": {
+        "broker_margin_context": {
+          "broker_margin_free_units": 0,
+          "margin_available_jpy": 49820.6874,
+          "margin_used_jpy": 221485.2
+        },
+        "margin_requirement_realistic_size_jpy": 0.0,
+        "realistic_units": 0,
+        "risk_allowed": false
+      },
+      "meets_4x_required_daily_return_prefilter": true,
+      "method": "TREND_CONTINUATION",
+      "missing_proof": {
+        "active_day_floor": true,
+        "attached_tp_proof": true,
+        "daily_stability_floor": true,
+        "forecast_executable_proof": false,
+        "fresh_744h_replay": false,
+        "geometry_proof": false,
+        "gpt_verifier_pass": false,
+        "live_order_gateway_pass": false,
+        "market_close_absence_or_close_gate_proof": true,
+        "no_guardian_operator_review_blocker": false,
+        "no_stale_packaged_rule": true,
+        "positive_day_rate_floor": true,
+        "residual_family_absence": true,
+        "risk_engine_pass": false,
+        "s5_bidask_spread_included_replay": false,
+        "sample_count_floor": true
+      },
+      "order_type": "STOP-ENTRY",
+      "packaged_historical_evidence": {
+        "bidask_rule_generated_at_utc": "2026-07-03T14:52:18.653002Z",
+        "bidask_rule_name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "capture_take_profit_scope_key": "AUD_JPY|SHORT|TREND_CONTINUATION|TAKE_PROFIT_ORDER",
+        "historical_only": true,
+        "positive_rotation_mode": null,
+        "positive_rotation_proof_collection_ready": null
+      },
+      "pair": "AUD_JPY",
+      "proof_checks": {
+        "fresh_forecast_executable": false,
+        "geometry_proof": false,
+        "gpt_verifier_pass": false,
+        "guardian_clear": false,
+        "live_order_gateway_pass": false,
+        "margin_and_risk_engine_pass": false,
+        "s5_live_grade": false
+      },
+      "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
+      "side": "SHORT"
+    }
+  ],
+  "source_artifacts": [
+    "data/rolling_30d_4x_firepower_board.json",
+    "data/as_proof_pack_queue.json",
+    "data/order_intents.json",
+    "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+    "data/execution_timing_audit.json",
+    "data/memory_health.json",
+    "data/broker_snapshot.json"
+  ],
+  "summary": {
+    "can_create_live_permission": 0,
+    "fresh_s5_adoption_level": "PAIR_LOCAL_RANK_ONLY",
+    "fresh_s5_price_truth_status": "PRICE_TRUTH_OK",
+    "historical_only": 2,
+    "proof_ready": 0,
+    "rows": 2
+  }
+}

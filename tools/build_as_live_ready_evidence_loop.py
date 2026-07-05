@@ -792,6 +792,14 @@ def _update_as_board(
                 "docs/rolling_30d_4x_firepower_board.md",
                 "data/as_proof_pack_queue.json",
                 "docs/as_proof_pack_queue.md",
+                "data/post_gate_expectancy_gap_trace.json",
+                "docs/post_gate_expectancy_gap_trace.md",
+                "data/historical_only_to_fresh_proof_replay.json",
+                "docs/historical_only_to_fresh_proof_replay.md",
+                "data/audjpy_short_breakout_failure_repair_proof.json",
+                "docs/audjpy_short_breakout_failure_repair_proof.md",
+                "data/portfolio_4x_path_planner.json",
+                "docs/portfolio_4x_path_planner.md",
             ],
         }
     )
@@ -996,9 +1004,17 @@ def _proof_gaps(
 def _missing_proof_map(row: dict[str, Any]) -> dict[str, Any]:
     gaps = set(row.get("exact_proof_gaps") or [])
     blockers = set(row.get("current_blockers") or [])
+    source = row.get("source_evidence") if isinstance(row.get("source_evidence"), dict) else {}
+    bidask_status = str(source.get("bidask_rule_status") or "")
+    historical_only = bool(source.get("historical_only"))
+    s5_live_support = bool(
+        bidask_status in {"LIVE_SUPPORT", "PROOF_COLLECTION"}
+        and not historical_only
+        and "LIVE_BLOCK_NEGATIVE_EXPECTANCY" not in gaps
+    )
     return {
-        "fresh_744h_replay": "MONTH_SCALE_RESIDUAL_FAMILY_BLOCKED" not in gaps,
-        "s5_bidask_spread_included_replay": not any("BIDASK" in item or "S5" in item for item in gaps),
+        "fresh_744h_replay": "MONTH_SCALE_RESIDUAL_FAMILY_BLOCKED" not in gaps and not historical_only,
+        "s5_bidask_spread_included_replay": s5_live_support,
         "sample_count_floor": "SAMPLE_COUNT_FLOOR_NOT_MET" not in gaps,
         "active_day_floor": "ACTIVE_DAY_FLOOR_NOT_MET" not in gaps,
         "daily_stability_floor": "DAILY_PNL_UNSTABLE" not in gaps,

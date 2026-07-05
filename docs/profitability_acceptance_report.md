@@ -1,14 +1,14 @@
 # Profitability Acceptance
 
 - Status: `PROFITABILITY_ACCEPTANCE_BLOCKED`
-- Generated: `2026-07-05T16:23:08.676825+00:00`
+- Generated: `2026-07-05T18:09:16.837973+00:00`
 - Findings: `8`
 
 ## Findings
 
 | Priority | Code | Message |
 | --- | --- | --- |
-| `P0` | `SELF_IMPROVEMENT_P0_PRESENT` | self-improvement audit still has 3 P0 finding(s) |
+| `P0` | `SELF_IMPROVEMENT_P0_PRESENT` | self-improvement audit still has 1 P0 finding(s) |
 | `P0` | `NEGATIVE_EXPECTANCY_ACTIVE` | capture economics is still NEGATIVE_EXPECTANCY |
 | `P0` | `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE` | 1 TP-proven segment(s) are still net-damaged by MARKET_ORDER_TRADE_CLOSE leakage |
 | `P0` | `MARKET_CLOSE_LEAK_FAMILY_BLOCKED` | EUR_USD LONG BREAKOUT_FAILURE system-gateway MARKET_ORDER_TRADE_CLOSE loss family remains blocked from fresh-entry and repair-exit live routing until the exact exception proof stack exists. |
@@ -2069,7 +2069,7 @@
     "tp_proven_market_close_leak_segments": 1
   },
   "execution_ledger_close_leak": {
-    "audit_now_utc": "2026-07-05T16:23:08.676825+00:00",
+    "audit_now_utc": "2026-07-05T18:09:16.837973+00:00",
     "execution_timing_audit": {
       "generated_at_utc": "2026-07-03T20:08:53.084075+00:00",
       "label_counts": {
@@ -3335,7 +3335,7 @@
       "window_to_utc": "2026-07-03T20:08:53.084075+00:00"
     },
     "gateway_event_stream_events": 34714,
-    "gateway_event_stream_lag_minutes": 2648.634,
+    "gateway_event_stream_lag_minutes": 2754.77,
     "gateway_event_stream_latest_ts_utc": "2026-07-03T20:14:30.629254+00:00",
     "gateway_event_stream_market_close_gap_minutes": 0.0,
     "gateway_event_stream_stale": true,
@@ -3361,7 +3361,7 @@
     "recent_contained_risk_loss_closes": 0,
     "recent_contained_risk_loss_examples": [],
     "recent_contained_risk_loss_net_jpy": 0,
-    "recent_cutoff_utc": "2026-06-28T16:23:08.676825+00:00",
+    "recent_cutoff_utc": "2026-06-28T18:09:16.837973+00:00",
     "recent_gateway_market_closes": 0,
     "recent_leak_loss_by_lane": [],
     "recent_leak_loss_closes": 0,
@@ -3383,7 +3383,7 @@
     "P1": 4,
     "P2": 0
   },
-  "generated_at_utc": "2026-07-05T16:23:08.676825+00:00",
+  "generated_at_utc": "2026-07-05T18:09:16.837973+00:00",
   "oanda_campaign_firepower": {
     "contract": "audit-only merged firepower estimate from pair-shard validation evidence; it does not grant live permission, size orders, or waive gateway gates",
     "evidence_queue": {
@@ -3424,7 +3424,7 @@
     "target_return_pct": 10.0
   },
   "order_capture_freshness": {
-    "capture_economics_generated_at_utc": "2026-07-05T16:22:47.610669+00:00",
+    "capture_economics_generated_at_utc": "2026-07-05T18:08:38.642697+00:00",
     "capture_generated_after_order_intents": false,
     "capture_trades": 229,
     "intent_capture_economics_trades": [
@@ -3432,12 +3432,12 @@
     ],
     "metadata_trade_count_mismatch": false,
     "mismatch_examples": [],
-    "order_intents_generated_at_utc": "2026-07-05T16:23:00.721047+00:00"
+    "order_intents_generated_at_utc": "2026-07-05T18:08:52.301482+00:00"
   },
   "order_intents": {
     "candidate_count": 73,
     "dry_run_blocked_lanes": 73,
-    "generated_at_utc": "2026-07-05T16:23:00.721047+00:00",
+    "generated_at_utc": "2026-07-05T18:08:52.301482+00:00",
     "live_ready_lanes": 0,
     "repair_frontier": {
       "blocked_count": 9,
@@ -3767,7 +3767,7 @@
         "472903",
         "472952"
       ],
-      "generated_at_utc": "2026-07-05T16:22:06Z",
+      "generated_at_utc": "2026-07-05T17:21:46Z",
       "improved_pl_jpy": -20863.5316,
       "loaded": true,
       "manual_eurusd_472987_excluded": true,
@@ -3791,9 +3791,7 @@
     "repair_replay_counterfactual_pl_jpy": -20504.5826,
     "replay_repair_proved": true,
     "self_improvement_p0_codes": [
-      "EXECUTION_LEDGER_STALE",
-      "MEMORY_HEALTH_BLOCKED",
-      "TARGET_OPEN_NO_LIVE_READY_LANES"
+      "MEMORY_HEALTH_BLOCKED"
     ],
     "self_improvement_profit_capture_context": false,
     "top_entry_quality_residual_groups": [
@@ -5184,12 +5182,10 @@
   },
   "self_improvement": {
     "p0_codes": [
-      "EXECUTION_LEDGER_STALE",
-      "MEMORY_HEALTH_BLOCKED",
-      "TARGET_OPEN_NO_LIVE_READY_LANES"
+      "MEMORY_HEALTH_BLOCKED"
     ],
-    "p0_findings": 3,
-    "p1_findings": 5,
+    "p0_findings": 1,
+    "p1_findings": 8,
     "status": "SELF_IMPROVEMENT_BLOCKED"
   },
   "target": {
