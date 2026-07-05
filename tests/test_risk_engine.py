@@ -1900,6 +1900,7 @@ class RiskEngineTest(unittest.TestCase):
                 invalidation="support fails",
             ),
             metadata={
+                "planned_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
                 "forecast_direction": "RANGE",
                 "forecast_confidence": 0.72,
                 "attach_take_profit_on_fill": True,
@@ -1951,6 +1952,7 @@ class RiskEngineTest(unittest.TestCase):
                 invalidation="support fails",
             ),
             metadata={
+                "planned_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
                 "forecast_direction": "RANGE",
                 "forecast_confidence": 0.72,
                 "attach_take_profit_on_fill": True,

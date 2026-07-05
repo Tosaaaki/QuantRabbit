@@ -4558,8 +4558,8 @@ class IntentGeneratorTest(unittest.TestCase):
             if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET"
         )
         self.assertTrue(trigger["intent"]["metadata"]["forecast_seed"])
-        self.assertEqual(trigger["status"], "LIVE_READY")
-        self.assertEqual(trigger["live_blockers"], [])
+        self.assertEqual(trigger["status"], "DRY_RUN_PASSED")
+        self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, trigger["live_blocker_codes"])
         self.assertTrue(
             any(
                 issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "WARN"
@@ -5008,18 +5008,26 @@ class IntentGeneratorTest(unittest.TestCase):
 
         issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
         live_ready = [item for item in payload["results"] if item["status"] == "LIVE_READY"]
+        blocked_family = [
+            item
+            for item in payload["results"]
+            if item["intent"]["market_context"]["method"] == "BREAKOUT_FAILURE"
+            and MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE in item.get("live_blocker_codes", [])
+        ]
 
-        self.assertGreater(summary.live_ready, 0)
-        self.assertTrue(live_ready)
+        self.assertEqual(summary.live_ready, 0)
+        self.assertFalse(live_ready)
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
-        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
+        self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, issue_codes)
+        self.assertTrue(blocked_family)
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in blocked_family))
         self.assertTrue(
             all(
                 item["intent"]["metadata"]["forecast_directional_calibration_name"]
                 == "directional_forecast_up"
                 and item["intent"]["metadata"]["forecast_directional_hit_rate"] == 1.0
                 and item["intent"]["metadata"]["forecast_directional_samples"] == 40
-                for item in live_ready
+                for item in blocked_family
             )
         )
 
@@ -5091,18 +5099,18 @@ class IntentGeneratorTest(unittest.TestCase):
 
             payload = json.loads(output.read_text())
 
-        live_ready = [
+        blocked_ready_shape = [
             item
             for item in payload["results"]
-            if item["status"] == "LIVE_READY"
-            and item["intent"]["order_type"] == OrderType.STOP_ENTRY.value
+            if item["intent"]["order_type"] == OrderType.STOP_ENTRY.value
             and item["intent"]["metadata"].get("forecast_watch_only_live_override")
+            and MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE in item.get("live_blocker_codes", [])
         ]
 
-        self.assertTrue(live_ready)
-        metadata = live_ready[0]["intent"]["metadata"]
+        self.assertTrue(blocked_ready_shape)
+        metadata = blocked_ready_shape[0]["intent"]["metadata"]
         receipt = metadata["required_receipt"]
-        event_risk = live_ready[0]["intent"]["market_context"]["event_risk"]
+        event_risk = blocked_ready_shape[0]["intent"]["market_context"]["event_risk"]
         self.assertTrue(metadata["forecast_watch_only"])
         self.assertTrue(metadata["forecast_watch_only_live_override"])
         self.assertIn("Forecast support override", receipt)
@@ -5262,15 +5270,23 @@ class IntentGeneratorTest(unittest.TestCase):
 
         live_ready = [item for item in payload["results"] if item["status"] == "LIVE_READY"]
         issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+        blocked_family = [
+            item
+            for item in payload["results"]
+            if item["intent"]["market_context"]["method"] == "BREAKOUT_FAILURE"
+            and MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE in item.get("live_blocker_codes", [])
+        ]
 
-        self.assertGreater(summary.live_ready, 0)
-        self.assertTrue(live_ready)
+        self.assertEqual(summary.live_ready, 0)
+        self.assertFalse(live_ready)
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
-        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
+        self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, issue_codes)
+        self.assertTrue(blocked_family)
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in blocked_family))
         self.assertTrue(
             all(
                 item["intent"]["metadata"]["forecast_market_support"]["bootstrap_projection_support"]
-                for item in live_ready
+                for item in blocked_family
             )
         )
 

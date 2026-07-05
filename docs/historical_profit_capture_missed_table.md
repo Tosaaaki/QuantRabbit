@@ -1,6 +1,6 @@
 # Historical Profit-Capture Missed Table
 
-- Generated: `2026-07-05T15:02:44Z`
+- Generated: `2026-07-05T15:18:41Z`
 - Blocker: `HISTORICAL_PROFIT_CAPTURE_MISSED`
 - Missed captures: `14`
 - Current-rule replay triggers: `13`

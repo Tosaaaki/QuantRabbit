@@ -35,7 +35,9 @@ def _family_intent(metadata: dict | None = None) -> OrderIntent:
 
 class MarketCloseLeakGateTest(unittest.TestCase):
     def test_blocks_exact_eurusd_long_breakout_failure_family_without_exception_proof(self) -> None:
-        issue = market_close_leak_family_block_issue(_family_intent())
+        issue = market_close_leak_family_block_issue(
+            _family_intent({"planned_exit_reason": "MARKET_ORDER_TRADE_CLOSE"})
+        )
 
         self.assertIsNotNone(issue)
         assert issue is not None
@@ -54,6 +56,7 @@ class MarketCloseLeakGateTest(unittest.TestCase):
         issue = market_close_leak_family_block_issue(
             _family_intent(
                 {
+                    "planned_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
                     "market_close_leak_family_close_gate_proof": True,
                     "market_close_leak_family_contained_risk_timing_evidence": True,
                     "market_close_leak_family_tp_proven_exception": True,
@@ -62,6 +65,48 @@ class MarketCloseLeakGateTest(unittest.TestCase):
         )
 
         self.assertIsNone(issue)
+
+    def test_allows_tp_proven_harvest_exception_when_market_close_exit_is_not_requested(self) -> None:
+        issue = market_close_leak_family_block_issue(
+            _family_intent(
+                {
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                }
+            )
+        )
+
+        self.assertIsNone(issue)
+
+    def test_tp_proven_harvest_still_requires_close_and_timing_for_market_close_exit(self) -> None:
+        issue = market_close_leak_family_block_issue(
+            _family_intent(
+                {
+                    "planned_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                }
+            )
+        )
+
+        self.assertIsNotNone(issue)
+        assert issue is not None
+        self.assertEqual(
+            issue["evidence"]["missing_proofs"],
+            ["close_gate_proof", "contained_risk_timing_evidence"],
+        )
 
     def test_excludes_manual_eurusd_trade_472987_from_system_edge_penalty(self) -> None:
         issue = market_close_leak_family_block_issue(
