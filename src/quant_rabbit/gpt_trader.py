@@ -1692,6 +1692,13 @@ from quant_rabbit.instruments import (
     NORMAL_SPREAD_PIPS,
     instrument_pip_factor,
 )
+from quant_rabbit.market_close_leak_gate import (
+    CLOSE_GATE_PROOF_KEYS,
+    CONTAINED_RISK_TIMING_EVIDENCE_KEYS,
+    MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
+    TP_PROVEN_EXCEPTION_KEYS,
+    market_close_leak_family_payload_issue,
+)
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
     FORECAST_ADVERSE_PATH_BLOCKER_CODE,
@@ -2664,6 +2671,14 @@ class DecisionVerifier:
                     issues.append(VerificationIssue("METHOD_MISMATCH", "decision method does not match selected primary lane"))
                 if selected_lane.get("risk_blockers") or selected_lane.get("strategy_blockers") or selected_lane.get("live_blockers"):
                     issues.append(VerificationIssue("LANE_HAS_BLOCKERS", f"{selected_lane_id} still carries blockers"))
+                market_close_leak_issue = market_close_leak_family_payload_issue(selected_lane)
+                if market_close_leak_issue is not None:
+                    issues.append(
+                        VerificationIssue(
+                            MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
+                            str(market_close_leak_issue.get("message") or ""),
+                        )
+                    )
                 forecast_issue = _lane_forecast_direction_issue(selected_lane)
                 if forecast_issue is not None:
                     issues.append(forecast_issue)
@@ -5815,6 +5830,13 @@ def _lane_packet(
                         "tp_target_intent",
                         "opportunity_mode",
                     ),
+                ),
+                "market_close_leak_family": _small_dict(
+                    metadata,
+                    CLOSE_GATE_PROOF_KEYS
+                    + CONTAINED_RISK_TIMING_EVIDENCE_KEYS
+                    + TP_PROVEN_EXCEPTION_KEYS
+                    + ("trade_id", "broker_trade_id", "classification", "operator_classification"),
                 ),
                 "position_building": _small_dict(
                     metadata,

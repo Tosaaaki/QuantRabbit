@@ -1,6 +1,6 @@
 # TP Progress Replay Repair Plan
 
-- Generated: `2026-07-05T09:14:46Z`
+- Generated: `2026-07-05T15:02:44Z`
 - Blocker: `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`
 - Fresh entries blocked: `True`
 

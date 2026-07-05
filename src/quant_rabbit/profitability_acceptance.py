@@ -19,6 +19,15 @@ from quant_rabbit.forecast_precision import (
     projection_precision_edge_summary,
     projection_precision_gap_summary,
 )
+from quant_rabbit.market_close_leak_gate import (
+    MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
+    MARKET_CLOSE_LEAK_FAMILY_MANUAL_EXCLUDED_TRADE_IDS,
+    MARKET_CLOSE_LEAK_FAMILY_METHOD,
+    MARKET_CLOSE_LEAK_FAMILY_PAIR,
+    MARKET_CLOSE_LEAK_FAMILY_SIDE,
+    MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS,
+    market_close_leak_family_proof_requirements,
+)
 from quant_rabbit.paths import (
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
@@ -555,6 +564,15 @@ def _capture_economics_findings(payload: dict[str, Any]) -> tuple[dict[str, Any]
             )
         )
     if tp_market_close_leaks:
+        family_leaks = [
+            item
+            for item in tp_market_close_leaks
+            if str(item.get("pair") or "").upper() == MARKET_CLOSE_LEAK_FAMILY_PAIR
+            and str(item.get("side") or "").upper() == MARKET_CLOSE_LEAK_FAMILY_SIDE
+            and str(item.get("method") or "").upper() == MARKET_CLOSE_LEAK_FAMILY_METHOD
+            and str(item.get("attribution_scope") or "").upper() == "SYSTEM_GATEWAY_ATTRIBUTED_ONLY"
+            and bool(item.get("should_count_against_system_edge"))
+        ]
         findings.append(
             _finding(
                 priority="P0",
@@ -596,6 +614,55 @@ def _capture_economics_findings(payload: dict[str, Any]) -> tuple[dict[str, Any]
                 },
             )
         )
+        if family_leaks:
+            findings.append(
+                _finding(
+                    priority="P0",
+                    code=MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
+                    message=(
+                        "EUR_USD LONG BREAKOUT_FAILURE system-gateway MARKET_ORDER_TRADE_CLOSE "
+                        "loss family remains blocked from fresh-entry and repair-exit live routing "
+                        "until the exact exception proof stack exists."
+                    ),
+                    next_action=(
+                        "Keep the family out of live routing unless close-gate proof, contained-risk "
+                        "timing evidence, and TP-proven exception evidence are all durable; keep "
+                        "operator-manual EUR_USD 472987 excluded from system edge accounting."
+                    ),
+                    evidence={
+                        "family": {
+                            "pair": MARKET_CLOSE_LEAK_FAMILY_PAIR,
+                            "side": MARKET_CLOSE_LEAK_FAMILY_SIDE,
+                            "method": MARKET_CLOSE_LEAK_FAMILY_METHOD,
+                            "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            "attribution_scope": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+                        },
+                        "system_gateway_loss_trade_ids": list(MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS),
+                        "operator_manual_excluded_trade_ids": list(
+                            MARKET_CLOSE_LEAK_FAMILY_MANUAL_EXCLUDED_TRADE_IDS
+                        ),
+                        "segments": [
+                            {
+                                "pair": item.get("pair"),
+                                "side": item.get("side"),
+                                "method": item.get("method"),
+                                "take_profit_trades": item.get("take_profit_trades"),
+                                "take_profit_proven": item.get("take_profit_proven"),
+                                "market_close_trades": item.get("market_close_trades"),
+                                "market_close_losses": item.get("market_close_losses"),
+                                "market_close_net_jpy": item.get("market_close_net_jpy"),
+                                "market_close_loss_net_jpy": item.get("market_close_loss_net_jpy"),
+                                "operator_manual_excluded": item.get("operator_manual_excluded"),
+                                "should_count_against_system_edge": item.get(
+                                    "should_count_against_system_edge"
+                                ),
+                            }
+                            for item in family_leaks[:5]
+                        ],
+                        "requirements": market_close_leak_family_proof_requirements(),
+                    },
+                )
+            )
     return metrics, findings
 
 

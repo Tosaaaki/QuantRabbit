@@ -11,6 +11,7 @@ from typing import Any
 
 import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.execution import LiveOrderGateway
+from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
@@ -153,6 +154,42 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
                 (root / "report.md").read_text(),
             )
+
+    def test_market_close_leak_family_blocks_campaign_recovery_send_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            lane_id = "campaign_exposure_recovery:EUR_USD:LONG:BREAKOUT_FAILURE"
+            intents = _intents(
+                root,
+                order_type="LIMIT",
+                lane_id=lane_id,
+                metadata={
+                    "desk": "campaign_exposure_recovery",
+                    "campaign_role": "NOW",
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                },
+            )
+            payload = json.loads(intents.read_text())
+            payload["results"][0]["intent"]["market_context"]["method"] = "BREAKOUT_FAILURE"
+            payload["results"][0]["intent"]["market_context"]["regime"] = "BREAKOUT_FAILURE leak family"
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(intents_path=intents, lane_id=lane_id, send=True, confirm_live=True)
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            staged = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in staged["risk_issues"]}
+            self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
 
     def test_missing_quote_blocks_send_without_guardian_artifact_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

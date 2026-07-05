@@ -273,6 +273,8 @@ def _parse_generated_at(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 DEFAULT_EXECUTION_TIMING_AUDIT = ROOT / "data" / "execution_timing_audit.json"
 DEFAULT_EXECUTION_TIMING_AUDIT_REPORT = ROOT / "docs" / "execution_timing_audit_report.md"
+DEFAULT_TP_PROGRESS_HARVEST_GATE_EVIDENCE = ROOT / "data" / "tp_progress_harvest_gate_evidence.json"
+DEFAULT_TP_PROGRESS_HARVEST_GATE_EVIDENCE_REPORT = ROOT / "docs" / "tp_progress_harvest_gate_evidence_report.md"
 DEFAULT_MANUAL_HISTORY_2025 = ROOT / "data" / "manual_history_2025_mining.json"
 DEFAULT_OPERATOR_PRECEDENT_AUDIT = ROOT / "data" / "operator_precedent_audit.json"
 DEFAULT_OPERATOR_PRECEDENT_AUDIT_REPORT = ROOT / "docs" / "operator_precedent_audit_report.md"

@@ -14,6 +14,7 @@ from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
+from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.gpt_trader import (
     GPTTraderBrain,
     StaticTraderProvider,
@@ -1189,6 +1190,9 @@ class GPTTraderBrainTest(unittest.TestCase):
                     "capture_take_profit_wins": 6,
                     "capture_take_profit_losses": 0,
                     "capture_take_profit_expectancy_jpy": 992.7,
+                    "market_close_leak_family_close_gate_proof": True,
+                    "market_close_leak_family_contained_risk_timing_evidence": True,
+                    "market_close_leak_family_tp_proven_exception": True,
                 }
             )
             files["intents"].write_text(json.dumps(intents))
@@ -1210,6 +1214,24 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
             lane = payload["input_packet"]["lanes"][0]
             self.assertTrue(lane["self_improvement"]["self_improvement_p0_repair_live_ready"])
+
+    def test_rejects_eurusd_breakout_failure_trade_without_market_close_leak_exception_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+            files["intents"].write_text(
+                json.dumps({"results": [_result(lane_id=lane_id, method="BREAKOUT_FAILURE")]})
+            )
+            decision = _trade_decision(lane_id=lane_id, method="BREAKOUT_FAILURE")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
 
     def test_rejects_underpowered_oanda_self_improvement_repair_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1428,6 +1450,9 @@ class GPTTraderBrainTest(unittest.TestCase):
                     "capture_take_profit_trades": 20,
                     "capture_take_profit_losses": 0,
                     "capture_take_profit_expectancy_jpy": 591.5,
+                    "market_close_leak_family_close_gate_proof": True,
+                    "market_close_leak_family_contained_risk_timing_evidence": True,
+                    "market_close_leak_family_tp_proven_exception": True,
                     "self_improvement_forecast_adverse_path_repair_live_ready": True,
                     "self_improvement_forecast_adverse_path_repair_mode": "TP_HARVEST_REPAIR",
                     "self_improvement_forecast_adverse_path_repair_blocker_code": (

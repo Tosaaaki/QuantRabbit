@@ -1,0 +1,1004 @@
+{
+  "attribution_counts": {
+    "SYSTEM_GATEWAY": 13,
+    "SYSTEM_GATEWAY_UNKNOWN_LANE": 1
+  },
+  "contract": {
+    "future_leak_reduction_gate": "TP-progress harvest may fire only when the production replay trigger is above noise floor, reaches the progress gate, and occurs before the loss close.",
+    "historical_evidence_grants_live_permission": false,
+    "historical_repair_evidence_allowed": true,
+    "live_permission_result": "NO_A_S_LIVE_PERMISSION_FROM_HISTORICAL_REPLAY_ONLY",
+    "manual_trade_ids_excluded_from_system_pl": [
+      "472987"
+    ],
+    "market_close_leak_family_excluded_trade_ids": [
+      "470356",
+      "470353",
+      "470730",
+      "471174",
+      "471089",
+      "471255",
+      "472280"
+    ]
+  },
+  "generated_at_utc": "2026-07-05T15:01:28.977313+00:00",
+  "metrics": {
+    "below_noise_floor_count": 1,
+    "current_rule_trigger_count": 13,
+    "executable_profit_capture_before_loss_close_count": 13,
+    "execution_timing_summary": {
+      "loss_close_repair_replay_actual_pl_jpy": -39275.3429,
+      "loss_close_repair_replay_counterfactual_pl_jpy": -20504.5826,
+      "loss_close_repair_replay_delta_jpy": 18770.7603,
+      "loss_closes_profit_capture_missed": 14,
+      "loss_closes_repair_replay_triggered": 13,
+      "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN"
+    },
+    "historical_missed_capture_count": 14,
+    "loss_closes_audited": 39,
+    "manual_rows": 0,
+    "system_gateway_rows": 13,
+    "unknown_gateway_lane_rows": 1
+  },
+  "missed_capture_evidence": [
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-22T07:23:59.208384+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -340.2,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 126.0,
+      "repair_replay_delta_jpy": 466.2,
+      "repair_replay_noise_floor_pips": 1.6,
+      "repair_replay_pl_jpy": 126.0,
+      "repair_replay_profit_pips": 2.0,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3571,
+      "repair_replay_trigger_at_utc": "2026-06-22T06:45:00+00:00",
+      "side": "SHORT",
+      "trade_id": "472792",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": false,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-17T18:33:53.017542+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_NZD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -239.4791,
+      "repair_replay_block_reason": "BELOW_NOISE_FLOOR",
+      "repair_replay_counterfactual_pl_jpy": null,
+      "repair_replay_delta_jpy": 0.0,
+      "repair_replay_noise_floor_pips": null,
+      "repair_replay_pl_jpy": -239.4791,
+      "repair_replay_profit_pips": null,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": null,
+      "repair_replay_trigger_at_utc": null,
+      "side": "SHORT",
+      "trade_id": "472632",
+      "trigger_before_loss_close": false,
+      "trigger_status": "BELOW_NOISE_FLOOR"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-12T09:33:30.435233+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "USD_CAD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -165.1694,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 664.9147,
+      "repair_replay_delta_jpy": 830.0841,
+      "repair_replay_noise_floor_pips": 1.7,
+      "repair_replay_pl_jpy": 664.9147,
+      "repair_replay_profit_pips": 7.3,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3259,
+      "repair_replay_trigger_at_utc": "2026-06-12T09:09:00+00:00",
+      "side": "LONG",
+      "trade_id": "472318",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-11T23:47:54.025605+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": true,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -28.8767,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 358.949,
+      "repair_replay_delta_jpy": 387.8257,
+      "repair_replay_noise_floor_pips": 1.6,
+      "repair_replay_pl_jpy": 358.949,
+      "repair_replay_profit_pips": 3.7,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3458,
+      "repair_replay_trigger_at_utc": "2026-06-11T22:45:00+00:00",
+      "side": "LONG",
+      "trade_id": "472280",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-11T21:25:15.420286+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_CHF",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -981.7942,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 298.7055,
+      "repair_replay_delta_jpy": 1280.4997,
+      "repair_replay_noise_floor_pips": 2.8,
+      "repair_replay_pl_jpy": 298.7055,
+      "repair_replay_profit_pips": 7.5,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3138,
+      "repair_replay_trigger_at_utc": "2026-06-11T17:34:00+00:00",
+      "side": "LONG",
+      "trade_id": "472222",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-11T17:27:05.752734+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:EUR_AUD:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_AUD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -6.7428,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 116.6358,
+      "repair_replay_delta_jpy": 123.3786,
+      "repair_replay_noise_floor_pips": 3.7,
+      "repair_replay_pl_jpy": 116.6358,
+      "repair_replay_profit_pips": 5.2,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.65,
+      "repair_replay_trigger_at_utc": "2026-06-11T17:03:00+00:00",
+      "side": "LONG",
+      "trade_id": "472230",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-11T12:02:47.078233+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:EUR_GBP:SHORT:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_GBP",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -116.1114,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 58.2976,
+      "repair_replay_delta_jpy": 174.409,
+      "repair_replay_noise_floor_pips": 1.4,
+      "repair_replay_pl_jpy": 58.2976,
+      "repair_replay_profit_pips": 2.7,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3375,
+      "repair_replay_trigger_at_utc": "2026-06-11T08:10:00+00:00",
+      "side": "SHORT",
+      "trade_id": "472149",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-08T05:03:45.959179+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "USD_CAD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -172.863,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 210.6322,
+      "repair_replay_delta_jpy": 383.4952,
+      "repair_replay_noise_floor_pips": 1.9,
+      "repair_replay_pl_jpy": 210.6322,
+      "repair_replay_profit_pips": 3.7,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3558,
+      "repair_replay_trigger_at_utc": "2026-06-05T18:46:00+00:00",
+      "side": "LONG",
+      "trade_id": "472109",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-05T12:41:09.815295+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:AUD_NZD:SHORT:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_NZD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -462.3796,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 95.9401,
+      "repair_replay_delta_jpy": 558.3197,
+      "repair_replay_noise_floor_pips": 2.4,
+      "repair_replay_pl_jpy": 95.9401,
+      "repair_replay_profit_pips": 2.6,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.321,
+      "repair_replay_trigger_at_utc": "2026-06-05T05:46:00+00:00",
+      "side": "SHORT",
+      "trade_id": "472037",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-04T15:45:40.873895+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:GBP_JPY:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_JPY",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -238.0,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 62.0,
+      "repair_replay_delta_jpy": 300.0,
+      "repair_replay_noise_floor_pips": 3.6,
+      "repair_replay_pl_jpy": 62.0,
+      "repair_replay_profit_pips": 6.2,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3605,
+      "repair_replay_trigger_at_utc": "2026-06-03T06:58:00+00:00",
+      "side": "LONG",
+      "trade_id": "471923",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-04T12:04:30.883749+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -2642.1057,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 198.8771,
+      "repair_replay_delta_jpy": 2840.9828,
+      "repair_replay_noise_floor_pips": 3.55,
+      "repair_replay_pl_jpy": 198.8771,
+      "repair_replay_profit_pips": 4.1,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.5125,
+      "repair_replay_trigger_at_utc": "2026-05-21T15:08:00+00:00",
+      "side": "SHORT",
+      "trade_id": "471414",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-06-04T11:30:18.360862+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "failure_trader:AUD_CHF:LONG:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "AUD_CHF",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -1215.4046,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 398.274,
+      "repair_replay_delta_jpy": 1613.6786,
+      "repair_replay_noise_floor_pips": 1.9,
+      "repair_replay_pl_jpy": 398.274,
+      "repair_replay_profit_pips": 5.5,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3416,
+      "repair_replay_trigger_at_utc": "2026-06-04T06:54:00+00:00",
+      "side": "LONG",
+      "trade_id": "471979",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY_UNKNOWN_LANE",
+      "close_at_utc": "2026-05-29T02:34:16.747617+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": null,
+      "method": "UNKNOWN",
+      "pair": "EUR_USD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -5267.5461,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 897.3725,
+      "repair_replay_delta_jpy": 6164.9186,
+      "repair_replay_noise_floor_pips": 3.0,
+      "repair_replay_pl_jpy": 897.3725,
+      "repair_replay_profit_pips": 3.7,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.4066,
+      "repair_replay_trigger_at_utc": "2026-05-14T21:36:00+00:00",
+      "side": "LONG",
+      "trade_id": "471240",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    },
+    {
+      "above_noise_floor": true,
+      "attribution": "SYSTEM_GATEWAY",
+      "close_at_utc": "2026-05-29T02:18:24.867826+00:00",
+      "excluded_as_operator_manual": false,
+      "excluded_by_market_close_leak_family_gate": false,
+      "executable_profit_capture_before_loss_close": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "historical_vs_live": "HISTORICAL_REPAIR_EVIDENCE",
+      "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_USD",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -3307.422,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_pl_jpy": 339.5463,
+      "repair_replay_delta_jpy": 3646.9683,
+      "repair_replay_noise_floor_pips": 1.7,
+      "repair_replay_pl_jpy": 339.5463,
+      "repair_replay_profit_pips": 3.0,
+      "repair_replay_progress_gate": 0.3,
+      "repair_replay_tp_progress": 0.3297,
+      "repair_replay_trigger_at_utc": "2026-05-14T17:39:00+00:00",
+      "side": "LONG",
+      "trade_id": "471232",
+      "trigger_before_loss_close": true,
+      "trigger_status": "CURRENT_RULE_TRIGGER"
+    }
+  ],
+  "month_scale_replay": {
+    "after_proposed_gates": {
+      "baseline_pl_jpy": -39246.4662,
+      "delta_jpy": 18382.9346,
+      "excluded_trade_ids": [
+        "472280"
+      ],
+      "improved_pl_jpy": -20863.5316,
+      "residual_groups": [
+        {
+          "baseline_pl_jpy": -2981.8961,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+              "realized_pl_jpy": -2981.8961,
+              "repair_replay_pl_jpy": -2981.8961,
+              "trade_id": "472071",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "residual_pl_jpy": -2981.8961,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2690.6967,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -2690.6967,
+              "repair_replay_pl_jpy": -2690.6967,
+              "trade_id": "472952",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "residual_pl_jpy": -2690.6967,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2333.8215,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -2333.8215,
+              "repair_replay_pl_jpy": -2333.8215,
+              "trade_id": "471817",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "residual_pl_jpy": -2333.8215,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2181.1565,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -2181.1565,
+              "repair_replay_pl_jpy": -2181.1565,
+              "trade_id": "471711",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "residual_pl_jpy": -2181.1565,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2044.4543,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 2
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+              "realized_pl_jpy": -548.9268,
+              "repair_replay_pl_jpy": -548.9268,
+              "trade_id": "472380",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            },
+            {
+              "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+              "realized_pl_jpy": -1495.5275,
+              "repair_replay_pl_jpy": -1495.5275,
+              "trade_id": "472312",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_CAD",
+          "residual_pl_jpy": -2044.4543,
+          "rows": 2,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1705.6738,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -1705.6738,
+              "repair_replay_pl_jpy": -1705.6738,
+              "trade_id": "472834",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "residual_pl_jpy": -1705.6738,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1380.8008,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -1380.8008,
+              "repair_replay_pl_jpy": -1380.8008,
+              "trade_id": "472743",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "residual_pl_jpy": -1380.8008,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1272.0771,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 2
+          },
+          "examples": [
+            {
+              "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -1019.7829,
+              "repair_replay_pl_jpy": -1019.7829,
+              "trade_id": "472445",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            },
+            {
+              "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -252.2942,
+              "repair_replay_pl_jpy": -252.2942,
+              "trade_id": "472174",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_CHF",
+          "residual_pl_jpy": -1272.0771,
+          "rows": 2,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1071.9,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -1071.9,
+              "repair_replay_pl_jpy": -1071.9,
+              "trade_id": "472094",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_JPY",
+          "residual_pl_jpy": -1071.9,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -971.0121,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -971.0121,
+              "repair_replay_pl_jpy": -971.0121,
+              "trade_id": "472837",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "GBP_USD",
+          "residual_pl_jpy": -971.0121,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -955.691,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -955.691,
+              "repair_replay_pl_jpy": -955.691,
+              "trade_id": "472190",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_CHF",
+          "residual_pl_jpy": -955.691,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -891.0833,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "failure_trader:EUR_GBP:SHORT:BREAKOUT_FAILURE:MARKET",
+              "realized_pl_jpy": -891.0833,
+              "repair_replay_pl_jpy": -891.0833,
+              "trade_id": "472208",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_GBP",
+          "residual_pl_jpy": -891.0833,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        }
+      ],
+      "residual_pl_jpy": -20863.5316,
+      "rows": 38
+    },
+    "basis": "Replay uses all audited loss closes. Triggered rows use executable TP-progress counterfactual P/L; non-triggered rows keep actual P/L. Proposed gates remove the exact market-close leak family and operator-manual trade ids from future system-edge accounting.",
+    "current_inputs": {
+      "baseline_pl_jpy": -39275.3429,
+      "delta_jpy": 18770.7603,
+      "excluded_trade_ids": [],
+      "improved_pl_jpy": -20504.5826,
+      "residual_groups": [
+        {
+          "baseline_pl_jpy": -2981.8961,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+              "realized_pl_jpy": -2981.8961,
+              "repair_replay_pl_jpy": -2981.8961,
+              "trade_id": "472071",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "residual_pl_jpy": -2981.8961,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2690.6967,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -2690.6967,
+              "repair_replay_pl_jpy": -2690.6967,
+              "trade_id": "472952",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "residual_pl_jpy": -2690.6967,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2333.8215,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -2333.8215,
+              "repair_replay_pl_jpy": -2333.8215,
+              "trade_id": "471817",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "residual_pl_jpy": -2333.8215,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2181.1565,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -2181.1565,
+              "repair_replay_pl_jpy": -2181.1565,
+              "trade_id": "471711",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "residual_pl_jpy": -2181.1565,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -2044.4543,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 2
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+              "realized_pl_jpy": -548.9268,
+              "repair_replay_pl_jpy": -548.9268,
+              "trade_id": "472380",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            },
+            {
+              "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+              "realized_pl_jpy": -1495.5275,
+              "repair_replay_pl_jpy": -1495.5275,
+              "trade_id": "472312",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_CAD",
+          "residual_pl_jpy": -2044.4543,
+          "rows": 2,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1705.6738,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -1705.6738,
+              "repair_replay_pl_jpy": -1705.6738,
+              "trade_id": "472834",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "residual_pl_jpy": -1705.6738,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1380.8008,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -1380.8008,
+              "repair_replay_pl_jpy": -1380.8008,
+              "trade_id": "472743",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "residual_pl_jpy": -1380.8008,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1272.0771,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 2
+          },
+          "examples": [
+            {
+              "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -1019.7829,
+              "repair_replay_pl_jpy": -1019.7829,
+              "trade_id": "472445",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            },
+            {
+              "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -252.2942,
+              "repair_replay_pl_jpy": -252.2942,
+              "trade_id": "472174",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_CHF",
+          "residual_pl_jpy": -1272.0771,
+          "rows": 2,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -1071.9,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+              "realized_pl_jpy": -1071.9,
+              "repair_replay_pl_jpy": -1071.9,
+              "trade_id": "472094",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_JPY",
+          "residual_pl_jpy": -1071.9,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -971.0121,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+              "realized_pl_jpy": -971.0121,
+              "repair_replay_pl_jpy": -971.0121,
+              "trade_id": "472837",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "GBP_USD",
+          "residual_pl_jpy": -971.0121,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -955.691,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
+              "realized_pl_jpy": -955.691,
+              "repair_replay_pl_jpy": -955.691,
+              "trade_id": "472190",
+              "trigger_status": "NO_PROFIT_CANDIDATE"
+            }
+          ],
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_CHF",
+          "residual_pl_jpy": -955.691,
+          "rows": 1,
+          "side": "LONG",
+          "triggered_rows": 0
+        },
+        {
+          "baseline_pl_jpy": -891.0833,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "examples": [
+            {
+              "lane_id": "failure_trader:EUR_GBP:SHORT:BREAKOUT_FAILURE:MARKET",
+              "realized_pl_jpy": -891.0833,
+              "repair_replay_pl_jpy": -891.0833,
+              "trade_id": "472208",
+              "trigger_status": "BELOW_TP_PROGRESS_GATE"
+            }
+          ],
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_GBP",
+          "residual_pl_jpy": -891.0833,
+          "rows": 1,
+          "side": "SHORT",
+          "triggered_rows": 0
+        }
+      ],
+      "residual_pl_jpy": -20504.5826,
+      "rows": 39
+    },
+    "month_scale_tp_progress_replay_still_negative_clears": false
+  },
+  "source": {
+    "execution_timing_audit_generated_at_utc": "2026-07-03T20:08:53.084075+00:00",
+    "execution_timing_audit_path": "/Users/tossaki/App/QuantRabbit-live/data/execution_timing_audit.json",
+    "lookback_hours": null
+  },
+  "trigger_classifications": {
+    "BELOW_NOISE_FLOOR": 1,
+    "CURRENT_RULE_TRIGGER": 13
+  }
+}

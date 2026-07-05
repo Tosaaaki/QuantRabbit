@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.operator_manual import (
     JPY_FRESH_ADD_BLOCK_CODE,
     OPERATOR_MANUAL_AUTH_METADATA_KEY,
@@ -1913,6 +1914,9 @@ class RiskEngineTest(unittest.TestCase):
                 "capture_take_profit_trades": 20,
                 "capture_take_profit_losses": 0,
                 "capture_take_profit_expectancy_jpy": 591.5,
+                "market_close_leak_family_close_gate_proof": True,
+                "market_close_leak_family_contained_risk_timing_evidence": True,
+                "market_close_leak_family_tp_proven_exception": True,
             },
         )
 
@@ -1927,6 +1931,52 @@ class RiskEngineTest(unittest.TestCase):
             "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
             {issue.code for issue in decision.issues},
         )
+        self.assertNotIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, {issue.code for issue in decision.issues})
+
+    def test_live_send_blocks_eurusd_long_breakout_failure_market_close_leak_family(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17300,
+            tp=1.17500,
+            sl=1.17200,
+            thesis="tp proven shape cannot bypass market close leak family without close proof",
+            market_context=MarketContext(
+                regime="RANGE current; failed-break fade at support",
+                narrative="system-gateway EUR_USD LONG BREAKOUT_FAILURE family",
+                chart_story="failed breakdown reclaimed support",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="support fails",
+            ),
+            metadata={
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "capture_take_profit_trades": 20,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_expectancy_jpy": 591.5,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(
+            intent,
+            snapshot(),
+            for_live_send=True,
+        )
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
 
     def test_range_forecast_blocks_opposite_unselected_projection_for_live_send(self) -> None:
         intent = OrderIntent(

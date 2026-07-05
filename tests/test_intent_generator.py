@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Quote, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
@@ -2520,6 +2521,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, issue_codes)
             self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
+            self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, result["live_blocker_codes"])
             self.assertNotEqual(result["status"], "LIVE_READY")
 
     def test_thin_tp_collection_allows_self_improvement_p0_repair_lane(self) -> None:

@@ -64,6 +64,7 @@ from .forecast_precision import (
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
+from .market_close_leak_gate import market_close_leak_family_block_issue
 from .operator_manual import (
     is_operator_managed_manual_owner,
     operator_manual_jpy_add_block_issue,
@@ -2283,6 +2284,16 @@ class RiskEngine:
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(_hedge_metadata_issues(intent))
         issues.extend(_hedge_balance_issues(intent, snapshot))
+        if for_live_send:
+            family_block = market_close_leak_family_block_issue(intent)
+            if family_block is not None:
+                issues.append(
+                    RiskIssue(
+                        str(family_block["code"]),
+                        str(family_block["message"]),
+                        str(family_block.get("severity") or "BLOCK"),
+                    )
+                )
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_executable_live_readiness_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))

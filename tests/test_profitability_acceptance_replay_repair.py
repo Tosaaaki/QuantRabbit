@@ -9,6 +9,10 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
+from quant_rabbit.market_close_leak_gate import (
+    MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
+    MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS,
+)
 from quant_rabbit.profitability_acceptance import (
     _capture_economics_findings,
     _execution_timing_loss_close_labels,
@@ -45,13 +49,17 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
                             "operator_manual_excluded": True,
                             "should_count_against_system_edge": True,
                             "take_profit_trades": 20,
+                            "take_profit_proven": True,
                             "take_profit_expectancy_jpy": 591.5,
+                            "market_close_trades": 7,
+                            "market_close_losses": 7,
                             "market_close_net_jpy": -15091.7,
+                            "market_close_loss_net_jpy": -15091.7,
                             "market_close_expectancy_jpy": -2156.0,
-                            "market_close_loss_trade_ids": ["470427"],
+                            "market_close_loss_trade_ids": list(MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS),
                             "market_close_loss_examples": [
                                 {
-                                    "trade_id": "470427",
+                                    "trade_id": MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS[0],
                                     "close_family": "SYSTEM_GATEWAY_MARKET_CLOSE",
                                     "operator_manual_excluded": True,
                                 }
@@ -71,11 +79,21 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertEqual(segment["attribution_scope"], "SYSTEM_GATEWAY_ATTRIBUTED_ONLY")
         self.assertTrue(segment["operator_manual_excluded"])
         self.assertTrue(segment["should_count_against_system_edge"])
-        self.assertEqual(segment["market_close_loss_trade_ids"], ["470427"])
+        self.assertEqual(segment["market_close_loss_trade_ids"], list(MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS))
         self.assertEqual(
             segment["market_close_loss_examples"][0]["close_family"],
             "SYSTEM_GATEWAY_MARKET_CLOSE",
         )
+        family_block = next(
+            item
+            for item in findings
+            if item["code"] == MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+        )
+        self.assertEqual(
+            family_block["evidence"]["system_gateway_loss_trade_ids"],
+            list(MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS),
+        )
+        self.assertEqual(family_block["evidence"]["operator_manual_excluded_trade_ids"], ["472987"])
 
     def test_blocks_when_candle_replay_shows_tp_progress_profit_capture_miss(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
