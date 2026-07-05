@@ -59,7 +59,7 @@
       "requires": "Exact close-gate proof, contained-risk timing evidence, and TP-proven exception evidence must all exist for EUR_USD LONG BREAKOUT_FAILURE before the family can route."
     }
   ],
-  "generated_at_utc": "2026-07-05T17:30:13Z",
+  "generated_at_utc": "2026-07-05T17:34:58Z",
   "live_side_effects": [],
   "mode": "read_only_remaining_profitability_p0_decomposition",
   "rows": [

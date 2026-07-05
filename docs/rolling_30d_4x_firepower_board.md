@@ -1,8 +1,8 @@
 # Rolling 30D 4X Firepower Board
 
-- Generated: `2026-07-05T17:30:13Z`
+- Generated: `2026-07-05T17:34:58Z`
 - Funding-adjusted equity: `170740.4982` JPY
-- Required calendar daily return: `5.398086`%
+- Required calendar daily return: `5.400795`%
 - Candidate rows after hard exclusions: `44`
 - Rows meeting required daily return prefilter: `2`
 - Can create live permission rows: `0`

@@ -1,6 +1,6 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-05T17:30:13Z`
+- Generated: `2026-07-05T17:34:58Z`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
@@ -16,7 +16,7 @@
 - Target from rolling start 4x: `685740.2208`
 - Prompt-style current funding-adjusted 4x target: `682961.9928`
 - Remaining to 4x funding-adjusted: `514999.7226`
-- Required calendar daily return: `5.398086`%
+- Required calendar daily return: `5.400795`%
 
 ## Firepower Summary
 

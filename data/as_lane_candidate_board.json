@@ -429,7 +429,7 @@
     "performance_basis": "funding_adjusted",
     "rolling_30d_multiplier_funding_adjusted_is_kpi": true
   },
-  "generated_at_utc": "2026-07-05T17:30:13Z",
+  "generated_at_utc": "2026-07-05T17:34:58Z",
   "live_ready_lanes": 0,
   "live_side_effects": [],
   "manual_eurusd_472987": {
@@ -1279,9 +1279,9 @@
     "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682961.9928,
     "remaining_to_4x_funding_adjusted": 514999.7226,
     "remaining_to_4x_raw": 414999.7226,
-    "required_active_day_return_funding_adjusted_pct": 7.432463,
-    "required_calendar_daily_profit_jpy": 9216.7189,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.398086,
+    "required_active_day_return_funding_adjusted_pct": 7.436229,
+    "required_calendar_daily_profit_jpy": 9221.3443,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.400795,
     "rolling_30d_multiplier_funding_adjusted": 0.995949,
     "rolling_30d_multiplier_raw": 1.57926,
     "rolling_30d_start_equity": 171435.0552,
