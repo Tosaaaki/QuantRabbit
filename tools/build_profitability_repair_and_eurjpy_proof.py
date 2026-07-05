@@ -75,6 +75,24 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
         timing=timing,
         broker=broker,
     )
+    market_close_table = _build_market_close_leak_trade_table(
+        generated_at=generated_at,
+        acceptance=acceptance,
+        capture=capture,
+        timing=timing,
+        broker=broker,
+    )
+    month_residuals = _build_month_scale_tp_replay_residuals(
+        generated_at=generated_at,
+        acceptance=acceptance,
+        timing=timing,
+        broker=broker,
+    )
+    historical_missed = _build_historical_profit_capture_missed_table(
+        generated_at=generated_at,
+        timing=timing,
+        broker=broker,
+    )
     eurjpy_proof = _build_eurjpy_proof(
         generated_at=generated_at,
         s5_report_path=s5_report_path,
@@ -102,13 +120,19 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
     return {
         "json": {
             Path("data/market_close_leak_repair_plan.json"): market_close,
+            Path("data/market_close_leak_trade_table.json"): market_close_table,
             Path("data/tp_progress_replay_repair_plan.json"): tp_replay,
+            Path("data/month_scale_tp_replay_residuals.json"): month_residuals,
+            Path("data/historical_profit_capture_missed_table.json"): historical_missed,
             Path("data/eurjpy_short_local_tp_proof.json"): eurjpy_proof,
             Path("data/as_lane_candidate_board.json"): board,
         },
         "markdown": {
             Path("docs/market_close_leak_repair_plan.md"): _market_close_md(market_close),
+            Path("docs/market_close_leak_trade_table.md"): _market_close_trade_table_md(market_close_table),
             Path("docs/tp_progress_replay_repair_plan.md"): _tp_replay_md(tp_replay),
+            Path("docs/month_scale_tp_replay_residuals.md"): _month_scale_tp_replay_residuals_md(month_residuals),
+            Path("docs/historical_profit_capture_missed_table.md"): _historical_profit_capture_missed_md(historical_missed),
             Path("docs/eurjpy_short_local_tp_proof_report.md"): _eurjpy_md(eurjpy_proof),
             Path("docs/as_lane_candidate_board.md"): _board_md(board),
         },
@@ -379,6 +403,311 @@ def _build_tp_replay_plan(
     }
 
 
+def _build_market_close_leak_trade_table(
+    *,
+    generated_at: str,
+    acceptance: dict[str, Any],
+    capture: dict[str, Any],
+    timing: dict[str, Any],
+    broker: dict[str, Any],
+) -> dict[str, Any]:
+    findings = _findings_by_code(acceptance)
+    segment = _market_close_segment(acceptance, capture)
+    rows = []
+    for item in _ledger_market_close_leak_trades():
+        rows.append(
+            {
+                "trade_id": item.get("trade_id"),
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "strategy": item.get("strategy"),
+                "lane_id": item.get("lane_id"),
+                "entry_price": item.get("entry_price"),
+                "entry_time_utc": item.get("entry_time_utc"),
+                "close_price": item.get("exit_price"),
+                "close_time_utc": item.get("exit_time_utc"),
+                "realized_pl_jpy": item.get("realized_pl_jpy"),
+                "close_reason": item.get("close_reason"),
+                "system_gateway_or_operator_manual": item.get("system_or_operator"),
+                "campaign_exposure_recovery": "no",
+                "campaign_exposure_recovery_evidence": item.get("campaign_exposure_recovery"),
+                "should_count_against_system_edge": True,
+                "system_edge_count_reason": "system gateway close reconciled to a system lane; operator manual EUR_USD 472987 is excluded separately",
+                "exact_trade_id_covered_by_regression_tests": False,
+                "already_covered_by_regression_tests": "behavioral coverage only; this live trade id is not a fixture",
+                "regression_test_coverage": [
+                    "tests/test_profitability_acceptance_replay_repair.py",
+                    "tests/test_capture_economics.py",
+                    "tests/test_gpt_trader.py",
+                ],
+            }
+        )
+    manual = _manual_position(broker)
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_trade_decomposition",
+        "source_artifacts": [
+            "data/profitability_acceptance.json",
+            "data/capture_economics.json",
+            "data/execution_timing_audit.json",
+            "data/execution_ledger.db",
+            "data/broker_snapshot.json",
+        ],
+        "blockers": {
+            "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE": {
+                "present": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE" in findings,
+                "segment": segment,
+                "contributing_trade_ids": [row.get("trade_id") for row in rows],
+                "contributing_trade_count": len(rows),
+            },
+            "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK": {
+                "present_in_current_profitability_acceptance": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK" in findings,
+                "contributing_trade_ids": [],
+                "contributing_trade_count": 0,
+                "status": "stale_or_runtime_mention_only_in_current_evidence",
+                "execution_timing_status": timing.get("status"),
+                "note": "Current profitability_acceptance does not raise this blocker; stale mentions remain non-permission evidence.",
+            },
+        },
+        "manual_eurusd_guard": {
+            "trade_id": EUR_USD_MANUAL_TRADE_ID,
+            "present": bool(manual),
+            "classification": _nested(manual, "operator_manual_position", "classification"),
+            "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
+            "system_pl_counted": _nested(manual, "operator_manual_position", "system_pl_counted"),
+            "system_occupancy_counted": False,
+            "auto_close_allowed": False,
+            "auto_sl_attach_allowed": _nested(manual, "operator_manual_position", "auto_sl_attach_allowed"),
+            "auto_tp_modify_allowed": _nested(manual, "operator_manual_position", "auto_tp_modify_allowed"),
+            "same_theme_auto_add_allowed": _nested(manual, "operator_manual_position", "same_theme_auto_add_allowed"),
+        },
+        "trades": rows,
+        "mitigation_by_family": [
+            {
+                "family": "TP_PROVEN_BREAKOUT_FAILURE_SYSTEM_MARKET_CLOSE",
+                "entry_or_close_path_must_be_banned": "loss-side SYSTEM_GATEWAY MARKET_ORDER_TRADE_CLOSE on TP-proven HARVEST/BREAKOUT_FAILURE lanes without durable close-gate evidence",
+                "evidence_that_would_allow_again": [
+                    "fresh quote/spread packet at close decision time",
+                    "system-owned trade provenance and lane receipt",
+                    "thesis invalidation plus contained-risk close-gate proof",
+                    "744h execution timing replay showing the market-close path is non-negative versus attached TP/profit capture",
+                    "profitability_acceptance clears MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                ],
+                "fix_type": ["CODE_FIX", "ROUTING_GATE", "REPLAY_FILTER"],
+                "files_modules_to_update": [
+                    "src/quant_rabbit/gpt_trader.py",
+                    "src/quant_rabbit/automation.py",
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "src/quant_rabbit/capture_economics.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "src/quant_rabbit/strategy/trader_brain.py",
+                ],
+                "tests_required": [
+                    "tests/test_gpt_trader.py",
+                    "tests/test_profitability_acceptance_replay_repair.py",
+                    "tests/test_capture_economics.py",
+                    "tests/test_trader_brain.py",
+                ],
+            },
+            {
+                "family": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                "entry_or_close_path_must_be_banned": "recent loss-side gateway market-close path if refreshed acceptance re-raises the blocker",
+                "evidence_that_would_allow_again": [
+                    "recent loss-side gateway market closes are zero",
+                    "or each loss close has contained-risk timing evidence plus durable close-gate receipt",
+                    "profitability_acceptance refresh keeps the blocker absent",
+                ],
+                "fix_type": ["EVIDENCE_GAP", "ROUTING_GATE"],
+                "files_modules_to_update": [
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "src/quant_rabbit/execution_timing_audit.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                ],
+                "tests_required": [
+                    "tests/test_profitability_acceptance_replay_repair.py",
+                    "tests/test_execution_timing_audit.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+            },
+            {
+                "family": "OPERATOR_MANUAL_EXCLUSION",
+                "entry_or_close_path_must_be_banned": "using operator/manual EUR_USD 472987 as system P/L, system occupancy, auto-close, SL attach, TP modification, or same-theme add evidence",
+                "evidence_that_would_allow_again": [
+                    "explicit operator reclassification and new proof packet; current artifact says OPERATOR_MANUAL / KEEP",
+                ],
+                "fix_type": ["MANUAL_EXCLUSION"],
+                "files_modules_to_update": [
+                    "src/quant_rabbit/broker_snapshot.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "src/quant_rabbit/position_manager.py",
+                    "src/quant_rabbit/risk_engine.py",
+                ],
+                "tests_required": [
+                    "tests/test_trader_support_bot.py",
+                    "tests/test_position_manager.py",
+                    "tests/test_risk_engine.py",
+                ],
+            },
+        ],
+        "gate_definitions": [
+            {
+                "blocker_code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                "current_evidence": "EUR_USD LONG BREAKOUT_FAILURE has positive TP expectancy but negative system MARKET_ORDER_TRADE_CLOSE leakage; ledger rows enumerate the loss trades.",
+                "exact_clearing_condition": "No TP-proven segment remains net-damaged by loss-side system MARKET_ORDER_TRADE_CLOSE, and refreshed acceptance no longer raises the blocker.",
+                "artifact_that_proves_it": [
+                    "data/capture_economics.json",
+                    "data/profitability_acceptance.json",
+                    "data/market_close_leak_trade_table.json",
+                ],
+                "verifier_riskengine_liveordergateway_implication": "Verifier must reject loss closes lacking durable close-gate proof; RiskEngine must keep matching fresh entries blocked; LiveOrderGateway must not execute loss-side market closes on this family without a fresh close receipt.",
+                "can_create_as_permission": False,
+            },
+            {
+                "blocker_code": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                "current_evidence": "Absent from current profitability_acceptance; stale/runtime mentions exist and do not grant permission.",
+                "exact_clearing_condition": "Refresh acceptance keeps the blocker absent, or if re-raised, every recent loss-side gateway market close is removed or proven contained-risk.",
+                "artifact_that_proves_it": [
+                    "data/profitability_acceptance.json",
+                    "data/execution_timing_audit.json",
+                    "data/market_close_leak_trade_table.json",
+                ],
+                "verifier_riskengine_liveordergateway_implication": "If re-raised, normal routing stays blocked and close-path receipts must be reviewed before any matching lane can route.",
+                "can_create_as_permission": False,
+            },
+        ],
+        "fresh_entries_must_remain_blocked": True,
+        "live_side_effects": [],
+    }
+
+
+def _build_month_scale_tp_replay_residuals(
+    *,
+    generated_at: str,
+    acceptance: dict[str, Any],
+    timing: dict[str, Any],
+    broker: dict[str, Any],
+) -> dict[str, Any]:
+    findings = _findings_by_code(acceptance)
+    ev = _evidence(findings.get("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"))
+    residuals = [_diagnose_residual(item) for item in ev.get("top_repair_replay_residual_groups") or []]
+    current_residual = _float_or_none(ev.get("repair_replay_counterfactual_pl_jpy"))
+    required = abs(current_residual or 0.0)
+    known_abs = sum(abs(float(item.get("repair_replay_pl_jpy") or 0.0)) for item in residuals)
+    manual = _manual_position(broker)
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_replay_residual_decomposition",
+        "source_artifacts": [
+            "data/profitability_acceptance.json",
+            "data/execution_timing_audit.json",
+            "data/broker_snapshot.json",
+        ],
+        "blocker": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+        "replay_window": {
+            "lookback_hours": ev.get("window_lookback_hours") or _nested(timing, "window", "lookback_hours"),
+            "from_utc": _nested(timing, "window", "from_utc"),
+            "to_utc": _nested(timing, "window", "to_utc"),
+            "post_close_hours": _nested(timing, "window", "post_close_hours"),
+        },
+        "pl_summary": {
+            "baseline_actual_loss_close_pl_jpy": _nested(timing, "summary", "loss_close_actual_pl_jpy"),
+            "raw_counterfactual_profit_capture_pl_jpy": ev.get("raw_counterfactual_profit_capture_pl_jpy"),
+            "active_counterfactual_profit_capture_pl_jpy": ev.get("active_counterfactual_profit_capture_pl_jpy"),
+            "current_residual_pl_jpy": current_residual,
+            "improved_pl_after_missed_capture_repair_jpy": ev.get("repair_replay_counterfactual_pl_jpy"),
+            "counterfactual_profit_capture_jpy": ev.get("counterfactual_profit_capture_jpy"),
+            "counterfactual_profit_capture_delta_jpy": ev.get("counterfactual_profit_capture_delta_jpy"),
+            "loss_closes_profit_capture_missed": ev.get("loss_closes_profit_capture_missed"),
+            "loss_closes_repair_replay_triggered": ev.get("loss_closes_repair_replay_triggered"),
+        },
+        "residual_losing_families": residuals,
+        "pair_side_strategy_groups": residuals,
+        "method_rollups": ev.get("top_repair_replay_residual_method_rollups") or [],
+        "bad_entry_vs_bad_exit_vs_missed_capture": _residual_reason_rollup(residuals),
+        "manual_eurusd_excluded": {
+            "trade_id": EUR_USD_MANUAL_TRADE_ID,
+            "excluded": bool(manual) and _nested(manual, "operator_manual_position", "system_pl_counted") is False,
+            "classification": _nested(manual, "operator_manual_position", "classification"),
+            "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
+        },
+        "filter_to_make_replay_non_negative": {
+            "required_replay_pl_improvement_jpy": round(required, 4),
+            "known_top_residual_abs_loss_jpy": round(known_abs, 4),
+            "additional_tail_loss_to_cover_jpy": round(max(required - known_abs, 0.0), 4),
+            "filter": "Block or repair every matching pair/side/method residual group with NO_PROFIT_CANDIDATE, BELOW_TP_PROGRESS_GATE, or BELOW_NOISE_FLOOR until the full 744h replay is non-negative; the top residual table alone is not permission evidence.",
+            "manual_eurusd_must_stay_excluded": True,
+        },
+        "gate_definitions": [
+            {
+                "blocker_code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                "current_evidence": "744h replay improves historical missed captures but remains net negative after the TP-progress production-gate repair.",
+                "exact_clearing_condition": "Rerun execution-timing-audit --lookback-hours 744 --post-close-hours 6 and profitability-acceptance; blocker clears only when replay P/L is non-negative or matching residual groups disappear.",
+                "artifact_that_proves_it": [
+                    "data/execution_timing_audit.json",
+                    "data/profitability_acceptance.json",
+                    "data/month_scale_tp_replay_residuals.json",
+                ],
+                "verifier_riskengine_liveordergateway_implication": "Verifier and RiskEngine must block matching residual pair/side/method groups from A/S; LiveOrderGateway cannot route them even if order_intents produce units.",
+                "can_create_as_permission": False,
+            }
+        ],
+        "fresh_entries_must_remain_blocked": True,
+        "live_side_effects": [],
+    }
+
+
+def _build_historical_profit_capture_missed_table(
+    *,
+    generated_at: str,
+    timing: dict[str, Any],
+    broker: dict[str, Any],
+) -> dict[str, Any]:
+    rows = [_missed_capture_row(item) for item in _missed_capture_regrets(timing)]
+    manual = _manual_position(broker)
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_profit_capture_decomposition",
+        "source_artifacts": [
+            "data/execution_timing_audit.json",
+            "data/profit_capture_bot.json",
+            "data/broker_snapshot.json",
+        ],
+        "blocker": "HISTORICAL_PROFIT_CAPTURE_MISSED",
+        "summary": {
+            "missed_capture_count": len(rows),
+            "repair_replay_triggered_count": sum(1 for row in rows if row.get("capture_would_be_allowed_under_current_rules")),
+            "historical_actual_loss_close_pl_jpy": _nested(timing, "summary", "loss_close_actual_pl_jpy"),
+            "historical_counterfactual_profit_capture_delta_jpy": _nested(timing, "summary", "loss_close_counterfactual_profit_capture_delta_jpy"),
+            "historical_repair_replay_delta_jpy": _nested(timing, "summary", "loss_close_repair_replay_delta_jpy"),
+            "post_repair_live_missed_count": _nested(timing, "summary", "post_repair_live_evidence_loss_closes_profit_capture_missed"),
+        },
+        "manual_eurusd_guard": {
+            "trade_id": EUR_USD_MANUAL_TRADE_ID,
+            "present": bool(manual),
+            "classification": _nested(manual, "operator_manual_position", "classification"),
+            "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
+            "system_pl_counted": _nested(manual, "operator_manual_position", "system_pl_counted"),
+        },
+        "missed_captures": rows,
+        "gate_definitions": [
+            {
+                "blocker_code": "HISTORICAL_PROFIT_CAPTURE_MISSED",
+                "current_evidence": "14 recent loss closes had executable profit-capture opportunities before loss close; production-gate replay triggers on 13.",
+                "exact_clearing_condition": "Post-repair live evidence remains clean and refreshed 744h replay residuals are non-negative or age out of the month-scale blocker.",
+                "artifact_that_proves_it": [
+                    "data/profit_capture_bot.json",
+                    "data/execution_timing_audit.json",
+                    "data/historical_profit_capture_missed_table.json",
+                ],
+                "verifier_riskengine_liveordergateway_implication": "Profit-capture trigger logic stays required; RiskEngine cannot treat historical repair as A/S permission until replay and profitability blockers clear.",
+                "can_create_as_permission": False,
+            }
+        ],
+        "fresh_entries_must_remain_blocked": True,
+        "live_side_effects": [],
+    }
+
+
 def _build_eurjpy_proof(
     *,
     generated_at: str,
@@ -457,6 +786,7 @@ def _build_board(
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
     usdjpy_current = [item for item in results if (item.get("intent") or {}).get("pair") == "USD_JPY"]
     eurjpy_short = [item for item in results if (item.get("intent") or {}).get("pair") == "EUR_JPY" and (item.get("intent") or {}).get("side") == "SHORT"]
+    audusd_current = [item for item in results if (item.get("intent") or {}).get("pair") == "AUD_USD"]
     manual = _manual_position(broker)
     target_lane_present = any(item.get("lane_id") == USD_JPY_TARGET_LANE for item in results)
     return {
@@ -470,11 +800,23 @@ def _build_board(
             "data/capture_economics.json",
             "data/daily_target_state.json",
             "data/broker_snapshot.json",
+            "data/market_close_leak_trade_table.json",
+            "data/month_scale_tp_replay_residuals.json",
+            "data/historical_profit_capture_missed_table.json",
+        ],
+        "repair_analysis_artifacts": [
+            "data/market_close_leak_trade_table.json",
+            "docs/market_close_leak_trade_table.md",
+            "data/month_scale_tp_replay_residuals.json",
+            "docs/month_scale_tp_replay_residuals.md",
+            "data/historical_profit_capture_missed_table.json",
+            "docs/historical_profit_capture_missed_table.md",
         ],
         "order_intents_generated_at_utc": order_intents.get("generated_at_utc"),
         "previous_board_generated_at_utc": old_board.get("generated_at_utc"),
         "total_lanes": len(results),
         "live_ready_lanes": len(live_ready),
+        "as_live_ready_path_exists": False,
         "routing_allowed": False,
         "normal_routing_status": "BLOCKED",
         "usd_jpy_rejection_state": {
@@ -495,8 +837,24 @@ def _build_board(
             "current_lanes": [_lane_summary(item) for item in eurjpy_short],
             "decision": eurjpy_proof.get("decision"),
         },
+        "aud_usd_rejection_state": {
+            "classification": "REJECTED",
+            "as_candidate": False,
+            "live_ready_allowed": False,
+            "reason": "All current AUD_USD lanes are DRY_RUN_BLOCKED with negative-expectancy, month-scale residual, stale quote, spread, loss-budget, bid/ask replay, and guardian review blockers.",
+            "current_lanes": [_lane_summary(item) for item in audusd_current],
+        },
         "profitability_blockers": blocker_decomposition,
         "next_best_candidates": _next_best_candidates(repair_orchestrator, acceptance, eurjpy_proof),
+        "blocker_hierarchy": [
+            "No order_intents row is LIVE_READY.",
+            "Normal routing remains BLOCKED.",
+            "Profitability acceptance still raises NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE.",
+            "USD_JPY LONG BREAKOUT_FAILURE LIMIT remains rejected until fresh exact positive proof exists.",
+            "EUR_JPY SHORT remains rejected/evidence-gap until spread-included non-negative proof exists.",
+            "AUD_USD remains rejected by current DRY_RUN_BLOCKED lanes and month-scale residual blockers.",
+            "Guardian/operator review and fresh GPT TRADE/ADD receipt requirements remain unfulfilled.",
+        ],
         "shortest_path": {
             "status": "blocked_no_as_live_ready_lane",
             "steps": [
@@ -515,16 +873,21 @@ def _build_board(
             "performance_basis": daily.get("performance_basis"),
             "current_30d_multiplier": daily.get("current_30d_multiplier"),
             "current_equity_raw": daily.get("current_equity_raw"),
+            "broker_nav_jpy": _nested(broker, "account", "nav_jpy"),
+            "current_equity_raw_equals_broker_nav": daily.get("current_equity_raw") == _nested(broker, "account", "nav_jpy"),
             "funding_adjusted_equity": daily.get("funding_adjusted_equity"),
             "capital_flows_30d": daily.get("capital_flows_30d"),
             "capital_flow_count_30d": daily.get("capital_flow_count_30d"),
             "deposit_100000_jpy_excluded_from_performance": True,
+            "rolling_30d_multiplier_funding_adjusted_is_kpi": daily.get("performance_basis") == "funding_adjusted",
         },
         "manual_eurusd_472987": {
             "present": bool(manual),
             "classification": _nested(manual, "operator_manual_position", "classification"),
             "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
             "system_pl_counted": _nested(manual, "operator_manual_position", "system_pl_counted"),
+            "system_occupancy_counted": False,
+            "auto_close_allowed": False,
             "auto_sl_attach_allowed": _nested(manual, "operator_manual_position", "auto_sl_attach_allowed"),
             "auto_tp_modify_allowed": _nested(manual, "operator_manual_position", "auto_tp_modify_allowed"),
             "same_theme_auto_add_allowed": _nested(manual, "operator_manual_position", "same_theme_auto_add_allowed"),
@@ -761,10 +1124,10 @@ def _ledger_market_close_leak_trades() -> list[dict[str, Any]]:
         SELECT *
         FROM execution_events
         WHERE event_type = 'GATEWAY_TRADE_CLOSE_RECONCILED'
-          AND lane_id = ?
+          AND (lane_id = ? OR lane_id LIKE ?)
         ORDER BY ts_utc
     """
-    for rec in conn.execute(query, (EUR_USD_LEAK_LANE,)):
+    for rec in conn.execute(query, (EUR_USD_LEAK_LANE, f"{EUR_USD_LEAK_LANE}:%")):
         raw = _json_or_empty(rec["raw_json"])
         close_tx = _close_tx(raw)
         close = conn.execute("SELECT * FROM execution_events WHERE oanda_transaction_id = ?", (close_tx,)).fetchone() if close_tx else None
@@ -780,7 +1143,7 @@ def _ledger_market_close_leak_trades() -> list[dict[str, Any]]:
                 "pair": "EUR_USD",
                 "side": "LONG",
                 "strategy": "BREAKOUT_FAILURE",
-                "lane_id": EUR_USD_LEAK_LANE,
+                "lane_id": rec["lane_id"],
                 "entry_time_utc": fill["ts_utc"] if fill else None,
                 "entry_price": fill["price"] if fill else None,
                 "entry_units": fill["units"] if fill else None,
@@ -804,12 +1167,16 @@ def _diagnose_residual(item: dict[str, Any]) -> dict[str, Any]:
     reasons = item.get("block_reasons") if isinstance(item.get("block_reasons"), dict) else {}
     if "NO_PROFIT_CANDIDATE" in reasons:
         diagnosis = "bad_entry_or_no_positive_excursion"
+        family = "BAD_ENTRY_NO_PROFIT_CANDIDATE"
     elif "BELOW_TP_PROGRESS_GATE" in reasons:
         diagnosis = "entry_quality_or_premature_exit_below_tp_progress_gate"
+        family = "BAD_ENTRY_OR_BAD_EXIT_BELOW_TP_PROGRESS_GATE"
     elif "BELOW_NOISE_FLOOR" in reasons:
         diagnosis = "missed_capture_but_below_noise_floor"
+        family = "MISSED_CAPTURE_BELOW_NOISE_FLOOR"
     else:
         diagnosis = "residual_needs_manual_review"
+        family = "MANUAL_REVIEW"
     return {
         "pair": item.get("pair"),
         "strategy": item.get("method"),
@@ -822,8 +1189,108 @@ def _diagnose_residual(item: dict[str, Any]) -> dict[str, Any]:
         "block_reasons": reasons,
         "examples": item.get("examples"),
         "diagnosis": diagnosis,
+        "bad_entry_vs_bad_exit_vs_missed_capture": family,
         "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
     }
+
+
+def _residual_reason_rollup(residuals: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    rollup: dict[str, dict[str, Any]] = {}
+    for item in residuals:
+        family = str(item.get("bad_entry_vs_bad_exit_vs_missed_capture") or "MANUAL_REVIEW")
+        bucket = rollup.setdefault(
+            family,
+            {
+                "groups": 0,
+                "loss_closes": 0,
+                "repair_replay_pl_jpy": 0.0,
+                "examples": [],
+            },
+        )
+        bucket["groups"] += 1
+        bucket["loss_closes"] += int(item.get("loss_closes") or 0)
+        bucket["repair_replay_pl_jpy"] = round(float(bucket["repair_replay_pl_jpy"]) + float(item.get("repair_replay_pl_jpy") or 0.0), 4)
+        for example in item.get("examples") or []:
+            if len(bucket["examples"]) < 5:
+                bucket["examples"].append(example.get("trade_id"))
+    return rollup
+
+
+def _missed_capture_regrets(timing: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = timing.get("loss_close_regrets") if isinstance(timing.get("loss_close_regrets"), list) else []
+    return [row for row in rows if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")]
+
+
+def _missed_capture_row(row: dict[str, Any]) -> dict[str, Any]:
+    triggered = bool(row.get("repair_replay_triggered_before_loss_close"))
+    capture_price = _capture_price_from_pips(row)
+    lane_id = row.get("lane_id")
+    if lane_id:
+        system_or_manual = "SYSTEM"
+    else:
+        system_or_manual = "UNATTRIBUTED_HISTORY_NOT_OPERATOR_MANUAL_472987"
+    trigger = row.get("repair_replay_exit") if triggered else row.get("repair_replay_block_reason") or row.get("profit_capture_counterfactual_exit")
+    return {
+        "trade_id": str(row.get("trade_id")),
+        "pair": row.get("pair"),
+        "side": row.get("side"),
+        "lane_id": lane_id,
+        "max_favorable_excursion": {
+            "mfe_pips_before_loss_close": row.get("mfe_pips_before_loss_close"),
+            "estimated_mfe_jpy_before_loss_close": row.get("estimated_mfe_jpy_before_loss_close"),
+            "mfe_at_utc": row.get("mfe_at_utc"),
+            "tp_progress_before_loss_close": row.get("tp_progress_before_loss_close"),
+        },
+        "executable_capture_price_time": {
+            "price": capture_price,
+            "time_utc": row.get("repair_replay_trigger_at_utc") or row.get("mfe_at_utc"),
+            "price_source": "entry_plus_repair_replay_profit_pips" if triggered else "entry_plus_raw_counterfactual_profit_pips",
+            "profit_pips": row.get("repair_replay_profit_pips") if triggered else row.get("profit_capture_counterfactual_pips"),
+            "spread_pips": row.get("repair_replay_spread_pips"),
+            "noise_floor_pips": row.get("repair_replay_noise_floor_pips"),
+        },
+        "missed_capture_amount": {
+            "raw_counterfactual_net_improvement_jpy": row.get("profit_capture_counterfactual_net_improvement_jpy"),
+            "repair_replay_net_improvement_jpy": row.get("repair_replay_counterfactual_net_improvement_jpy"),
+            "repair_replay_counterfactual_pl_jpy": row.get("repair_replay_counterfactual_pl_jpy"),
+        },
+        "current_close_result": {
+            "entry_price": row.get("entry"),
+            "entry_time_utc": row.get("fill_at_utc"),
+            "close_price": row.get("close_price"),
+            "close_time_utc": row.get("close_at_utc"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "close_reason": row.get("exit_reason"),
+        },
+        "system_or_manual": system_or_manual,
+        "capture_would_be_allowed_under_current_rules": triggered,
+        "current_rules_block_reason": None if triggered else row.get("repair_replay_block_reason"),
+        "exact_trigger_that_should_have_fired": trigger,
+        "operator_manual_eurusd_472987": False,
+    }
+
+
+def _capture_price_from_pips(row: dict[str, Any]) -> float | None:
+    entry = _float_or_none(row.get("entry"))
+    if entry is None:
+        return None
+    pips = _float_or_none(row.get("repair_replay_profit_pips"))
+    if pips is None:
+        pips = _float_or_none(row.get("profit_capture_counterfactual_pips"))
+    if pips is None:
+        return None
+    pair = str(row.get("pair") or "")
+    pip_size = 0.01 if pair.endswith("_JPY") else 0.0001
+    side = str(row.get("side") or "").upper()
+    price = entry + pips * pip_size if side == "LONG" else entry - pips * pip_size
+    return round(price, 3 if pair.endswith("_JPY") else 5)
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _lane_summary(item: dict[str, Any]) -> dict[str, Any]:
@@ -985,6 +1452,57 @@ def _market_close_md(plan: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _market_close_trade_table_md(table: dict[str, Any]) -> str:
+    blocker = (table.get("blockers") or {}).get("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE") or {}
+    recent = (table.get("blockers") or {}).get("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK") or {}
+    lines = [
+        "# Market Close Leak Trade Table",
+        "",
+        f"- Generated: `{table.get('generated_at_utc')}`",
+        f"- MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE present: `{blocker.get('present')}`",
+        f"- RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK present in current acceptance: `{recent.get('present_in_current_profitability_acceptance')}`",
+        f"- Fresh entries blocked: `{table.get('fresh_entries_must_remain_blocked')}`",
+        "",
+        "## Contributing Trades",
+        "",
+        "| trade_id | pair | side | strategy | entry | close | P/L JPY | close reason | attribution | campaign recovery | counts against system edge | regression coverage |",
+        "|---|---|---|---|---|---|---:|---|---|---|---|---|",
+    ]
+    for item in table.get("trades") or []:
+        lines.append(
+            "| {trade_id} | {pair} | {side} | {strategy} | {entry_time_utc} @ {entry_price} | {close_time_utc} @ {close_price} | {realized_pl_jpy} | {close_reason} | {system_gateway_or_operator_manual} | {campaign_exposure_recovery} | {should_count_against_system_edge} | {already_covered_by_regression_tests} |".format(**item)
+        )
+    lines.extend(
+        [
+            "",
+            "## Recent Gateway Loss Leak",
+            "",
+            f"- Current contributing trades: `{recent.get('contributing_trade_count')}`",
+            f"- Status: `{recent.get('status')}`",
+            f"- Note: {recent.get('note')}",
+            "",
+            "## Mitigation Families",
+            "",
+            "| family | fix type | banned path | evidence to allow again | files/modules | tests |",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    for item in table.get("mitigation_by_family") or []:
+        lines.append(
+            f"| `{item.get('family')}` | `{', '.join(item.get('fix_type') or [])}` | {item.get('entry_or_close_path_must_be_banned')} | {', '.join(item.get('evidence_that_would_allow_again') or [])} | `{', '.join(item.get('files_modules_to_update') or [])}` | `{', '.join(item.get('tests_required') or [])}` |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Gate Definitions",
+            "",
+        ]
+    )
+    for item in table.get("gate_definitions") or []:
+        lines.append(f"- `{item.get('blocker_code')}`: {item.get('exact_clearing_condition')} Can create A/S permission: `{item.get('can_create_as_permission')}`")
+    return "\n".join(lines) + "\n"
+
+
 def _tp_replay_md(plan: dict[str, Any]) -> str:
     lines = [
         "# TP Progress Replay Repair Plan",
@@ -1026,6 +1544,87 @@ def _tp_replay_md(plan: dict[str, Any]) -> str:
     )
     for item in plan.get("proof_required_before_live_permission") or []:
         lines.append(f"- {item}")
+    return "\n".join(lines) + "\n"
+
+
+def _month_scale_tp_replay_residuals_md(table: dict[str, Any]) -> str:
+    pl = table.get("pl_summary") or {}
+    filt = table.get("filter_to_make_replay_non_negative") or {}
+    manual = table.get("manual_eurusd_excluded") or {}
+    lines = [
+        "# Month-Scale TP Replay Residuals",
+        "",
+        f"- Generated: `{table.get('generated_at_utc')}`",
+        f"- Blocker: `{table.get('blocker')}`",
+        f"- Replay window: `{json.dumps(table.get('replay_window'), sort_keys=True)}`",
+        f"- Baseline actual loss-close P/L JPY: `{pl.get('baseline_actual_loss_close_pl_jpy')}`",
+        f"- Improved P/L after missed-capture repair JPY: `{pl.get('improved_pl_after_missed_capture_repair_jpy')}`",
+        f"- Current residual P/L JPY: `{pl.get('current_residual_pl_jpy')}`",
+        f"- Manual EUR_USD `{EUR_USD_MANUAL_TRADE_ID}` excluded: `{manual.get('excluded')}`",
+        "",
+        "## Residual Groups",
+        "",
+        "| pair | side | strategy | exit | repair P/L JPY | loss closes | family | block reasons | examples |",
+        "|---|---|---|---|---:|---:|---|---|---|",
+    ]
+    for item in table.get("residual_losing_families") or []:
+        examples = ",".join(str(example.get("trade_id")) for example in item.get("examples") or [])
+        lines.append(
+            f"| {item.get('pair')} | {item.get('side')} | {item.get('strategy')} | {item.get('exit_reason')} | {item.get('repair_replay_pl_jpy')} | {item.get('loss_closes')} | {item.get('bad_entry_vs_bad_exit_vs_missed_capture')} | {json.dumps(item.get('block_reasons'), sort_keys=True)} | {examples} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Rollup",
+            "",
+            f"- Bad entry / bad exit / missed capture: `{json.dumps(table.get('bad_entry_vs_bad_exit_vs_missed_capture'), sort_keys=True)}`",
+            f"- Required improvement to non-negative: `{filt.get('required_replay_pl_improvement_jpy')}` JPY",
+            f"- Known top residual abs loss: `{filt.get('known_top_residual_abs_loss_jpy')}` JPY",
+            f"- Additional tail loss to cover: `{filt.get('additional_tail_loss_to_cover_jpy')}` JPY",
+            f"- Filter: {filt.get('filter')}",
+            "",
+            "## Gate Definitions",
+            "",
+        ]
+    )
+    for item in table.get("gate_definitions") or []:
+        lines.append(f"- `{item.get('blocker_code')}`: {item.get('exact_clearing_condition')} Can create A/S permission: `{item.get('can_create_as_permission')}`")
+    return "\n".join(lines) + "\n"
+
+
+def _historical_profit_capture_missed_md(table: dict[str, Any]) -> str:
+    summary = table.get("summary") or {}
+    lines = [
+        "# Historical Profit-Capture Missed Table",
+        "",
+        f"- Generated: `{table.get('generated_at_utc')}`",
+        f"- Blocker: `{table.get('blocker')}`",
+        f"- Missed captures: `{summary.get('missed_capture_count')}`",
+        f"- Current-rule replay triggers: `{summary.get('repair_replay_triggered_count')}`",
+        f"- Post-repair live missed count: `{summary.get('post_repair_live_missed_count')}`",
+        "",
+        "## Missed Captures",
+        "",
+        "| trade_id | pair | side | MFE | executable capture | missed amount JPY | close result | system/manual | allowed now | trigger |",
+        "|---|---|---|---|---|---:|---|---|---|---|",
+    ]
+    for item in table.get("missed_captures") or []:
+        mfe = item.get("max_favorable_excursion") or {}
+        cap = item.get("executable_capture_price_time") or {}
+        amt = item.get("missed_capture_amount") or {}
+        close = item.get("current_close_result") or {}
+        lines.append(
+            f"| {item.get('trade_id')} | {item.get('pair')} | {item.get('side')} | {mfe.get('mfe_pips_before_loss_close')}p / {mfe.get('estimated_mfe_jpy_before_loss_close')} JPY @ {mfe.get('mfe_at_utc')} | {cap.get('time_utc')} @ {cap.get('price')} | {amt.get('repair_replay_net_improvement_jpy')} | {close.get('close_time_utc')} @ {close.get('close_price')} = {close.get('realized_pl_jpy')} ({close.get('close_reason')}) | {item.get('system_or_manual')} | {item.get('capture_would_be_allowed_under_current_rules')} | {item.get('exact_trigger_that_should_have_fired')} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Gate Definitions",
+            "",
+        ]
+    )
+    for item in table.get("gate_definitions") or []:
+        lines.append(f"- `{item.get('blocker_code')}`: {item.get('exact_clearing_condition')} Can create A/S permission: `{item.get('can_create_as_permission')}`")
     return "\n".join(lines) + "\n"
 
 
@@ -1080,6 +1679,7 @@ def _board_md(board: dict[str, Any]) -> str:
         f"- Order intents generated: `{board.get('order_intents_generated_at_utc')}`",
         f"- Total lanes: `{board.get('total_lanes')}`",
         f"- LIVE_READY lanes: `{board.get('live_ready_lanes')}`",
+        f"- A/S LIVE_READY path exists: `{board.get('as_live_ready_path_exists')}`",
         f"- Normal routing: `{board.get('normal_routing_status')}`",
         "",
         "## USD_JPY",
@@ -1106,6 +1706,27 @@ def _board_md(board: dict[str, Any]) -> str:
             f"- A/S candidate: `{eur.get('as_candidate')}`",
             f"- LIVE_READY allowed: `{eur.get('live_ready_allowed')}`",
             f"- Reason: `{((eur.get('decision') or {}).get('reason'))}`",
+            "",
+            "## AUD_USD",
+            "",
+        ]
+    )
+    aud = board.get("aud_usd_rejection_state") or {}
+    lines.extend(
+        [
+            f"- Classification: `{aud.get('classification')}`",
+            f"- A/S candidate: `{aud.get('as_candidate')}`",
+            f"- LIVE_READY allowed: `{aud.get('live_ready_allowed')}`",
+            f"- Reason: `{aud.get('reason')}`",
+            "",
+            "## Repair Analysis Artifacts",
+            "",
+        ]
+    )
+    for item in board.get("repair_analysis_artifacts") or []:
+        lines.append(f"- `{item}`")
+    lines.extend(
+        [
             "",
             "## Profitability Blockers",
             "",
@@ -1134,6 +1755,12 @@ def _board_md(board: dict[str, Any]) -> str:
             f"- Status: `{(board.get('shortest_path') or {}).get('status')}`",
         ]
     )
+    lines.append("")
+    lines.append("Blocker hierarchy:")
+    for item in board.get("blocker_hierarchy") or []:
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("Required sequence:")
     for item in (board.get("shortest_path") or {}).get("steps") or []:
         lines.append(f"- {item}")
     lines.extend(
@@ -1142,10 +1769,16 @@ def _board_md(board: dict[str, Any]) -> str:
             "## Funding / Manual Safety",
             "",
             f"- Funding-adjusted 30d multiplier: `{(board.get('funding_adjusted_30d_status') or {}).get('current_30d_multiplier')}`",
+            f"- Current equity raw equals broker NAV: `{(board.get('funding_adjusted_30d_status') or {}).get('current_equity_raw_equals_broker_nav')}`",
+            f"- Funding-adjusted multiplier is KPI: `{(board.get('funding_adjusted_30d_status') or {}).get('rolling_30d_multiplier_funding_adjusted_is_kpi')}`",
             f"- 100,000 JPY deposit excluded from performance: `{(board.get('funding_adjusted_30d_status') or {}).get('deposit_100000_jpy_excluded_from_performance')}`",
             f"- EUR_USD `{EUR_USD_MANUAL_TRADE_ID}` classification: `{(board.get('manual_eurusd_472987') or {}).get('classification')}`",
             f"- EUR_USD `{EUR_USD_MANUAL_TRADE_ID}` intent: `{(board.get('manual_eurusd_472987') or {}).get('management_intent')}`",
             f"- System P/L counted: `{(board.get('manual_eurusd_472987') or {}).get('system_pl_counted')}`",
+            f"- System occupancy counted: `{(board.get('manual_eurusd_472987') or {}).get('system_occupancy_counted')}`",
+            f"- Auto close allowed: `{(board.get('manual_eurusd_472987') or {}).get('auto_close_allowed')}`",
+            f"- Auto SL attach allowed: `{(board.get('manual_eurusd_472987') or {}).get('auto_sl_attach_allowed')}`",
+            f"- Auto TP modify allowed: `{(board.get('manual_eurusd_472987') or {}).get('auto_tp_modify_allowed')}`",
             "",
         ]
     )

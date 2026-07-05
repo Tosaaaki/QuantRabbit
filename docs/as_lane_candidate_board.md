@@ -1,9 +1,10 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-05T09:14:46Z`
+- Generated: `2026-07-05T12:34:08Z`
 - Order intents generated: `2026-07-05T08:21:44.548031+00:00`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
+- A/S LIVE_READY path exists: `False`
 - Normal routing: `BLOCKED`
 
 ## USD_JPY
@@ -21,6 +22,22 @@
 - A/S candidate: `False`
 - LIVE_READY allowed: `False`
 - Reason: `Broad EUR_JPY SHORT S5 and pair-shape evidence is negative; narrow positive confluences are post-hoc, audit-only, and below live-grade sample/Wilson/active-day requirements.`
+
+## AUD_USD
+
+- Classification: `REJECTED`
+- A/S candidate: `False`
+- LIVE_READY allowed: `False`
+- Reason: `All current AUD_USD lanes are DRY_RUN_BLOCKED with negative-expectancy, month-scale residual, stale quote, spread, loss-budget, bid/ask replay, and guardian review blockers.`
+
+## Repair Analysis Artifacts
+
+- `data/market_close_leak_trade_table.json`
+- `docs/market_close_leak_trade_table.md`
+- `data/month_scale_tp_replay_residuals.json`
+- `docs/month_scale_tp_replay_residuals.md`
+- `data/historical_profit_capture_missed_table.json`
+- `docs/historical_profit_capture_missed_table.md`
 
 ## Profitability Blockers
 
@@ -42,6 +59,17 @@
 ## Shortest Path
 
 - Status: `blocked_no_as_live_ready_lane`
+
+Blocker hierarchy:
+- No order_intents row is LIVE_READY.
+- Normal routing remains BLOCKED.
+- Profitability acceptance still raises NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE.
+- USD_JPY LONG BREAKOUT_FAILURE LIMIT remains rejected until fresh exact positive proof exists.
+- EUR_JPY SHORT remains rejected/evidence-gap until spread-included non-negative proof exists.
+- AUD_USD remains rejected by current DRY_RUN_BLOCKED lanes and month-scale residual blockers.
+- Guardian/operator review and fresh GPT TRADE/ADD receipt requirements remain unfulfilled.
+
+Required sequence:
 - Keep USD_JPY stale packaged rule excluded; do not promote USD_JPY LONG without fresh exact TP proof.
 - Repair EUR_USD LONG BREAKOUT_FAILURE market-close leakage or keep that lane out of fresh entry routing.
 - Clear the 744h month-scale TP-progress replay residuals for matching pair/side/method groups.
@@ -51,8 +79,14 @@
 ## Funding / Manual Safety
 
 - Funding-adjusted 30d multiplier: `0.995949`
+- Current equity raw equals broker NAV: `True`
+- Funding-adjusted multiplier is KPI: `True`
 - 100,000 JPY deposit excluded from performance: `True`
 - EUR_USD `472987` classification: `OPERATOR_MANUAL`
 - EUR_USD `472987` intent: `KEEP`
 - System P/L counted: `False`
+- System occupancy counted: `False`
+- Auto close allowed: `False`
+- Auto SL attach allowed: `False`
+- Auto TP modify allowed: `False`
 
