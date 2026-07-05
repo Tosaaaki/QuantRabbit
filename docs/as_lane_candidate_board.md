@@ -1,7 +1,7 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-05T15:18:41Z`
-- Order intents generated: `2026-07-05T15:18:29.837929+00:00`
+- Generated: `2026-07-05T16:24:00Z`
+- Order intents generated: `2026-07-05T16:23:00.721047+00:00`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
@@ -30,12 +30,34 @@
 - LIVE_READY allowed: `False`
 - Reason: `All current AUD_USD lanes are DRY_RUN_BLOCKED with negative-expectancy, month-scale residual, stale quote, spread, loss-budget, bid/ask replay, and guardian review blockers.`
 
+## Month-Scale Residual Family Gate
+
+- Family count: `23`
+- Priority families: `7`
+- Tail families: `16`
+- Before filters improved P/L JPY: `-20863.5316`
+- After filters residual P/L JPY: `2984.1927`
+- Month-scale replay clears after filters: `True`
+- All negative families can create live permission: `False`
+
+| family | residual P/L | cause | blocker | action | A/S now | can ever A/S |
+|---|---:|---|---|---|---|---|
+| GBP_USD LONG BREAKOUT_FAILURE | -2981.8961 | `BAD_EXIT` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_LOCAL_TP_PROOF` | `False` | `True` |
+| AUD_USD LONG RANGE_ROTATION | -2690.6967 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+| EUR_USD LONG RANGE_ROTATION | -2333.8215 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+| EUR_USD SHORT RANGE_ROTATION | -2181.1565 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+| NZD_CAD SHORT RANGE_ROTATION | -2044.4543 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+| AUD_USD SHORT RANGE_ROTATION | -1705.6738 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+| EUR_JPY LONG RANGE_ROTATION | -1071.9 | `RANGE_CHASE` | `MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED` | `REQUIRE_GEOMETRY_REPAIR` | `False` | `True` |
+
 ## Repair Analysis Artifacts
 
 - `data/market_close_leak_trade_table.json`
 - `docs/market_close_leak_trade_table.md`
 - `data/month_scale_tp_replay_residuals.json`
 - `docs/month_scale_tp_replay_residuals.md`
+- `data/month_scale_residual_family_table.json`
+- `docs/month_scale_residual_family_table.md`
 - `data/historical_profit_capture_missed_table.json`
 - `docs/historical_profit_capture_missed_table.md`
 
@@ -63,7 +85,8 @@
 Blocker hierarchy:
 - No order_intents row is LIVE_READY.
 - Normal routing remains BLOCKED.
-- Profitability acceptance still raises NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE.
+- Profitability acceptance no longer raises MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE; residual-family gates still block every negative historical family from fresh A/S permission.
+- Residual family table blocks every negative pair/side/method group from fresh A/S permission until exact proof clears the matching family.
 - USD_JPY LONG BREAKOUT_FAILURE LIMIT remains rejected until fresh exact positive proof exists.
 - EUR_JPY SHORT remains rejected/evidence-gap until spread-included non-negative proof exists.
 - AUD_USD remains rejected by current DRY_RUN_BLOCKED lanes and month-scale residual blockers.

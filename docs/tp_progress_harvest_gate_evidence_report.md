@@ -1,6 +1,6 @@
 # TP Progress Harvest Gate Evidence
 
-- generated_at_utc: `2026-07-05T15:18:02.816205+00:00`
+- generated_at_utc: `2026-07-05T16:21:04.081371+00:00`
 - missed captures: `14`
 - current-rule triggers: `13`
 - executable before loss close: `13`

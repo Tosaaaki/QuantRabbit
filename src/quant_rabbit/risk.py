@@ -65,6 +65,7 @@ from .forecast_precision import (
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
 from .market_close_leak_gate import market_close_leak_family_block_issue
+from .month_scale_residual_gate import month_scale_residual_metadata_issue
 from .operator_manual import (
     is_operator_managed_manual_owner,
     operator_manual_jpy_add_block_issue,
@@ -2292,6 +2293,21 @@ class RiskEngine:
                         str(family_block["code"]),
                         str(family_block["message"]),
                         str(family_block.get("severity") or "BLOCK"),
+                    )
+                )
+            residual_block = month_scale_residual_metadata_issue(
+                {
+                    "pair": intent.pair,
+                    "side": intent.side.value if isinstance(intent.side, Side) else str(intent.side),
+                    "metadata": intent.metadata,
+                }
+            )
+            if residual_block is not None:
+                issues.append(
+                    RiskIssue(
+                        str(residual_block["code"]),
+                        str(residual_block["message"]),
+                        str(residual_block.get("severity") or "BLOCK"),
                     )
                 )
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))

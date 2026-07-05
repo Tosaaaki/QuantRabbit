@@ -1,0 +1,1474 @@
+{
+  "all_negative_families_can_create_live_permission_false": true,
+  "families": [
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -2981.8961,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where GBP_USD LONG BREAKOUT_FAILURE no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -2981.8961,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -2981.8961,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472071"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "GBP_USD LONG BREAKOUT_FAILURE",
+      "loss_closes": 1,
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_USD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -2981.8961,
+      "residual_pl_jpy": -2981.8961,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "LONG",
+      "strategy": "BREAKOUT_FAILURE",
+      "trade_ids": [
+        "472071"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -2690.6967,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where AUD_USD LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -2690.6967,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -2690.6967,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472952"
+        }
+      ],
+      "exit_reasons": {
+        "STOP_LOSS_ORDER": 1
+      },
+      "family": "AUD_USD LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_USD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -2690.6967,
+      "residual_pl_jpy": -2690.6967,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472952"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -2333.8215,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_USD LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -2333.8215,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -2333.8215,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "471817"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_USD LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_USD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -2333.8215,
+      "residual_pl_jpy": -2333.8215,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "471817"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -2181.1565,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_USD SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -2181.1565,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -2181.1565,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "471711"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_USD SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_USD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -2181.1565,
+      "residual_pl_jpy": -2181.1565,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "471711"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 2
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -2044.4543,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where NZD_CAD SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+          "realized_pl_jpy": -548.9268,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -548.9268,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472380"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET",
+          "realized_pl_jpy": -1495.5275,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -1495.5275,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472312"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 2
+      },
+      "family": "NZD_CAD SHORT RANGE_ROTATION",
+      "loss_closes": 2,
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CAD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -2044.4543,
+      "residual_pl_jpy": -2044.4543,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 2
+      },
+      "residual_tail": false,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472312",
+        "472380"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -1705.6738,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where AUD_USD SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -1705.6738,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -1705.6738,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472834"
+        }
+      ],
+      "exit_reasons": {
+        "STOP_LOSS_ORDER": 1
+      },
+      "family": "AUD_USD SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_USD",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -1705.6738,
+      "residual_pl_jpy": -1705.6738,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472834"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -1380.8008,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where NZD_USD LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -1380.8008,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -1380.8008,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472743"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "NZD_USD LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_USD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -1380.8008,
+      "residual_pl_jpy": -1380.8008,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472743"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 2
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -1272.0771,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_CHF LONG TREND_CONTINUATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -1019.7829,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -1019.7829,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472445"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -252.2942,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -252.2942,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472174"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 2
+      },
+      "family": "EUR_CHF LONG TREND_CONTINUATION",
+      "loss_closes": 2,
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_CHF",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -1272.0771,
+      "residual_pl_jpy": -1272.0771,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 2
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "TREND_CONTINUATION",
+      "trade_ids": [
+        "472174",
+        "472445"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -1071.9,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_JPY LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -1071.9,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -1071.9,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472094"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_JPY LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_JPY",
+      "priority_focus": true,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -1071.9,
+      "residual_pl_jpy": -1071.9,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": false,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472094"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -971.0121,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where GBP_USD SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -971.0121,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -971.0121,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472837"
+        }
+      ],
+      "exit_reasons": {
+        "STOP_LOSS_ORDER": 1
+      },
+      "family": "GBP_USD SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "GBP_USD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -971.0121,
+      "residual_pl_jpy": -971.0121,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472837"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "FORECAST_NOT_EXECUTABLE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -955.691,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where GBP_CHF LONG TREND_CONTINUATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "fresh forecast packet marks the family executable with direction/method agreement and no watch-only fallback"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -955.691,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -955.691,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472190"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "GBP_CHF LONG TREND_CONTINUATION",
+      "loss_closes": 1,
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_CHF",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_FORECAST_EXECUTABLE",
+      "realized_pl_jpy": -955.691,
+      "residual_pl_jpy": -955.691,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "TREND_CONTINUATION",
+      "trade_ids": [
+        "472190"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -891.0833,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_GBP SHORT BREAKOUT_FAILURE no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "failure_trader:EUR_GBP:SHORT:BREAKOUT_FAILURE:MARKET",
+          "realized_pl_jpy": -891.0833,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -891.0833,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472208"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_GBP SHORT BREAKOUT_FAILURE",
+      "loss_closes": 1,
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_GBP",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -891.0833,
+      "residual_pl_jpy": -891.0833,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "BREAKOUT_FAILURE",
+      "trade_ids": [
+        "472208"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -844.2,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_JPY SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:EUR_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -844.2,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -844.2,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472903"
+        }
+      ],
+      "exit_reasons": {
+        "STOP_LOSS_ORDER": 1
+      },
+      "family": "EUR_JPY SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_JPY",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -844.2,
+      "residual_pl_jpy": -844.2,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472903"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1,
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -744.8,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where USD_JPY SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -464.0,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -464.0,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472900"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -280.8,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -280.8,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472775"
+        }
+      ],
+      "exit_reasons": {
+        "STOP_LOSS_ORDER": 2
+      },
+      "family": "USD_JPY SHORT RANGE_ROTATION",
+      "loss_closes": 2,
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -744.8,
+      "residual_pl_jpy": -744.8,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 2
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472775",
+        "472900"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -661.5,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where CHF_JPY SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:CHF_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -661.5,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -661.5,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472497"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "CHF_JPY SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "CHF_JPY",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -661.5,
+      "residual_pl_jpy": -661.5,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472497"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -620.0993,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where USD_CAD LONG TREND_CONTINUATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:USD_CAD:LONG:TREND_CONTINUATION:MARKET",
+          "realized_pl_jpy": -620.0993,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -620.0993,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472427"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "USD_CAD LONG TREND_CONTINUATION",
+      "loss_closes": 1,
+      "method": "TREND_CONTINUATION",
+      "pair": "USD_CAD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -620.0993,
+      "residual_pl_jpy": -620.0993,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "TREND_CONTINUATION",
+      "trade_ids": [
+        "472427"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_NOISE_FLOOR": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "NEGATIVE_BIDASK_REPLAY",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -239.4791,
+      "current_blocker_code": "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where AUD_NZD SHORT RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "bid/ask replay for the exact family is non-negative after spread, noise floor, samples, and active-day checks"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -239.4791,
+          "repair_replay_block_reason": "BELOW_NOISE_FLOOR",
+          "repair_replay_pl_jpy": -239.4791,
+          "residual_scope": "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+          "trade_id": "472632"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "AUD_NZD SHORT RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_NZD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_BIDASK_NON_NEGATIVE",
+      "realized_pl_jpy": -239.4791,
+      "residual_pl_jpy": -239.4791,
+      "residual_scopes": {
+        "TP_PROGRESS_DIAGNOSTIC_BLOCKED": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472632"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -218.1407,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where NZD_CAD LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -218.1407,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -218.1407,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472088"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "NZD_CAD LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CAD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -218.1407,
+      "residual_pl_jpy": -218.1407,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472088"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -170.1,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_JPY LONG BREAKOUT_FAILURE no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+          "realized_pl_jpy": -170.1,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -170.1,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472156"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_JPY LONG BREAKOUT_FAILURE",
+      "loss_closes": 1,
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_JPY",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -170.1,
+      "residual_pl_jpy": -170.1,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "BREAKOUT_FAILURE",
+      "trade_ids": [
+        "472156"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "NO_PROFIT_CANDIDATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "FORECAST_NOT_EXECUTABLE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -169.1591,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_GBP SHORT TREND_CONTINUATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "fresh forecast packet marks the family executable with direction/method agreement and no watch-only fallback"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:EUR_GBP:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -169.1591,
+          "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+          "repair_replay_pl_jpy": -169.1591,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472125"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_GBP SHORT TREND_CONTINUATION",
+      "loss_closes": 1,
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_GBP",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_FORECAST_EXECUTABLE",
+      "realized_pl_jpy": -169.1591,
+      "residual_pl_jpy": -169.1591,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "SHORT",
+      "strategy": "TREND_CONTINUATION",
+      "trade_ids": [
+        "472125"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "RANGE_CHASE",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -96.6085,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where NZD_CHF LONG RANGE_ROTATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+        "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "range_trader:NZD_CHF:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -96.6085,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -96.6085,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472530"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "NZD_CHF LONG RANGE_ROTATION",
+      "loss_closes": 1,
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CHF",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+      "realized_pl_jpy": -96.6085,
+      "residual_pl_jpy": -96.6085,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "RANGE_ROTATION",
+      "trade_ids": [
+        "472530"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -48.3235,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where GBP_AUD LONG TREND_CONTINUATION no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "trend_trader:GBP_AUD:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -48.3235,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -48.3235,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472233"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "GBP_AUD LONG TREND_CONTINUATION",
+      "loss_closes": 1,
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_AUD",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -48.3235,
+      "residual_pl_jpy": -48.3235,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "TREND_CONTINUATION",
+      "trade_ids": [
+        "472233"
+      ]
+    },
+    {
+      "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration",
+      "block_reasons": {
+        "BELOW_TP_PROGRESS_GATE": 1
+      },
+      "can_create_live_permission": false,
+      "can_ever_be_as": true,
+      "cause": "BAD_EXIT",
+      "counterfactual_pl_after_tp_progress_repair_jpy": -38.054,
+      "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE",
+      "exact_evidence_needed_to_repair": [
+        "fresh 744h execution-timing-audit where EUR_CHF LONG BREAKOUT_FAILURE no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+        "spread-included local TP proof for the exact pair/side/method/order-type shape",
+        "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+        "loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only"
+      ],
+      "examples": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "lane_id": "failure_trader:EUR_CHF:LONG:BREAKOUT_FAILURE:LIMIT",
+          "realized_pl_jpy": -38.054,
+          "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+          "repair_replay_pl_jpy": -38.054,
+          "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+          "trade_id": "472252"
+        }
+      ],
+      "exit_reasons": {
+        "MARKET_ORDER_TRADE_CLOSE": 1
+      },
+      "family": "EUR_CHF LONG BREAKOUT_FAILURE",
+      "loss_closes": 1,
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_CHF",
+      "priority_focus": false,
+      "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+      "realized_pl_jpy": -38.054,
+      "residual_pl_jpy": -38.054,
+      "residual_scopes": {
+        "ENTRY_QUALITY_OR_CLOSE_RESIDUAL": 1
+      },
+      "residual_tail": true,
+      "side": "LONG",
+      "strategy": "BREAKOUT_FAILURE",
+      "trade_ids": [
+        "472252"
+      ]
+    }
+  ],
+  "gate_definitions": [
+    {
+      "blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+      "can_create_as_permission": false,
+      "current_evidence": "The same pair/side/method remains negative after TP-progress repair because no executable profit candidate or acceptable geometry exists.",
+      "exact_clearing_condition": "The matching family disappears from a refreshed 744h replay, or exact local TP/geometry/forecast proof makes the filtered replay non-negative and order_intents no longer carry residual metadata.",
+      "verifier_riskengine_liveordergateway_implication": "GPT verifier and RiskEngine block residual metadata; LiveOrderGateway receives no LIVE_READY receipt for matching families."
+    },
+    {
+      "blocker_code": "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
+      "can_create_as_permission": false,
+      "current_evidence": "The TP-progress diagnostic row remains negative or below bid/ask/noise proof after the repair replay.",
+      "exact_clearing_condition": "Spread-included non-negative replay plus current production-gate evidence removes the matching residual family.",
+      "verifier_riskengine_liveordergateway_implication": "The family is historical-only until the exact repair proof is refreshed and acceptance clears."
+    }
+  ],
+  "generated_at_utc": "2026-07-05T16:24:00Z",
+  "live_side_effects": [],
+  "manual_eurusd_472987_excluded": true,
+  "market_close_leak_family_gate_active": true,
+  "mode": "read_only_month_scale_residual_family_gate",
+  "no_unproven_fresh_entry_promotion": true,
+  "replay_after_residual_family_filters": {
+    "baseline_pl_jpy": -39246.4662,
+    "basis": "Same 744h replay after blocking every negative pair/side/method residual family from fresh permission.",
+    "clears_month_scale_tp_progress_replay_still_negative": true,
+    "excluded_family_count": 23,
+    "excluded_trade_ids": [
+      "471711",
+      "471817",
+      "472071",
+      "472088",
+      "472094",
+      "472125",
+      "472156",
+      "472174",
+      "472190",
+      "472208",
+      "472233",
+      "472252",
+      "472312",
+      "472380",
+      "472427",
+      "472445",
+      "472497",
+      "472530",
+      "472632",
+      "472743",
+      "472775",
+      "472834",
+      "472837",
+      "472900",
+      "472903",
+      "472952"
+    ],
+    "improved_pl_jpy": -20863.5316,
+    "remaining_residual_groups": [],
+    "residual_family_filters_active": true,
+    "residual_pl_jpy": 2984.1927
+  },
+  "replay_before_residual_family_filters": {
+    "baseline_pl_jpy": -39246.4662,
+    "basis": "durable TP-progress harvest gate evidence after EUR_USD market-close family/manual exclusions when available",
+    "clears_month_scale_tp_progress_replay_still_negative": false,
+    "improved_pl_jpy": -20863.5316,
+    "residual_pl_jpy": -20863.5316
+  },
+  "residual_tail": {
+    "families": [
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "NZD_USD LONG RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -1380.8008
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_CHF LONG TREND_CONTINUATION",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -1272.0771
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "GBP_USD SHORT RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -971.0121
+      },
+      {
+        "cause": "FORECAST_NOT_EXECUTABLE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "GBP_CHF LONG TREND_CONTINUATION",
+        "proposed_action": "REQUIRE_FORECAST_EXECUTABLE",
+        "residual_pl_jpy": -955.691
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_GBP SHORT BREAKOUT_FAILURE",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -891.0833
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_JPY SHORT RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -844.2
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "USD_JPY SHORT RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -744.8
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "CHF_JPY SHORT RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -661.5
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "USD_CAD LONG TREND_CONTINUATION",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -620.0993
+      },
+      {
+        "cause": "NEGATIVE_BIDASK_REPLAY",
+        "current_blocker_code": "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
+        "family": "AUD_NZD SHORT RANGE_ROTATION",
+        "proposed_action": "REQUIRE_BIDASK_NON_NEGATIVE",
+        "residual_pl_jpy": -239.4791
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "NZD_CAD LONG RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -218.1407
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_JPY LONG BREAKOUT_FAILURE",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -170.1
+      },
+      {
+        "cause": "FORECAST_NOT_EXECUTABLE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_GBP SHORT TREND_CONTINUATION",
+        "proposed_action": "REQUIRE_FORECAST_EXECUTABLE",
+        "residual_pl_jpy": -169.1591
+      },
+      {
+        "cause": "RANGE_CHASE",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "NZD_CHF LONG RANGE_ROTATION",
+        "proposed_action": "REQUIRE_GEOMETRY_REPAIR",
+        "residual_pl_jpy": -96.6085
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "GBP_AUD LONG TREND_CONTINUATION",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -48.3235
+      },
+      {
+        "cause": "BAD_EXIT",
+        "current_blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+        "family": "EUR_CHF LONG BREAKOUT_FAILURE",
+        "proposed_action": "REQUIRE_LOCAL_TP_PROOF",
+        "residual_pl_jpy": -38.054
+      }
+    ],
+    "family_count": 16,
+    "residual_pl_jpy": -9321.1285
+  },
+  "safety": {
+    "all_negative_families_can_create_live_permission_false": true,
+    "broker_state_modified": false,
+    "deposit_100000_jpy_is_capital_flow_not_pl": true,
+    "execution_flags_enabled": false,
+    "manual_eurusd_472987_excluded": true,
+    "market_close_leak_family_gate_active": true,
+    "no_unproven_fresh_entry_promotion": true,
+    "normal_routing_remains_blocked": true,
+    "orders_cancelled": false,
+    "orders_placed": false,
+    "performance_kpi": "funding_adjusted_equity",
+    "positions_closed": false,
+    "raw_nav_usage": "sizing_and_risk_only",
+    "sl_tp_modified": false,
+    "tp_progress_harvest_gate_active": true
+  },
+  "source_artifacts": [
+    "data/execution_timing_audit.json",
+    "data/tp_progress_harvest_gate_evidence.json",
+    "data/broker_snapshot.json"
+  ],
+  "source_execution_timing_audit": {
+    "generated_at_utc": "2026-07-03T20:08:53.084075+00:00",
+    "path": "data/execution_timing_audit.json",
+    "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
+    "window": {
+      "canceled_from_utc": "2026-06-02T20:08:53.084075+00:00",
+      "from_utc": "2026-05-26T07:03:46.222763+00:00",
+      "lookback_hours": 744.0,
+      "market_close_anchor_utc": "2026-06-26T07:03:46.222763+00:00",
+      "market_close_from_utc": "2026-05-26T07:03:46.222763+00:00",
+      "post_cancel_hours": 6.0,
+      "post_close_hours": 6.0,
+      "to_utc": "2026-07-03T20:08:53.084075+00:00"
+    }
+  },
+  "source_harvest_gate_evidence": {
+    "basis": "Replay uses all audited loss closes. Triggered rows use executable TP-progress counterfactual P/L; non-triggered rows keep actual P/L. Proposed gates remove the exact market-close leak family and operator-manual trade ids from future system-edge accounting.",
+    "generated_at_utc": "2026-07-05T16:21:04.081371+00:00",
+    "source_consistent_with_execution_timing": true,
+    "source_execution_timing_audit_generated_at_utc": "2026-07-03T20:08:53.084075+00:00"
+  },
+  "summary": {
+    "all_can_create_live_permission_false": true,
+    "family_count": 23,
+    "negative_trade_count": 26,
+    "priority_family_count": 7,
+    "priority_residual_pl_jpy": -15009.5989,
+    "tail_family_count": 16,
+    "tail_residual_pl_jpy": -9321.1285
+  },
+  "tp_progress_harvest_gate_active": true
+}

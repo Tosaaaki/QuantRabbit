@@ -149,6 +149,7 @@ from quant_rabbit.paths import (
     DEFAULT_POST_TRADE_LEARNING_REPORT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
+    DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_REPLAY_BACKTEST,
@@ -3776,6 +3777,11 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_profit_accept.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_profit_accept.add_argument("--execution-timing-audit", type=Path, default=None)
+    p_profit_accept.add_argument(
+        "--month-scale-residual-family-table",
+        type=Path,
+        default=DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE,
+    )
     p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
     p_profit_accept.add_argument(
@@ -6422,6 +6428,7 @@ def main(argv: list[str] | None = None) -> int:
                 capture_economics_path=args.capture_economics,
                 execution_ledger_path=audit_db,
                 execution_timing_audit_path=execution_timing_audit,
+                month_scale_residual_family_table_path=args.month_scale_residual_family_table,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,

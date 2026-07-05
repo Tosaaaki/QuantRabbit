@@ -21,7 +21,7 @@
       "472280"
     ]
   },
-  "generated_at_utc": "2026-07-05T15:18:02.816205+00:00",
+  "generated_at_utc": "2026-07-05T16:21:04.081371+00:00",
   "metrics": {
     "below_noise_floor_count": 1,
     "current_rule_trigger_count": 13,
@@ -994,7 +994,7 @@
   },
   "source": {
     "execution_timing_audit_generated_at_utc": "2026-07-03T20:08:53.084075+00:00",
-    "execution_timing_audit_path": "/Users/tossaki/App/QuantRabbit-live/data/execution_timing_audit.json",
+    "execution_timing_audit_path": "/Users/tossaki/App/QuantRabbit/data/execution_timing_audit.json",
     "lookback_hours": null
   },
   "trigger_classifications": {

@@ -15,6 +15,9 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.month_scale_residual_gate import (
+    MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
+)
 from quant_rabbit.gpt_trader import (
     GPTTraderBrain,
     StaticTraderProvider,
@@ -1232,6 +1235,46 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
+
+    def test_rejects_live_ready_lane_with_month_scale_residual_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            lane_id = "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=lane_id,
+                                method="RANGE_ROTATION",
+                                metadata={
+                                    "opportunity_mode": "RUNNER",
+                                    "month_scale_residual_loss_repair_blocked": True,
+                                    "month_scale_residual_loss_group": {
+                                        "pair": "EUR_USD",
+                                        "side": "LONG",
+                                        "method": "RANGE_ROTATION",
+                                        "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                                        "repair_replay_pl_jpy": -2333.8215,
+                                        "loss_closes": 1,
+                                        "trade_ids": ["471817"],
+                                    },
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            decision = _trade_decision(lane_id=lane_id, method="RANGE_ROTATION")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn(MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE, codes)
 
     def test_rejects_underpowered_oanda_self_improvement_repair_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

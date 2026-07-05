@@ -98,6 +98,8 @@ DEFAULT_CAPTURE_ECONOMICS = ROOT / "data" / "capture_economics.json"
 DEFAULT_CAPTURE_ECONOMICS_REPORT = ROOT / "docs" / "capture_economics_report.md"
 DEFAULT_PROFITABILITY_ACCEPTANCE = ROOT / "data" / "profitability_acceptance.json"
 DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT = ROOT / "docs" / "profitability_acceptance_report.md"
+DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE = ROOT / "data" / "month_scale_residual_family_table.json"
+DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE_REPORT = ROOT / "docs" / "month_scale_residual_family_table.md"
 DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING = (
     ROOT / "logs" / "reports" / "forecast_improvement" / "oanda_universal_rotation_mining_latest.json"
 )

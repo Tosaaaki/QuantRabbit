@@ -21,6 +21,25 @@ LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
 USD_JPY_TARGET_LANE = "failure_trader:USD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"
 EUR_USD_LEAK_LANE = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
 EUR_USD_MANUAL_TRADE_ID = "472987"
+MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS = (
+    "470356",
+    "470353",
+    "470730",
+    "471174",
+    "471089",
+    "471255",
+    "472280",
+)
+MARKET_CLOSE_LEAK_FAMILY_MANUAL_EXCLUDED_TRADE_IDS = (EUR_USD_MANUAL_TRADE_ID,)
+PRIORITY_RESIDUAL_FAMILY_KEYS = {
+    ("GBP_USD", "LONG", "BREAKOUT_FAILURE"),
+    ("AUD_USD", "LONG", "RANGE_ROTATION"),
+    ("AUD_USD", "SHORT", "RANGE_ROTATION"),
+    ("EUR_USD", "LONG", "RANGE_ROTATION"),
+    ("EUR_USD", "SHORT", "RANGE_ROTATION"),
+    ("NZD_CAD", "SHORT", "RANGE_ROTATION"),
+    ("EUR_JPY", "LONG", "RANGE_ROTATION"),
+}
 
 S5_PROBE_DIR = Path("logs/reports/forecast_improvement/eurjpy_short_local_tp_probe")
 
@@ -42,6 +61,7 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
     capture = _load_json(Path("data/capture_economics.json"))
     profit_capture = _load_json(Path("data/profit_capture_bot.json"))
     timing = _load_json(Path("data/execution_timing_audit.json"))
+    harvest_gate = _load_json(Path("data/tp_progress_harvest_gate_evidence.json"))
     order_intents = _load_json(Path("data/order_intents.json"))
     old_board = _load_json(Path("data/as_lane_candidate_board.json"))
     usdjpy = _load_json(Path("data/usdjpy_long_breakout_failure_tp_proof.json"))
@@ -88,6 +108,12 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
         timing=timing,
         broker=broker,
     )
+    residual_family_table = _build_month_scale_residual_family_table(
+        generated_at=generated_at,
+        timing=timing,
+        harvest_gate=harvest_gate,
+        broker=broker,
+    )
     historical_missed = _build_historical_profit_capture_missed_table(
         generated_at=generated_at,
         timing=timing,
@@ -115,6 +141,7 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
         support=support,
         repair_orchestrator=repair_orchestrator,
         blocker_decomposition=blocker_decomposition,
+        residual_family_table=residual_family_table,
     )
 
     return {
@@ -123,6 +150,7 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
             Path("data/market_close_leak_trade_table.json"): market_close_table,
             Path("data/tp_progress_replay_repair_plan.json"): tp_replay,
             Path("data/month_scale_tp_replay_residuals.json"): month_residuals,
+            Path("data/month_scale_residual_family_table.json"): residual_family_table,
             Path("data/historical_profit_capture_missed_table.json"): historical_missed,
             Path("data/eurjpy_short_local_tp_proof.json"): eurjpy_proof,
             Path("data/as_lane_candidate_board.json"): board,
@@ -132,6 +160,7 @@ def _build_all(generated_at: str) -> dict[str, dict[Path, Any]]:
             Path("docs/market_close_leak_trade_table.md"): _market_close_trade_table_md(market_close_table),
             Path("docs/tp_progress_replay_repair_plan.md"): _tp_replay_md(tp_replay),
             Path("docs/month_scale_tp_replay_residuals.md"): _month_scale_tp_replay_residuals_md(month_residuals),
+            Path("docs/month_scale_residual_family_table.md"): _month_scale_residual_family_table_md(residual_family_table),
             Path("docs/historical_profit_capture_missed_table.md"): _historical_profit_capture_missed_md(historical_missed),
             Path("docs/eurjpy_short_local_tp_proof_report.md"): _eurjpy_md(eurjpy_proof),
             Path("docs/as_lane_candidate_board.md"): _board_md(board),
@@ -151,7 +180,7 @@ def _build_blocker_decomposition(
     capture_overall = capture.get("overall") if isinstance(capture.get("overall"), dict) else {}
     repair_summary = capture.get("repair_summary") if isinstance(capture.get("repair_summary"), dict) else {}
     market_segment = _market_close_segment(acceptance, capture)
-    month_ev = _evidence(findings.get("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"))
+    month_ev = _month_scale_replay_metrics(acceptance)
     bidask_ev = _evidence(findings.get("BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN"))
     adoption = bidask_ev.get("adoption_summary") or bidask_rules.get("adoption_summary") or {}
 
@@ -335,8 +364,7 @@ def _build_tp_replay_plan(
     timing: dict[str, Any],
     broker: dict[str, Any],
 ) -> dict[str, Any]:
-    findings = _findings_by_code(acceptance)
-    ev = _evidence(findings.get("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"))
+    ev = _month_scale_replay_metrics(acceptance)
     residuals = ev.get("top_repair_replay_residual_groups") or []
     method_rollups = ev.get("top_repair_replay_residual_method_rollups") or []
     manual = _manual_position(broker)
@@ -587,8 +615,7 @@ def _build_month_scale_tp_replay_residuals(
     timing: dict[str, Any],
     broker: dict[str, Any],
 ) -> dict[str, Any]:
-    findings = _findings_by_code(acceptance)
-    ev = _evidence(findings.get("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"))
+    ev = _month_scale_replay_metrics(acceptance)
     residuals = [_diagnose_residual(item) for item in ev.get("top_repair_replay_residual_groups") or []]
     current_residual = _float_or_none(ev.get("repair_replay_counterfactual_pl_jpy"))
     required = abs(current_residual or 0.0)
@@ -654,6 +681,474 @@ def _build_month_scale_tp_replay_residuals(
         "fresh_entries_must_remain_blocked": True,
         "live_side_effects": [],
     }
+
+
+def _build_month_scale_residual_family_table(
+    *,
+    generated_at: str,
+    timing: dict[str, Any],
+    harvest_gate: dict[str, Any],
+    broker: dict[str, Any],
+) -> dict[str, Any]:
+    raw_rows = timing.get("loss_close_regrets") if isinstance(timing.get("loss_close_regrets"), list) else []
+    rows = [
+        _residual_family_replay_row(row)
+        for row in raw_rows
+        if isinstance(row, dict)
+    ]
+    family_excluded_ids = set(MARKET_CLOSE_LEAK_FAMILY_TRADE_IDS)
+    manual_excluded_ids = set(MARKET_CLOSE_LEAK_FAMILY_MANUAL_EXCLUDED_TRADE_IDS)
+    included = [
+        row
+        for row in rows
+        if row["trade_id"] not in family_excluded_ids
+        and row["trade_id"] not in manual_excluded_ids
+    ]
+    negative_groups = _residual_family_groups(included)
+    blocked_keys = {
+        (item["pair"], item["side"], item["method"])
+        for item in negative_groups
+        if float(item.get("residual_pl_jpy") or 0.0) < 0.0
+    }
+    after_filter_rows = [
+        row
+        for row in included
+        if (row["pair"], row["side"], row["method"]) not in blocked_keys
+    ]
+    harvest_source_timing_generated = _nested(
+        harvest_gate,
+        "source",
+        "execution_timing_audit_generated_at_utc",
+    )
+    harvest_matches_timing = bool(
+        timing.get("generated_at_utc")
+        and harvest_source_timing_generated == timing.get("generated_at_utc")
+    )
+    after_proposed = (
+        (harvest_gate.get("month_scale_replay") or {}).get("after_proposed_gates")
+        if harvest_matches_timing
+        and isinstance((harvest_gate.get("month_scale_replay") or {}).get("after_proposed_gates"), dict)
+        else {}
+    )
+    headline_baseline = _float_or_none(after_proposed.get("baseline_pl_jpy"))
+    headline_improved = _float_or_none(after_proposed.get("improved_pl_jpy"))
+    if headline_baseline is None:
+        headline_baseline = sum(float(row["realized_pl_jpy"] or 0.0) for row in included)
+    if headline_improved is None:
+        headline_improved = sum(float(row["repair_replay_pl_jpy"] or 0.0) for row in included)
+    after_filter_residual = sum(float(row["repair_replay_pl_jpy"] or 0.0) for row in after_filter_rows)
+    families = [_classify_residual_family(item) for item in negative_groups]
+    priority_families = [item for item in families if item.get("priority_focus")]
+    tail_families = [item for item in families if not item.get("priority_focus")]
+    manual = _manual_position(broker)
+    excluded_trade_ids = sorted(
+        {
+            trade_id
+            for item in families
+            for trade_id in item.get("trade_ids", []) or []
+        }
+    )
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_month_scale_residual_family_gate",
+        "source_artifacts": [
+            "data/execution_timing_audit.json",
+            "data/tp_progress_harvest_gate_evidence.json",
+            "data/broker_snapshot.json",
+        ],
+        "source_execution_timing_audit": {
+            "generated_at_utc": timing.get("generated_at_utc"),
+            "path": "data/execution_timing_audit.json",
+            "window": timing.get("window"),
+            "repair_replay_contract": _nested(timing, "precision", "profit_capture_repair_replay_contract"),
+        },
+        "source_harvest_gate_evidence": {
+            "generated_at_utc": harvest_gate.get("generated_at_utc"),
+            "source_execution_timing_audit_generated_at_utc": _nested(
+                harvest_gate,
+                "source",
+                "execution_timing_audit_generated_at_utc",
+            ),
+            "source_consistent_with_execution_timing": harvest_matches_timing,
+            "basis": _nested(harvest_gate, "month_scale_replay", "basis"),
+        },
+        "summary": {
+            "family_count": len(families),
+            "priority_family_count": len(priority_families),
+            "tail_family_count": len(tail_families),
+            "negative_trade_count": sum(len(item.get("trade_ids", []) or []) for item in families),
+            "priority_residual_pl_jpy": round(sum(float(item.get("residual_pl_jpy") or 0.0) for item in priority_families), 4),
+            "tail_residual_pl_jpy": round(sum(float(item.get("residual_pl_jpy") or 0.0) for item in tail_families), 4),
+            "all_can_create_live_permission_false": all(
+                item.get("can_create_live_permission") is False for item in families
+            ),
+        },
+        "replay_before_residual_family_filters": {
+            "baseline_pl_jpy": round(headline_baseline, 4),
+            "improved_pl_jpy": round(headline_improved, 4),
+            "residual_pl_jpy": round(headline_improved, 4),
+            "basis": "durable TP-progress harvest gate evidence after EUR_USD market-close family/manual exclusions when available",
+            "clears_month_scale_tp_progress_replay_still_negative": headline_improved >= 0.0,
+        },
+        "replay_after_residual_family_filters": {
+            "baseline_pl_jpy": round(headline_baseline, 4),
+            "improved_pl_jpy": round(headline_improved, 4),
+            "residual_pl_jpy": round(after_filter_residual, 4),
+            "residual_family_filters_active": True,
+            "excluded_family_count": len(blocked_keys),
+            "excluded_trade_ids": excluded_trade_ids,
+            "remaining_residual_groups": _remaining_negative_groups(after_filter_rows),
+            "clears_month_scale_tp_progress_replay_still_negative": after_filter_residual >= 0.0,
+            "basis": "Same 744h replay after blocking every negative pair/side/method residual family from fresh permission.",
+        },
+        "families": families,
+        "residual_tail": {
+            "family_count": len(tail_families),
+            "residual_pl_jpy": round(sum(float(item.get("residual_pl_jpy") or 0.0) for item in tail_families), 4),
+            "families": [
+                {
+                    "family": item.get("family"),
+                    "residual_pl_jpy": item.get("residual_pl_jpy"),
+                    "cause": item.get("cause"),
+                    "proposed_action": item.get("proposed_action"),
+                    "current_blocker_code": item.get("current_blocker_code"),
+                }
+                for item in tail_families
+            ],
+        },
+        "market_close_leak_family_gate_active": True,
+        "tp_progress_harvest_gate_active": True,
+        "manual_eurusd_472987_excluded": bool(manual)
+        and _nested(manual, "operator_manual_position", "system_pl_counted") is False,
+        "no_unproven_fresh_entry_promotion": True,
+        "all_negative_families_can_create_live_permission_false": all(
+            item.get("can_create_live_permission") is False for item in families
+        ),
+        "gate_definitions": [
+            {
+                "blocker_code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+                "current_evidence": "The same pair/side/method remains negative after TP-progress repair because no executable profit candidate or acceptable geometry exists.",
+                "exact_clearing_condition": "The matching family disappears from a refreshed 744h replay, or exact local TP/geometry/forecast proof makes the filtered replay non-negative and order_intents no longer carry residual metadata.",
+                "verifier_riskengine_liveordergateway_implication": "GPT verifier and RiskEngine block residual metadata; LiveOrderGateway receives no LIVE_READY receipt for matching families.",
+                "can_create_as_permission": False,
+            },
+            {
+                "blocker_code": "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
+                "current_evidence": "The TP-progress diagnostic row remains negative or below bid/ask/noise proof after the repair replay.",
+                "exact_clearing_condition": "Spread-included non-negative replay plus current production-gate evidence removes the matching residual family.",
+                "verifier_riskengine_liveordergateway_implication": "The family is historical-only until the exact repair proof is refreshed and acceptance clears.",
+                "can_create_as_permission": False,
+            },
+        ],
+        "safety": {
+            **_safety_packet(),
+            "market_close_leak_family_gate_active": True,
+            "tp_progress_harvest_gate_active": True,
+            "manual_eurusd_472987_excluded": bool(manual)
+            and _nested(manual, "operator_manual_position", "system_pl_counted") is False,
+            "no_unproven_fresh_entry_promotion": True,
+            "all_negative_families_can_create_live_permission_false": all(
+                item.get("can_create_live_permission") is False for item in families
+            ),
+        },
+        "live_side_effects": [],
+    }
+
+
+def _residual_family_replay_row(row: dict[str, Any]) -> dict[str, Any]:
+    actual = _float_or_none(row.get("realized_pl_jpy")) or 0.0
+    counterfactual = _float_or_none(row.get("repair_replay_counterfactual_pl_jpy"))
+    trigger_at = _parse_utc(row.get("repair_replay_trigger_at_utc"))
+    close_at = _parse_utc(row.get("close_at_utc"))
+    before_close = bool(trigger_at and close_at and trigger_at < close_at)
+    profit_pips = _float_or_none(row.get("repair_replay_profit_pips"))
+    noise_floor_pips = _float_or_none(row.get("repair_replay_noise_floor_pips"))
+    above_noise = (
+        profit_pips is not None
+        and noise_floor_pips is not None
+        and profit_pips > noise_floor_pips
+    )
+    executable = bool(
+        row.get("repair_replay_triggered_before_loss_close")
+        and before_close
+        and above_noise
+        and counterfactual is not None
+        and counterfactual > actual
+        and str(row.get("repair_replay_exit") or "") == "TP_PROGRESS_PRODUCTION_GATE_REPLAY"
+    )
+    block_reason = str(row.get("repair_replay_block_reason") or "").strip()
+    return {
+        "trade_id": str(row.get("trade_id") or ""),
+        "pair": str(row.get("pair") or "UNKNOWN").strip() or "UNKNOWN",
+        "side": str(row.get("side") or "UNKNOWN").strip().upper() or "UNKNOWN",
+        "method": _method_from_lane_id(str(row.get("lane_id") or "")),
+        "lane_id": row.get("lane_id"),
+        "exit_reason": str(row.get("exit_reason") or "UNKNOWN").strip().upper(),
+        "realized_pl_jpy": round(actual, 4),
+        "repair_replay_pl_jpy": round(counterfactual if executable and counterfactual is not None else actual, 4),
+        "repair_replay_counterfactual_pl_jpy": round(counterfactual, 4) if counterfactual is not None else None,
+        "repair_replay_triggered": executable,
+        "raw_repair_replay_triggered_before_loss_close": bool(
+            row.get("repair_replay_triggered_before_loss_close")
+        ),
+        "profit_capture_missed_before_loss_close": bool(
+            row.get("profit_capture_missed_before_loss_close")
+        ),
+        "repair_replay_block_reason": block_reason or None,
+        "trigger_status": "CURRENT_RULE_TRIGGER" if executable else (block_reason or "NO_PROFIT_CANDIDATE"),
+        "residual_scope": _residual_family_scope(row, executable=executable),
+    }
+
+
+def _residual_family_scope(row: dict[str, Any], *, executable: bool) -> str:
+    if executable:
+        return "TP_PROGRESS_REPAIR_TRIGGERED"
+    if row.get("profit_capture_missed_before_loss_close"):
+        return "TP_PROGRESS_DIAGNOSTIC_BLOCKED"
+    return "ENTRY_QUALITY_OR_CLOSE_RESIDUAL"
+
+
+def _residual_family_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        residual = _float_or_none(row.get("repair_replay_pl_jpy"))
+        if residual is None or residual >= 0.0:
+            continue
+        key = (row["pair"], row["side"], row["method"])
+        item = groups.setdefault(
+            key,
+            {
+                "pair": key[0],
+                "side": key[1],
+                "method": key[2],
+                "trade_ids": [],
+                "loss_closes": 0,
+                "realized_pl_jpy": 0.0,
+                "counterfactual_pl_after_tp_progress_repair_jpy": 0.0,
+                "residual_pl_jpy": 0.0,
+                "exit_reasons": {},
+                "block_reasons": {},
+                "residual_scopes": {},
+                "examples": [],
+            },
+        )
+        item["trade_ids"].append(row["trade_id"])
+        item["loss_closes"] = int(item["loss_closes"]) + 1
+        item["realized_pl_jpy"] = float(item["realized_pl_jpy"]) + float(row["realized_pl_jpy"])
+        item["counterfactual_pl_after_tp_progress_repair_jpy"] = float(
+            item["counterfactual_pl_after_tp_progress_repair_jpy"]
+        ) + residual
+        item["residual_pl_jpy"] = float(item["residual_pl_jpy"]) + residual
+        _increment_count(item["exit_reasons"], row.get("exit_reason"))
+        _increment_count(item["block_reasons"], row.get("repair_replay_block_reason") or row.get("trigger_status"))
+        _increment_count(item["residual_scopes"], row.get("residual_scope"))
+        if len(item["examples"]) < 4:
+            item["examples"].append(
+                {
+                    "trade_id": row["trade_id"],
+                    "lane_id": row.get("lane_id"),
+                    "realized_pl_jpy": row.get("realized_pl_jpy"),
+                    "repair_replay_pl_jpy": row.get("repair_replay_pl_jpy"),
+                    "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                    "exit_reason": row.get("exit_reason"),
+                    "residual_scope": row.get("residual_scope"),
+                }
+            )
+    result = []
+    for item in groups.values():
+        result.append(
+            {
+                **item,
+                "trade_ids": sorted(str(value) for value in item.get("trade_ids") or []),
+                "realized_pl_jpy": round(float(item.get("realized_pl_jpy") or 0.0), 4),
+                "counterfactual_pl_after_tp_progress_repair_jpy": round(
+                    float(item.get("counterfactual_pl_after_tp_progress_repair_jpy") or 0.0),
+                    4,
+                ),
+                "residual_pl_jpy": round(float(item.get("residual_pl_jpy") or 0.0), 4),
+                "exit_reasons": _sorted_count_dict(item.get("exit_reasons")),
+                "block_reasons": _sorted_count_dict(item.get("block_reasons")),
+                "residual_scopes": _sorted_count_dict(item.get("residual_scopes")),
+            }
+        )
+    result.sort(
+        key=lambda item: (
+            float(item.get("residual_pl_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        )
+    )
+    return result
+
+
+def _classify_residual_family(item: dict[str, Any]) -> dict[str, Any]:
+    key = (
+        str(item.get("pair") or "UNKNOWN"),
+        str(item.get("side") or "UNKNOWN"),
+        str(item.get("method") or "UNKNOWN"),
+    )
+    block_reasons = item.get("block_reasons") if isinstance(item.get("block_reasons"), dict) else {}
+    exit_reasons = item.get("exit_reasons") if isinstance(item.get("exit_reasons"), dict) else {}
+    residual_scopes = item.get("residual_scopes") if isinstance(item.get("residual_scopes"), dict) else {}
+    cause = _residual_family_cause(key, block_reasons, exit_reasons)
+    proposed_action = _residual_family_action(key, cause, block_reasons)
+    blocker_code = (
+        "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED"
+        if "TP_PROGRESS_DIAGNOSTIC_BLOCKED" in residual_scopes
+        else "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED"
+    )
+    exact_evidence = _residual_family_exact_evidence(key, cause, proposed_action)
+    priority = key in PRIORITY_RESIDUAL_FAMILY_KEYS
+    can_ever_be_as = proposed_action not in {"BAN_FAMILY", "HISTORICAL_ONLY", "OPERATOR_MANUAL_EXCLUDE"}
+    return {
+        "family": f"{key[0]} {key[1]} {key[2]}",
+        "pair": key[0],
+        "side": key[1],
+        "strategy": key[2],
+        "method": key[2],
+        "trade_ids": item.get("trade_ids") or [],
+        "loss_closes": item.get("loss_closes"),
+        "realized_pl_jpy": item.get("realized_pl_jpy"),
+        "counterfactual_pl_after_tp_progress_repair_jpy": item.get(
+            "counterfactual_pl_after_tp_progress_repair_jpy"
+        ),
+        "residual_pl_jpy": item.get("residual_pl_jpy"),
+        "cause": cause,
+        "current_blocker_code": blocker_code,
+        "proposed_action": proposed_action,
+        "can_create_live_permission": False,
+        "can_ever_be_as": can_ever_be_as,
+        "decision": "BAN_NOW_REPAIR_ONLY_WITH_EXACT_EVIDENCE" if can_ever_be_as else "BAN_NOW_HISTORICAL_ONLY",
+        "priority_focus": priority,
+        "residual_tail": not priority,
+        "exit_reasons": exit_reasons,
+        "block_reasons": block_reasons,
+        "residual_scopes": residual_scopes,
+        "examples": item.get("examples") or [],
+        "exact_evidence_needed_to_repair": exact_evidence,
+        "as_status": "NO_CURRENT_A_S; possible only after exact evidence and fresh LIVE_READY regeneration"
+        if can_ever_be_as
+        else "NO_CURRENT_A_S; historical-only until a new family proof exists",
+    }
+
+
+def _residual_family_cause(
+    key: tuple[str, str, str],
+    block_reasons: dict[str, Any],
+    exit_reasons: dict[str, Any],
+) -> str:
+    method = key[2]
+    if "BELOW_NOISE_FLOOR" in block_reasons:
+        return "NEGATIVE_BIDASK_REPLAY"
+    if "NO_PROFIT_CANDIDATE" in block_reasons:
+        if method == "RANGE_ROTATION":
+            return "RANGE_CHASE"
+        return "FORECAST_NOT_EXECUTABLE"
+    if "BELOW_TP_PROGRESS_GATE" in block_reasons:
+        if method == "RANGE_ROTATION":
+            return "RANGE_CHASE"
+        if "STOP_LOSS_ORDER" in exit_reasons:
+            return "BAD_ENTRY"
+        return "BAD_EXIT"
+    return "UNKNOWN"
+
+
+def _residual_family_action(
+    key: tuple[str, str, str],
+    cause: str,
+    block_reasons: dict[str, Any],
+) -> str:
+    method = key[2]
+    if cause == "NEGATIVE_BIDASK_REPLAY":
+        return "REQUIRE_BIDASK_NON_NEGATIVE"
+    if cause == "FORECAST_NOT_EXECUTABLE":
+        return "REQUIRE_FORECAST_EXECUTABLE"
+    if cause == "RANGE_CHASE" or method == "RANGE_ROTATION":
+        return "REQUIRE_GEOMETRY_REPAIR"
+    if "BELOW_TP_PROGRESS_GATE" in block_reasons:
+        return "REQUIRE_LOCAL_TP_PROOF"
+    return "BAN_FAMILY"
+
+
+def _residual_family_exact_evidence(
+    key: tuple[str, str, str],
+    cause: str,
+    proposed_action: str,
+) -> list[str]:
+    pair, side, method = key
+    evidence = [
+        f"fresh 744h execution-timing-audit where {pair} {side} {method} no longer has negative residual replay P/L",
+        "profitability-acceptance regenerated from the same timing artifact and not stale against inputs",
+        "order_intents regenerated with no month_scale_residual_loss_group metadata for the matching family",
+        "RiskEngine and LiveOrderGateway validation on a fresh broker snapshot after all blockers clear",
+        "fresh GPT TRADE/ADD receipt only after the lane is already LIVE_READY",
+    ]
+    if proposed_action == "REQUIRE_GEOMETRY_REPAIR":
+        evidence.extend(
+            [
+                "RANGE_ROTATION broad-location proof: LONG entries only in broad discount/lower half and SHORT entries only in premium/upper half",
+                "TP geometry proof that target lies inside the current range and SL lies outside invalidation without negative reward/risk distortion",
+            ]
+        )
+    elif proposed_action == "REQUIRE_LOCAL_TP_PROOF":
+        evidence.extend(
+            [
+                "spread-included local TP proof for the exact pair/side/method/order-type shape",
+                "close-gate proof if any MARKET_ORDER_TRADE_CLOSE path is retained",
+            ]
+        )
+    elif proposed_action == "REQUIRE_BIDASK_NON_NEGATIVE":
+        evidence.append("bid/ask replay for the exact family is non-negative after spread, noise floor, samples, and active-day checks")
+    elif proposed_action == "REQUIRE_FORECAST_EXECUTABLE":
+        evidence.append("fresh forecast packet marks the family executable with direction/method agreement and no watch-only fallback")
+    if cause == "BAD_EXIT":
+        evidence.append("loss-side close path proves thesis invalidation and contained risk; otherwise use attached TP/HARVEST only")
+    return evidence
+
+
+def _remaining_negative_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "pair": item.get("pair"),
+            "side": item.get("side"),
+            "method": item.get("method"),
+            "residual_pl_jpy": item.get("residual_pl_jpy"),
+            "trade_ids": item.get("trade_ids"),
+        }
+        for item in _residual_family_groups(rows)
+        if float(item.get("residual_pl_jpy") or 0.0) < 0.0
+    ]
+
+
+def _increment_count(target: Any, raw_key: Any) -> None:
+    if not isinstance(target, dict):
+        return
+    key = str(raw_key or "UNKNOWN")
+    target[key] = int(target.get(key) or 0) + 1
+
+
+def _sorted_count_dict(value: Any) -> dict[str, int]:
+    source = value if isinstance(value, dict) else {}
+    return dict(
+        sorted(
+            ((str(key), int(count)) for key, count in source.items()),
+            key=lambda item: (-item[1], item[0]),
+        )
+    )
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        text = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _build_historical_profit_capture_missed_table(
@@ -781,6 +1276,7 @@ def _build_board(
     support: dict[str, Any],
     repair_orchestrator: dict[str, Any],
     blocker_decomposition: list[dict[str, Any]],
+    residual_family_table: dict[str, Any],
 ) -> dict[str, Any]:
     results = order_intents.get("results") if isinstance(order_intents.get("results"), list) else []
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
@@ -789,6 +1285,12 @@ def _build_board(
     audusd_current = [item for item in results if (item.get("intent") or {}).get("pair") == "AUD_USD"]
     manual = _manual_position(broker)
     target_lane_present = any(item.get("lane_id") == USD_JPY_TARGET_LANE for item in results)
+    finding_codes = set(_findings_by_code(acceptance))
+    month_residual_line = (
+        "Profitability acceptance still raises NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE."
+        if "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE" in finding_codes
+        else "Profitability acceptance no longer raises MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE; residual-family gates still block every negative historical family from fresh A/S permission."
+    )
     return {
         "generated_at_utc": generated_at,
         "mode": "read_only_board_rebuild",
@@ -802,6 +1304,7 @@ def _build_board(
             "data/broker_snapshot.json",
             "data/market_close_leak_trade_table.json",
             "data/month_scale_tp_replay_residuals.json",
+            "data/month_scale_residual_family_table.json",
             "data/historical_profit_capture_missed_table.json",
         ],
         "repair_analysis_artifacts": [
@@ -809,6 +1312,8 @@ def _build_board(
             "docs/market_close_leak_trade_table.md",
             "data/month_scale_tp_replay_residuals.json",
             "docs/month_scale_tp_replay_residuals.md",
+            "data/month_scale_residual_family_table.json",
+            "docs/month_scale_residual_family_table.md",
             "data/historical_profit_capture_missed_table.json",
             "docs/historical_profit_capture_missed_table.md",
         ],
@@ -844,12 +1349,42 @@ def _build_board(
             "reason": "All current AUD_USD lanes are DRY_RUN_BLOCKED with negative-expectancy, month-scale residual, stale quote, spread, loss-budget, bid/ask replay, and guardian review blockers.",
             "current_lanes": [_lane_summary(item) for item in audusd_current],
         },
+        "month_scale_residual_family_gate": {
+            "family_count": _nested(residual_family_table, "summary", "family_count"),
+            "priority_family_count": _nested(residual_family_table, "summary", "priority_family_count"),
+            "tail_family_count": _nested(residual_family_table, "summary", "tail_family_count"),
+            "baseline_pl_jpy": _nested(residual_family_table, "replay_after_residual_family_filters", "baseline_pl_jpy"),
+            "improved_pl_jpy": _nested(residual_family_table, "replay_after_residual_family_filters", "improved_pl_jpy"),
+            "residual_pl_jpy": _nested(residual_family_table, "replay_after_residual_family_filters", "residual_pl_jpy"),
+            "clears_month_scale_tp_progress_replay_still_negative": _nested(
+                residual_family_table,
+                "replay_after_residual_family_filters",
+                "clears_month_scale_tp_progress_replay_still_negative",
+            ),
+            "all_negative_families_can_create_live_permission_false": residual_family_table.get(
+                "all_negative_families_can_create_live_permission_false"
+            ),
+            "priority_families": [
+                {
+                    "family": item.get("family"),
+                    "cause": item.get("cause"),
+                    "current_blocker_code": item.get("current_blocker_code"),
+                    "proposed_action": item.get("proposed_action"),
+                    "residual_pl_jpy": item.get("residual_pl_jpy"),
+                    "can_create_live_permission": item.get("can_create_live_permission"),
+                    "can_ever_be_as": item.get("can_ever_be_as"),
+                }
+                for item in residual_family_table.get("families", []) or []
+                if item.get("priority_focus")
+            ],
+        },
         "profitability_blockers": blocker_decomposition,
         "next_best_candidates": _next_best_candidates(repair_orchestrator, acceptance, eurjpy_proof),
         "blocker_hierarchy": [
             "No order_intents row is LIVE_READY.",
             "Normal routing remains BLOCKED.",
-            "Profitability acceptance still raises NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE.",
+            month_residual_line,
+            "Residual family table blocks every negative pair/side/method group from fresh A/S permission until exact proof clears the matching family.",
             "USD_JPY LONG BREAKOUT_FAILURE LIMIT remains rejected until fresh exact positive proof exists.",
             "EUR_JPY SHORT remains rejected/evidence-gap until spread-included non-negative proof exists.",
             "AUD_USD remains rejected by current DRY_RUN_BLOCKED lanes and month-scale residual blockers.",
@@ -1286,6 +1821,13 @@ def _capture_price_from_pips(row: dict[str, Any]) -> float | None:
     return round(price, 3 if pair.endswith("_JPY") else 5)
 
 
+def _method_from_lane_id(lane_id: str) -> str:
+    parts = [part for part in str(lane_id or "").split(":") if part]
+    if len(parts) >= 4:
+        return str(parts[3] or "UNKNOWN").strip().upper()
+    return "UNKNOWN"
+
+
 def _float_or_none(value: Any) -> float | None:
     try:
         return float(value)
@@ -1592,6 +2134,84 @@ def _month_scale_tp_replay_residuals_md(table: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _month_scale_residual_family_table_md(table: dict[str, Any]) -> str:
+    summary = table.get("summary") or {}
+    before = table.get("replay_before_residual_family_filters") or {}
+    after = table.get("replay_after_residual_family_filters") or {}
+    source = table.get("source_execution_timing_audit") or {}
+    harvest = table.get("source_harvest_gate_evidence") or {}
+    lines = [
+        "# Month-Scale Residual Family Table",
+        "",
+        f"- Generated: `{table.get('generated_at_utc')}`",
+        f"- Execution timing generated: `{source.get('generated_at_utc')}`",
+        f"- Harvest evidence generated: `{harvest.get('generated_at_utc')}`",
+        f"- Harvest source matches timing: `{harvest.get('source_consistent_with_execution_timing')}`",
+        f"- Family count: `{summary.get('family_count')}`",
+        f"- Priority families: `{summary.get('priority_family_count')}`",
+        f"- Tail families: `{summary.get('tail_family_count')}`",
+        f"- All negative families can create live permission: `{not table.get('all_negative_families_can_create_live_permission_false')}`",
+        "",
+        "## Replay",
+        "",
+        f"- Before filters baseline P/L JPY: `{before.get('baseline_pl_jpy')}`",
+        f"- Before filters improved/residual P/L JPY: `{before.get('improved_pl_jpy')}`",
+        f"- After residual-family filters residual P/L JPY: `{after.get('residual_pl_jpy')}`",
+        f"- MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE clears after filters: `{after.get('clears_month_scale_tp_progress_replay_still_negative')}`",
+        f"- Excluded family count: `{after.get('excluded_family_count')}`",
+        f"- Remaining residual groups: `{json.dumps(after.get('remaining_residual_groups') or [], sort_keys=True)}`",
+        "",
+        "## Families",
+        "",
+        "| family | trades | realized P/L | counterfactual P/L | residual P/L | cause | blocker | action | A/S now | can ever A/S | priority |",
+        "|---|---:|---:|---:|---:|---|---|---|---|---|---|",
+    ]
+    for item in table.get("families") or []:
+        lines.append(
+            f"| {item.get('family')} | {','.join(item.get('trade_ids') or [])} | {item.get('realized_pl_jpy')} | {item.get('counterfactual_pl_after_tp_progress_repair_jpy')} | {item.get('residual_pl_jpy')} | `{item.get('cause')}` | `{item.get('current_blocker_code')}` | `{item.get('proposed_action')}` | `{item.get('can_create_live_permission')}` | `{item.get('can_ever_be_as')}` | `{item.get('priority_focus')}` |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Priority Repair Requirements",
+            "",
+        ]
+    )
+    for item in table.get("families") or []:
+        if not item.get("priority_focus"):
+            continue
+        lines.append(f"### {item.get('family')}")
+        lines.append(f"- Decision: `{item.get('decision')}`")
+        lines.append(f"- Cause/action: `{item.get('cause')}` / `{item.get('proposed_action')}`")
+        lines.append(f"- A/S status: `{item.get('as_status')}`")
+        for evidence in item.get("exact_evidence_needed_to_repair") or []:
+            lines.append(f"- {evidence}")
+        lines.append("")
+    tail = table.get("residual_tail") or {}
+    lines.extend(
+        [
+            "## Residual Tail",
+            "",
+            f"- Tail family count: `{tail.get('family_count')}`",
+            f"- Tail residual P/L JPY: `{tail.get('residual_pl_jpy')}`",
+        ]
+    )
+    for item in tail.get("families") or []:
+        lines.append(
+            f"- `{item.get('family')}`: `{item.get('residual_pl_jpy')}` JPY, `{item.get('cause')}`, `{item.get('proposed_action')}`, blocker `{item.get('current_blocker_code')}`"
+        )
+    lines.extend(
+        [
+            "",
+            "## Gate Definitions",
+            "",
+        ]
+    )
+    for item in table.get("gate_definitions") or []:
+        lines.append(f"- `{item.get('blocker_code')}`: {item.get('exact_clearing_condition')} Can create A/S permission: `{item.get('can_create_as_permission')}`")
+    return "\n".join(lines) + "\n"
+
+
 def _historical_profit_capture_missed_md(table: dict[str, Any]) -> str:
     summary = table.get("summary") or {}
     lines = [
@@ -1719,6 +2339,32 @@ def _board_md(board: dict[str, Any]) -> str:
             f"- LIVE_READY allowed: `{aud.get('live_ready_allowed')}`",
             f"- Reason: `{aud.get('reason')}`",
             "",
+            "## Month-Scale Residual Family Gate",
+            "",
+        ]
+    )
+    residual = board.get("month_scale_residual_family_gate") or {}
+    lines.extend(
+        [
+            f"- Family count: `{residual.get('family_count')}`",
+            f"- Priority families: `{residual.get('priority_family_count')}`",
+            f"- Tail families: `{residual.get('tail_family_count')}`",
+            f"- Before filters improved P/L JPY: `{residual.get('improved_pl_jpy')}`",
+            f"- After filters residual P/L JPY: `{residual.get('residual_pl_jpy')}`",
+            f"- Month-scale replay clears after filters: `{residual.get('clears_month_scale_tp_progress_replay_still_negative')}`",
+            f"- All negative families can create live permission: `{not residual.get('all_negative_families_can_create_live_permission_false')}`",
+            "",
+            "| family | residual P/L | cause | blocker | action | A/S now | can ever A/S |",
+            "|---|---:|---|---|---|---|---|",
+        ]
+    )
+    for item in residual.get("priority_families") or []:
+        lines.append(
+            f"| {item.get('family')} | {item.get('residual_pl_jpy')} | `{item.get('cause')}` | `{item.get('current_blocker_code')}` | `{item.get('proposed_action')}` | `{item.get('can_create_live_permission')}` | `{item.get('can_ever_be_as')}` |"
+        )
+    lines.extend(
+        [
+            "",
             "## Repair Analysis Artifacts",
             "",
         ]
@@ -1794,6 +2440,20 @@ def _evidence(finding: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     evidence = finding.get("evidence")
     return evidence if isinstance(evidence, dict) else {}
+
+
+def _month_scale_replay_metrics(acceptance: dict[str, Any]) -> dict[str, Any]:
+    findings = _findings_by_code(acceptance)
+    evidence = _evidence(findings.get("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"))
+    if evidence:
+        return evidence
+    metrics = acceptance.get("metrics") if isinstance(acceptance.get("metrics"), dict) else {}
+    replay = (
+        metrics.get("profit_capture_replay_repair")
+        if isinstance(metrics.get("profit_capture_replay_repair"), dict)
+        else {}
+    )
+    return dict(replay)
 
 
 def _manual_position(broker: dict[str, Any]) -> dict[str, Any]:

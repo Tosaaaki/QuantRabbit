@@ -33,6 +33,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_TIMING_AUDIT,
+    DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
@@ -111,6 +112,7 @@ class ProfitabilityAcceptanceAuditor:
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
+        month_scale_residual_family_table_path: Path = DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         bidask_rules_path: Path = DEFAULT_BIDASK_REPLAY_RULES_PATH,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
@@ -123,6 +125,7 @@ class ProfitabilityAcceptanceAuditor:
         intents = _load_json(order_intents_path)
         self_improvement = _load_json(self_improvement_path)
         capture = _load_json(capture_economics_path)
+        month_scale_residual_family_table = _load_json(month_scale_residual_family_table_path)
         bidask_rules = _load_json(bidask_rules_path)
         oanda_rotation_mining_path = _oanda_rotation_mining_effective_path(oanda_rotation_mining_path)
         oanda_rotation_mining = _load_json(oanda_rotation_mining_path)
@@ -146,6 +149,7 @@ class ProfitabilityAcceptanceAuditor:
             else {},
             self_metrics=self_metrics,
             capture_metrics=capture_metrics,
+            month_scale_residual_family_table=month_scale_residual_family_table,
         )
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
@@ -2079,11 +2083,98 @@ def _top_repair_replay_residual_method_rollups(
     return rows[:10]
 
 
+def _month_scale_residual_family_filter_metrics(
+    timing_metrics: dict[str, Any],
+    table: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = table if isinstance(table, dict) else {}
+    replay = (
+        payload.get("replay_after_residual_family_filters")
+        if isinstance(payload.get("replay_after_residual_family_filters"), dict)
+        else {}
+    )
+    source = (
+        payload.get("source_execution_timing_audit")
+        if isinstance(payload.get("source_execution_timing_audit"), dict)
+        else {}
+    )
+    timing_generated = str(timing_metrics.get("generated_at_utc") or "").strip()
+    table_timing_generated = str(
+        source.get("generated_at_utc")
+        or payload.get("source_execution_timing_audit_generated_at_utc")
+        or ""
+    ).strip()
+    residual_pl = _optional_float(replay.get("residual_pl_jpy"))
+    baseline_pl = _optional_float(replay.get("baseline_pl_jpy"))
+    improved_pl = _optional_float(replay.get("improved_pl_jpy"))
+    filters_active = bool(
+        replay.get("residual_family_filters_active")
+        or payload.get("residual_family_filters_active")
+    )
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    market_close_gate_active = bool(
+        payload.get("market_close_leak_family_gate_active")
+        or safety.get("market_close_leak_family_gate_active")
+    )
+    tp_progress_gate_active = bool(
+        payload.get("tp_progress_harvest_gate_active")
+        or safety.get("tp_progress_harvest_gate_active")
+    )
+    manual_excluded = bool(
+        payload.get("manual_eurusd_472987_excluded")
+        or safety.get("manual_eurusd_472987_excluded")
+    )
+    no_fresh_promotion = bool(
+        payload.get("no_unproven_fresh_entry_promotion")
+        or safety.get("no_unproven_fresh_entry_promotion")
+    )
+    all_live_permission_false = bool(
+        payload.get("all_negative_families_can_create_live_permission_false")
+        or safety.get("all_negative_families_can_create_live_permission_false")
+    )
+    current = bool(timing_generated and table_timing_generated == timing_generated)
+    safety_ok = (
+        filters_active
+        and market_close_gate_active
+        and tp_progress_gate_active
+        and manual_excluded
+        and no_fresh_promotion
+        and all_live_permission_false
+    )
+    clears = bool(current and safety_ok and residual_pl is not None and residual_pl >= 0.0)
+    return {
+        "loaded": bool(payload),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "source_execution_timing_generated_at_utc": table_timing_generated or None,
+        "current_against_execution_timing": current,
+        "residual_family_filters_active": filters_active,
+        "market_close_leak_family_gate_active": market_close_gate_active,
+        "tp_progress_harvest_gate_active": tp_progress_gate_active,
+        "manual_eurusd_472987_excluded": manual_excluded,
+        "no_unproven_fresh_entry_promotion": no_fresh_promotion,
+        "all_negative_families_can_create_live_permission_false": all_live_permission_false,
+        "safety_ok": safety_ok,
+        "baseline_pl_jpy": baseline_pl,
+        "improved_pl_jpy": improved_pl,
+        "residual_pl_jpy": residual_pl,
+        "excluded_family_count": replay.get("excluded_family_count"),
+        "excluded_trade_ids": replay.get("excluded_trade_ids") or [],
+        "remaining_residual_groups": replay.get("remaining_residual_groups") or [],
+        "clears_month_scale_tp_progress_replay_still_negative": clears,
+        "clearance_basis": (
+            "current residual-family filters make the same 744h replay non-negative"
+            if clears
+            else "table absent, stale, unsafe, or filtered replay remains negative"
+        ),
+    }
+
+
 def _profit_capture_replay_repair_findings(
     timing_metrics: dict[str, Any],
     *,
     self_metrics: dict[str, Any] | None = None,
     capture_metrics: dict[str, Any] | None = None,
+    month_scale_residual_family_table: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     self_metrics = self_metrics or {}
     capture_metrics = capture_metrics or {}
@@ -2188,6 +2279,15 @@ def _profit_capture_replay_repair_findings(
         and window_lookback_hours is not None
         and window_lookback_hours >= MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS
     )
+    residual_family_filter_metrics = _month_scale_residual_family_filter_metrics(
+        timing_metrics,
+        month_scale_residual_family_table,
+    )
+    month_scale_filtered_replay_clears = bool(
+        residual_family_filter_metrics.get(
+            "clears_month_scale_tp_progress_replay_still_negative"
+        )
+    )
     metrics = {
         "execution_timing_loaded": bool(timing_metrics.get("loaded")),
         "execution_timing_generated_at_utc": timing_metrics.get("generated_at_utc"),
@@ -2197,6 +2297,10 @@ def _profit_capture_replay_repair_findings(
         "month_scale_replay_required": monthly_replay_required,
         "month_scale_replay_loaded": month_scale_replay_loaded,
         "month_scale_replay_min_hours": MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS,
+        "month_scale_residual_family_filters": residual_family_filter_metrics,
+        "month_scale_replay_cleared_by_residual_family_filters": (
+            month_scale_filtered_replay_clears
+        ),
         "capture_take_profit_net_jpy": tp_net,
         "capture_market_close_net_jpy": market_close_net,
         "loss_closes_profit_capture_missed": simple_missed,
@@ -2275,6 +2379,7 @@ def _profit_capture_replay_repair_findings(
                     and (
                         active_counterfactual_pl is None
                         or active_counterfactual_pl >= 0.0
+                        or month_scale_filtered_replay_clears
                     )
                 )
             )
@@ -2312,6 +2417,7 @@ def _profit_capture_replay_repair_findings(
         and month_scale_replay_loaded
         and active_counterfactual_pl is not None
         and active_counterfactual_pl < 0.0
+        and not month_scale_filtered_replay_clears
     ):
         findings.append(
             _finding(
@@ -2334,6 +2440,9 @@ def _profit_capture_replay_repair_findings(
                     "repair_replay_counterfactual_pl_jpy": repair_counterfactual_pl,
                     "raw_counterfactual_profit_capture_pl_jpy": raw_counterfactual_pl,
                     "active_counterfactual_profit_capture_pl_jpy": active_counterfactual_pl,
+                    "month_scale_residual_family_filters": (
+                        residual_family_filter_metrics
+                    ),
                     "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
                     "counterfactual_profit_capture_jpy": counterfactual_jpy,
                     "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],

@@ -1,9 +1,9 @@
 # Month-Scale TP Replay Residuals
 
-- Generated: `2026-07-05T15:18:41Z`
+- Generated: `2026-07-05T16:24:00Z`
 - Blocker: `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`
-- Replay window: `{"from_utc": "2026-05-25T19:16:37.296403+00:00", "lookback_hours": 744.0, "post_close_hours": 6.0, "to_utc": "2026-06-26T06:41:21.431830+00:00"}`
-- Baseline actual loss-close P/L JPY: `-35276.4462`
+- Replay window: `{"from_utc": "2026-05-26T07:03:46.222763+00:00", "lookback_hours": 744.0, "post_close_hours": 6.0, "to_utc": "2026-07-03T20:08:53.084075+00:00"}`
+- Baseline actual loss-close P/L JPY: `-39275.3429`
 - Improved P/L after missed-capture repair JPY: `-20504.5826`
 - Current residual P/L JPY: `-20504.5826`
 - Manual EUR_USD `472987` excluded: `True`

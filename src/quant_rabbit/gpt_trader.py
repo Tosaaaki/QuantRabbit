@@ -1699,6 +1699,7 @@ from quant_rabbit.market_close_leak_gate import (
     TP_PROVEN_EXCEPTION_KEYS,
     market_close_leak_family_payload_issue,
 )
+from quant_rabbit.month_scale_residual_gate import month_scale_residual_metadata_issue
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
     FORECAST_ADVERSE_PATH_BLOCKER_CODE,
@@ -2677,6 +2678,14 @@ class DecisionVerifier:
                         VerificationIssue(
                             MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE,
                             str(market_close_leak_issue.get("message") or ""),
+                        )
+                    )
+                residual_family_issue = month_scale_residual_metadata_issue(selected_lane)
+                if residual_family_issue is not None:
+                    issues.append(
+                        VerificationIssue(
+                            str(residual_family_issue.get("code") or ""),
+                            str(residual_family_issue.get("message") or ""),
                         )
                     )
                 forecast_issue = _lane_forecast_direction_issue(selected_lane)
@@ -5829,6 +5838,8 @@ def _lane_packet(
                         "tp_execution_mode",
                         "tp_target_intent",
                         "opportunity_mode",
+                        "month_scale_residual_loss_repair_blocked",
+                        "month_scale_residual_loss_group",
                     ),
                 ),
                 "market_close_leak_family": _small_dict(

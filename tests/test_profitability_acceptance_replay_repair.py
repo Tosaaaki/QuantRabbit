@@ -376,6 +376,94 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
             residual_groups,
         )
 
+    def test_current_residual_family_filters_clear_month_specific_gate_only(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-07-03T20:08:53+00:00",
+                "window_lookback_hours": 744.0,
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 0,
+                "loss_close_repair_replay_counterfactual_pl_jpy": -20863.5316,
+                "loss_close_repair_replay_delta_jpy": 18382.9346,
+            },
+            capture_metrics={
+                "take_profit": {"net_jpy": 48804.0},
+                "market_close": {"net_jpy": -81147.0},
+            },
+            month_scale_residual_family_table={
+                "generated_at_utc": "2026-07-05T00:00:00+00:00",
+                "source_execution_timing_audit": {
+                    "generated_at_utc": "2026-07-03T20:08:53+00:00"
+                },
+                "market_close_leak_family_gate_active": True,
+                "tp_progress_harvest_gate_active": True,
+                "manual_eurusd_472987_excluded": True,
+                "no_unproven_fresh_entry_promotion": True,
+                "all_negative_families_can_create_live_permission_false": True,
+                "replay_after_residual_family_filters": {
+                    "residual_family_filters_active": True,
+                    "baseline_pl_jpy": -39246.4662,
+                    "improved_pl_jpy": -20863.5316,
+                    "residual_pl_jpy": 2984.1927,
+                    "excluded_trade_ids": ["471817"],
+                    "remaining_residual_groups": [],
+                },
+            },
+        )
+
+        codes = [item["code"] for item in findings]
+        self.assertTrue(metrics["month_scale_replay_loaded"])
+        self.assertTrue(metrics["month_scale_replay_cleared_by_residual_family_filters"])
+        self.assertTrue(metrics["replay_repair_proved"])
+        self.assertNotIn("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE", codes)
+
+    def test_stale_residual_family_filters_do_not_clear_month_specific_gate(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-07-03T20:08:53+00:00",
+                "window_lookback_hours": 744.0,
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 0,
+                "loss_close_repair_replay_counterfactual_pl_jpy": -20863.5316,
+            },
+            capture_metrics={
+                "take_profit": {"net_jpy": 48804.0},
+                "market_close": {"net_jpy": -81147.0},
+            },
+            month_scale_residual_family_table={
+                "source_execution_timing_audit": {
+                    "generated_at_utc": "2026-06-26T06:41:21+00:00"
+                },
+                "market_close_leak_family_gate_active": True,
+                "tp_progress_harvest_gate_active": True,
+                "manual_eurusd_472987_excluded": True,
+                "no_unproven_fresh_entry_promotion": True,
+                "all_negative_families_can_create_live_permission_false": True,
+                "replay_after_residual_family_filters": {
+                    "residual_family_filters_active": True,
+                    "residual_pl_jpy": 2984.1927,
+                },
+            },
+        )
+
+        codes = [item["code"] for item in findings]
+        self.assertFalse(metrics["month_scale_replay_cleared_by_residual_family_filters"])
+        self.assertIn("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE", codes)
+        month_finding = next(
+            item
+            for item in findings
+            if item["code"] == "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+        )
+        self.assertFalse(
+            month_finding["evidence"]["month_scale_residual_family_filters"][
+                "current_against_execution_timing"
+            ]
+        )
+
     def test_month_scale_replay_non_negative_can_clear_month_specific_gate(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
             {

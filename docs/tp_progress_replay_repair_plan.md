@@ -1,12 +1,12 @@
 # TP Progress Replay Repair Plan
 
-- Generated: `2026-07-05T15:18:41Z`
+- Generated: `2026-07-05T16:24:00Z`
 - Blocker: `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`
 - Fresh entries blocked: `True`
 
 ## Current Evidence
 
-- `window_lookback_hours`: `744.0`
+- `window_lookback_hours`: `None`
 - `loss_closes_profit_capture_missed`: `14`
 - `loss_closes_repair_replay_triggered`: `13`
 - `counterfactual_profit_capture_delta_jpy`: `18770.7603`

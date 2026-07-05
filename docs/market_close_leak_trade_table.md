@@ -1,6 +1,6 @@
 # Market Close Leak Trade Table
 
-- Generated: `2026-07-05T15:18:41Z`
+- Generated: `2026-07-05T16:24:00Z`
 - MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE present: `True`
 - RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK present in current acceptance: `False`
 - Fresh entries blocked: `True`

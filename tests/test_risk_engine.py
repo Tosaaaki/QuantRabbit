@@ -10,6 +10,9 @@ from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.month_scale_residual_gate import (
+    MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
+)
 from quant_rabbit.operator_manual import (
     JPY_FRESH_ADD_BLOCK_CODE,
     OPERATOR_MANUAL_AUTH_METADATA_KEY,
@@ -368,6 +371,48 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("LIVE_DISABLED", {issue.code for issue in decision.issues})
         self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
+
+    def test_live_send_blocks_month_scale_residual_metadata(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="residual_family_metadata_must_block_live_send",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="candidate shape still has a month-scale residual",
+                chart_story="trend staircase",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1716 loses on M5 bodies",
+            ),
+            metadata={
+                "month_scale_residual_loss_repair_blocked": True,
+                "month_scale_residual_loss_group": {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "method": "TREND_CONTINUATION",
+                    "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                    "repair_replay_pl_jpy": -620.0,
+                    "loss_closes": 1,
+                    "trade_ids": ["residual-trade"],
+                },
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(
+            intent,
+            snapshot(),
+            for_live_send=True,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertIn(
+            MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
+            {issue.code for issue in decision.issues},
+        )
 
     def test_valid_context_removes_market_story_warning(self) -> None:
         intent = OrderIntent(
