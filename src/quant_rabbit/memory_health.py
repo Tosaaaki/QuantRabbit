@@ -1539,11 +1539,17 @@ def _is_capture_economics_profitability_blocker(item: Any) -> bool:
     text = _issue_text(item).upper()
     if isinstance(item, dict):
         code = str(item.get("code") or "").upper()
-        if code == "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION":
+        if code in {
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+        }:
             return True
         message = str(item.get("message") or "").upper()
         text = f"{text} {message}"
-    return "CAPTURE_ECONOMICS IS NEGATIVE_EXPECTANCY" in text
+    return (
+        "CAPTURE_ECONOMICS IS NEGATIVE_EXPECTANCY" in text
+        or "OBSERVED AVERAGE WINNER CAP" in text
+    )
 
 
 def _is_strategy_profile_gap(item: Any) -> bool:

@@ -707,6 +707,48 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
         self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
 
+    def test_loss_asymmetry_capture_blocker_is_advisory_for_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            message = (
+                "planned worst-case loss 956 JPY exceeds the observed average winner cap "
+                "418 JPY while capture_economics status=NEGATIVE_EXPECTANCY and "
+                "avg_loss=1015 JPY; size down or repair TP/exit payoff before adding "
+                "fresh one-way risk."
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "failure_trader:GBP_CHF:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "GBP_CHF"},
+                                "risk_issues": [
+                                    {
+                                        "code": "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+                                        "message": message,
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [message],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
     def test_stale_quote_live_blocker_is_advisory_for_memory_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
