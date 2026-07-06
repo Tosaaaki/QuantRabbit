@@ -2,7 +2,7 @@
 
 - Generated: `2026-07-06T09:42:39Z`
 - Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
-- Classification: `REPAIR_REQUIRED`
+- Classification: `EVIDENCE_GAP`
 - Standalone 4x: `False`
 - Portfolio component possible after repair: `True`
 - Can create live permission: `False`

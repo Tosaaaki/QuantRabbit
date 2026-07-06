@@ -1,7 +1,7 @@
 # AUD_JPY LIMIT Fresh S5 Bid/Ask Replay
 
 - Generated: `2026-07-06T10:10:06.406105Z`
-- Classification: `REPAIR_REQUIRED`
+- Classification: `EVIDENCE_GAP`
 - Pair/side/method/order type/exit shape: `AUD_JPY` `SHORT` `BREAKOUT_FAILURE` `LIMIT` `TP_PROOF_COLLECTION_HARVEST`
 - Replay window: `2026-05-14T15:15:47.378998Z` to `2026-06-22T05:47:46.506094Z`
 - Samples: `135`

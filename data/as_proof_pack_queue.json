@@ -172,7 +172,7 @@
       "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
       "order_type": "LIMIT",
       "pair": "AUD_JPY",
-      "proof_classification": "REPAIR_REQUIRED",
+      "proof_classification": "EVIDENCE_GAP",
       "proof_distance": 7,
       "side": "SHORT"
     }

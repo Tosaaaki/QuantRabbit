@@ -9,14 +9,14 @@
     "proof_collection_ready": true
   },
   "can_create_live_permission": false,
-  "classification": "REPAIR_REQUIRED",
+  "classification": "EVIDENCE_GAP",
   "classification_values": [
     "PROOF_READY",
     "REPAIR_REQUIRED",
     "EVIDENCE_GAP",
     "REJECTED"
   ],
-  "decision": "keep_as_repair_required_no_permission",
+  "decision": "mark_evidence_gap_no_live_permission",
   "economics": {
     "estimated_trades_per_day_available": 34.8974,
     "expected_active_day_contribution_jpy": 6627.7317,

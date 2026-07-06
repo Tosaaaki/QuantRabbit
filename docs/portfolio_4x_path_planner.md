@@ -7,11 +7,11 @@
 - Standalone math candidates: `2`
 - Fastest mathematical basket reaches required return: `True`; live eligible `False`
 
-## Top Ranked Repair Work
+## Top Ranked Repair / Evidence Work
 
 | rank | lane | class | daily % | score | distance | units | blockers |
 |---:|---|---|---:|---:|---:|---:|---:|
-| 1 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` | `REPAIR_REQUIRED` | 3.7891 | 63.3128 | 5 | 3000 | 4 |
+| 1 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` | `EVIDENCE_GAP` | 3.7891 | 63.3128 | 5 | 3000 | 4 |
 | 2 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` | `REPAIR_REQUIRED` | 3.7891 | 54.8128 | 6 | 3000 | 7 |
 | 3 | `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.1576 | 45.2608 | 7 | 0 | 8 |
 | 4 | `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.741 | 44.428 | 7 | 3000 | 9 |
