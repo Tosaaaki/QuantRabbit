@@ -1,0 +1,529 @@
+{
+  "classification_values": [
+    "ACTIVE_BLOCKER",
+    "CONTAINED_NOT_CLEARED",
+    "TAXONOMY_DUPLICATE",
+    "STALE_SUPERSEDED",
+    "EVIDENCE_GAP"
+  ],
+  "generated_at_utc": "2026-07-06T06:08:36Z",
+  "live_side_effects": [],
+  "mode": "read_only_profitability_acceptance_blocker_reconciliation",
+  "permission_boundary": "No row in this reconciliation creates live permission. ACTIVE, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.",
+  "rows": [
+    {
+      "can_create_live_permission": false,
+      "classification": "ACTIVE_BLOCKER",
+      "clearance_condition": "Regenerate memory-health and self-improvement-audit with zero P0 findings.",
+      "code": "SELF_IMPROVEMENT_P0_PRESENT",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "memory_blockers": [
+          "forecast_history latest row predates broker snapshot (forecast=2026-07-06T01:58:08.871602+00:00, snapshot=2026-07-06T05:51:56.023182+00:00)"
+        ],
+        "memory_status": "MEMORY_HEALTH_BLOCKED",
+        "self_improvement_p0_codes": [
+          "MEMORY_HEALTH_BLOCKED"
+        ],
+        "self_improvement_status": "SELF_IMPROVEMENT_BLOCKED"
+      },
+      "present_as_current_blocker": true,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": true,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "ACTIVE_BLOCKER",
+      "clearance_condition": "Accepted realized capture economics must become non-negative without promoting blocked historical families.",
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "expectancy_jpy_per_trade": -177.4,
+          "net_jpy": -40616.9,
+          "payoff_ratio": 0.393,
+          "profit_factor": null,
+          "trades": 229,
+          "win_rate": 0.5983
+        },
+        "message": "capture economics is still NEGATIVE_EXPECTANCY",
+        "priority": "P0"
+      },
+      "present_as_current_blocker": true,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": true,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "ACTIVE_BLOCKER",
+      "clearance_condition": "TP-proven segments must no longer be net-damaged by unproven MARKET_ORDER_TRADE_CLOSE leakage.",
+      "code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "segments": {
+            "count": 1,
+            "first": {
+              "keys": [
+                "attribution_scope",
+                "market_close_expectancy_jpy",
+                "market_close_loss_examples",
+                "market_close_loss_trade_ids",
+                "market_close_net_jpy",
+                "method",
+                "operator_manual_excluded",
+                "pair",
+                "should_count_against_system_edge",
+                "side",
+                "take_profit_expectancy_jpy",
+                "take_profit_trades"
+              ]
+            }
+          }
+        },
+        "message": "1 TP-proven segment(s) are still net-damaged by MARKET_ORDER_TRADE_CLOSE leakage",
+        "priority": "P0"
+      },
+      "present_as_current_blocker": true,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": true,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "TAXONOMY_DUPLICATE",
+      "clearance_condition": "Clear only with exact close-gate proof, contained-risk timing evidence, and TP-proven exception evidence for the family.",
+      "code": "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+      "contained_by": null,
+      "duplicate_of": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "evidence_summary": {
+        "evidence": {
+          "family": {
+            "attribution_scope": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+            "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+            "method": "BREAKOUT_FAILURE",
+            "pair": "EUR_USD",
+            "side": "LONG"
+          },
+          "operator_manual_excluded_trade_ids": {
+            "count": 1,
+            "first": "472987"
+          },
+          "requirements": {
+            "attribution_scope": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+            "close_gate_proof_required": "when_MARKET_ORDER_TRADE_CLOSE_is_used",
+            "contained_risk_timing_evidence_required": "when_MARKET_ORDER_TRADE_CLOSE_is_used",
+            "required_close_reason": "MARKET_ORDER_TRADE_CLOSE",
+            "tp_proven_exception_evidence_required": true
+          },
+          "segments": {
+            "count": 1,
+            "first": {
+              "keys": [
+                "market_close_loss_net_jpy",
+                "market_close_losses",
+                "market_close_net_jpy",
+                "market_close_trades",
+                "method",
+                "operator_manual_excluded",
+                "pair",
+                "should_count_against_system_edge",
+                "side",
+                "take_profit_proven",
+                "take_profit_trades"
+              ]
+            }
+          },
+          "system_gateway_loss_trade_ids": {
+            "count": 7,
+            "first": "470356"
+          }
+        },
+        "message": "EUR_USD LONG BREAKOUT_FAILURE system-gateway MARKET_ORDER_TRADE_CLOSE loss family remains blocked from fresh-entry and repair-exit live routing until the exact exception proof stack exists.",
+        "priority": "P0"
+      },
+      "present_as_current_blocker": true,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": true,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "CONTAINED_NOT_CLEARED",
+      "clearance_condition": "Fresh 30-day TP-progress repair replay must be non-negative after the accepted filters and cannot rely on optimism.",
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "contained_by": "month_scale_residual_family_filters",
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "_truncated_keys": 7,
+          "active_counterfactual_profit_capture_pl_jpy": -20492.5063,
+          "counterfactual_profit_capture_delta_jpy": 18782.8366,
+          "counterfactual_profit_capture_jpy": 3838.2211,
+          "loss_closes_profit_capture_missed": 14,
+          "loss_closes_repair_replay_triggered": 13,
+          "month_scale_residual_family_filters": {
+            "_truncated_keys": 9,
+            "all_negative_families_can_create_live_permission_false": true,
+            "baseline_pl_jpy": -39246.4662,
+            "clearance_basis": "table absent, stale, unsafe, or filtered replay remains negative",
+            "clears_month_scale_tp_progress_replay_still_negative": false,
+            "current_against_execution_timing": false,
+            "excluded_family_count": 23,
+            "excluded_trade_ids": {
+              "count": 26
+            },
+            "generated_at_utc": "2026-07-05T17:21:46Z",
+            "improved_pl_jpy": -20863.5316,
+            "loaded": true
+          },
+          "raw_counterfactual_profit_capture_pl_jpy": -20537.1976,
+          "repair_replay_counterfactual_pl_jpy": -20492.5063,
+          "top_entry_quality_residual_groups": {
+            "count": 10,
+            "first": {
+              "keys": [
+                "actual_pl_jpy",
+                "block_reasons",
+                "examples",
+                "exit_reason",
+                "loss_closes",
+                "method",
+                "pair",
+                "repair_replay_delta_jpy",
+                "repair_replay_pl_jpy",
+                "repair_replay_triggered",
+                "residual_scope",
+                "side"
+              ]
+            }
+          },
+          "top_entry_quality_residual_method_rollups": {
+            "count": 3,
+            "first": {
+              "keys": [
+                "actual_pl_jpy",
+                "block_reasons",
+                "examples",
+                "exit_reasons",
+                "group_count",
+                "loss_closes",
+                "method",
+                "pair_count",
+                "pairs",
+                "repair_replay_delta_jpy",
+                "repair_replay_pl_jpy",
+                "repair_replay_triggered"
+              ]
+            }
+          }
+        },
+        "message": "30-day OANDA candle replay says the current TP-progress repair improves loss-side closes, but the replayed loss-close P/L is still net negative",
+        "priority": "P0"
+      },
+      "present_as_current_blocker": true,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": true,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "EVIDENCE_GAP",
+      "clearance_condition": "Projection buckets used for live support must clear economic precision, not just headline hit-rate precision.",
+      "code": "PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "gaps": {
+            "count": 5,
+            "first": {
+              "keys": [
+                "bucket",
+                "economic_hit_rate",
+                "economic_hit_rate_wilson_lower",
+                "economic_samples",
+                "hit_rate",
+                "hit_rate_wilson_lower",
+                "pair",
+                "regime",
+                "samples",
+                "signal_name",
+                "timeout_count",
+                "timeout_rate"
+              ]
+            }
+          },
+          "usable_edges": {
+            "count": 5,
+            "first": {
+              "keys": [
+                "bucket",
+                "economic_hit_rate",
+                "economic_hit_rate_wilson_lower",
+                "economic_samples",
+                "hit_rate",
+                "hit_rate_wilson_lower",
+                "pair",
+                "passes_economic_precision",
+                "regime",
+                "samples",
+                "signal_name",
+                "timeout_count"
+              ]
+            }
+          }
+        },
+        "message": "5 projection bucket(s) clear headline precision but fail economic precision after TIMEOUT/no-touch penalties",
+        "priority": "P1"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "EVIDENCE_GAP",
+      "clearance_condition": "All-currency bid/ask replay coverage must be thick enough for the live-grade proof target.",
+      "code": "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "_truncated_keys": 15,
+          "adoption_summary": {
+            "has_live_grade_support": true,
+            "has_rank_only_support": true,
+            "live_grade_support_rules": 12,
+            "negative_block_rules": 52,
+            "rank_only_blocker_counts": {
+              "keys": [
+                "DAILY_PNL_UNSTABLE",
+                "DAILY_SAMPLE_CONCENTRATED",
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION"
+              ]
+            },
+            "rank_only_support_rules": 5
+          },
+          "contrarian_edge_rules": 17,
+          "daily_stability_requirements": {
+            "max_daily_sample_share": 0.7,
+            "min_active_days": 3,
+            "min_positive_day_rate": 0.6666666666666666
+          },
+          "daily_stable_contrarian_edge_rules": 12,
+          "daily_stable_edge_rules": 0,
+          "daily_stable_support_rules": 12,
+          "edge_rules": 0,
+          "forecast_sample_collection_required": true,
+          "forecast_sample_coverage_summary": {
+            "_truncated_keys": 6,
+            "min_active_days_for_daily_stability": 3,
+            "min_directional_samples_for_precision_rule": 30,
+            "pair_count": 28,
+            "pair_coverage": {
+              "count": 28
+            },
+            "pair_coverage_count": 28,
+            "pair_coverage_examples": {
+              "count": 24
+            },
+            "pair_coverage_examples_omitted": 4,
+            "pair_direction_count": 56,
+            "pending_future_truth_samples": 59,
+            "under_sampled_gap_reason_counts": {
+              "keys": [
+                "NO_MARKET_SESSION_UNSCORABLE",
+                "PENDING_FUTURE_TRUTH_WINDOW"
+              ]
+            }
+          },
+          "generated_at_utc": "2026-07-03T14:52:18.653002Z"
+        },
+        "message": "S5 bid/ask replay has price truth for loaded samples, but pair-direction sample coverage is too thin to claim all-currency high-turn readiness",
+        "priority": "P1"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "EVIDENCE_GAP",
+      "clearance_condition": "At least one lane must regenerate LIVE_READY with risk, gateway, GPT, guardian, telemetry, and acceptance proof.",
+      "code": "NO_LIVE_READY_TARGET_COVERAGE",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "candidate_count": 82,
+          "live_ready_lanes": 0,
+          "remaining_target_jpy": 28718.6,
+          "top_blockers": {
+            "count": 10,
+            "first": {
+              "keys": [
+                "code",
+                "count"
+              ]
+            }
+          }
+        },
+        "message": "daily target is open but there are no LIVE_READY lanes",
+        "priority": "P1"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "EVIDENCE_GAP",
+      "clearance_condition": "Closest repair lanes must fill exact proof gaps; repair ranking does not create permission.",
+      "code": "REPAIR_FRONTIER_BLOCKED",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "evidence": {
+          "blocked_count": 11,
+          "candidate_count": 11,
+          "examples": {
+            "count": 8,
+            "first": {
+              "keys": [
+                "blocker_codes",
+                "blocker_count",
+                "lane_id",
+                "method",
+                "oanda_campaign_matching_vehicle_key",
+                "order_type",
+                "pair",
+                "positive_rotation_pessimistic_expectancy_jpy",
+                "repair_mode",
+                "risk_allowed",
+                "side",
+                "status"
+              ]
+            }
+          },
+          "live_ready_count": 0,
+          "top_remaining_blockers": {
+            "count": 10,
+            "first": {
+              "keys": [
+                "code",
+                "count"
+              ]
+            }
+          }
+        },
+        "message": "11 repair-mode candidate(s) exist, but none currently clear live gates",
+        "priority": "P1"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": true,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "STALE_SUPERSEDED",
+      "clearance_condition": "Keep execution ledger synchronized with broker snapshot before regenerating acceptance.",
+      "code": "EXECUTION_LEDGER_STALE",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "execution_ledger_last_oanda_transaction_id": "472996",
+        "snapshot_last_transaction_id": "472996"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": false,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": false,
+      "still_blocks_live_ready": false
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "STALE_SUPERSEDED",
+      "clearance_condition": "If it reappears, reconcile the exact market-close receipt and keep the family blocked until proven.",
+      "code": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "present_in_current_acceptance": false
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": false,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": false,
+      "still_blocks_live_ready": false
+    },
+    {
+      "can_create_live_permission": false,
+      "classification": "CONTAINED_NOT_CLEARED",
+      "clearance_condition": "Treat historical capture misses as repair inputs only until post-repair replay and fresh proof are non-negative.",
+      "code": "HISTORICAL_PROFIT_CAPTURE_MISSED",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "related_current_code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": false,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    }
+  ],
+  "source_artifacts": [
+    "data/profitability_acceptance.json",
+    "docs/profitability_acceptance_report.md",
+    "data/self_improvement_audit.json",
+    "data/memory_health.json",
+    "data/remaining_profitability_p0_decomposition.json",
+    "data/as_lane_candidate_board.json",
+    "data/as_proof_pack_queue.json"
+  ],
+  "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+  "summary": {
+    "acceptance_blocked": true,
+    "as_live_ready_path_exists": false,
+    "can_create_live_permission": false,
+    "classification_counts": {
+      "ACTIVE_BLOCKER": 3,
+      "CONTAINED_NOT_CLEARED": 2,
+      "EVIDENCE_GAP": 4,
+      "STALE_SUPERSEDED": 2,
+      "TAXONOMY_DUPLICATE": 1
+    },
+    "containment_only_cannot_clear_acceptance": true,
+    "current_acceptance_blocker_codes": [
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+      "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "SELF_IMPROVEMENT_P0_PRESENT"
+    ],
+    "live_ready_lanes": 0,
+    "normal_routing_status": "BLOCKED",
+    "routing_allowed": false
+  }
+}

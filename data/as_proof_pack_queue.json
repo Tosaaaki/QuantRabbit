@@ -6,7 +6,7 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-06T01:59:25Z",
+  "generated_at_utc": "2026-07-06T06:08:31Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
   "queue": [
@@ -20,7 +20,7 @@
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
       "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
       "method": "BREAKOUT_FAILURE",
       "missing_proof": {
@@ -60,7 +60,7 @@
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
       "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
       "method": "BREAKOUT_FAILURE",
       "missing_proof": {
@@ -102,7 +102,7 @@
         "STRATEGY_NOT_ELIGIBLE"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 8.175,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 8.1576,
       "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
       "method": "RANGE_ROTATION",
       "missing_proof": {
@@ -144,7 +144,7 @@
         "STRATEGY_NOT_ELIGIBLE"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.7576,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.741,
       "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
       "method": "TREND_CONTINUATION",
       "missing_proof": {

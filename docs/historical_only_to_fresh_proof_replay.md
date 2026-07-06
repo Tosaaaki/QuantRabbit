@@ -1,14 +1,14 @@
 # Historical-Only To Fresh Proof Replay
 
-- Generated: `2026-07-06T01:59:31Z`
+- Generated: `2026-07-06T06:08:36Z`
 - Fresh replay: `logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json`
 - Price truth: `PRICE_TRUTH_OK`
 - Adoption level: `PAIR_LOCAL_RANK_ONLY`
 
 | lane | class | daily % | fresh S5 status | forecast | geometry | margin | permission |
 |---|---|---:|---|---|---|---|---|
-| `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.175 | `EVIDENCE_GAP_UNDER_SAMPLED` | `True` | `False` | `False` | `False` |
-| `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.7576 | `EVIDENCE_GAP_UNDER_SAMPLED` | `True` | `False` | `False` | `False` |
+| `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.1576 | `EVIDENCE_GAP_UNDER_SAMPLED` | `True` | `False` | `False` | `False` |
+| `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.741 | `EVIDENCE_GAP_UNDER_SAMPLED` | `True` | `False` | `False` | `False` |
 
 ## 744h Replay Boundary
 

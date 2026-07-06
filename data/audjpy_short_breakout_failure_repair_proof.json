@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T01:59:31Z",
+  "generated_at_utc": "2026-07-06T06:08:36Z",
   "live_side_effects": [],
   "mode": "read_only_audjpy_short_breakout_failure_repair_proof",
   "rows": [
@@ -17,7 +17,7 @@
       ],
       "decision": "portfolio_component_after_repair_only",
       "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "expected_jpy_per_trade": 189.9205,
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
@@ -324,8 +324,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 53439.7074,
-          "margin_used_jpy": 221902.8
+          "margin_available_jpy": 52953.7698,
+          "margin_used_jpy": 222180.0
         },
         "margin_requirement_min_lot_jpy": 4483.56,
         "margin_requirement_realistic_size_jpy": 13450.68,
@@ -372,9 +372,9 @@
         "risk_engine_pass",
         "s5_bidask_spread_included_replay"
       ],
-      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.84837332015857,
       "standalone_4x": false,
-      "standalone_4x_gap_pct": 1.5888
+      "standalone_4x_gap_pct": 1.6234
     },
     {
       "can_create_live_permission": false,
@@ -388,7 +388,7 @@
       ],
       "decision": "portfolio_component_after_repair_only",
       "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "expected_jpy_per_trade": 189.9205,
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
@@ -695,8 +695,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 53439.7074,
-          "margin_used_jpy": 221902.8
+          "margin_available_jpy": 52953.7698,
+          "margin_used_jpy": 222180.0
         },
         "margin_requirement_min_lot_jpy": 4486.76,
         "margin_requirement_realistic_size_jpy": 13460.28,
@@ -742,9 +742,9 @@
         "risk_engine_pass",
         "s5_bidask_spread_included_replay"
       ],
-      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.84837332015857,
       "standalone_4x": false,
-      "standalone_4x_gap_pct": 1.5888
+      "standalone_4x_gap_pct": 1.6234
     }
   ],
   "source_artifacts": [
@@ -764,18 +764,18 @@
   },
   "target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 274541.8969,
-    "funding_adjusted_equity": 174541.8969,
+    "current_equity_raw": 274914.8862,
+    "funding_adjusted_equity": 174914.8862,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 698167.5876,
-    "remaining_to_4x_funding_adjusted": 511198.3239,
-    "remaining_to_4x_raw": 411198.3239,
-    "required_active_day_return_funding_adjusted_pct": 7.415701,
-    "required_calendar_daily_profit_jpy": 9400.8737,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
-    "rolling_30d_multiplier_funding_adjusted": 1.018123,
-    "rolling_30d_multiplier_raw": 1.601434,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 699659.5448,
+    "remaining_to_4x_funding_adjusted": 510825.3346,
+    "remaining_to_4x_raw": 410825.3346,
+    "required_active_day_return_funding_adjusted_pct": 7.452467,
+    "required_calendar_daily_profit_jpy": 9467.228,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.412477,
+    "rolling_30d_multiplier_funding_adjusted": 1.020298,
+    "rolling_30d_multiplier_raw": 1.60361,
     "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
     "target_equity_from_rolling_start_4x_jpy": 685740.2208

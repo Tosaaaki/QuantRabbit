@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -21,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AS_LOOP_PATH = ROOT / "tools" / "build_as_live_ready_evidence_loop.py"
 MANUAL_TRADE_ID = "472987"
 MANUAL_TP_ORDER_ID = "472988"
+MANUAL_TP_AUDIT_ORDER_ID = "472994"
+AUDJPY_LIMIT_PROOF_CLASSIFICATIONS = ("PROOF_READY", "REPAIR_REQUIRED", "EVIDENCE_GAP", "REJECTED")
 HISTORICAL_TARGETS = (
     ("range_trader:GBP_USD:LONG:RANGE_ROTATION", "UP"),
     ("trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION", "DOWN"),
@@ -40,6 +43,8 @@ def main() -> int:
         "data/historical_only_to_fresh_proof_replay.json": build_historical_only_replay(generated_at, context),
         "data/audjpy_short_breakout_failure_repair_proof.json": build_audjpy_repair(generated_at, context),
         "data/audjpy_short_breakout_failure_limit_proof_pack.json": build_audjpy_limit_proof_pack(generated_at, context),
+        "data/manual_eurusd_tp_replacement_provenance.json": build_manual_eurusd_tp_replacement_provenance(generated_at, context),
+        "data/profitability_acceptance_blocker_reconciliation.json": build_profitability_acceptance_blocker_reconciliation(generated_at, context),
         "data/portfolio_4x_path_planner.json": build_portfolio_planner(generated_at, context),
     }
     markdown = {
@@ -47,6 +52,8 @@ def main() -> int:
         "docs/historical_only_to_fresh_proof_replay.md": historical_replay_md(payloads["data/historical_only_to_fresh_proof_replay.json"]),
         "docs/audjpy_short_breakout_failure_repair_proof.md": audjpy_repair_md(payloads["data/audjpy_short_breakout_failure_repair_proof.json"]),
         "docs/audjpy_short_breakout_failure_limit_proof_pack.md": audjpy_limit_proof_pack_md(payloads["data/audjpy_short_breakout_failure_limit_proof_pack.json"]),
+        "docs/manual_eurusd_tp_replacement_provenance.md": manual_eurusd_tp_replacement_provenance_md(payloads["data/manual_eurusd_tp_replacement_provenance.json"]),
+        "docs/profitability_acceptance_blocker_reconciliation.md": profitability_acceptance_blocker_reconciliation_md(payloads["data/profitability_acceptance_blocker_reconciliation.json"]),
         "docs/portfolio_4x_path_planner.md": portfolio_planner_md(payloads["data/portfolio_4x_path_planner.json"]),
     }
     for rel, payload in payloads.items():
@@ -259,18 +266,43 @@ def build_audjpy_limit_proof_pack(generated_at: str, ctx: dict[str, Any]) -> dic
         "guardian_operator_review_clear": bool(missing.get("no_guardian_operator_review_blocker") is True),
     }
     failed = [key for key, value in checks.items() if value is not True]
-    if candidate.get("source_evidence", {}).get("historical_only"):
-        classification = "HISTORICAL_ONLY"
-    elif not candidate:
+    if not candidate:
         classification = "EVIDENCE_GAP"
-    elif any(code in blockers for code in ("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION")):
-        classification = "PORTFOLIO_COMPONENT_REPAIR_REQUIRED"
+    elif any(
+        code in blockers
+        for code in (
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        )
+    ):
+        classification = "REPAIR_REQUIRED"
     elif failed:
-        classification = "EVIDENCE_GAP"
+        classification = "REPAIR_REQUIRED"
     else:
         classification = "PROOF_READY"
     if classification == "PROOF_READY" and (checks["risk_engine_pass"] is not True or checks["live_order_gateway_pass"] is not True):
-        classification = "PORTFOLIO_COMPONENT_REPAIR_REQUIRED"
+        classification = "REPAIR_REQUIRED"
+    required_proof_matrix = audjpy_limit_required_proof_matrix(
+        checks=checks,
+        fresh_samples=fresh_samples,
+        fresh_active_days=fresh_active_days,
+        min_directional_samples=min_directional_samples,
+        min_active_days=min_active_days,
+        daily_stability_status=daily_stability_status,
+        forecast_executable=forecast_executable,
+        geometry={
+            "entry": intent.get("entry"),
+            "tp": intent.get("tp"),
+            "sl": intent.get("sl"),
+            "reward_risk": risk.get("reward_risk"),
+            "blockers": [code for code in blockers if "CHASE" in code or "HARVEST_TP_STRUCTURE" in code or "RANGE_FORECAST" in code],
+        },
+        attached_tp=metadata,
+        blockers=blockers,
+    )
     return {
         "generated_at_utc": generated_at,
         "mode": "read_only_audjpy_short_breakout_failure_limit_proof_pack",
@@ -284,15 +316,11 @@ def build_audjpy_limit_proof_pack(generated_at: str, ctx: dict[str, Any]) -> dic
             "data/broker_snapshot.json",
         ],
         "classification_values": [
-            "PROOF_READY",
-            "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
-            "EVIDENCE_GAP",
-            "REJECTED",
-            "HISTORICAL_ONLY",
+            *AUDJPY_LIMIT_PROOF_CLASSIFICATIONS,
         ],
         "classification": classification,
         "standalone_4x": False,
-        "portfolio_component_possible_after_repair": classification == "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
+        "portfolio_component_possible_after_repair": classification == "REPAIR_REQUIRED",
         "can_create_live_permission": False,
         "decision": "keep_as_repair_required_no_permission",
         "fresh_744h_replay": timing_summary(ctx["timing"]),
@@ -360,7 +388,308 @@ def build_audjpy_limit_proof_pack(generated_at: str, ctx: dict[str, Any]) -> dic
         },
         "proof_checks": checks,
         "failed_checks": failed,
+        "required_proof_matrix": required_proof_matrix,
+        "missing_required_proof": [
+            row["proof"] for row in required_proof_matrix if row.get("status") not in {"PRESENT", "PRESENT_BUT_NOT_PERMISSION"}
+        ],
         "missing_proof": missing,
+        "live_side_effects": [],
+    }
+
+
+def audjpy_limit_required_proof_matrix(
+    *,
+    checks: dict[str, bool],
+    fresh_samples: int,
+    fresh_active_days: int,
+    min_directional_samples: int,
+    min_active_days: int,
+    daily_stability_status: Any,
+    forecast_executable: bool,
+    geometry: dict[str, Any],
+    attached_tp: dict[str, Any],
+    blockers: list[str],
+) -> list[dict[str, Any]]:
+    geometry_complete = all(geometry.get(key) is not None for key in ("entry", "tp", "sl")) and (_float(geometry.get("reward_risk")) or 0.0) >= 1.0
+    attached_tp_complete = bool(
+        attached_tp.get("attach_take_profit_on_fill") is True
+        and attached_tp.get("capture_take_profit_scope_key")
+        and (_int(attached_tp.get("capture_take_profit_trades")) or 0) > 0
+    )
+    return [
+        {
+            "proof": "S5 samples",
+            "status": "PRESENT" if checks.get("sample_count_floor") and checks.get("s5_bidask_spread_included_replay") else "MISSING",
+            "evidence": {
+                "fresh_replay_evaluated_samples": fresh_samples,
+                "min_directional_samples": min_directional_samples,
+                "s5_bidask_spread_included_replay": checks.get("s5_bidask_spread_included_replay"),
+            },
+        },
+        {
+            "proof": "active days",
+            "status": "PRESENT" if fresh_active_days >= min_active_days and checks.get("daily_stability_floor") else "MISSING",
+            "evidence": {
+                "fresh_replay_evaluated_active_days": fresh_active_days,
+                "min_active_days": min_active_days,
+                "daily_stability_status": daily_stability_status,
+            },
+        },
+        {
+            "proof": "forecast executable proof",
+            "status": "PRESENT" if forecast_executable else "MISSING",
+            "evidence": {
+                "forecast_executable": forecast_executable,
+                "blocking_codes": [
+                    code
+                    for code in blockers
+                    if code in {"RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", "STALE_QUOTE", "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"}
+                ],
+            },
+        },
+        {
+            "proof": "geometry proof",
+            "status": "PRESENT_BUT_NOT_PERMISSION" if geometry_complete else "MISSING",
+            "evidence": geometry,
+        },
+        {
+            "proof": "attached TP proof",
+            "status": "PRESENT_BUT_NOT_PERMISSION" if attached_tp_complete else "MISSING",
+            "evidence": {
+                "attach_take_profit_on_fill": attached_tp.get("attach_take_profit_on_fill"),
+                "capture_take_profit_scope_key": attached_tp.get("capture_take_profit_scope_key"),
+                "capture_take_profit_trades": attached_tp.get("capture_take_profit_trades"),
+                "capture_take_profit_wins": attached_tp.get("capture_take_profit_wins"),
+                "capture_take_profit_expectancy_jpy": attached_tp.get("capture_take_profit_expectancy_jpy"),
+                "positive_rotation_proof_collection_ready": attached_tp.get("positive_rotation_proof_collection_ready"),
+            },
+        },
+        {
+            "proof": "RiskEngine",
+            "status": "PRESENT" if checks.get("risk_engine_pass") else "MISSING",
+            "evidence": {"risk_engine_pass": checks.get("risk_engine_pass")},
+        },
+        {
+            "proof": "Gateway",
+            "status": "PRESENT" if checks.get("live_order_gateway_pass") else "MISSING",
+            "evidence": {"live_order_gateway_pass": checks.get("live_order_gateway_pass")},
+        },
+        {
+            "proof": "GPT verifier",
+            "status": "PRESENT" if checks.get("gpt_verifier_pass") else "MISSING",
+            "evidence": {"gpt_verifier_pass": checks.get("gpt_verifier_pass")},
+        },
+        {
+            "proof": "guardian/operator review",
+            "status": "PRESENT" if checks.get("guardian_operator_review_clear") else "MISSING",
+            "evidence": {
+                "guardian_operator_review_clear": checks.get("guardian_operator_review_clear"),
+                "guardian_blocker_present": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in blockers,
+            },
+        },
+    ]
+
+
+def build_manual_eurusd_tp_replacement_provenance(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    broker = ctx["broker"]
+    active = _manual_active_tp_from_broker(broker)
+    active_id = active.get("order_id")
+    ledger_events = _manual_tp_ledger_events(extra_order_ids=[active_id] if active_id else [])
+    chain = _manual_tp_replacement_chain(broker, ledger_events)
+    order_ids = [str(row.get("order_id")) for row in chain if row.get("order_id")]
+    gateway_receipts = _manual_tp_gateway_receipts(order_ids)
+    chain = _manual_tp_replacement_chain(broker, ledger_events, gateway_receipts=gateway_receipts)
+    safety = manual_position_safety(broker, ledger_events=ledger_events, gateway_receipts=gateway_receipts)
+    audit_order = next((row for row in chain if str(row.get("order_id")) == MANUAL_TP_AUDIT_ORDER_ID), {})
+    current_order = next((row for row in chain if row.get("lifecycle") == "ACTIVE_BROKER_TRUTH"), {})
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_manual_eurusd_tp_replacement_provenance",
+        "source_artifacts": [
+            "data/broker_snapshot.json",
+            "data/execution_ledger.db",
+            "docs/execution_ledger_report.md",
+        ],
+        "classification_values": ["OPERATOR_MANUAL_PROTECTED", "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION"],
+        "status": "MANUAL_TP_AUTOMATION_BLOCKED",
+        "manual_trade_id": MANUAL_TRADE_ID,
+        "audit_order_id": MANUAL_TP_AUDIT_ORDER_ID,
+        "audit_order_classification": audit_order.get("provenance_classification") or "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+        "audit_order_lifecycle": audit_order.get("lifecycle"),
+        "current_active_tp_order_id": current_order.get("order_id") or active_id,
+        "current_active_tp_price": current_order.get("price") or active.get("price"),
+        "current_active_tp_classification": current_order.get("provenance_classification") or "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+        "broker_truth": {
+            "snapshot_fetched_at_utc": broker.get("fetched_at_utc"),
+            "last_transaction_id": _nested(broker, "account", "last_transaction_id") or broker.get("last_transaction_id"),
+            "manual_position": _manual_position_snapshot(broker),
+            "active_take_profit_order": active,
+        },
+        "replacement_chain": chain,
+        "gateway_receipt_search": {
+            "searched_order_ids": order_ids,
+            "receipt_count": sum(len(items) for items in gateway_receipts.values()),
+            "receipts_by_order_id": gateway_receipts,
+            "result": "NO_LOCAL_QUANTRABBIT_GATEWAY_RECEIPT_FOUND",
+        },
+        "manual_position_safety": safety,
+        "conclusion": (
+            "Broker truth shows EUR_USD trade 472987 is operator-manual and the active TP is protected from automation. "
+            "Order 472994 is historical/replaced by 472996, and neither 472994 nor 472996 has a local QuantRabbit gateway receipt. "
+            "Classify TP provenance as unknown and block automation from using, modifying, or inferring permission from it."
+        ),
+        "live_side_effects": [],
+    }
+
+
+def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    acceptance = ctx["acceptance"]
+    current_codes = _acceptance_codes(acceptance)
+    blocker_codes = _acceptance_blocker_codes(acceptance)
+    rows = [
+        _profitability_reconciliation_row(
+            code="SELF_IMPROVEMENT_P0_PRESENT",
+            classification="ACTIVE_BLOCKER" if _self_p0_items(ctx["self_audit"]) else "STALE_SUPERSEDED",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary={
+                "self_improvement_status": ctx["self_audit"].get("status"),
+                "self_improvement_p0_codes": [row.get("code") for row in _self_p0_items(ctx["self_audit"])],
+                "memory_status": ctx["memory"].get("status"),
+                "memory_blockers": ctx["memory"].get("blockers") or [],
+            },
+            clearance_condition="Regenerate memory-health and self-improvement-audit with zero P0 findings.",
+        ),
+        _profitability_reconciliation_row(
+            code="NEGATIVE_EXPECTANCY_ACTIVE",
+            classification="ACTIVE_BLOCKER",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "NEGATIVE_EXPECTANCY_ACTIVE"),
+            clearance_condition="Accepted realized capture economics must become non-negative without promoting blocked historical families.",
+        ),
+        _profitability_reconciliation_row(
+            code="MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+            classification="ACTIVE_BLOCKER",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE"),
+            clearance_condition="TP-proven segments must no longer be net-damaged by unproven MARKET_ORDER_TRADE_CLOSE leakage.",
+        ),
+        _profitability_reconciliation_row(
+            code="MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+            classification="TAXONOMY_DUPLICATE",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            duplicate_of="MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+            evidence_summary=_acceptance_evidence_summary(acceptance, "MARKET_CLOSE_LEAK_FAMILY_BLOCKED"),
+            clearance_condition="Clear only with exact close-gate proof, contained-risk timing evidence, and TP-proven exception evidence for the family.",
+        ),
+        _profitability_reconciliation_row(
+            code="MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+            classification="CONTAINED_NOT_CLEARED",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            contained_by="month_scale_residual_family_filters",
+            evidence_summary=_acceptance_evidence_summary(acceptance, "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"),
+            clearance_condition="Fresh 30-day TP-progress repair replay must be non-negative after the accepted filters and cannot rely on optimism.",
+        ),
+        _profitability_reconciliation_row(
+            code="PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP",
+            classification="EVIDENCE_GAP",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP"),
+            clearance_condition="Projection buckets used for live support must clear economic precision, not just headline hit-rate precision.",
+        ),
+        _profitability_reconciliation_row(
+            code="BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+            classification="EVIDENCE_GAP",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN"),
+            clearance_condition="All-currency bid/ask replay coverage must be thick enough for the live-grade proof target.",
+        ),
+        _profitability_reconciliation_row(
+            code="NO_LIVE_READY_TARGET_COVERAGE",
+            classification="EVIDENCE_GAP",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "NO_LIVE_READY_TARGET_COVERAGE"),
+            clearance_condition="At least one lane must regenerate LIVE_READY with risk, gateway, GPT, guardian, telemetry, and acceptance proof.",
+        ),
+        _profitability_reconciliation_row(
+            code="REPAIR_FRONTIER_BLOCKED",
+            classification="EVIDENCE_GAP",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary=_acceptance_evidence_summary(acceptance, "REPAIR_FRONTIER_BLOCKED"),
+            clearance_condition="Closest repair lanes must fill exact proof gaps; repair ranking does not create permission.",
+        ),
+        _profitability_reconciliation_row(
+            code="EXECUTION_LEDGER_STALE",
+            classification="STALE_SUPERSEDED",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary={
+                "execution_ledger_last_oanda_transaction_id": _nested(ctx["memory"], "metrics", "execution_ledger", "last_oanda_transaction_id"),
+                "snapshot_last_transaction_id": _nested(ctx["memory"], "metrics", "execution_ledger", "snapshot_last_transaction_id"),
+            },
+            clearance_condition="Keep execution ledger synchronized with broker snapshot before regenerating acceptance.",
+        ),
+        _profitability_reconciliation_row(
+            code="RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+            classification="STALE_SUPERSEDED",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary={"present_in_current_acceptance": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK" in current_codes},
+            clearance_condition="If it reappears, reconcile the exact market-close receipt and keep the family blocked until proven.",
+        ),
+        _profitability_reconciliation_row(
+            code="HISTORICAL_PROFIT_CAPTURE_MISSED",
+            classification="CONTAINED_NOT_CLEARED",
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary={"related_current_code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"},
+            clearance_condition="Treat historical capture misses as repair inputs only until post-repair replay and fresh proof are non-negative.",
+        ),
+    ]
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_profitability_acceptance_blocker_reconciliation",
+        "source_artifacts": [
+            "data/profitability_acceptance.json",
+            "docs/profitability_acceptance_report.md",
+            "data/self_improvement_audit.json",
+            "data/memory_health.json",
+            "data/remaining_profitability_p0_decomposition.json",
+            "data/as_lane_candidate_board.json",
+            "data/as_proof_pack_queue.json",
+        ],
+        "classification_values": [
+            "ACTIVE_BLOCKER",
+            "CONTAINED_NOT_CLEARED",
+            "TAXONOMY_DUPLICATE",
+            "STALE_SUPERSEDED",
+            "EVIDENCE_GAP",
+        ],
+        "status": acceptance.get("status") or "PROFITABILITY_ACCEPTANCE_BLOCKED",
+        "summary": {
+            "acceptance_blocked": acceptance.get("status") != "PROFITABILITY_ACCEPTANCE_PASS",
+            "current_acceptance_blocker_codes": sorted(blocker_codes),
+            "classification_counts": _classification_counts(rows),
+            "normal_routing_status": "BLOCKED",
+            "routing_allowed": False,
+            "live_ready_lanes": 0,
+            "as_live_ready_path_exists": False,
+            "can_create_live_permission": False,
+            "containment_only_cannot_clear_acceptance": True,
+        },
+        "rows": rows,
+        "permission_boundary": (
+            "No row in this reconciliation creates live permission. ACTIVE, contained, duplicate, and evidence-gap rows all keep "
+            "normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together."
+        ),
         "live_side_effects": [],
     }
 
@@ -415,6 +744,7 @@ def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str,
 
 def _context(as_loop: Any) -> dict[str, Any]:
     acceptance = _load_json("data/profitability_acceptance.json")
+    self_audit = _load_json("data/self_improvement_audit.json")
     residual = _load_json("data/month_scale_residual_family_table.json")
     market_close = _load_json("data/market_close_leak_trade_table.json")
     blocked = as_loop._blocked_sets(acceptance, residual, market_close)
@@ -426,12 +756,14 @@ def _context(as_loop: Any) -> dict[str, Any]:
     order_intents = _load_json("data/order_intents.json")
     broker = _load_json("data/broker_snapshot.json")
     daily = _load_json("data/daily_target_state.json")
+    memory = _load_json("data/memory_health.json")
     candidate_by_lane = {str(row.get("lane_id")): row for row in firepower.get("candidates") or []}
     proof_by_lane = {str(row.get("lane_id")): row for row in proof_queue.get("queue") or []}
     intent_by_lane = {str(row.get("lane_id")): row for row in order_intents.get("results") or []}
     return {
         "as_loop": as_loop,
         "acceptance": acceptance,
+        "self_audit": self_audit,
         "residual": residual,
         "market_close": market_close,
         "blocked": blocked,
@@ -444,8 +776,10 @@ def _context(as_loop: Any) -> dict[str, Any]:
         "broker": broker,
         "daily": daily,
         "timing": _load_json("data/execution_timing_audit.json"),
-        "memory": _load_json("data/memory_health.json"),
+        "memory": memory,
         "support": _load_json("data/trader_support_bot.json"),
+        "p0_decomposition": _load_json("data/remaining_profitability_p0_decomposition.json"),
+        "as_board": _load_json("data/as_lane_candidate_board.json"),
         "candidate_by_lane": candidate_by_lane,
         "proof_by_lane": proof_by_lane,
         "intent_by_lane": intent_by_lane,
@@ -758,44 +1092,400 @@ def global_blockers(ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def manual_position_safety(broker: dict[str, Any]) -> dict[str, Any]:
+def _manual_position_snapshot(broker: dict[str, Any]) -> dict[str, Any]:
+    positions = broker.get("positions") if isinstance(broker.get("positions"), list) else []
+    manual = next((row for row in positions if str(row.get("trade_id")) == MANUAL_TRADE_ID), {})
+    operator = manual.get("operator_manual_position") if isinstance(manual.get("operator_manual_position"), dict) else {}
+    return {
+        "present": bool(manual),
+        "trade_id": MANUAL_TRADE_ID,
+        "owner": manual.get("owner"),
+        "pair": manual.get("pair"),
+        "side": manual.get("side"),
+        "units": manual.get("units"),
+        "take_profit": manual.get("take_profit"),
+        "stop_loss": manual.get("stop_loss"),
+        "unrealized_pl_jpy": manual.get("unrealized_pl_jpy"),
+        "management_intent": operator.get("management_intent"),
+        "system_pl_counted": operator.get("system_pl_counted"),
+        "system_occupancy_counted": operator.get("system_occupancy_counted"),
+        "auto_close_allowed": operator.get("loss_side_auto_close_allowed"),
+        "auto_sl_attach_allowed": operator.get("auto_sl_attach_allowed"),
+        "auto_tp_modify_allowed": operator.get("auto_tp_modify_allowed"),
+        "same_theme_auto_add_allowed": operator.get("same_theme_auto_add_allowed"),
+    }
+
+
+def _manual_active_tp_from_broker(broker: dict[str, Any]) -> dict[str, Any]:
     positions = broker.get("positions") if isinstance(broker.get("positions"), list) else []
     orders = broker.get("orders") if isinstance(broker.get("orders"), list) else []
     manual = next((row for row in positions if str(row.get("trade_id")) == MANUAL_TRADE_ID), {})
-    expected_tp = next((row for row in orders if str(row.get("order_id") or row.get("id")) == MANUAL_TP_ORDER_ID), {})
-    active_tp = next((row for row in orders if str(row.get("trade_id")) == MANUAL_TRADE_ID), expected_tp)
     raw_tp = _nested(manual, "raw", "takeProfitOrder") if isinstance(manual.get("raw"), dict) else {}
-    current_tp_order_id = (
+    active_tp = next(
+        (
+            row
+            for row in orders
+            if str(row.get("trade_id") or row.get("tradeID") or _nested(row, "raw", "tradeID") or "") == MANUAL_TRADE_ID
+        ),
+        {},
+    )
+    order_id = (
         active_tp.get("order_id")
         or active_tp.get("id")
         or (raw_tp.get("id") if isinstance(raw_tp, dict) else None)
     )
-    replaced_expected_tp = (
-        isinstance(raw_tp, dict)
-        and str(raw_tp.get("replacesOrderID") or "") == MANUAL_TP_ORDER_ID
-        and str(current_tp_order_id or "") != MANUAL_TP_ORDER_ID
-    )
+    return {
+        "order_id": str(order_id) if order_id is not None else None,
+        "trade_id": MANUAL_TRADE_ID if order_id else None,
+        "price": active_tp.get("price") or (raw_tp.get("price") if isinstance(raw_tp, dict) else None) or manual.get("take_profit"),
+        "state": active_tp.get("state"),
+        "create_time": active_tp.get("createTime") or (raw_tp.get("createTime") if isinstance(raw_tp, dict) else None),
+        "replaces_order_id": raw_tp.get("replacesOrderID") if isinstance(raw_tp, dict) else active_tp.get("replacesOrderID"),
+        "source": "broker_snapshot",
+    }
+
+
+def _manual_tp_ledger_events(*, extra_order_ids: list[Any] | None = None) -> list[dict[str, Any]]:
+    db_path = ROOT / "data" / "execution_ledger.db"
+    if not db_path.exists():
+        return []
+    order_ids = {MANUAL_TP_ORDER_ID, MANUAL_TP_AUDIT_ORDER_ID}
+    order_ids.update(str(item) for item in extra_order_ids or [] if item)
+    predicates = ["trade_id = ?", "raw_json LIKE ?"]
+    params: list[Any] = [MANUAL_TRADE_ID, f"%{MANUAL_TRADE_ID}%"]
+    for order_id in sorted(order_ids):
+        predicates.extend(["order_id = ?", "raw_json LIKE ?"])
+        params.extend([order_id, f"%{order_id}%"])
+    sql = f"""
+        SELECT ts_utc, source, event_type, lane_id, order_id, trade_id, client_order_id,
+               pair, side, units, price, tp, sl, exit_reason, oanda_transaction_id, raw_json
+        FROM execution_events
+        WHERE {' OR '.join(predicates)}
+        ORDER BY ts_utc, oanda_transaction_id
+    """
+    events: list[dict[str, Any]] = []
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        for row in conn.execute(sql, params):
+            (
+                ts_utc,
+                source,
+                event_type,
+                lane_id,
+                order_id,
+                trade_id,
+                client_order_id,
+                pair,
+                side,
+                units,
+                price,
+                tp,
+                sl,
+                exit_reason,
+                oanda_transaction_id,
+                raw_json,
+            ) = row
+            try:
+                raw = json.loads(raw_json or "{}")
+            except json.JSONDecodeError:
+                raw = {}
+            raw_type = str(raw.get("type") or "")
+            if raw_type not in {"TAKE_PROFIT_ORDER", "ORDER_CANCEL"} and event_type not in {"PROTECTION_CREATED", "ORDER_CANCELED"}:
+                continue
+            raw_order_id = raw.get("id") if raw_type == "TAKE_PROFIT_ORDER" else raw.get("orderID")
+            events.append(
+                {
+                    "ts_utc": ts_utc,
+                    "source": source,
+                    "event_type": event_type,
+                    "raw_type": raw_type,
+                    "lane_id": lane_id,
+                    "order_id": str(raw_order_id or order_id or ""),
+                    "ledger_order_id": str(order_id or ""),
+                    "trade_id": str(raw.get("tradeID") or trade_id or ""),
+                    "client_order_id": client_order_id,
+                    "pair": pair,
+                    "side": side,
+                    "units": units,
+                    "price": raw.get("price") or price or tp,
+                    "tp": tp,
+                    "sl": sl,
+                    "exit_reason": exit_reason,
+                    "transaction_id": str(raw.get("id") or oanda_transaction_id or ""),
+                    "oanda_transaction_id": str(oanda_transaction_id or ""),
+                    "reason": raw.get("reason") or exit_reason,
+                    "replaces_order_id": raw.get("replacesOrderID"),
+                    "replaced_by_order_id": raw.get("replacedByOrderID"),
+                    "cancelling_transaction_id": raw.get("cancellingTransactionID"),
+                    "request_id": raw.get("requestID"),
+                    "user_id": raw.get("userID"),
+                    "time": raw.get("time") or ts_utc,
+                }
+            )
+    return events
+
+
+def _manual_tp_gateway_receipts(order_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    db_path = ROOT / "data" / "execution_ledger.db"
+    receipts = {str(order_id): [] for order_id in order_ids if str(order_id)}
+    if not receipts or not db_path.exists():
+        return receipts
+    predicates = []
+    params: list[Any] = []
+    for order_id in receipts:
+        predicates.extend(["order_id = ?", "client_order_id = ?", "raw_json LIKE ?"])
+        params.extend([order_id, order_id, f"%{order_id}%"])
+    sql = f"""
+        SELECT ts_utc, source, event_type, order_id, trade_id, client_order_id, lane_id, raw_json
+        FROM execution_events
+        WHERE (event_type LIKE 'GATEWAY%' OR source LIKE '%gateway%' OR event_type IN ('ORDER_INTENT_STAGED', 'ORDER_ACCEPTED'))
+          AND ({' OR '.join(predicates)})
+        ORDER BY ts_utc
+    """
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        for ts_utc, source, event_type, order_id, trade_id, client_order_id, lane_id, raw_json in conn.execute(sql, params):
+            row = {
+                "ts_utc": ts_utc,
+                "source": source,
+                "event_type": event_type,
+                "order_id": order_id,
+                "trade_id": trade_id,
+                "client_order_id": client_order_id,
+                "lane_id": lane_id,
+            }
+            raw_text = raw_json or ""
+            for oid in receipts:
+                if oid in {str(order_id or ""), str(client_order_id or "")} or oid in raw_text:
+                    receipts[oid].append(row)
+    return receipts
+
+
+def _manual_tp_replacement_chain(
+    broker: dict[str, Any],
+    ledger_events: list[dict[str, Any]],
+    *,
+    gateway_receipts: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    gateway_receipts = gateway_receipts or {}
+    active = _manual_active_tp_from_broker(broker)
+    active_id = str(active.get("order_id") or "")
+    created: dict[str, dict[str, Any]] = {}
+    cancel_by_order: dict[str, dict[str, Any]] = {}
+    for event in ledger_events:
+        order_id = str(event.get("order_id") or "")
+        if not order_id:
+            continue
+        if event.get("raw_type") == "TAKE_PROFIT_ORDER" and str(event.get("trade_id") or "") == MANUAL_TRADE_ID:
+            created[order_id] = event
+        elif event.get("raw_type") == "ORDER_CANCEL":
+            cancel_by_order[order_id] = event
+    if active_id and active_id not in created:
+        created[active_id] = {
+            "time": active.get("create_time"),
+            "ts_utc": active.get("create_time"),
+            "source": active.get("source"),
+            "event_type": "BROKER_SNAPSHOT_ACTIVE_TP",
+            "raw_type": "TAKE_PROFIT_ORDER",
+            "order_id": active_id,
+            "trade_id": MANUAL_TRADE_ID,
+            "price": active.get("price"),
+            "replaces_order_id": active.get("replaces_order_id"),
+        }
+    chain: list[dict[str, Any]] = []
+    for order_id, event in sorted(created.items(), key=lambda item: (str(item[1].get("time") or item[1].get("ts_utc") or ""), item[0])):
+        cancel = cancel_by_order.get(order_id) or {}
+        replaced_by = cancel.get("replaced_by_order_id")
+        if not replaced_by:
+            child = next((row for row in created.values() if str(row.get("replaces_order_id") or "") == order_id), {})
+            replaced_by = child.get("order_id")
+        lifecycle = "ACTIVE_BROKER_TRUTH" if order_id == active_id else "REPLACED" if replaced_by else "HISTORICAL_INACTIVE_OR_UNKNOWN"
+        receipts = gateway_receipts.get(order_id) or []
+        chain.append(
+            {
+                "order_id": order_id,
+                "trade_id": event.get("trade_id") or MANUAL_TRADE_ID,
+                "price": _round(event.get("price"), 5),
+                "created_at_utc": event.get("time") or event.get("ts_utc"),
+                "source": event.get("source"),
+                "event_type": event.get("event_type"),
+                "reason": event.get("reason"),
+                "request_id": event.get("request_id"),
+                "user_id": event.get("user_id"),
+                "replaces_order_id": event.get("replaces_order_id"),
+                "replaced_by_order_id": replaced_by,
+                "cancel_transaction_id": cancel.get("transaction_id"),
+                "cancel_request_id": cancel.get("request_id"),
+                "lifecycle": lifecycle,
+                "provenance_classification": "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+                "classification_reason": (
+                    "No local QuantRabbit gateway receipt/client extension proves this TP mutation. "
+                    "Because the parent trade is operator-manual, the order is protected and automation-usable=false."
+                ),
+                "local_gateway_receipt_count": len(receipts),
+                "automation_usable": False,
+                "auto_modify_allowed": False,
+            }
+        )
+    return chain
+
+
+def manual_position_safety(
+    broker: dict[str, Any],
+    *,
+    ledger_events: list[dict[str, Any]] | None = None,
+    gateway_receipts: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    positions = broker.get("positions") if isinstance(broker.get("positions"), list) else []
+    orders = broker.get("orders") if isinstance(broker.get("orders"), list) else []
+    manual = next((row for row in positions if str(row.get("trade_id")) == MANUAL_TRADE_ID), {})
+    active = _manual_active_tp_from_broker(broker)
+    if ledger_events is None:
+        ledger_events = _manual_tp_ledger_events(extra_order_ids=[active.get("order_id")] if active.get("order_id") else [])
+    chain = _manual_tp_replacement_chain(broker, ledger_events, gateway_receipts=gateway_receipts)
+    expected_tp = next((row for row in orders if str(row.get("order_id") or row.get("id")) == MANUAL_TP_ORDER_ID), {})
+    current_tp_order_id = active.get("order_id")
+    audit_order = next((row for row in chain if str(row.get("order_id")) == MANUAL_TP_AUDIT_ORDER_ID), {})
+    current_order = next((row for row in chain if str(row.get("order_id")) == str(current_tp_order_id or "")), {})
+    replaced_expected_tp = any(
+        str(row.get("order_id") or "") == MANUAL_TP_ORDER_ID and row.get("replaced_by_order_id")
+        for row in chain
+    ) or any(str(row.get("replaces_order_id") or "") == MANUAL_TP_ORDER_ID for row in chain)
     return {
         "manual_trade_id": MANUAL_TRADE_ID,
         "expected_manual_tp_order_id": MANUAL_TP_ORDER_ID,
+        "audit_manual_tp_order_id": MANUAL_TP_AUDIT_ORDER_ID,
         "current_manual_tp_order_id": current_tp_order_id,
         "expected_tp_order_present": bool(expected_tp),
         "expected_tp_replaced_in_broker_truth": bool(replaced_expected_tp),
         "position_present": bool(manual),
-        "tp_order_present": bool(active_tp),
+        "tp_order_present": bool(current_tp_order_id),
         "position_owner": manual.get("owner"),
         "position_pair": manual.get("pair"),
         "position_side": manual.get("side"),
         "position_units": manual.get("units"),
         "position_unrealized_pl_jpy": manual.get("unrealized_pl_jpy"),
-        "take_profit_price": manual.get("take_profit") or active_tp.get("price"),
-        "tp_replaces_order_id": raw_tp.get("replacesOrderID") if isinstance(raw_tp, dict) else None,
-        "tp_create_time": raw_tp.get("createTime") if isinstance(raw_tp, dict) else active_tp.get("createTime"),
+        "take_profit_price": manual.get("take_profit") or active.get("price"),
+        "tp_replaces_order_id": active.get("replaces_order_id"),
+        "tp_create_time": active.get("create_time"),
+        "audit_tp_lifecycle": audit_order.get("lifecycle"),
+        "audit_tp_replaced_by_order_id": audit_order.get("replaced_by_order_id"),
+        "audit_tp_provenance_classification": audit_order.get("provenance_classification") or "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+        "current_tp_provenance_classification": current_order.get("provenance_classification") or "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+        "tp_replacement_chain": chain,
         "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
         "system_pl_counted": _nested(manual, "operator_manual_position", "system_pl_counted"),
+        "system_occupancy_counted": _nested(manual, "operator_manual_position", "system_occupancy_counted"),
+        "automation_blocked": True,
+        "auto_close_allowed": False,
+        "auto_sl_attach_allowed": False,
+        "auto_tp_modify_allowed": False,
+        "same_theme_auto_add_allowed": False,
         "no_live_side_effects": True,
         "untouched_by_this_run": True,
     }
+
+
+def _profitability_reconciliation_row(
+    *,
+    code: str,
+    classification: str,
+    current_codes: set[str],
+    blocker_codes: set[str],
+    evidence_summary: dict[str, Any],
+    clearance_condition: str,
+    duplicate_of: str | None = None,
+    contained_by: str | None = None,
+) -> dict[str, Any]:
+    present = code in current_codes
+    blocker = code in blocker_codes
+    stale = classification == "STALE_SUPERSEDED"
+    still_blocks_acceptance = bool(blocker and not stale)
+    still_blocks_fresh_entries = bool((present or blocker or classification in {"CONTAINED_NOT_CLEARED", "TAXONOMY_DUPLICATE"}) and not stale)
+    return {
+        "code": code,
+        "classification": classification,
+        "present_in_current_acceptance": present,
+        "present_as_current_blocker": blocker,
+        "duplicate_of": duplicate_of,
+        "contained_by": contained_by,
+        "still_blocks_acceptance": still_blocks_acceptance,
+        "still_blocks_fresh_entries": still_blocks_fresh_entries,
+        "still_blocks_live_ready": still_blocks_fresh_entries,
+        "can_create_live_permission": False,
+        "evidence_summary": evidence_summary,
+        "clearance_condition": clearance_condition,
+    }
+
+
+def _acceptance_codes(acceptance: dict[str, Any]) -> set[str]:
+    codes = {str(item.get("code")) for item in acceptance.get("findings") or [] if isinstance(item, dict) and item.get("code")}
+    codes.update(_acceptance_blocker_codes(acceptance))
+    return codes
+
+
+def _acceptance_blocker_codes(acceptance: dict[str, Any]) -> set[str]:
+    return {
+        str(item).split(":", 1)[0]
+        for item in acceptance.get("blockers") or []
+        if str(item).split(":", 1)[0]
+    }
+
+
+def _acceptance_evidence_summary(acceptance: dict[str, Any], code: str) -> dict[str, Any]:
+    finding = _findings_by_code(acceptance).get(code) or {}
+    return {
+        "message": finding.get("message"),
+        "priority": finding.get("priority"),
+        "evidence": _compact_evidence(finding.get("evidence")),
+    }
+
+
+def _findings_by_code(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(item.get("code")): item
+        for item in payload.get("findings") or []
+        if isinstance(item, dict) and item.get("code")
+    }
+
+
+def _self_p0_items(self_audit: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in self_audit.get("findings") or []
+        if isinstance(item, dict) and item.get("priority") == "P0"
+    ]
+
+
+def _classification_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("classification") or "UNKNOWN")
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _compact_evidence(value: Any, *, depth: int = 0) -> Any:
+    if value is None:
+        return None
+    if depth >= 2:
+        if isinstance(value, list):
+            return {"count": len(value)}
+        if isinstance(value, dict):
+            return {"keys": sorted(str(key) for key in value.keys())[:12]}
+        return value
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= 10:
+                compact["_truncated_keys"] = max(0, len(value) - idx)
+                break
+            compact[str(key)] = _compact_evidence(item, depth=depth + 1)
+        return compact
+    if isinstance(value, list):
+        return {
+            "count": len(value),
+            "first": _compact_evidence(value[0], depth=depth + 1) if value else None,
+        }
+    return value
 
 
 def row_positive(row: dict[str, Any]) -> bool:
@@ -916,9 +1606,66 @@ def audjpy_limit_proof_pack_md(payload: dict[str, Any]) -> str:
     ]
     for item in payload.get("failed_checks") or []:
         lines.append(f"- `{item}`")
+    lines.extend(["", "## Required Proof Matrix", "", "| proof | status |", "|---|---|"])
+    for row in payload.get("required_proof_matrix") or []:
+        lines.append(f"| `{row.get('proof')}` | `{row.get('status')}` |")
     lines.extend(["", "## Current Blockers", ""])
     for item in (payload.get("verifier_gateway_guardian") or {}).get("blockers") or []:
         lines.append(f"- `{item}`")
+    return "\n".join(lines) + "\n"
+
+
+def manual_eurusd_tp_replacement_provenance_md(payload: dict[str, Any]) -> str:
+    broker = payload.get("broker_truth") or {}
+    active = broker.get("active_take_profit_order") or {}
+    lines = [
+        "# Manual EUR_USD TP Replacement Provenance",
+        "",
+        f"- Generated: `{payload.get('generated_at_utc')}`",
+        f"- Manual trade: `{payload.get('manual_trade_id')}`",
+        f"- Audit order: `{payload.get('audit_order_id')}` classified `{payload.get('audit_order_classification')}` with lifecycle `{payload.get('audit_order_lifecycle')}`",
+        f"- Active broker TP: `{payload.get('current_active_tp_order_id')}` at `{payload.get('current_active_tp_price')}` classified `{payload.get('current_active_tp_classification')}`",
+        f"- Snapshot last transaction: `{broker.get('last_transaction_id')}` fetched `{broker.get('snapshot_fetched_at_utc')}`",
+        f"- Gateway receipt search: `{_nested(payload, 'gateway_receipt_search', 'result')}`",
+        f"- Can automation use or modify this TP: `False`",
+        "",
+        "## Current Broker Truth",
+        "",
+        f"- Active TP order `{active.get('order_id')}` replaces `{active.get('replaces_order_id')}`.",
+        f"- No live side effects in this run: `{payload.get('live_side_effects')}`",
+        "",
+        "## Replacement Chain",
+        "",
+        "| order | lifecycle | price | replaces | replaced by | class | gateway receipts |",
+        "|---|---|---:|---|---|---|---:|",
+    ]
+    for row in payload.get("replacement_chain") or []:
+        lines.append(
+            f"| `{row.get('order_id')}` | `{row.get('lifecycle')}` | {row.get('price')} | `{row.get('replaces_order_id')}` | `{row.get('replaced_by_order_id')}` | `{row.get('provenance_classification')}` | {row.get('local_gateway_receipt_count')} |"
+        )
+    lines.extend(["", "## Conclusion", "", payload.get("conclusion") or ""])
+    return "\n".join(lines) + "\n"
+
+
+def profitability_acceptance_blocker_reconciliation_md(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    lines = [
+        "# Profitability Acceptance Blocker Reconciliation",
+        "",
+        f"- Generated: `{payload.get('generated_at_utc')}`",
+        f"- Status: `{payload.get('status')}`",
+        f"- Normal routing: `{summary.get('normal_routing_status')}`",
+        f"- A/S LIVE_READY path exists: `{summary.get('as_live_ready_path_exists')}`",
+        f"- Can create live permission: `{summary.get('can_create_live_permission')}`",
+        "",
+        "| code | classification | current blocker | blocks fresh entries | clearance |",
+        "|---|---|---|---|---|",
+    ]
+    for row in payload.get("rows") or []:
+        lines.append(
+            f"| `{row.get('code')}` | `{row.get('classification')}` | `{row.get('present_as_current_blocker')}` | `{row.get('still_blocks_fresh_entries')}` | {row.get('clearance_condition')} |"
+        )
+    lines.extend(["", "## Boundary", "", payload.get("permission_boundary") or ""])
     return "\n".join(lines) + "\n"
 
 

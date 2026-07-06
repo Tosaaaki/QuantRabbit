@@ -9,22 +9,21 @@
     "proof_collection_ready": true
   },
   "can_create_live_permission": false,
-  "classification": "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
+  "classification": "REPAIR_REQUIRED",
   "classification_values": [
     "PROOF_READY",
-    "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
+    "REPAIR_REQUIRED",
     "EVIDENCE_GAP",
-    "REJECTED",
-    "HISTORICAL_ONLY"
+    "REJECTED"
   ],
   "decision": "keep_as_repair_required_no_permission",
   "economics": {
     "estimated_trades_per_day_available": 34.8974,
     "expected_active_day_contribution_jpy": 6627.7317,
-    "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+    "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
     "expected_jpy_per_trade": 189.9205,
-    "required_calendar_daily_return_pct": 5.386027,
-    "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987
+    "required_calendar_daily_return_pct": 5.412477,
+    "required_trades_per_day_to_contribute_to_30d_4x": 49.84837332015857
   },
   "failed_checks": [
     "s5_bidask_spread_included_replay",
@@ -357,7 +356,7 @@
     "price_truth_status": "PRICE_TRUTH_OK",
     "status": "EVIDENCE_GAP_UNDER_SAMPLED"
   },
-  "generated_at_utc": "2026-07-06T01:59:31Z",
+  "generated_at_utc": "2026-07-06T06:08:36Z",
   "geometry": {
     "blockers": [
       "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
@@ -376,8 +375,8 @@
   "margin_and_risk": {
     "broker_margin_context": {
       "broker_margin_free_units": 0,
-      "margin_available_jpy": 53439.7074,
-      "margin_used_jpy": 221902.8
+      "margin_available_jpy": 52953.7698,
+      "margin_used_jpy": 222180.0
     },
     "estimated_margin_jpy": 13460.28,
     "margin_requirement_min_lot_jpy": 4486.76,
@@ -403,6 +402,15 @@
     "s5_bidask_spread_included_replay": false,
     "sample_count_floor": true
   },
+  "missing_required_proof": [
+    "S5 samples",
+    "active days",
+    "forecast executable proof",
+    "RiskEngine",
+    "Gateway",
+    "GPT verifier",
+    "guardian/operator review"
+  ],
   "mode": "read_only_audjpy_short_breakout_failure_limit_proof_pack",
   "portfolio_component_possible_after_repair": true,
   "proof_checks": {
@@ -421,6 +429,91 @@
     "s5_bidask_spread_included_replay": false,
     "sample_count_floor": false
   },
+  "required_proof_matrix": [
+    {
+      "evidence": {
+        "fresh_replay_evaluated_samples": 9,
+        "min_directional_samples": 30,
+        "s5_bidask_spread_included_replay": false
+      },
+      "proof": "S5 samples",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+        "fresh_replay_evaluated_active_days": 5,
+        "min_active_days": 3
+      },
+      "proof": "active days",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "blocking_codes": [
+          "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+          "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+        ],
+        "forecast_executable": false
+      },
+      "proof": "forecast executable proof",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "blockers": [
+          "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
+        ],
+        "entry": 112.169,
+        "reward_risk": 2.6960000000000264,
+        "sl": 112.294,
+        "tp": 111.832
+      },
+      "proof": "geometry proof",
+      "status": "PRESENT_BUT_NOT_PERMISSION"
+    },
+    {
+      "evidence": {
+        "attach_take_profit_on_fill": true,
+        "capture_take_profit_expectancy_jpy": 992.7,
+        "capture_take_profit_scope_key": "AUD_JPY|SHORT|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+        "capture_take_profit_trades": 6,
+        "capture_take_profit_wins": 6,
+        "positive_rotation_proof_collection_ready": true
+      },
+      "proof": "attached TP proof",
+      "status": "PRESENT_BUT_NOT_PERMISSION"
+    },
+    {
+      "evidence": {
+        "risk_engine_pass": false
+      },
+      "proof": "RiskEngine",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "live_order_gateway_pass": false
+      },
+      "proof": "Gateway",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "gpt_verifier_pass": false
+      },
+      "proof": "GPT verifier",
+      "status": "MISSING"
+    },
+    {
+      "evidence": {
+        "guardian_blocker_present": true,
+        "guardian_operator_review_clear": false
+      },
+      "proof": "guardian/operator review",
+      "status": "MISSING"
+    }
+  ],
   "sample_and_stability": {
     "candidate_active_days": 39,
     "candidate_samples": 1361,

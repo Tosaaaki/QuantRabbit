@@ -7,8 +7,8 @@
       "avg_win_jpy": 331.6,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -33,7 +33,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 8.175,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 8.1576,
       "expected_jpy_per_trade": 331.6,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -46,7 +46,7 @@
       "pair": "GBP_USD",
       "proof_gap_count": 6,
       "realistic_units": 0,
-      "required_trades_per_day_to_contribute_to_30d_4x": 28.3500412947713,
+      "required_trades_per_day_to_contribute_to_30d_4x": 28.550144707934788,
       "risk_allowed": false,
       "sample_count": 1420,
       "side": "LONG",
@@ -71,8 +71,8 @@
       "avg_win_jpy": 388.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -97,7 +97,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.7576,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.741,
       "expected_jpy_per_trade": 388.0,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -110,7 +110,7 @@
       "pair": "AUD_JPY",
       "proof_gap_count": 6,
       "realistic_units": 3000,
-      "required_trades_per_day_to_contribute_to_30d_4x": 24.22905591068599,
+      "required_trades_per_day_to_contribute_to_30d_4x": 24.40007212667829,
       "risk_allowed": false,
       "sample_count": 1361,
       "side": "SHORT",
@@ -135,8 +135,8 @@
       "avg_win_jpy": 155.9,
       "broker_margin_context": {
         "broker_margin_free_units": 30000,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -164,7 +164,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8603,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8521,
       "expected_jpy_per_trade": 155.9,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -177,7 +177,7 @@
       "pair": "EUR_USD",
       "proof_gap_count": 6,
       "realistic_units": 0,
-      "required_trades_per_day_to_contribute_to_30d_4x": 60.300665127300604,
+      "required_trades_per_day_to_contribute_to_30d_4x": 60.72628598557521,
       "risk_allowed": false,
       "sample_count": 1383,
       "side": "LONG",
@@ -202,8 +202,8 @@
       "avg_win_jpy": 992.7,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": true,
@@ -226,7 +226,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "expected_jpy_per_trade": 189.9205,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -239,7 +239,7 @@
       "pair": "AUD_JPY",
       "proof_gap_count": 6,
       "realistic_units": 3000,
-      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.84837332015857,
       "risk_allowed": false,
       "sample_count": 1361,
       "side": "SHORT",
@@ -264,8 +264,8 @@
       "avg_win_jpy": 992.7,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": true,
@@ -286,7 +286,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
       "expected_jpy_per_trade": 189.9205,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -299,7 +299,7 @@
       "pair": "AUD_JPY",
       "proof_gap_count": 6,
       "realistic_units": 3000,
-      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.84837332015857,
       "risk_allowed": false,
       "sample_count": 1361,
       "side": "SHORT",
@@ -324,8 +324,8 @@
       "avg_win_jpy": 52.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -351,7 +351,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 1.0918,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 1.0895,
       "expected_jpy_per_trade": 52.0,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -364,7 +364,7 @@
       "pair": "AUD_JPY",
       "proof_gap_count": 6,
       "realistic_units": 0,
-      "required_trades_per_day_to_contribute_to_30d_4x": 180.7860325643493,
+      "required_trades_per_day_to_contribute_to_30d_4x": 182.0620766375226,
       "risk_allowed": false,
       "sample_count": 1246,
       "side": "LONG",
@@ -389,8 +389,8 @@
       "avg_win_jpy": 52.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -416,7 +416,7 @@
         "RISK_ENGINE_PASS_MISSING"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 1.0918,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 1.0895,
       "expected_jpy_per_trade": 52.0,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
@@ -429,7 +429,7 @@
       "pair": "AUD_JPY",
       "proof_gap_count": 6,
       "realistic_units": 0,
-      "required_trades_per_day_to_contribute_to_30d_4x": 180.7860325643493,
+      "required_trades_per_day_to_contribute_to_30d_4x": 182.0620766375226,
       "risk_allowed": false,
       "sample_count": 1246,
       "side": "LONG",
@@ -454,8 +454,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -516,8 +516,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -579,8 +579,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -641,8 +641,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -704,8 +704,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -767,8 +767,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -828,8 +828,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -892,8 +892,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -953,8 +953,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1017,8 +1017,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1078,8 +1078,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1142,8 +1142,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1208,8 +1208,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 53439.7074,
-        "margin_used_jpy": 221902.8
+        "margin_available_jpy": 52953.7698,
+        "margin_used_jpy": 222180.0
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1269,7 +1269,7 @@
       "win_rate": null
     }
   ],
-  "generated_at_utc": "2026-07-06T01:59:25Z",
+  "generated_at_utc": "2026-07-06T06:08:31Z",
   "hard_exclusions": [
     {
       "hard_exclusion_reasons": [
@@ -1563,18 +1563,18 @@
   },
   "target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 274541.8969,
-    "funding_adjusted_equity": 174541.8969,
+    "current_equity_raw": 274914.8862,
+    "funding_adjusted_equity": 174914.8862,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 698167.5876,
-    "remaining_to_4x_funding_adjusted": 511198.3239,
-    "remaining_to_4x_raw": 411198.3239,
-    "required_active_day_return_funding_adjusted_pct": 7.415701,
-    "required_calendar_daily_profit_jpy": 9400.8737,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
-    "rolling_30d_multiplier_funding_adjusted": 1.018123,
-    "rolling_30d_multiplier_raw": 1.601434,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 699659.5448,
+    "remaining_to_4x_funding_adjusted": 510825.3346,
+    "remaining_to_4x_raw": 410825.3346,
+    "required_active_day_return_funding_adjusted_pct": 7.452467,
+    "required_calendar_daily_profit_jpy": 9467.228,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.412477,
+    "rolling_30d_multiplier_funding_adjusted": 1.020298,
+    "rolling_30d_multiplier_raw": 1.60361,
     "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
     "target_equity_from_rolling_start_4x_jpy": 685740.2208
