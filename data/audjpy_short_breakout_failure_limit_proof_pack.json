@@ -356,7 +356,7 @@
     "price_truth_status": "PRICE_TRUTH_OK",
     "status": "EVIDENCE_GAP_UNDER_SAMPLED"
   },
-  "generated_at_utc": "2026-07-06T09:04:10Z",
+  "generated_at_utc": "2026-07-06T09:42:39Z",
   "geometry": {
     "blockers": [
       "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"

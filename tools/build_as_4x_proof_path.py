@@ -545,6 +545,7 @@ def build_manual_eurusd_tp_replacement_provenance(generated_at: str, ctx: dict[s
 def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
     acceptance = ctx["acceptance"]
     broker_mutation_audit = _load_json("data/broker_mutation_bypass_audit.json")
+    manual_tp_audit = _manual_tp_audit_evidence_summary(broker_mutation_audit)
     current_codes = _acceptance_codes(acceptance)
     blocker_codes = _acceptance_blocker_codes(acceptance)
     rows = [
@@ -568,8 +569,8 @@ def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx
                 "manual_trade_472987_untouched": _nested(
                     broker_mutation_audit, "conclusion", "manual_trade_472987_untouched"
                 ),
-                "last_transaction_id": _nested(broker_mutation_audit, "broker_truth", "last_transaction_id"),
-                "active_take_profit_order": _nested(broker_mutation_audit, "broker_truth", "orders", 0, "order_id"),
+                "last_transaction_id": manual_tp_audit["last_transaction_id"],
+                "active_take_profit_order": manual_tp_audit["active_take_profit_order"],
             },
             clearance_condition=(
                 "Keep a clean proof window where tp_rebalancer, PositionManager, and "
@@ -818,6 +819,50 @@ def _context(as_loop: Any) -> dict[str, Any]:
         "proof_by_lane": proof_by_lane,
         "intent_by_lane": intent_by_lane,
     }
+
+
+def _manual_tp_audit_evidence_summary(broker_mutation_audit: dict[str, Any]) -> dict[str, Any]:
+    broker_truth = broker_mutation_audit.get("broker_truth") if isinstance(broker_mutation_audit, dict) else {}
+    if not isinstance(broker_truth, dict):
+        broker_truth = {}
+    snapshots = [
+        broker_truth.get("live"),
+        broker_truth.get("dev"),
+        broker_truth,
+    ]
+    last_transaction_id = None
+    active_take_profit_order = None
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        if last_transaction_id is None:
+            last_transaction_id = snapshot.get("last_transaction_id") or _nested(snapshot, "account", "last_transaction_id")
+        if active_take_profit_order is None:
+            active_take_profit_order = _active_manual_tp_order_id(snapshot)
+        if last_transaction_id is not None and active_take_profit_order is not None:
+            break
+    return {
+        "last_transaction_id": str(last_transaction_id) if last_transaction_id is not None else None,
+        "active_take_profit_order": str(active_take_profit_order) if active_take_profit_order is not None else None,
+    }
+
+
+def _active_manual_tp_order_id(snapshot: dict[str, Any]) -> str | None:
+    for order in snapshot.get("orders") or []:
+        if not isinstance(order, dict):
+            continue
+        if str(order.get("trade_id") or "") != MANUAL_TRADE_ID:
+            continue
+        order_type = str(order.get("order_type") or order.get("type") or "").upper()
+        state = str(order.get("state") or "").upper()
+        if "TAKE_PROFIT" not in order_type and order_type != "TAKE_PROFIT":
+            continue
+        if state and state not in {"PENDING", "OPEN"}:
+            continue
+        order_id = order.get("order_id") or order.get("id")
+        if order_id:
+            return str(order_id)
+    return None
 
 
 def _historical_target_row(

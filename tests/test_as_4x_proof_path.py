@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from tools import build_as_4x_proof_path as proof_path
 from tools import build_as_live_ready_evidence_loop as evidence_loop
@@ -327,6 +328,37 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertEqual(matrix["attached TP proof"], "PRESENT_BUT_NOT_PERMISSION")
 
     def test_profitability_reconciliation_keeps_routing_blocked(self) -> None:
+        broker_mutation_audit = {
+            "conclusion": {
+                "manual_trade_472987_untouched": True,
+                "position_manager_gateway_bypass_fixed": True,
+                "tp_rebalance_incident_contained": True,
+            },
+            "broker_truth": {
+                "dev": {
+                    "last_transaction_id": "472996",
+                    "orders": [
+                        {
+                            "order_id": "472996",
+                            "order_type": "TAKE_PROFIT",
+                            "state": "PENDING",
+                            "trade_id": "472987",
+                        }
+                    ],
+                },
+                "live": {
+                    "last_transaction_id": "472996",
+                    "orders": [
+                        {
+                            "order_id": "472996",
+                            "order_type": "TAKE_PROFIT",
+                            "state": "PENDING",
+                            "trade_id": "472987",
+                        }
+                    ],
+                },
+            },
+        }
         ctx = {
             "acceptance": {
                 "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
@@ -362,7 +394,8 @@ class As4xProofPathTests(unittest.TestCase):
             },
         }
 
-        payload = proof_path.build_profitability_acceptance_blocker_reconciliation("2026-07-06T00:00:00Z", ctx)
+        with patch.object(proof_path, "_load_json", return_value=broker_mutation_audit):
+            payload = proof_path.build_profitability_acceptance_blocker_reconciliation("2026-07-06T00:00:00Z", ctx)
         rows = {row["code"]: row for row in payload["rows"]}
 
         self.assertEqual(payload["status"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
@@ -373,6 +406,9 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertEqual(rows["MARKET_CLOSE_LEAK_FAMILY_BLOCKED"]["classification"], "TAXONOMY_DUPLICATE")
         self.assertTrue(rows["MARKET_CLOSE_LEAK_FAMILY_BLOCKED"]["still_blocks_fresh_entries"])
         self.assertEqual(rows["EXECUTION_LEDGER_STALE"]["classification"], "STALE_SUPERSEDED")
+        manual_tp_summary = rows["OPERATOR_MANUAL_TP_OPT_OUT_BYPASS"]["evidence_summary"]
+        self.assertEqual(manual_tp_summary["last_transaction_id"], "472996")
+        self.assertEqual(manual_tp_summary["active_take_profit_order"], "472996")
 
 
 if __name__ == "__main__":

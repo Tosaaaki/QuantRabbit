@@ -1,0 +1,227 @@
+{
+  "generated_at_utc": "2026-07-06T09:42:39Z",
+  "mode": "read_only_audjpy_limit_live_ready_decision",
+  "live_side_effects": [],
+  "scope": {
+    "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+    "pair": "AUD_JPY",
+    "side": "SHORT",
+    "method": "BREAKOUT_FAILURE",
+    "order_type": "LIMIT",
+    "candidate_only": true
+  },
+  "answers": {
+    "can_become_proof_ready_now": false,
+    "blocker_category": [
+      "sample_shortage",
+      "forecast_proof",
+      "RiskEngine",
+      "Gateway",
+      "GPT verifier",
+      "guardian/operator review",
+      "profitability acceptance"
+    ],
+    "geometry_blocker": false,
+    "classification": "REPAIR_REQUIRED",
+    "single_next_proof_needed": "Fresh S5 bid/ask spread-included replay proof for the exact AUD_JPY SHORT BREAKOUT_FAILURE LIMIT HARVEST vehicle that is daily-stable/live-grade: at least 3 active days, max daily sample share <= 0.7, positive day rate >= 0.6667, and non-negative/positive expectancy after spread. This must replace the current rank-only contrarian support and must not conflict with the current AUD_JPY DOWN negative replay block before RiskEngine/Gateway/GPT proof can matter.",
+    "next_candidate_if_rejected": null,
+    "next_candidate_note": "Not rejected now. If this lane later becomes REJECTED, the next proof-queue row is failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE STOP-ENTRY, but it is farther from proof and also REPAIR_REQUIRED."
+  },
+  "decision": {
+    "proof_ready_now": "NO",
+    "can_create_live_permission": false,
+    "as_live_ready_status": 0,
+    "normal_routing_status": "BLOCKED",
+    "live_ready_env_should_remain": 0,
+    "ordinary_fresh_entries_must_remain_blocked": true,
+    "trade_action_allowed": false,
+    "reason": "Geometry and attached TP proof exist as diagnostics, but exact live-grade S5 bid/ask proof, executable forecast proof, RiskEngine pass, LiveOrderGateway pass, GPT verifier pass, guardian/operator review clearance, and profitability acceptance are not all present."
+  },
+  "evidence": {
+    "proof_queue": {
+      "generated_at_utc": "2026-07-06T09:37:49Z",
+      "proof_ready_count": 0,
+      "can_create_live_permission_count": 0,
+      "lane_classification": "REPAIR_REQUIRED",
+      "lane_proof_distance": 5,
+      "can_enter_proof_pack": true,
+      "missing_proof": {
+        "s5_bidask_spread_included_replay": false,
+        "risk_engine_pass": false,
+        "live_order_gateway_pass": false,
+        "gpt_verifier_pass": false,
+        "no_guardian_operator_review_blocker": false,
+        "sample_count_floor": true,
+        "active_day_floor": true,
+        "daily_stability_floor": true,
+        "forecast_executable_proof": true,
+        "geometry_proof": true,
+        "attached_tp_proof": true,
+        "fresh_744h_replay": true,
+        "market_close_absence_or_close_gate_proof": true,
+        "residual_family_absence": true,
+        "no_stale_packaged_rule": true,
+        "positive_day_rate_floor": true
+      }
+    },
+    "as_board": {
+      "generated_at_utc": "2026-07-06T09:37:49Z",
+      "as_live_ready_path_exists": false,
+      "live_ready_lanes": 0,
+      "normal_routing_status": "BLOCKED",
+      "closest_candidate": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT"
+    },
+    "order_intent": {
+      "generated_at_utc": "2026-07-06T09:03:54.921550+00:00",
+      "status": "DRY_RUN_BLOCKED",
+      "risk_allowed": false,
+      "live_blocker_codes": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ],
+      "geometry": {
+        "entry": 112.502,
+        "tp": 112.165,
+        "sl": 112.627,
+        "reward_pips": 33.69999999999891,
+        "loss_pips": 12.5,
+        "reward_risk": 2.6959999999999127,
+        "spread_pips": 1.6000000000005343,
+        "units": 3000,
+        "risk_jpy": 375.0,
+        "estimated_margin_jpy": 13500.24
+      },
+      "forecast": {
+        "direction": "RANGE",
+        "confidence": 0.5244,
+        "market_support_ok": false,
+        "market_support_reason": "no directional projection support",
+        "range_forecast_requires_range_rotation": true
+      },
+      "attached_tp_proof": {
+        "attach_take_profit_on_fill": true,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+        "capture_take_profit_scope_key": "AUD_JPY|SHORT|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+        "capture_take_profit_trades": 6,
+        "capture_take_profit_wins": 6,
+        "capture_take_profit_expectancy_jpy": 992.7
+      },
+      "bidask_negative_replay": {
+        "name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "samples": 1361,
+        "active_days": 39,
+        "positive_days": 0,
+        "positive_day_rate": 0.0,
+        "avg_final_pips": -3.365,
+        "avg_mae_pips": 11.781,
+        "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY"
+      }
+    },
+    "fresh_s5_replay_candidate_support": {
+      "source": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+      "generated_at_utc": "2026-07-06T01:36:34.760297Z",
+      "price_truth_status": "PRICE_TRUTH_OK",
+      "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+      "live_grade_support": false,
+      "rank_only_support_rules": 2,
+      "candidate_rule_name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+      "candidate_samples": 40,
+      "candidate_active_days": 2,
+      "candidate_positive_days": 1,
+      "candidate_positive_day_rate": 0.5,
+      "candidate_max_daily_sample_share": 0.95,
+      "candidate_daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+      "candidate_adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "audjpy_down_evaluated_samples": 9,
+      "audjpy_down_evaluated_active_days": 5,
+      "audjpy_down_coverage_gap_reasons": [
+        "INSUFFICIENT_EVALUATED_SAMPLES",
+        "NO_MARKET_SESSION_UNSCORABLE"
+      ]
+    },
+    "risk_engine": {
+      "pass": false,
+      "blocking_codes": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ]
+    },
+    "gateway": {
+      "pass": false,
+      "evidence": "No order_request or gateway pass exists because the intent is DRY_RUN_BLOCKED before gateway send/stage permission."
+    },
+    "gpt_verifier": {
+      "pass": false,
+      "evidence": "No accepted fresh GPT TRADE/ADD receipt exists for this lane."
+    },
+    "guardian_operator_review": {
+      "clear": false,
+      "guardian_receipt_consumption_status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "normal_routing_allowed": false,
+      "unresolved_issue_count": 2
+    },
+    "profitability_acceptance": {
+      "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "active_blockers": [
+        "SELF_IMPROVEMENT_P0_PRESENT",
+        "NEGATIVE_EXPECTANCY_ACTIVE",
+        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+        "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+        "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+      ],
+      "capture_status": "NEGATIVE_EXPECTANCY"
+    },
+    "manual_position_safety": {
+      "trade_id": "472987",
+      "pair": "EUR_USD",
+      "classification": "OPERATOR_MANUAL",
+      "management_intent": "KEEP",
+      "active_take_profit_order_id": "472996",
+      "auto_tp_modify_allowed": false,
+      "auto_sl_attach_allowed": false,
+      "loss_side_auto_close_allowed": false,
+      "touched_by_this_decision": false
+    },
+    "notion_reference": {
+      "workspace_scan_ok": true,
+      "search_checked": [
+        "QuantRabbit AUD_JPY SHORT BREAKOUT_FAILURE LIVE_READY PROOF_READY",
+        "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT",
+        "QuantRabbit LIVE_READY normal routing BLOCKED guardian operator review"
+      ],
+      "relevant_page": "quant-rabbit-profitability-evidence-repair-2026-07-03",
+      "relevant_page_id": "392f1c8e-53a7-81af-a467-d6ce4635b5cd",
+      "notion_summary": "The fetched memory mirror states no broker actions, EUR_USD 472987 OPERATOR_MANUAL/KEEP, and no-live-ready gates remained active as of 2026-07-03."
+    }
+  },
+  "source_artifacts": [
+    "docs/AGENT_CONTRACT.md",
+    "docs/SKILL_trader.md",
+    "data/order_intents.json",
+    "data/as_proof_pack_queue.json",
+    "docs/as_proof_pack_queue.md",
+    "data/as_lane_candidate_board.json",
+    "docs/as_lane_candidate_board.md",
+    "data/audjpy_short_breakout_failure_limit_proof_pack.json",
+    "docs/audjpy_short_breakout_failure_limit_proof_pack.md",
+    "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+    "data/profitability_acceptance.json",
+    "data/self_improvement_audit.json",
+    "data/memory_health.json",
+    "data/trader_support_bot.json",
+    "data/guardian_receipt_consumption.json",
+    "data/guardian_receipt_operator_review.json",
+    "data/broker_snapshot.json",
+    "Notion: quant-rabbit-profitability-evidence-repair-2026-07-03"
+  ]
+}

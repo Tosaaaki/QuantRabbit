@@ -1,6 +1,6 @@
 # Portfolio 4x Path Planner
 
-- Generated: `2026-07-06T09:04:10Z`
+- Generated: `2026-07-06T09:42:39Z`
 - Status: `NO_LIVE_READY_PORTFOLIO`
 - Can reach 4x now: `False`
 - Non-hard-excluded candidates: `55`

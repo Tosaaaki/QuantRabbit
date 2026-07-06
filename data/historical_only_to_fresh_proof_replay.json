@@ -207,7 +207,7 @@
       ]
     }
   },
-  "generated_at_utc": "2026-07-06T09:04:10Z",
+  "generated_at_utc": "2026-07-06T09:42:39Z",
   "live_side_effects": [],
   "mode": "read_only_historical_only_to_fresh_proof_replay",
   "rolling_30d_target_math": {
