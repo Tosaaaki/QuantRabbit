@@ -15,8 +15,8 @@
       ],
       "can_create_live_permission": false,
       "classification": "ACTIVE_BLOCKER",
-      "node": "MEMORY_HEALTH_BLOCKED",
-      "requires": "memory-health must PASS after fresh forecast/quote/order-intent evidence; stale short forecast history cannot support live routing."
+      "node": "EXECUTION_LEDGER_STALE",
+      "requires": "self-improvement-audit must regenerate without this P0 code."
     },
     {
       "blocks": [
@@ -49,7 +49,7 @@
       "requires": "Exact close-gate proof, contained-risk timing evidence, and TP-proven exception evidence must all exist for EUR_USD LONG BREAKOUT_FAILURE before the family can route."
     }
   ],
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:25Z",
   "live_side_effects": [],
   "mode": "read_only_remaining_profitability_p0_decomposition",
   "rows": [
@@ -61,11 +61,11 @@
       "clearing_would_affect_as_live_ready": true,
       "family_ids": [],
       "market_close_leak_family_already_contains_it": false,
-      "message": "memory_health is blocked with 1 issue(s)",
-      "proposed_action": "Refresh forecast/market evidence, regenerate order_intents, rerun memory-health and self-improvement.",
-      "required_proof_to_clear": "memory-health must PASS after fresh forecast/quote/order-intent evidence; stale short forecast history cannot support live routing.",
+      "message": "execution ledger last transaction `472992` is behind broker snapshot `472994`",
+      "proposed_action": "Repair the named self-improvement P0 and rerun acceptance.",
+      "required_proof_to_clear": "self-improvement-audit must regenerate without this P0 code.",
       "residual_family_gate_already_contains_it": false,
-      "row_code": "MEMORY_HEALTH_BLOCKED",
+      "row_code": "EXECUTION_LEDGER_STALE",
       "source_artifact": "data/self_improvement_audit.json",
       "trade_ids": []
     },

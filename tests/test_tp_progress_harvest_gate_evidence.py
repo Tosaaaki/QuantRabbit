@@ -78,16 +78,37 @@ class TPProgressHarvestGateEvidenceTest(unittest.TestCase):
         self.assertEqual(proposed["excluded_trade_ids"], ["472987"])
         self.assertEqual(proposed["improved_pl_jpy"], -80.0)
 
-    def test_current_execution_timing_table_has_14_misses_and_13_current_rule_triggers(self) -> None:
+    def test_current_execution_timing_table_matches_current_fixture_metrics(self) -> None:
         timing_path = Path("data/execution_timing_audit.json")
         if not timing_path.exists():
             self.skipTest("current execution timing audit fixture is not present")
-        payload = build_tp_progress_harvest_gate_evidence(json.loads(timing_path.read_text()))
+        timing_payload = json.loads(timing_path.read_text())
+        payload = build_tp_progress_harvest_gate_evidence(timing_payload)
+        rows = [
+            row
+            for row in timing_payload.get("loss_close_regrets") or []
+            if isinstance(row, dict)
+        ]
+        missed_rows = [
+            row for row in rows if bool(row.get("profit_capture_missed_before_loss_close"))
+        ]
+        triggered_rows = [
+            row
+            for row in missed_rows
+            if bool(row.get("repair_replay_triggered_before_loss_close"))
+        ]
+        below_noise_rows = [
+            row
+            for row in missed_rows
+            if row.get("repair_replay_block_reason") == "BELOW_NOISE_FLOOR"
+        ]
 
-        self.assertEqual(payload["metrics"]["historical_missed_capture_count"], 14)
-        self.assertEqual(payload["metrics"]["current_rule_trigger_count"], 13)
-        self.assertEqual(payload["metrics"]["executable_profit_capture_before_loss_close_count"], 13)
-        self.assertEqual(payload["metrics"]["below_noise_floor_count"], 1)
+        self.assertEqual(payload["metrics"]["loss_closes_audited"], len(rows))
+        self.assertEqual(payload["metrics"]["historical_missed_capture_count"], len(missed_rows))
+        self.assertEqual(payload["metrics"]["current_rule_trigger_count"], len(triggered_rows))
+        self.assertEqual(payload["metrics"]["executable_profit_capture_before_loss_close_count"], len(triggered_rows))
+        self.assertEqual(payload["metrics"]["below_noise_floor_count"], len(below_noise_rows))
+        self.assertGreater(payload["metrics"]["historical_missed_capture_count"], 0)
         self.assertFalse(
             payload["month_scale_replay"]["month_scale_tp_progress_replay_still_negative_clears"]
         )

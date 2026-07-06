@@ -39,12 +39,14 @@ def main() -> int:
         "data/post_gate_expectancy_gap_trace.json": build_post_gate_gap_trace(generated_at, context),
         "data/historical_only_to_fresh_proof_replay.json": build_historical_only_replay(generated_at, context),
         "data/audjpy_short_breakout_failure_repair_proof.json": build_audjpy_repair(generated_at, context),
+        "data/audjpy_short_breakout_failure_limit_proof_pack.json": build_audjpy_limit_proof_pack(generated_at, context),
         "data/portfolio_4x_path_planner.json": build_portfolio_planner(generated_at, context),
     }
     markdown = {
         "docs/post_gate_expectancy_gap_trace.md": post_gate_gap_md(payloads["data/post_gate_expectancy_gap_trace.json"]),
         "docs/historical_only_to_fresh_proof_replay.md": historical_replay_md(payloads["data/historical_only_to_fresh_proof_replay.json"]),
         "docs/audjpy_short_breakout_failure_repair_proof.md": audjpy_repair_md(payloads["data/audjpy_short_breakout_failure_repair_proof.json"]),
+        "docs/audjpy_short_breakout_failure_limit_proof_pack.md": audjpy_limit_proof_pack_md(payloads["data/audjpy_short_breakout_failure_limit_proof_pack.json"]),
         "docs/portfolio_4x_path_planner.md": portfolio_planner_md(payloads["data/portfolio_4x_path_planner.json"]),
     }
     for rel, payload in payloads.items():
@@ -205,6 +207,164 @@ def build_audjpy_repair(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any
     }
 
 
+def build_audjpy_limit_proof_pack(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    lane_id = "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT"
+    candidate = ctx["candidate_by_lane"].get(lane_id) or {}
+    queue_row = ctx["proof_by_lane"].get(lane_id) or {}
+    intent_row = ctx["intent_by_lane"].get(lane_id) or {}
+    risk = intent_row.get("risk_metrics") if isinstance(intent_row.get("risk_metrics"), dict) else {}
+    intent = intent_row.get("intent") if isinstance(intent_row.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    fresh = fresh_direction_evidence(ctx["fresh_replay"], "AUD_JPY", "DOWN")
+    missing = queue_row.get("missing_proof") or {}
+    blockers = candidate.get("current_blockers") or []
+    expected_jpy = _float(candidate.get("expected_jpy_per_trade"))
+    trades_per_day = _float(candidate.get("estimated_trades_per_day_available"))
+    active_day_contribution = expected_jpy * trades_per_day if expected_jpy is not None and trades_per_day is not None else None
+    direction_coverage = fresh.get("direction_coverage") if isinstance(fresh.get("direction_coverage"), dict) else {}
+    forecast_coverage = (
+        ctx["fresh_replay"].get("forecast_sample_coverage")
+        if isinstance(ctx["fresh_replay"].get("forecast_sample_coverage"), dict)
+        else {}
+    )
+    min_directional_samples = _int(forecast_coverage.get("min_directional_samples_for_precision_rule")) or 30
+    min_active_days = _int(forecast_coverage.get("min_active_days_for_daily_stability")) or 3
+    fresh_samples = _int(direction_coverage.get("evaluated_samples")) or 0
+    fresh_active_days = _int(direction_coverage.get("evaluated_active_days")) or 0
+    daily_stability_status = _nested(fresh, "contrarian_or_rank_only_rules", 0, "daily_stability_status")
+    stale_quote_blocked = "STALE_QUOTE" in blockers or "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE" in blockers
+    range_forecast_requires_range_rotation = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION" in blockers
+    forecast_market_support_ok = metadata.get("forecast_market_support_ok")
+    forecast_executable = (
+        missing.get("forecast_executable_proof") is True
+        and forecast_market_support_ok is not False
+        and not stale_quote_blocked
+        and not range_forecast_requires_range_rotation
+    )
+    daily_stability_ok = bool(fresh.get("live_grade_support") is True and daily_stability_status not in {"INSUFFICIENT_ACTIVE_DAYS", "REJECTED_DAILY_STABILITY"})
+    checks = {
+        "fresh_744h_replay": bool(missing.get("fresh_744h_replay") is True),
+        "s5_bidask_spread_included_replay": bool(missing.get("s5_bidask_spread_included_replay") is True),
+        "sample_count_floor": fresh_samples >= min_directional_samples,
+        "active_day_floor": fresh_active_days >= min_active_days,
+        "daily_stability_floor": daily_stability_ok,
+        "forecast_executability": forecast_executable,
+        "geometry_proof": bool(missing.get("geometry_proof") is True),
+        "attached_tp_proof": bool(missing.get("attached_tp_proof") is True),
+        "reward_risk": bool((_float(risk.get("reward_risk")) or 0.0) >= 1.0),
+        "margin_feasibility": bool(candidate.get("realistic_units") and candidate.get("margin_requirement_realistic_size_jpy")),
+        "risk_engine_pass": bool(missing.get("risk_engine_pass") is True),
+        "live_order_gateway_pass": bool(missing.get("live_order_gateway_pass") is True),
+        "gpt_verifier_pass": bool(missing.get("gpt_verifier_pass") is True),
+        "guardian_operator_review_clear": bool(missing.get("no_guardian_operator_review_blocker") is True),
+    }
+    failed = [key for key, value in checks.items() if value is not True]
+    if candidate.get("source_evidence", {}).get("historical_only"):
+        classification = "HISTORICAL_ONLY"
+    elif not candidate:
+        classification = "EVIDENCE_GAP"
+    elif any(code in blockers for code in ("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION")):
+        classification = "PORTFOLIO_COMPONENT_REPAIR_REQUIRED"
+    elif failed:
+        classification = "EVIDENCE_GAP"
+    else:
+        classification = "PROOF_READY"
+    if classification == "PROOF_READY" and (checks["risk_engine_pass"] is not True or checks["live_order_gateway_pass"] is not True):
+        classification = "PORTFOLIO_COMPONENT_REPAIR_REQUIRED"
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_audjpy_short_breakout_failure_limit_proof_pack",
+        "lane_id": lane_id,
+        "source_artifacts": [
+            "data/order_intents.json",
+            "data/as_proof_pack_queue.json",
+            "data/rolling_30d_4x_firepower_board.json",
+            str(ctx["fresh_replay_relpath"]),
+            "data/execution_timing_audit.json",
+            "data/broker_snapshot.json",
+        ],
+        "classification_values": [
+            "PROOF_READY",
+            "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
+            "EVIDENCE_GAP",
+            "REJECTED",
+            "HISTORICAL_ONLY",
+        ],
+        "classification": classification,
+        "standalone_4x": False,
+        "portfolio_component_possible_after_repair": classification == "PORTFOLIO_COMPONENT_REPAIR_REQUIRED",
+        "can_create_live_permission": False,
+        "decision": "keep_as_repair_required_no_permission",
+        "fresh_744h_replay": timing_summary(ctx["timing"]),
+        "fresh_s5_bidask_spread_included_replay": fresh,
+        "sample_and_stability": {
+            "candidate_samples": candidate.get("sample_count"),
+            "candidate_active_days": candidate.get("active_days"),
+            "fresh_replay_evaluated_samples": _nested(fresh, "direction_coverage", "evaluated_samples"),
+            "fresh_replay_evaluated_active_days": _nested(fresh, "direction_coverage", "evaluated_active_days"),
+            "min_directional_samples_for_precision_rule": min_directional_samples,
+            "min_active_days_for_daily_stability": min_active_days,
+            "daily_stability_status": daily_stability_status,
+            "daily_stability_gap": _nested(fresh, "contrarian_or_rank_only_rules", 0, "daily_stability_gap"),
+        },
+        "forecast_executability": {
+            "forecast_direction": metadata.get("forecast_direction"),
+            "forecast_confidence": metadata.get("forecast_confidence"),
+            "forecast_market_support_ok": forecast_market_support_ok,
+            "stale_quote_blocked": stale_quote_blocked,
+            "range_forecast_requires_range_rotation": range_forecast_requires_range_rotation,
+            "executable": forecast_executable,
+        },
+        "geometry": {
+            "order_type": candidate.get("order_type"),
+            "entry": intent.get("entry"),
+            "tp": intent.get("tp"),
+            "sl": intent.get("sl"),
+            "reward_pips": risk.get("reward_pips"),
+            "loss_pips": risk.get("loss_pips"),
+            "reward_risk": risk.get("reward_risk"),
+            "spread_pips": risk.get("spread_pips"),
+            "blockers": [code for code in blockers if "CHASE" in code or "HARVEST_TP_STRUCTURE" in code or "RANGE_FORECAST" in code],
+        },
+        "attached_tp_proof": {
+            "attach_take_profit_on_fill": metadata.get("attach_take_profit_on_fill"),
+            "capture_take_profit_scope_key": metadata.get("capture_take_profit_scope_key"),
+            "capture_take_profit_trades": metadata.get("capture_take_profit_trades"),
+            "capture_take_profit_wins": metadata.get("capture_take_profit_wins"),
+            "capture_take_profit_expectancy_jpy": metadata.get("capture_take_profit_expectancy_jpy"),
+            "positive_rotation_mode": metadata.get("positive_rotation_mode"),
+            "proof_collection_ready": metadata.get("positive_rotation_proof_collection_ready"),
+        },
+        "economics": {
+            "expected_jpy_per_trade": candidate.get("expected_jpy_per_trade"),
+            "estimated_trades_per_day_available": candidate.get("estimated_trades_per_day_available"),
+            "expected_active_day_contribution_jpy": _round(active_day_contribution),
+            "expected_daily_return_pct_on_funding_adjusted_equity": candidate.get("expected_daily_return_pct_on_funding_adjusted_equity"),
+            "required_calendar_daily_return_pct": _nested(ctx["firepower"], "target_math", "required_calendar_daily_return_funding_adjusted_pct"),
+            "required_trades_per_day_to_contribute_to_30d_4x": candidate.get("required_trades_per_day_to_contribute_to_30d_4x"),
+        },
+        "margin_and_risk": {
+            "realistic_units": candidate.get("realistic_units"),
+            "risk_allowed": candidate.get("risk_allowed"),
+            "risk_jpy": risk.get("risk_jpy"),
+            "estimated_margin_jpy": candidate.get("margin_requirement_realistic_size_jpy"),
+            "margin_requirement_min_lot_jpy": candidate.get("margin_requirement_min_lot_jpy"),
+            "broker_margin_context": candidate.get("broker_margin_context"),
+        },
+        "verifier_gateway_guardian": {
+            "risk_engine_pass": checks["risk_engine_pass"],
+            "live_order_gateway_pass": checks["live_order_gateway_pass"],
+            "gpt_verifier_pass": checks["gpt_verifier_pass"],
+            "guardian_operator_review_clear": checks["guardian_operator_review_clear"],
+            "blockers": blockers,
+        },
+        "proof_checks": checks,
+        "failed_checks": failed,
+        "missing_proof": missing,
+        "live_side_effects": [],
+    }
+
+
 def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
     all_candidates = all_firepower_candidates(ctx)
     rankings = [portfolio_rank_row(row, ctx) for row in all_candidates]
@@ -223,6 +383,7 @@ def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str,
             "data/order_intents.json",
             "data/rolling_30d_4x_firepower_board.json",
             "data/as_proof_pack_queue.json",
+            "data/audjpy_short_breakout_failure_limit_proof_pack.json",
             "data/profitability_acceptance.json",
             "data/trader_support_bot.json",
             "data/broker_snapshot.json",
@@ -601,18 +762,35 @@ def manual_position_safety(broker: dict[str, Any]) -> dict[str, Any]:
     positions = broker.get("positions") if isinstance(broker.get("positions"), list) else []
     orders = broker.get("orders") if isinstance(broker.get("orders"), list) else []
     manual = next((row for row in positions if str(row.get("trade_id")) == MANUAL_TRADE_ID), {})
-    tp = next((row for row in orders if str(row.get("order_id") or row.get("id")) == MANUAL_TP_ORDER_ID), {})
+    expected_tp = next((row for row in orders if str(row.get("order_id") or row.get("id")) == MANUAL_TP_ORDER_ID), {})
+    active_tp = next((row for row in orders if str(row.get("trade_id")) == MANUAL_TRADE_ID), expected_tp)
+    raw_tp = _nested(manual, "raw", "takeProfitOrder") if isinstance(manual.get("raw"), dict) else {}
+    current_tp_order_id = (
+        active_tp.get("order_id")
+        or active_tp.get("id")
+        or (raw_tp.get("id") if isinstance(raw_tp, dict) else None)
+    )
+    replaced_expected_tp = (
+        isinstance(raw_tp, dict)
+        and str(raw_tp.get("replacesOrderID") or "") == MANUAL_TP_ORDER_ID
+        and str(current_tp_order_id or "") != MANUAL_TP_ORDER_ID
+    )
     return {
         "manual_trade_id": MANUAL_TRADE_ID,
-        "manual_tp_order_id": MANUAL_TP_ORDER_ID,
+        "expected_manual_tp_order_id": MANUAL_TP_ORDER_ID,
+        "current_manual_tp_order_id": current_tp_order_id,
+        "expected_tp_order_present": bool(expected_tp),
+        "expected_tp_replaced_in_broker_truth": bool(replaced_expected_tp),
         "position_present": bool(manual),
-        "tp_order_present": bool(tp),
+        "tp_order_present": bool(active_tp),
         "position_owner": manual.get("owner"),
         "position_pair": manual.get("pair"),
         "position_side": manual.get("side"),
         "position_units": manual.get("units"),
         "position_unrealized_pl_jpy": manual.get("unrealized_pl_jpy"),
-        "take_profit_price": manual.get("take_profit") or tp.get("price"),
+        "take_profit_price": manual.get("take_profit") or active_tp.get("price"),
+        "tp_replaces_order_id": raw_tp.get("replacesOrderID") if isinstance(raw_tp, dict) else None,
+        "tp_create_time": raw_tp.get("createTime") if isinstance(raw_tp, dict) else active_tp.get("createTime"),
         "management_intent": _nested(manual, "operator_manual_position", "management_intent"),
         "system_pl_counted": _nested(manual, "operator_manual_position", "system_pl_counted"),
         "no_live_side_effects": True,
@@ -627,6 +805,7 @@ def row_positive(row: dict[str, Any]) -> bool:
 def post_gate_gap_md(payload: dict[str, Any]) -> str:
     scope = payload.get("scope") or {}
     metrics = scope.get("metrics") or {}
+    safety = payload.get("manual_position_safety") or {}
     lines = [
         "# Post-Gate Expectancy Gap Trace",
         "",
@@ -646,7 +825,16 @@ def post_gate_gap_md(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Largest Loss Trades", "", "| trade | family | P/L JPY |", "|---|---|---:|"])
     for row in (payload.get("largest_loss_trades") or [])[:12]:
         lines.append(f"| `{row.get('trade_id')}` | `{row.get('family_id')}` | {row.get('realized_pl_jpy')} |")
-    lines.extend(["", "## Safety", "", f"- EUR_USD `{MANUAL_TRADE_ID}` and TP `{MANUAL_TP_ORDER_ID}` remain manual/read-only and excluded."])
+    lines.extend(
+        [
+            "",
+            "## Safety",
+            "",
+            f"- EUR_USD `{MANUAL_TRADE_ID}` remains manual/read-only and excluded.",
+            f"- Expected TP `{safety.get('expected_manual_tp_order_id')}` active: `{safety.get('expected_tp_order_present')}`; current TP: `{safety.get('current_manual_tp_order_id')}` at `{safety.get('take_profit_price')}`.",
+            f"- Replaced expected TP in broker truth: `{safety.get('expected_tp_replaced_in_broker_truth')}`; no live side effects from this run: `{safety.get('untouched_by_this_run')}`.",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -692,6 +880,45 @@ def audjpy_repair_md(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Missing Repair Requirements", ""])
     for row in payload.get("rows") or []:
         lines.append(f"- `{row.get('lane_id')}`: {', '.join(row.get('repair_requirements') or [])}")
+    return "\n".join(lines) + "\n"
+
+
+def audjpy_limit_proof_pack_md(payload: dict[str, Any]) -> str:
+    economics = payload.get("economics") or {}
+    geometry = payload.get("geometry") or {}
+    margin = payload.get("margin_and_risk") or {}
+    lines = [
+        "# AUD_JPY SHORT BREAKOUT_FAILURE LIMIT Proof Pack",
+        "",
+        f"- Generated: `{payload.get('generated_at_utc')}`",
+        f"- Lane: `{payload.get('lane_id')}`",
+        f"- Classification: `{payload.get('classification')}`",
+        f"- Standalone 4x: `{payload.get('standalone_4x')}`",
+        f"- Portfolio component possible after repair: `{payload.get('portfolio_component_possible_after_repair')}`",
+        f"- Can create live permission: `{payload.get('can_create_live_permission')}`",
+        "",
+        "## Economics",
+        "",
+        f"- Expected JPY/trade: `{economics.get('expected_jpy_per_trade')}`",
+        f"- Estimated trades/day: `{economics.get('estimated_trades_per_day_available')}`",
+        f"- Expected active-day contribution: `{economics.get('expected_active_day_contribution_jpy')}` JPY",
+        f"- Expected daily return on funding-adjusted equity: `{economics.get('expected_daily_return_pct_on_funding_adjusted_equity')}`%",
+        f"- Required calendar daily return: `{economics.get('required_calendar_daily_return_pct')}`%",
+        "",
+        "## Geometry / Margin",
+        "",
+        f"- Entry / TP / SL: `{geometry.get('entry')}` / `{geometry.get('tp')}` / `{geometry.get('sl')}`",
+        f"- Reward/risk: `{geometry.get('reward_risk')}`; reward/loss pips `{geometry.get('reward_pips')}` / `{geometry.get('loss_pips')}`",
+        f"- Units / risk / margin: `{margin.get('realistic_units')}` / `{margin.get('risk_jpy')}` / `{margin.get('estimated_margin_jpy')}`",
+        "",
+        "## Failed Checks",
+        "",
+    ]
+    for item in payload.get("failed_checks") or []:
+        lines.append(f"- `{item}`")
+    lines.extend(["", "## Current Blockers", ""])
+    for item in (payload.get("verifier_gateway_guardian") or {}).get("blockers") or []:
+        lines.append(f"- `{item}`")
     return "\n".join(lines) + "\n"
 
 
@@ -750,9 +977,14 @@ def _write_text(rel: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _nested(payload: Any, *keys: str) -> Any:
+def _nested(payload: Any, *keys: Any) -> Any:
     cur = payload
     for key in keys:
+        if isinstance(cur, list) and isinstance(key, int):
+            if 0 <= key < len(cur):
+                cur = cur[key]
+                continue
+            return None
         if not isinstance(cur, dict):
             return None
         cur = cur.get(key)

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:31Z",
   "live_side_effects": [],
   "mode": "read_only_audjpy_short_breakout_failure_repair_proof",
   "rows": [
@@ -9,19 +9,15 @@
       "classification": "REPAIR_REQUIRED",
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "STALE_QUOTE",
-        "SPREAD_TOO_WIDE",
-        "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
         "PATTERN_REVERSAL_CHASE",
-        "HARVEST_TP_STRUCTURE_MISSING",
         "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
       "decision": "portfolio_component_after_repair_only",
       "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8818,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
       "expected_jpy_per_trade": 189.9205,
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
@@ -36,7 +32,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -51,7 +47,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -59,7 +55,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -107,7 +103,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -122,7 +118,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -130,7 +126,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -187,7 +183,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -195,7 +191,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -238,7 +234,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -246,7 +242,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -328,19 +324,19 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 49820.6874,
-          "margin_used_jpy": 221485.2
+          "margin_available_jpy": 53439.7074,
+          "margin_used_jpy": 221902.8
         },
-        "margin_requirement_min_lot_jpy": 4455.56,
-        "margin_requirement_realistic_size_jpy": 4455.56,
-        "realistic_units": 1000,
+        "margin_requirement_min_lot_jpy": 4483.56,
+        "margin_requirement_realistic_size_jpy": 13450.68,
+        "realistic_units": 3000,
         "risk_allowed": false
       },
       "missing_proof": {
         "active_day_floor": true,
-        "attached_tp_proof": false,
+        "attached_tp_proof": true,
         "daily_stability_floor": true,
-        "forecast_executable_proof": false,
+        "forecast_executable_proof": true,
         "fresh_744h_replay": true,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
@@ -367,8 +363,6 @@
       },
       "portfolio_component_candidate_after_repair": true,
       "repair_requirements": [
-        "attached_tp_proof",
-        "forecast_executable_proof",
         "fresh_s5_bidask_live_grade_support",
         "geometry_proof",
         "gpt_verifier_pass",
@@ -378,9 +372,9 @@
         "risk_engine_pass",
         "s5_bidask_spread_included_replay"
       ],
-      "required_trades_per_day_to_contribute_to_30d_4x": 48.598756301323405,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
       "standalone_4x": false,
-      "standalone_4x_gap_pct": 1.524
+      "standalone_4x_gap_pct": 1.5888
     },
     {
       "can_create_live_permission": false,
@@ -388,16 +382,13 @@
       "classification": "REPAIR_REQUIRED",
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "STALE_QUOTE",
-        "SPREAD_TOO_WIDE",
-        "HARVEST_TP_STRUCTURE_MISSING",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
       "decision": "portfolio_component_after_repair_only",
       "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8818,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
       "expected_jpy_per_trade": 189.9205,
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
@@ -412,7 +403,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -427,7 +418,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -435,7 +426,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -483,7 +474,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -498,7 +489,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -506,7 +497,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -563,7 +554,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -571,7 +562,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -614,7 +605,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -622,7 +613,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -704,21 +695,21 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 49820.6874,
-          "margin_used_jpy": 221485.2
+          "margin_available_jpy": 53439.7074,
+          "margin_used_jpy": 221902.8
         },
-        "margin_requirement_min_lot_jpy": 4503.56,
-        "margin_requirement_realistic_size_jpy": 4503.56,
-        "realistic_units": 1000,
+        "margin_requirement_min_lot_jpy": 4486.76,
+        "margin_requirement_realistic_size_jpy": 13460.28,
+        "realistic_units": 3000,
         "risk_allowed": false
       },
       "missing_proof": {
         "active_day_floor": true,
-        "attached_tp_proof": false,
+        "attached_tp_proof": true,
         "daily_stability_floor": true,
-        "forecast_executable_proof": false,
+        "forecast_executable_proof": true,
         "fresh_744h_replay": true,
-        "geometry_proof": false,
+        "geometry_proof": true,
         "gpt_verifier_pass": false,
         "live_order_gateway_pass": false,
         "market_close_absence_or_close_gate_proof": true,
@@ -743,10 +734,7 @@
       },
       "portfolio_component_candidate_after_repair": true,
       "repair_requirements": [
-        "attached_tp_proof",
-        "forecast_executable_proof",
         "fresh_s5_bidask_live_grade_support",
-        "geometry_proof",
         "gpt_verifier_pass",
         "live_order_gateway_pass",
         "no_guardian_operator_review_blocker",
@@ -754,9 +742,9 @@
         "risk_engine_pass",
         "s5_bidask_spread_included_replay"
       ],
-      "required_trades_per_day_to_contribute_to_30d_4x": 48.598756301323405,
+      "required_trades_per_day_to_contribute_to_30d_4x": 49.49899401773987,
       "standalone_4x": false,
-      "standalone_4x_gap_pct": 1.524
+      "standalone_4x_gap_pct": 1.5888
     }
   ],
   "source_artifacts": [
@@ -776,18 +764,18 @@
   },
   "target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 270740.4982,
-    "funding_adjusted_equity": 170740.4982,
+    "current_equity_raw": 274541.8969,
+    "funding_adjusted_equity": 174541.8969,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682961.9928,
-    "remaining_to_4x_funding_adjusted": 514999.7226,
-    "remaining_to_4x_raw": 414999.7226,
-    "required_active_day_return_funding_adjusted_pct": 7.443193,
-    "required_calendar_daily_profit_jpy": 9229.9001,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
-    "rolling_30d_multiplier_funding_adjusted": 0.995949,
-    "rolling_30d_multiplier_raw": 1.57926,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 698167.5876,
+    "remaining_to_4x_funding_adjusted": 511198.3239,
+    "remaining_to_4x_raw": 411198.3239,
+    "required_active_day_return_funding_adjusted_pct": 7.415701,
+    "required_calendar_daily_profit_jpy": 9400.8737,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
+    "rolling_30d_multiplier_funding_adjusted": 1.018123,
+    "rolling_30d_multiplier_raw": 1.601434,
     "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
     "target_equity_from_rolling_start_4x_jpy": 685740.2208

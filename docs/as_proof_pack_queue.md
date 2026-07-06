@@ -1,20 +1,20 @@
 # A/S Proof-Pack Queue
 
-- Generated: `2026-07-05T18:15:59Z`
+- Generated: `2026-07-06T01:59:25Z`
 - Queue count: `4`
 - PROOF_READY: `0`
 - Can create live permission: `0`
 
 | lane | class | daily % | distance | can enter proof pack | blockers |
 |---|---|---:|---:|---|---|
-| `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.357 | 8 | `False` | STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, RANGE_ROTATION_BROADER_LOCATION_CHASE, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, STRATEGY_NOT_ELIGIBLE |
-| `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.9303 | 8 | `False` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, PATTERN_REVERSAL_CHASE, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, STRATEGY_NOT_ELIGIBLE |
-| `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` | `REPAIR_REQUIRED` | 3.8818 | 8 | `True` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE, PATTERN_REVERSAL_CHASE, HARVEST_TP_STRUCTURE_MISSING, EXHAUSTION_RANGE_CHASE, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED |
-| `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` | `REPAIR_REQUIRED` | 3.8818 | 8 | `True` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, STALE_QUOTE, SPREAD_TOO_WIDE, HARVEST_TP_STRUCTURE_MISSING, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED |
+| `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` | `REPAIR_REQUIRED` | 3.7972 | 5 | `True` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED |
+| `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` | `REPAIR_REQUIRED` | 3.7972 | 6 | `True` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, PATTERN_REVERSAL_CHASE, EXHAUSTION_RANGE_CHASE, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED |
+| `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.175 | 7 | `False` | LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, RANGE_ROTATION_BROADER_LOCATION_CHASE, EXHAUSTION_RANGE_CHASE, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, STRATEGY_NOT_ELIGIBLE |
+| `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.7576 | 7 | `False` | RANGE_FORECAST_REQUIRES_RANGE_ROTATION, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, PATTERN_REVERSAL_CHASE, EXHAUSTION_RANGE_CHASE, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, STRATEGY_NOT_ELIGIBLE |
 
 ## Missing Proof
 
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION`: fresh_744h_replay, s5_bidask_spread_included_replay, forecast_executable_proof, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
-- `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION`: fresh_744h_replay, s5_bidask_spread_included_replay, forecast_executable_proof, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
-- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE`: s5_bidask_spread_included_replay, forecast_executable_proof, geometry_proof, attached_tp_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
-- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`: s5_bidask_spread_included_replay, forecast_executable_proof, geometry_proof, attached_tp_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
+- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`: s5_bidask_spread_included_replay, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
+- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE`: s5_bidask_spread_included_replay, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION`: fresh_744h_replay, s5_bidask_spread_included_replay, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
+- `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION`: fresh_744h_replay, s5_bidask_spread_included_replay, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker

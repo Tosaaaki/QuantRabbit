@@ -148,6 +148,11 @@ def build_payloads(generated_at: str) -> dict[str, dict[Path, Any]]:
     raw_closed = _load_outcomes(ROOT / "data/execution_ledger.db", RAW_CLOSED_SQL)
     blocked = _blocked_sets(acceptance, residual_table, market_close_table)
 
+    family_repair = _build_post_gate_gap_family_repair_table(
+        generated_at=generated_at,
+        attributed=attributed,
+        blocked=blocked,
+    )
     p0_decomposition = _build_p0_decomposition(
         generated_at=generated_at,
         acceptance=acceptance,
@@ -161,6 +166,7 @@ def build_payloads(generated_at: str) -> dict[str, dict[Path, Any]]:
         attributed=attributed,
         blocked=blocked,
         capture=capture,
+        family_repair=family_repair,
     )
     firepower = _build_firepower_board(
         generated_at=generated_at,
@@ -187,6 +193,7 @@ def build_payloads(generated_at: str) -> dict[str, dict[Path, Any]]:
     return {
         "json": {
             Path("data/remaining_profitability_p0_decomposition.json"): p0_decomposition,
+            Path("data/post_gate_gap_family_repair_table.json"): family_repair,
             Path("data/post_gate_capture_economics_decomposition.json"): post_gate,
             Path("data/rolling_30d_4x_firepower_board.json"): firepower,
             Path("data/as_proof_pack_queue.json"): proof_queue,
@@ -194,6 +201,7 @@ def build_payloads(generated_at: str) -> dict[str, dict[Path, Any]]:
         },
         "markdown": {
             Path("docs/remaining_profitability_p0_decomposition.md"): _p0_md(p0_decomposition),
+            Path("docs/post_gate_gap_family_repair_table.md"): _family_repair_md(family_repair),
             Path("docs/post_gate_capture_economics_decomposition.md"): _post_gate_md(post_gate),
             Path("docs/rolling_30d_4x_firepower_board.md"): _firepower_md(firepower),
             Path("docs/as_proof_pack_queue.md"): _proof_queue_md(proof_queue),
@@ -404,6 +412,130 @@ def _p0_row(
     }
 
 
+def _build_post_gate_gap_family_repair_table(
+    *,
+    generated_at: str,
+    attributed: list[Outcome],
+    blocked: dict[str, Any],
+) -> dict[str, Any]:
+    manual_ids = {MANUAL_EURUSD_TRADE_ID}
+    base_rows = [
+        row
+        for row in attributed
+        if row.trade_id not in manual_ids | blocked["market_close_trade_ids"] | blocked["residual_trade_ids"]
+    ]
+    groups: dict[tuple[str, str, str, str], list[Outcome]] = {}
+    for row in base_rows:
+        groups.setdefault((row.pair, row.side, row.method, row.exit_reason), []).append(row)
+
+    close_gate_proven = _close_gate_proven_trade_ids()
+    rows: list[dict[str, Any]] = []
+    for (pair, side, method, exit_reason), family_rows in groups.items():
+        metrics = _bucket_metrics(family_rows)
+        if (metrics.get("net_jpy") or 0.0) >= 0.0:
+            continue
+        trade_ids = [row.trade_id for row in sorted(family_rows, key=lambda item: item.ts_utc)]
+        key = (pair, side, method)
+        close_gate_ids = sorted(set(trade_ids) & close_gate_proven)
+        market_close_path = exit_reason == "MARKET_ORDER_TRADE_CLOSE"
+        market_close_allowed = bool(market_close_path and len(close_gate_ids) == len(trade_ids))
+        action = _family_repair_action(
+            pair=pair,
+            side=side,
+            method=method,
+            exit_reason=exit_reason,
+            market_close_allowed=market_close_allowed,
+        )
+        rows.append(
+            {
+                "family_id": f"{pair}|{side}|{method}|{exit_reason}",
+                "pair": pair,
+                "side": side,
+                "method": method,
+                "exit_reason": exit_reason,
+                "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+                "operator_manual_excluded": True,
+                **metrics,
+                "trade_ids": trade_ids,
+                "trades_detail": [
+                    {
+                        "ts_utc": row.ts_utc,
+                        "trade_id": row.trade_id,
+                        "lane_id": row.lane_id,
+                        "realized_pl_jpy": _round(row.realized_pl_jpy),
+                    }
+                    for row in sorted(family_rows, key=lambda item: item.realized_pl_jpy)
+                ],
+                "existing_residual_family_key_match": key in blocked["residual_keys"],
+                "existing_market_close_family_key_match": key == blocked["market_close_family_key"],
+                "close_gate_proven_trade_ids": close_gate_ids,
+                "market_close_path_allowed": market_close_allowed if market_close_path else None,
+                "can_create_live_permission": False,
+                "blocker": _family_repair_blocker(
+                    pair=pair,
+                    side=side,
+                    method=method,
+                    exit_reason=exit_reason,
+                    market_close_allowed=market_close_allowed,
+                ),
+                "action": action,
+                "secondary_actions": _family_secondary_actions(exit_reason, market_close_allowed),
+                "exact_clearance_condition": _family_clearance_condition(exit_reason, market_close_allowed),
+                "permission_boundary": (
+                    "This row may contain or ban a historical loss path only. It cannot create A/S "
+                    "permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof."
+                ),
+            }
+        )
+
+    rows.sort(key=lambda item: (item["net_jpy"], item["family_id"]))
+    filter_trade_ids = {
+        trade_id
+        for row in rows
+        if row["action"] in {"BAN_FAMILY", "MARKET_CLOSE_PATH_BLOCK"}
+        for trade_id in row.get("trade_ids") or []
+    }
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_post_gate_gap_family_repair_table",
+        "source_artifacts": [
+            "data/execution_ledger.db",
+            "data/post_gate_capture_economics_decomposition.json",
+            "data/profitability_acceptance.json",
+            "data/month_scale_residual_family_table.json",
+            "data/market_close_leak_trade_table.json",
+        ],
+        "scope": {
+            "name": "manual_excluded_plus_existing_market_close_and_residual_filters_remaining_negative_families",
+            "definition": (
+                "Trader-attributed realized rows excluding EUR_USD 472987, current "
+                "MARKET_CLOSE_LEAK_FAMILY_BLOCKED trade IDs, and current month-scale residual trade IDs."
+            ),
+            "metrics": _bucket_metrics(base_rows),
+        },
+        "action_values": [
+            "BAN_FAMILY",
+            "MARKET_CLOSE_PATH_BLOCK",
+            "REQUIRE_LOCAL_TP_PROOF",
+            "REQUIRE_CLOSE_GATE_PROOF",
+            "HISTORICAL_ONLY",
+            "TAXONOMY_DUPLICATE",
+        ],
+        "summary": {
+            "negative_family_count": len(rows),
+            "market_close_path_block_count": sum(1 for row in rows if row["action"] == "MARKET_CLOSE_PATH_BLOCK"),
+            "ban_family_count": sum(1 for row in rows if row["action"] == "BAN_FAMILY"),
+            "require_local_tp_proof_count": sum(1 for row in rows if row["action"] == "REQUIRE_LOCAL_TP_PROOF"),
+            "can_create_live_permission_count": 0,
+            "containment_filter_trade_count": len(filter_trade_ids),
+            "largest_remaining_adverse_family": rows[0]["family_id"] if rows else None,
+        },
+        "containment_filter_trade_ids": sorted(filter_trade_ids),
+        "rows": rows,
+        "live_side_effects": [],
+    }
+
+
 def _build_post_gate_capture(
     *,
     generated_at: str,
@@ -411,10 +543,12 @@ def _build_post_gate_capture(
     attributed: list[Outcome],
     blocked: dict[str, Any],
     capture: dict[str, Any],
+    family_repair: dict[str, Any],
 ) -> dict[str, Any]:
     manual_ids = {MANUAL_EURUSD_TRADE_ID}
     market_ids = blocked["market_close_trade_ids"]
     residual_ids = blocked["residual_trade_ids"]
+    family_filter_ids = _family_repair_filter_trade_ids(family_repair)
     unknown_market_ids = _unknown_unverified_gateway_close_ids(attributed)
     scopes = [
         (
@@ -449,6 +583,20 @@ def _build_post_gate_capture(
             "manual_excluded_plus_both_market_close_leak_and_residual_family_filters",
             [row for row in attributed if row.trade_id not in manual_ids | market_ids | residual_ids],
             "Manual exclusion plus both non-permission historical filters.",
+            False,
+            False,
+        ),
+        (
+            "manual_excluded_plus_existing_filters_plus_new_family_containment",
+            [
+                row
+                for row in attributed
+                if row.trade_id not in manual_ids | market_ids | residual_ids | family_filter_ids
+            ],
+            (
+                "Manual exclusion plus existing filters plus this run's BAN_FAMILY / "
+                "MARKET_CLOSE_PATH_BLOCK containment rows. Non-negative here is containment, not permission."
+            ),
             False,
             False,
         ),
@@ -502,6 +650,7 @@ def _build_post_gate_capture(
             "data/capture_economics.json",
             "data/month_scale_residual_family_table.json",
             "data/market_close_leak_trade_table.json",
+            "data/post_gate_gap_family_repair_table.json",
         ],
         "raw_broker_closed_context": _bucket_metrics(raw_closed),
         "capture_economics_status": capture.get("status"),
@@ -510,6 +659,7 @@ def _build_post_gate_capture(
             "manual_trade_ids": sorted(manual_ids),
             "market_close_leak_trade_ids": sorted(market_ids),
             "residual_family_trade_ids": sorted(residual_ids),
+            "post_gate_family_repair_filter_trade_ids": sorted(family_filter_ids),
             "unknown_unverified_gateway_close_trade_ids": sorted(unknown_market_ids),
         },
         "scopes": scope_rows,
@@ -788,6 +938,8 @@ def _update_as_board(
                 "docs/remaining_profitability_p0_decomposition.md",
                 "data/post_gate_capture_economics_decomposition.json",
                 "docs/post_gate_capture_economics_decomposition.md",
+                "data/post_gate_gap_family_repair_table.json",
+                "docs/post_gate_gap_family_repair_table.md",
                 "data/rolling_30d_4x_firepower_board.json",
                 "docs/rolling_30d_4x_firepower_board.md",
                 "data/as_proof_pack_queue.json",
@@ -935,6 +1087,106 @@ def _unknown_unverified_gateway_close_ids(rows: list[Outcome]) -> set[str]:
         row.trade_id
         for row in rows
         if row.exit_reason == "MARKET_ORDER_TRADE_CLOSE" and row.trade_id not in sent_ids
+    }
+
+
+def _close_gate_proven_trade_ids() -> set[str]:
+    proven: set[str] = set()
+    db_path = ROOT / "data/execution_ledger.db"
+    if not db_path.exists():
+        return proven
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        for (trade_id,) in conn.execute(
+            """
+            SELECT DISTINCT trade_id
+            FROM execution_events
+            WHERE event_type IN ('GATEWAY_GPT_CLOSE_ACCEPTED', 'GATEWAY_TRADE_CLOSE_SENT')
+              AND trade_id IS NOT NULL
+              AND trade_id != ''
+            """
+        ):
+            proven.add(str(trade_id))
+    return proven
+
+
+def _family_repair_action(
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    exit_reason: str,
+    market_close_allowed: bool,
+) -> str:
+    if pair == "GBP_USD" and side == "LONG" and method == "BREAKOUT_FAILURE" and exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return "MARKET_CLOSE_PATH_BLOCK"
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return "REQUIRE_CLOSE_GATE_PROOF" if market_close_allowed else "MARKET_CLOSE_PATH_BLOCK"
+    if exit_reason == "MARKET_ORDER_MARGIN_CLOSEOUT":
+        return "BAN_FAMILY"
+    if exit_reason in {"STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"}:
+        return "REQUIRE_LOCAL_TP_PROOF"
+    return "HISTORICAL_ONLY"
+
+
+def _family_repair_blocker(
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    exit_reason: str,
+    market_close_allowed: bool,
+) -> str:
+    if pair == "GBP_USD" and side == "LONG" and method == "BREAKOUT_FAILURE" and exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return "GBP_USD_LONG_BREAKOUT_FAILURE_MARKET_CLOSE_PATH_BLOCKED"
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and not market_close_allowed:
+        return "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE"
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return "MARKET_CLOSE_PATH_REQUIRES_CLOSE_GATE_PROOF"
+    if exit_reason == "MARKET_ORDER_MARGIN_CLOSEOUT":
+        return "MARGIN_CLOSEOUT_FAMILY_BANNED_FROM_A_S"
+    if exit_reason == "STOP_LOSS_ORDER":
+        return "LOSS_EXIT_REQUIRES_LOCAL_TP_OR_GEOMETRY_PROOF"
+    return "NEGATIVE_HISTORICAL_FAMILY_REPAIR_REQUIRED"
+
+
+def _family_secondary_actions(exit_reason: str, market_close_allowed: bool) -> list[str]:
+    actions: list[str] = []
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        actions.append("REQUIRE_CLOSE_GATE_PROOF")
+        if not market_close_allowed:
+            actions.append("REQUIRE_LOCAL_TP_PROOF")
+    elif exit_reason == "MARKET_ORDER_MARGIN_CLOSEOUT":
+        actions.append("REQUIRE_LOCAL_TP_PROOF")
+    elif exit_reason == "STOP_LOSS_ORDER":
+        actions.append("REQUIRE_LOCAL_TP_PROOF")
+    return actions
+
+
+def _family_clearance_condition(exit_reason: str, market_close_allowed: bool) -> str:
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        if market_close_allowed:
+            return (
+                "Retain only if every matching future close has durable close-gate proof, "
+                "contained-risk timing proof, and the regenerated family economics are non-negative."
+            )
+        return (
+            "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through "
+            "attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics."
+        )
+    if exit_reason == "MARKET_ORDER_MARGIN_CLOSEOUT":
+        return "Reject as an A/S vehicle until margin-closeout risk disappears from a fresh replay and current gateway sizing proof."
+    if exit_reason == "STOP_LOSS_ORDER":
+        return "Require exact local TP, geometry, and risk proof showing the loss path no longer dominates the family."
+    return "Treat as historical repair context until exact fresh proof regenerates a clean LIVE_READY lane."
+
+
+def _family_repair_filter_trade_ids(table: dict[str, Any]) -> set[str]:
+    return {
+        str(trade_id)
+        for row in table.get("rows") or []
+        if row.get("action") in {"BAN_FAMILY", "MARKET_CLOSE_PATH_BLOCK"}
+        for trade_id in row.get("trade_ids") or []
+        if str(trade_id)
     }
 
 
@@ -1253,6 +1505,37 @@ def _p0_md(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Dependency Graph", ""])
     for node in payload.get("dependency_graph") or []:
         lines.append(f"- `{node.get('node')}` -> blocks `{', '.join(node.get('blocks') or [])}`; requires: {node.get('requires')}")
+    return "\n".join(lines) + "\n"
+
+
+def _family_repair_md(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    scope = payload.get("scope") or {}
+    metrics = scope.get("metrics") or {}
+    lines = [
+        "# Post-Gate Gap Family Repair Table",
+        "",
+        f"- Generated: `{payload.get('generated_at_utc')}`",
+        f"- Scope: `{scope.get('name')}`",
+        f"- Scope net / expectancy: `{metrics.get('net_jpy')}` / `{metrics.get('expectancy_jpy_per_trade')}` JPY",
+        f"- Negative families: `{summary.get('negative_family_count')}`",
+        f"- Largest remaining adverse family: `{summary.get('largest_remaining_adverse_family')}`",
+        f"- Can create live permission: `{summary.get('can_create_live_permission_count')}`",
+        "",
+        "| family | trades | net | exp/trade | exit reason | market-close allowed | blocker | action | live permission |",
+        "|---|---:|---:|---:|---|---|---|---|---|",
+    ]
+    for row in payload.get("rows") or []:
+        lines.append(
+            f"| `{row.get('family_id')}` | {row.get('trades')} | {row.get('net_jpy')} | {row.get('expectancy_jpy_per_trade')} | `{row.get('exit_reason')}` | `{row.get('market_close_path_allowed')}` | `{row.get('blocker')}` | `{row.get('action')}` | `{row.get('can_create_live_permission')}` |"
+        )
+    lines.extend(["", "## Trade IDs And Required Proof", ""])
+    for row in payload.get("rows") or []:
+        ids = ", ".join(str(x) for x in row.get("trade_ids") or [])
+        secondaries = ", ".join(row.get("secondary_actions") or [])
+        lines.append(f"- `{row.get('family_id')}`: trades `{ids}`")
+        lines.append(f"  - P/L: `{row.get('net_jpy')}` JPY; attribution `{row.get('attribution')}`; action `{row.get('action')}`; secondary `{secondaries or 'none'}`")
+        lines.append(f"  - Clearance: {row.get('exact_clearance_condition')}")
     return "\n".join(lines) + "\n"
 
 

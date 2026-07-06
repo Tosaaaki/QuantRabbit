@@ -1,6 +1,6 @@
 # Capture Economics Report
 
-- Generated at UTC: `2026-07-05T18:08:38.642697+00:00`
+- Generated at UTC: `2026-07-06T01:57:35.731924+00:00`
 - Status: `NEGATIVE_EXPECTANCY`
 - Trades (trader-attributed, realized): `229`
 - Win rate: `59.8%`

@@ -7,12 +7,12 @@
     "HISTORICAL_ONLY"
   ],
   "execution_timing_744h_summary": {
-    "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
-    "historical_pre_repair_loss_closes_profit_capture_missed": 14,
-    "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+    "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
+    "historical_pre_repair_loss_closes_profit_capture_missed": 1,
+    "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
     "lookback_basis": "execution_timing_audit current local artifact",
-    "loss_close_repair_replay_delta_jpy": 18771.7372,
-    "loss_closes_audited": 39,
+    "loss_close_repair_replay_delta_jpy": 466.2,
+    "loss_closes_audited": 8,
     "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
     "post_repair_live_evidence_loss_closes_audited": 5,
     "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
@@ -129,7 +129,7 @@
       ],
       "unscorable_no_market_samples": 13
     },
-    "generated_at_utc": "2026-07-05T18:07:59.961645Z",
+    "generated_at_utc": "2026-07-06T01:36:34.760297Z",
     "granularity": "S5",
     "pair_filter": [
       "AUD_JPY",
@@ -207,23 +207,23 @@
       ]
     }
   },
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:31Z",
   "live_side_effects": [],
   "mode": "read_only_historical_only_to_fresh_proof_replay",
   "rolling_30d_target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 270740.4982,
-    "funding_adjusted_equity": 170740.4982,
+    "current_equity_raw": 274541.8969,
+    "funding_adjusted_equity": 174541.8969,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682961.9928,
-    "remaining_to_4x_funding_adjusted": 514999.7226,
-    "remaining_to_4x_raw": 414999.7226,
-    "required_active_day_return_funding_adjusted_pct": 7.443193,
-    "required_calendar_daily_profit_jpy": 9229.9001,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
-    "rolling_30d_multiplier_funding_adjusted": 0.995949,
-    "rolling_30d_multiplier_raw": 1.57926,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 698167.5876,
+    "remaining_to_4x_funding_adjusted": 511198.3239,
+    "remaining_to_4x_raw": 411198.3239,
+    "required_active_day_return_funding_adjusted_pct": 7.415701,
+    "required_calendar_daily_profit_jpy": 9400.8737,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
+    "rolling_30d_multiplier_funding_adjusted": 1.018123,
+    "rolling_30d_multiplier_raw": 1.601434,
     "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
     "target_equity_from_rolling_start_4x_jpy": 685740.2208
@@ -233,28 +233,26 @@
       "can_create_live_permission": false,
       "classification": "HISTORICAL_ONLY",
       "current_blockers": [
-        "STALE_QUOTE",
-        "SPREAD_TOO_WIDE",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
         "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
         "STRATEGY_NOT_ELIGIBLE"
       ],
       "decision": "rank_repair_work_only_no_live_permission",
       "estimated_trades_per_day_available": 43.0303,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 8.357,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 8.175,
       "expected_jpy_per_trade": 331.6,
       "fresh_744h_replay": {
-        "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
-        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
-        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+        "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 1,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
         "lookback_basis": "execution_timing_audit current local artifact",
-        "loss_close_repair_replay_delta_jpy": 18771.7372,
-        "loss_closes_audited": 39,
+        "loss_close_repair_replay_delta_jpy": 466.2,
+        "loss_closes_audited": 8,
         "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
         "post_repair_live_evidence_loss_closes_audited": 5,
         "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
@@ -307,8 +305,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 49820.6874,
-          "margin_used_jpy": 221485.2
+          "margin_available_jpy": 53439.7074,
+          "margin_used_jpy": 221902.8
         },
         "margin_requirement_realistic_size_jpy": 0.0,
         "realistic_units": 0,
@@ -320,7 +318,7 @@
         "active_day_floor": true,
         "attached_tp_proof": true,
         "daily_stability_floor": true,
-        "forecast_executable_proof": false,
+        "forecast_executable_proof": true,
         "fresh_744h_replay": false,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
@@ -347,7 +345,7 @@
       },
       "pair": "GBP_USD",
       "proof_checks": {
-        "fresh_forecast_executable": false,
+        "fresh_forecast_executable": true,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
         "guardian_clear": false,
@@ -355,7 +353,7 @@
         "margin_and_risk_engine_pass": false,
         "s5_live_grade": false
       },
-      "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
+      "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
       "side": "LONG"
     },
     {
@@ -363,28 +361,25 @@
       "classification": "HISTORICAL_ONLY",
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "STALE_QUOTE",
-        "SPREAD_TOO_WIDE",
-        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
         "STRATEGY_NOT_ELIGIBLE"
       ],
       "decision": "rank_repair_work_only_no_live_permission",
       "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9303,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.7576,
       "expected_jpy_per_trade": 388.0,
       "fresh_744h_replay": {
-        "generated_at_utc": "2026-07-05T17:59:08.900081+00:00",
-        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
-        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
+        "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 1,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
         "lookback_basis": "execution_timing_audit current local artifact",
-        "loss_close_repair_replay_delta_jpy": 18771.7372,
-        "loss_closes_audited": 39,
+        "loss_close_repair_replay_delta_jpy": 466.2,
+        "loss_closes_audited": 8,
         "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
         "post_repair_live_evidence_loss_closes_audited": 5,
         "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
@@ -404,7 +399,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -419,7 +414,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -427,7 +422,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -475,7 +470,7 @@
               "NEEDS_HIGHER_POSITIVE_DAY_RATE"
             ],
             "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260705T180759Z.json",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
             "avg_daily_realized_pips": 56.75,
             "avg_daily_samples": 20.0,
             "avg_final_pips": 4.8425,
@@ -490,7 +485,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -498,7 +493,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -555,7 +550,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -563,7 +558,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -606,7 +601,7 @@
               "current_positive_day_rate": 0.5,
               "max_allowed_daily_sample_share": 0.7,
               "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 2,
+              "missing_positive_days_at_current_requirement": 1,
               "reasons": [
                 "NEEDS_MORE_ACTIVE_DAYS",
                 "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -614,7 +609,7 @@
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 3,
+              "required_positive_days_at_current_requirement": 2,
               "status": "INSUFFICIENT_ACTIVE_DAYS"
             },
             "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -696,11 +691,11 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 49820.6874,
-          "margin_used_jpy": 221485.2
+          "margin_available_jpy": 53439.7074,
+          "margin_used_jpy": 221902.8
         },
-        "margin_requirement_realistic_size_jpy": 0.0,
-        "realistic_units": 0,
+        "margin_requirement_realistic_size_jpy": 13450.68,
+        "realistic_units": 3000,
         "risk_allowed": false
       },
       "meets_4x_required_daily_return_prefilter": true,
@@ -709,7 +704,7 @@
         "active_day_floor": true,
         "attached_tp_proof": true,
         "daily_stability_floor": true,
-        "forecast_executable_proof": false,
+        "forecast_executable_proof": true,
         "fresh_744h_replay": false,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
@@ -736,7 +731,7 @@
       },
       "pair": "AUD_JPY",
       "proof_checks": {
-        "fresh_forecast_executable": false,
+        "fresh_forecast_executable": true,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
         "guardian_clear": false,
@@ -744,7 +739,7 @@
         "margin_and_risk_engine_pass": false,
         "s5_live_grade": false
       },
-      "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
+      "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
       "side": "SHORT"
     }
   ],

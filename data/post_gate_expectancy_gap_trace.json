@@ -4555,7 +4555,7 @@
       "wins": 20
     }
   ],
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:31Z",
   "largest_loss_trades": [
     {
       "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
@@ -4780,8 +4780,11 @@
   ],
   "live_side_effects": [],
   "manual_position_safety": {
+    "current_manual_tp_order_id": "472994",
+    "expected_manual_tp_order_id": "472988",
+    "expected_tp_order_present": false,
+    "expected_tp_replaced_in_broker_truth": true,
     "management_intent": "KEEP",
-    "manual_tp_order_id": "472988",
     "manual_trade_id": "472987",
     "no_live_side_effects": true,
     "position_owner": "operator_manual",
@@ -4789,10 +4792,12 @@
     "position_present": true,
     "position_side": "SHORT",
     "position_units": 30000,
-    "position_unrealized_pl_jpy": -16445.4764,
+    "position_unrealized_pl_jpy": -12061.6976,
     "system_pl_counted": false,
-    "take_profit_price": 1.1388,
+    "take_profit_price": 1.136,
+    "tp_create_time": "2026-07-06T01:27:42.923617123Z",
     "tp_order_present": true,
+    "tp_replaces_order_id": "472988",
     "untouched_by_this_run": true
   },
   "mode": "read_only_post_gate_expectancy_gap_trace",

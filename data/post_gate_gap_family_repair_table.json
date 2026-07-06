@@ -1,0 +1,1393 @@
+{
+  "action_values": [
+    "BAN_FAMILY",
+    "MARKET_CLOSE_PATH_BLOCK",
+    "REQUIRE_LOCAL_TP_PROOF",
+    "REQUIRE_CLOSE_GATE_PROOF",
+    "HISTORICAL_ONLY",
+    "TAXONOMY_DUPLICATE"
+  ],
+  "containment_filter_trade_ids": [
+    "470266",
+    "470279",
+    "470348",
+    "470359",
+    "470362",
+    "470365",
+    "470368",
+    "470395",
+    "470400",
+    "470403",
+    "470415",
+    "470427",
+    "470440",
+    "470446",
+    "470461",
+    "470464",
+    "470468",
+    "470494",
+    "470497",
+    "470500",
+    "470503",
+    "470519",
+    "470529",
+    "470644",
+    "470655",
+    "470713",
+    "470719",
+    "470749",
+    "470759",
+    "470762",
+    "470837",
+    "470854",
+    "470859",
+    "470898",
+    "470904",
+    "470945",
+    "470951",
+    "470971",
+    "471008",
+    "471020",
+    "471061",
+    "471077",
+    "471213",
+    "471216",
+    "471219",
+    "471232",
+    "471414",
+    "471923",
+    "471979",
+    "472037",
+    "472149",
+    "472222",
+    "472230",
+    "472819"
+  ],
+  "generated_at_utc": "2026-07-06T01:59:25Z",
+  "live_side_effects": [],
+  "mode": "read_only_post_gate_gap_family_repair_table",
+  "rows": [
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 2008.8456,
+      "avg_win_jpy": 295.8317,
+      "blocker": "GBP_USD_LONG_BREAKOUT_FAILURE_MARKET_CLOSE_PATH_BLOCKED",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -1624.7327,
+      "family_id": "GBP_USD|LONG|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 10,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -11986.9276,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -19496.7922,
+      "operator_manual_excluded": true,
+      "pair": "GBP_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0295,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "470368",
+        "470362",
+        "470359",
+        "470446",
+        "470461",
+        "470500",
+        "470494",
+        "470529",
+        "470854",
+        "470837",
+        "470762",
+        "471008"
+      ],
+      "trades": 12,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -11986.9276,
+          "trade_id": "470854",
+          "ts_utc": "2026-05-12T15:33:19.430010978Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -3688.6643,
+          "trade_id": "471008",
+          "ts_utc": "2026-05-14T14:44:38.121219113Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1283.9605,
+          "trade_id": "470762",
+          "ts_utc": "2026-05-12T15:33:19.858305282Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1092.4855,
+          "trade_id": "470494",
+          "ts_utc": "2026-05-08T13:16:17.322203447Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1031.1508,
+          "trade_id": "470837",
+          "ts_utc": "2026-05-12T15:33:19.639635814Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -453.5178,
+          "trade_id": "470500",
+          "ts_utc": "2026-05-08T13:16:16.836531079Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -373.8699,
+          "trade_id": "470359",
+          "ts_utc": "2026-05-07T23:01:57.086017276Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -118.1418,
+          "trade_id": "470368",
+          "ts_utc": "2026-05-07T23:01:56.431579430Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -51.7592,
+          "trade_id": "470529",
+          "ts_utc": "2026-05-08T13:58:22.288143583Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -7.9781,
+          "trade_id": "470362",
+          "ts_utc": "2026-05-07T23:01:56.856519742Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": 136.8629,
+          "trade_id": "470446",
+          "ts_utc": "2026-05-08T12:16:09.191995152Z"
+        },
+        {
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": 454.8004,
+          "trade_id": "470461",
+          "ts_utc": "2026-05-08T12:39:17.684233563Z"
+        }
+      ],
+      "win_rate": 0.1667,
+      "wins": 2
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 785.4367,
+      "avg_win_jpy": 218.0282,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -694.2126,
+      "family_id": "EUR_USD|SHORT|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 10,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -2891.0746,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -7636.3391,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0278,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470279",
+        "470266",
+        "470395",
+        "470415",
+        "470403",
+        "470400",
+        "470427",
+        "470655",
+        "470713",
+        "471414",
+        "472819"
+      ],
+      "trades": 11,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -2891.0746,
+          "trade_id": "470427",
+          "ts_utc": "2026-05-08T07:23:10.799861871Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -2642.1057,
+          "trade_id": "471414",
+          "ts_utc": "2026-06-04T12:04:30.883749739Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1034.3364,
+          "trade_id": "470713",
+          "ts_utc": "2026-05-11T18:17:12.808238128Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -330.1911,
+          "trade_id": "470395",
+          "ts_utc": "2026-05-08T00:45:25.576054411Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -240.5448,
+          "trade_id": "470415",
+          "ts_utc": "2026-05-08T01:59:55.901115720Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -188.6626,
+          "trade_id": "470400",
+          "ts_utc": "2026-05-08T01:59:57.327562924Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -188.6614,
+          "trade_id": "470403",
+          "ts_utc": "2026-05-08T01:59:56.758725937Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -181.4312,
+          "trade_id": "470279",
+          "ts_utc": "2026-05-07T01:47:20.094363596Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -136.0734,
+          "trade_id": "470266",
+          "ts_utc": "2026-05-07T01:47:20.484041774Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -21.2861,
+          "trade_id": "470655",
+          "ts_utc": "2026-05-11T06:53:06.404329612Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "realized_pl_jpy": 218.0282,
+          "trade_id": "472819",
+          "ts_utc": "2026-06-25T06:06:56.830954181Z"
+        }
+      ],
+      "win_rate": 0.0909,
+      "wins": 1
+    },
+    {
+      "action": "BAN_FAMILY",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 3947.4,
+      "avg_win_jpy": null,
+      "blocker": "MARGIN_CLOSEOUT_FAMILY_BANNED_FROM_A_S",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Reject as an A/S vehicle until margin-closeout risk disappears from a fresh replay and current gateway sizing proof.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "expectancy_jpy_per_trade": -3947.4,
+      "family_id": "AUD_JPY|SHORT|BREAKOUT_FAILURE|MARKET_ORDER_MARGIN_CLOSEOUT",
+      "losses": 1,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -3947.4,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -3947.4,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "471020"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -3947.4,
+          "trade_id": "471020",
+          "ts_utc": "2026-05-14T16:20:47.587735566Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 3307.422,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -3307.422,
+      "family_id": "EUR_USD|LONG|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -3307.422,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -3307.422,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471232"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -3307.422,
+          "trade_id": "471232",
+          "ts_utc": "2026-05-29T02:18:24.867826983Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 3171.0,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -3171.0,
+      "family_id": "AUD_JPY|SHORT|RANGE_ROTATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -3171.0,
+      "method": "RANGE_ROTATION",
+      "net_jpy": -3171.0,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470898"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -3171.0,
+          "trade_id": "470898",
+          "ts_utc": "2026-05-13T01:23:50.028353009Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 528.2235,
+      "avg_win_jpy": 46.0275,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -384.6608,
+      "family_id": "AUD_JPY|LONG|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 6,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -1740.0,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -3077.286,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.029,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "470365",
+        "470348",
+        "470468",
+        "470464",
+        "470440",
+        "470503",
+        "470497",
+        "470519"
+      ],
+      "trades": 8,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1740.0,
+          "trade_id": "470497",
+          "ts_utc": "2026-05-08T13:16:17.031008832Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -925.38,
+          "trade_id": "470348",
+          "ts_utc": "2026-05-07T23:01:57.289474610Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -350.0,
+          "trade_id": "470519",
+          "ts_utc": "2026-05-08T13:37:07.508613712Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -82.069,
+          "trade_id": "470503",
+          "ts_utc": "2026-05-08T13:16:16.598520484Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -65.34,
+          "trade_id": "470468",
+          "ts_utc": "2026-05-08T12:16:08.535164443Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -6.552,
+          "trade_id": "470365",
+          "ts_utc": "2026-05-07T23:01:56.651585984Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": 5.055,
+          "trade_id": "470464",
+          "ts_utc": "2026-05-08T12:16:08.799394899Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": 87.0,
+          "trade_id": "470440",
+          "ts_utc": "2026-05-08T12:16:09.619765863Z"
+        }
+      ],
+      "win_rate": 0.25,
+      "wins": 2
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 1005.45,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -1005.45,
+      "family_id": "AUD_JPY|SHORT|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 3,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -1953.0,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -3016.35,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470749",
+        "470759",
+        "470971"
+      ],
+      "trades": 3,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1953.0,
+          "trade_id": "470971",
+          "ts_utc": "2026-05-13T01:23:49.581456368Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1023.75,
+          "trade_id": "470749",
+          "ts_utc": "2026-05-11T18:17:13.105233253Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -39.6,
+          "trade_id": "470759",
+          "ts_utc": "2026-05-11T18:17:13.302209942Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "BAN_FAMILY",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 2918.857,
+      "avg_win_jpy": null,
+      "blocker": "MARGIN_CLOSEOUT_FAMILY_BANNED_FROM_A_S",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Reject as an A/S vehicle until margin-closeout risk disappears from a fresh replay and current gateway sizing proof.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "expectancy_jpy_per_trade": -2918.857,
+      "family_id": "GBP_USD|LONG|TREND_CONTINUATION|MARKET_ORDER_MARGIN_CLOSEOUT",
+      "losses": 1,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -2918.857,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -2918.857,
+      "operator_manual_excluded": true,
+      "pair": "GBP_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471216"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -2918.857,
+          "trade_id": "471216",
+          "ts_utc": "2026-05-14T16:20:47.587735566Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "BAN_FAMILY",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 2364.6529,
+      "avg_win_jpy": null,
+      "blocker": "MARGIN_CLOSEOUT_FAMILY_BANNED_FROM_A_S",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Reject as an A/S vehicle until margin-closeout risk disappears from a fresh replay and current gateway sizing proof.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "expectancy_jpy_per_trade": -2364.6529,
+      "family_id": "GBP_USD|LONG|RANGE_ROTATION|MARKET_ORDER_MARGIN_CLOSEOUT",
+      "losses": 1,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -2364.6529,
+      "method": "RANGE_ROTATION",
+      "net_jpy": -2364.6529,
+      "operator_manual_excluded": true,
+      "pair": "GBP_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471219"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -2364.6529,
+          "trade_id": "471219",
+          "ts_utc": "2026-05-14T16:20:47.587735566Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 353.5485,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -353.5485,
+      "family_id": "EUR_JPY|SHORT|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 4,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -672.0,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -1414.194,
+      "operator_manual_excluded": true,
+      "pair": "EUR_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470951",
+        "470945",
+        "471061",
+        "471077"
+      ],
+      "trades": 4,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -672.0,
+          "trade_id": "470945",
+          "ts_utc": "2026-05-12T16:25:34.295214560Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -371.194,
+          "trade_id": "470951",
+          "ts_utc": "2026-05-12T16:25:34.084263018Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -217.0,
+          "trade_id": "471077",
+          "ts_utc": "2026-05-14T03:03:45.867408378Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -154.0,
+          "trade_id": "471061",
+          "ts_utc": "2026-05-14T01:18:34.427184926Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 1215.4046,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -1215.4046,
+      "family_id": "AUD_CHF|LONG|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -1215.4046,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -1215.4046,
+      "operator_manual_excluded": true,
+      "pair": "AUD_CHF",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471979"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_CHF:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -1215.4046,
+          "trade_id": "471979",
+          "ts_utc": "2026-06-04T11:30:18.360862124Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 601.0629,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -601.0629,
+      "family_id": "EUR_USD|SHORT|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 2,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -1193.7375,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -1202.1257,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470644",
+        "470719"
+      ],
+      "trades": 2,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -1193.7375,
+          "trade_id": "470719",
+          "ts_utc": "2026-05-11T18:17:12.599715987Z"
+        },
+        {
+          "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -8.3882,
+          "trade_id": "470644",
+          "ts_utc": "2026-05-11T06:15:12.204205393Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 981.7942,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -981.7942,
+      "family_id": "GBP_CHF|LONG|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -981.7942,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -981.7942,
+      "operator_manual_excluded": true,
+      "pair": "GBP_CHF",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "472222"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -981.7942,
+          "trade_id": "472222",
+          "ts_utc": "2026-06-11T21:25:15.420286995Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "REQUIRE_LOCAL_TP_PROOF",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 299.0,
+      "avg_win_jpy": null,
+      "blocker": "LOSS_EXIT_REQUIRES_LOCAL_TP_OR_GEOMETRY_PROOF",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Require exact local TP, geometry, and risk proof showing the loss path no longer dominates the family.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -299.0,
+      "family_id": "AUD_JPY|SHORT|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "losses": 2,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -546.0,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -598.0,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470984",
+        "470992"
+      ],
+      "trades": 2,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -546.0,
+          "trade_id": "470992",
+          "ts_utc": "2026-05-13T02:19:25.063604296Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -52.0,
+          "trade_id": "470984",
+          "ts_utc": "2026-05-13T02:03:35.578962238Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "REQUIRE_LOCAL_TP_PROOF",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 296.4873,
+      "avg_win_jpy": null,
+      "blocker": "LOSS_EXIT_REQUIRES_LOCAL_TP_OR_GEOMETRY_PROOF",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Require exact local TP, geometry, and risk proof showing the loss path no longer dominates the family.",
+      "existing_market_close_family_key_match": true,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -296.4873,
+      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "losses": 2,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -454.9862,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -592.9746,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "470270",
+        "471000"
+      ],
+      "trades": 2,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -454.9862,
+          "trade_id": "471000",
+          "ts_utc": "2026-05-13T03:16:24.384717922Z"
+        },
+        {
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -137.9884,
+          "trade_id": "470270",
+          "ts_utc": "2026-05-06T17:44:04.096680205Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "REQUIRE_LOCAL_TP_PROOF",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 154.3333,
+      "avg_win_jpy": null,
+      "blocker": "LOSS_EXIT_REQUIRES_LOCAL_TP_OR_GEOMETRY_PROOF",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Require exact local TP, geometry, and risk proof showing the loss path no longer dominates the family.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -154.3333,
+      "family_id": "AUD_JPY|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "losses": 3,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -173.0,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -463.0,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "470261",
+        "470276",
+        "470297"
+      ],
+      "trades": 3,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -173.0,
+          "trade_id": "470276",
+          "ts_utc": "2026-05-06T21:05:04.976191771Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -158.0,
+          "trade_id": "470261",
+          "ts_utc": "2026-05-06T21:05:04.976191771Z"
+        },
+        {
+          "lane_id": "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -132.0,
+          "trade_id": "470297",
+          "ts_utc": "2026-05-07T00:11:48.346351904Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 462.3796,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -462.3796,
+      "family_id": "AUD_NZD|SHORT|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -462.3796,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -462.3796,
+      "operator_manual_excluded": true,
+      "pair": "AUD_NZD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "472037"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:AUD_NZD:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -462.3796,
+          "trade_id": "472037",
+          "ts_utc": "2026-06-05T12:41:09.815295596Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "REQUIRE_LOCAL_TP_PROOF",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 340.2,
+      "avg_win_jpy": null,
+      "blocker": "LOSS_EXIT_REQUIRES_LOCAL_TP_OR_GEOMETRY_PROOF",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Require exact local TP, geometry, and risk proof showing the loss path no longer dominates the family.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": true,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -340.2,
+      "family_id": "USD_JPY|SHORT|RANGE_ROTATION|STOP_LOSS_ORDER",
+      "losses": 1,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -340.2,
+      "method": "RANGE_ROTATION",
+      "net_jpy": -340.2,
+      "operator_manual_excluded": true,
+      "pair": "USD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "472792"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+          "realized_pl_jpy": -340.2,
+          "trade_id": "472792",
+          "ts_utc": "2026-06-22T07:23:59.208384537Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 299.768,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -299.768,
+      "family_id": "EUR_USD|LONG|RANGE_ROTATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -299.768,
+      "method": "RANGE_ROTATION",
+      "net_jpy": -299.768,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "470859"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+          "realized_pl_jpy": -299.768,
+          "trade_id": "470859",
+          "ts_utc": "2026-05-12T15:33:20.313187354Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 238.0,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -238.0,
+      "family_id": "GBP_JPY|LONG|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -238.0,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -238.0,
+      "operator_manual_excluded": true,
+      "pair": "GBP_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471923"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:GBP_JPY:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -238.0,
+          "trade_id": "471923",
+          "ts_utc": "2026-06-04T15:45:40.873895398Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "BAN_FAMILY",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 202.8305,
+      "avg_win_jpy": null,
+      "blocker": "MARGIN_CLOSEOUT_FAMILY_BANNED_FROM_A_S",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Reject as an A/S vehicle until margin-closeout risk disappears from a fresh replay and current gateway sizing proof.",
+      "existing_market_close_family_key_match": true,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "expectancy_jpy_per_trade": -202.8305,
+      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|MARKET_ORDER_MARGIN_CLOSEOUT",
+      "losses": 1,
+      "market_close_path_allowed": null,
+      "max_loss_jpy": -202.8305,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -202.8305,
+      "operator_manual_excluded": true,
+      "pair": "EUR_USD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "471213"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "realized_pl_jpy": -202.8305,
+          "trade_id": "471213",
+          "ts_utc": "2026-05-14T16:20:47.587735566Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 146.832,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -146.832,
+      "family_id": "AUD_JPY|SHORT|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -146.832,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -146.832,
+      "operator_manual_excluded": true,
+      "pair": "AUD_JPY",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "470904"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -146.832,
+          "trade_id": "470904",
+          "ts_utc": "2026-05-13T01:23:49.798157080Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 116.1114,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": true,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -116.1114,
+      "family_id": "EUR_GBP|SHORT|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -116.1114,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -116.1114,
+      "operator_manual_excluded": true,
+      "pair": "EUR_GBP",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "SHORT",
+      "trade_ids": [
+        "472149"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:EUR_GBP:SHORT:TREND_CONTINUATION",
+          "realized_pl_jpy": -116.1114,
+          "trade_id": "472149",
+          "ts_utc": "2026-06-11T12:02:47.078233631Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "action": "MARKET_CLOSE_PATH_BLOCK",
+      "attribution": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+      "avg_loss_jpy": 6.7428,
+      "avg_win_jpy": null,
+      "blocker": "MARKET_CLOSE_PATH_UNVERIFIED_AND_NEGATIVE",
+      "can_create_live_permission": false,
+      "close_gate_proven_trade_ids": [],
+      "exact_clearance_condition": "Block the MARKET_ORDER_TRADE_CLOSE path. A fresh lane may be considered only through attached local TP/HARVEST proof or exact close-gate proof plus non-negative regenerated economics.",
+      "existing_market_close_family_key_match": false,
+      "existing_residual_family_key_match": false,
+      "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "expectancy_jpy_per_trade": -6.7428,
+      "family_id": "EUR_AUD|LONG|TREND_CONTINUATION|MARKET_ORDER_TRADE_CLOSE",
+      "losses": 1,
+      "market_close_path_allowed": false,
+      "max_loss_jpy": -6.7428,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -6.7428,
+      "operator_manual_excluded": true,
+      "pair": "EUR_AUD",
+      "permission_boundary": "This row may contain or ban a historical loss path only. It cannot create A/S permission without fresh LIVE_READY, RiskEngine, LiveOrderGateway, GPT, and guardian proof.",
+      "profit_factor": 0.0,
+      "secondary_actions": [
+        "REQUIRE_CLOSE_GATE_PROOF",
+        "REQUIRE_LOCAL_TP_PROOF"
+      ],
+      "side": "LONG",
+      "trade_ids": [
+        "472230"
+      ],
+      "trades": 1,
+      "trades_detail": [
+        {
+          "lane_id": "trend_trader:EUR_AUD:LONG:TREND_CONTINUATION",
+          "realized_pl_jpy": -6.7428,
+          "trade_id": "472230",
+          "ts_utc": "2026-06-11T17:27:05.752734049Z"
+        }
+      ],
+      "win_rate": 0.0,
+      "wins": 0
+    }
+  ],
+  "scope": {
+    "definition": "Trader-attributed realized rows excluding EUR_USD 472987, current MARKET_CLOSE_LEAK_FAMILY_BLOCKED trade IDs, and current month-scale residual trade IDs.",
+    "metrics": {
+      "avg_loss_jpy": 990.7837,
+      "avg_win_jpy": 417.9691,
+      "expectancy_jpy_per_trade": -6.0942,
+      "losses": 59,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -1194.4656,
+      "profit_factor": 0.9796,
+      "trades": 196,
+      "win_rate": 0.699,
+      "wins": 137
+    },
+    "name": "manual_excluded_plus_existing_market_close_and_residual_filters_remaining_negative_families"
+  },
+  "source_artifacts": [
+    "data/execution_ledger.db",
+    "data/post_gate_capture_economics_decomposition.json",
+    "data/profitability_acceptance.json",
+    "data/month_scale_residual_family_table.json",
+    "data/market_close_leak_trade_table.json"
+  ],
+  "summary": {
+    "ban_family_count": 4,
+    "can_create_live_permission_count": 0,
+    "containment_filter_trade_count": 54,
+    "largest_remaining_adverse_family": "GBP_USD|LONG|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
+    "market_close_path_block_count": 16,
+    "negative_family_count": 24,
+    "require_local_tp_proof_count": 4
+  }
+}

@@ -131,27 +131,21 @@
     "can_enter_proof_pack": true,
     "current_blockers": [
       "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-      "STALE_QUOTE",
-      "SPREAD_TOO_WIDE",
-      "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
-      "PATTERN_REVERSAL_CHASE",
-      "HARVEST_TP_STRUCTURE_MISSING",
-      "EXHAUSTION_RANGE_CHASE",
+      "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
       "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-      "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
       "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
     ],
     "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-    "expected_daily_return_pct_on_funding_adjusted_equity": 3.8818,
-    "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+    "expected_daily_return_pct_on_funding_adjusted_equity": 3.7972,
+    "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
     "method": "BREAKOUT_FAILURE",
     "missing_proof": {
       "active_day_floor": true,
-      "attached_tp_proof": false,
+      "attached_tp_proof": true,
       "daily_stability_floor": true,
-      "forecast_executable_proof": false,
+      "forecast_executable_proof": true,
       "fresh_744h_replay": true,
-      "geometry_proof": false,
+      "geometry_proof": true,
       "gpt_verifier_pass": false,
       "live_order_gateway_pass": false,
       "market_close_absence_or_close_gate_proof": true,
@@ -164,10 +158,10 @@
       "sample_count_floor": true
     },
     "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
-    "order_type": "STOP-ENTRY",
+    "order_type": "LIMIT",
     "pair": "AUD_JPY",
     "proof_classification": "REPAIR_REQUIRED",
-    "proof_distance": 8,
+    "proof_distance": 5,
     "side": "SHORT"
   },
   "eur_jpy_short_proof_result": {
@@ -398,7 +392,7 @@
     ],
     "normal_routing_must_remain_blocked": true,
     "p0_rows": [
-      "MEMORY_HEALTH_BLOCKED",
+      "EXECUTION_LEDGER_STALE",
       "NEGATIVE_EXPECTANCY_ACTIVE",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED"
@@ -409,12 +403,12 @@
     "as_live_ready_path_exists": false,
     "can_create_live_permission_rows": 0,
     "can_enter_proof_pack_rows": 2,
-    "candidate_rows_after_hard_exclusions": 44,
+    "candidate_rows_after_hard_exclusions": 53,
     "hard_excluded_rows": 29,
     "normal_routing_status": "BLOCKED",
     "p0_dependency_count": 4,
     "rows_meeting_required_daily_return_prefilter": 2,
-    "total_order_intent_rows": 73
+    "total_order_intent_rows": 82
   },
   "funding_adjusted_30d_status": {
     "broker_nav_jpy": 270740.4982,
@@ -428,7 +422,7 @@
     "performance_basis": "funding_adjusted",
     "rolling_30d_multiplier_funding_adjusted_is_kpi": true
   },
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:25Z",
   "live_ready_lanes": 0,
   "live_side_effects": [],
   "manual_eurusd_472987": {
@@ -523,6 +517,8 @@
     "docs/remaining_profitability_p0_decomposition.md",
     "data/post_gate_capture_economics_decomposition.json",
     "docs/post_gate_capture_economics_decomposition.md",
+    "data/post_gate_gap_family_repair_table.json",
+    "docs/post_gate_gap_family_repair_table.md",
     "data/rolling_30d_4x_firepower_board.json",
     "docs/rolling_30d_4x_firepower_board.md",
     "data/as_proof_pack_queue.json",
@@ -1223,8 +1219,8 @@
       ],
       "can_create_live_permission": false,
       "classification": "ACTIVE_BLOCKER",
-      "node": "MEMORY_HEALTH_BLOCKED",
-      "requires": "memory-health must PASS after fresh forecast/quote/order-intent evidence; stale short forecast history cannot support live routing."
+      "node": "EXECUTION_LEDGER_STALE",
+      "requires": "self-improvement-audit must regenerate without this P0 code."
     },
     {
       "blocks": [
@@ -1269,18 +1265,18 @@
   ],
   "rolling_30d_4x_target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 270740.4982,
-    "funding_adjusted_equity": 170740.4982,
+    "current_equity_raw": 274541.8969,
+    "funding_adjusted_equity": 174541.8969,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682961.9928,
-    "remaining_to_4x_funding_adjusted": 514999.7226,
-    "remaining_to_4x_raw": 414999.7226,
-    "required_active_day_return_funding_adjusted_pct": 7.443193,
-    "required_calendar_daily_profit_jpy": 9229.9001,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.405806,
-    "rolling_30d_multiplier_funding_adjusted": 0.995949,
-    "rolling_30d_multiplier_raw": 1.57926,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 698167.5876,
+    "remaining_to_4x_funding_adjusted": 511198.3239,
+    "remaining_to_4x_raw": 411198.3239,
+    "required_active_day_return_funding_adjusted_pct": 7.415701,
+    "required_calendar_daily_profit_jpy": 9400.8737,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.386027,
+    "rolling_30d_multiplier_funding_adjusted": 1.018123,
+    "rolling_30d_multiplier_raw": 1.601434,
     "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
     "target_equity_from_rolling_start_4x_jpy": 685740.2208

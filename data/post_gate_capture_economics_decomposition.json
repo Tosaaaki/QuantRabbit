@@ -12,6 +12,62 @@
       "471255",
       "472280"
     ],
+    "post_gate_family_repair_filter_trade_ids": [
+      "470266",
+      "470279",
+      "470348",
+      "470359",
+      "470362",
+      "470365",
+      "470368",
+      "470395",
+      "470400",
+      "470403",
+      "470415",
+      "470427",
+      "470440",
+      "470446",
+      "470461",
+      "470464",
+      "470468",
+      "470494",
+      "470497",
+      "470500",
+      "470503",
+      "470519",
+      "470529",
+      "470644",
+      "470655",
+      "470713",
+      "470719",
+      "470749",
+      "470759",
+      "470762",
+      "470837",
+      "470854",
+      "470859",
+      "470898",
+      "470904",
+      "470945",
+      "470951",
+      "470971",
+      "471008",
+      "471020",
+      "471061",
+      "471077",
+      "471213",
+      "471216",
+      "471219",
+      "471232",
+      "471414",
+      "471923",
+      "471979",
+      "472037",
+      "472149",
+      "472222",
+      "472230",
+      "472819"
+    ],
     "residual_family_trade_ids": [
       "471711",
       "471817",
@@ -153,7 +209,7 @@
     "wins": 137
   },
   "capture_economics_status": "NEGATIVE_EXPECTANCY",
-  "generated_at_utc": "2026-07-05T18:15:59Z",
+  "generated_at_utc": "2026-07-06T01:59:25Z",
   "live_side_effects": [],
   "mode": "read_only_post_gate_capture_economics_decomposition",
   "negative_expectancy_active_should_remain": true,
@@ -592,6 +648,90 @@
       "wins": 137
     },
     {
+      "avg_loss_jpy": 233.2207,
+      "avg_win_jpy": 426.9699,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": 380.4776,
+      "losses": 10,
+      "max_loss_jpy": -546.0,
+      "net_jpy": 54027.8164,
+      "note": "Manual exclusion plus existing filters plus this run's BAN_FAMILY / MARKET_CLOSE_PATH_BLOCK containment rows. Non-negative here is containment, not permission.",
+      "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
+      "profit_factor": 24.166,
+      "scope": "manual_excluded_plus_existing_filters_plus_new_family_containment",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -546.0,
+          "side": "SHORT",
+          "trade_id": "470992"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -454.9862,
+          "side": "LONG",
+          "trade_id": "471000"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "RANGE_ROTATION",
+          "pair": "USD_JPY",
+          "realized_pl_jpy": -340.2,
+          "side": "SHORT",
+          "trade_id": "472792"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -173.0,
+          "side": "LONG",
+          "trade_id": "470276"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "USD_CAD",
+          "realized_pl_jpy": -172.863,
+          "side": "LONG",
+          "trade_id": "472109"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "USD_CAD",
+          "realized_pl_jpy": -165.1694,
+          "side": "LONG",
+          "trade_id": "472318"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -158.0,
+          "side": "LONG",
+          "trade_id": "470261"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -137.9884,
+          "side": "LONG",
+          "trade_id": "470270"
+        }
+      ],
+      "trades": 142,
+      "win_rate": 0.9296,
+      "wins": 132
+    },
+    {
       "avg_loss_jpy": null,
       "avg_win_jpy": 508.3837,
       "can_clear_negative_expectancy_active": false,
@@ -783,6 +923,7 @@
     "data/execution_ledger.db",
     "data/capture_economics.json",
     "data/month_scale_residual_family_table.json",
-    "data/market_close_leak_trade_table.json"
+    "data/market_close_leak_trade_table.json",
+    "data/post_gate_gap_family_repair_table.json"
   ]
 }
