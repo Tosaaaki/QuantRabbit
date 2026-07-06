@@ -155,6 +155,7 @@ class _TPProbePosition:
     stop_loss: float | None
     unrealized_pl_jpy: float
     owner: str
+    raw: dict[str, Any]
 
 
 PROMPT_FILES: dict[str, Path] = {
@@ -1996,19 +1997,23 @@ def _tp_rebalance_reasons(
 
 def _tp_probe_positions(snapshot: dict[str, Any]) -> tuple[_TPProbePosition, ...]:
     positions: list[_TPProbePosition] = []
-    for raw in snapshot.get("positions", []) or []:
-        if not isinstance(raw, dict):
+    for position_payload in snapshot.get("positions", []) or []:
+        if not isinstance(position_payload, dict):
             continue
-        trade_id = str(raw.get("trade_id") or "")
-        pair = str(raw.get("pair") or "")
-        side = str(raw.get("side") or "").upper()
-        entry_price = _optional_float(raw.get("entry_price"))
+        trade_id = str(position_payload.get("trade_id") or "")
+        pair = str(position_payload.get("pair") or "")
+        side = str(position_payload.get("side") or "").upper()
+        entry_price = _optional_float(position_payload.get("entry_price"))
         if not trade_id or not pair or side not in {"LONG", "SHORT"} or entry_price is None:
             continue
         try:
-            units = int(raw.get("units") or 0)
+            units = int(position_payload.get("units") or 0)
         except (TypeError, ValueError):
             units = 0
+        raw_payload = dict(position_payload.get("raw") or {})
+        operator_packet = position_payload.get("operator_manual_position")
+        if isinstance(operator_packet, dict) and "operator_manual_position" not in raw_payload:
+            raw_payload["operator_manual_position"] = dict(operator_packet)
         positions.append(
             _TPProbePosition(
                 trade_id=trade_id,
@@ -2016,10 +2021,11 @@ def _tp_probe_positions(snapshot: dict[str, Any]) -> tuple[_TPProbePosition, ...
                 side=side,
                 units=units,
                 entry_price=entry_price,
-                take_profit=_optional_float(raw.get("take_profit")),
-                stop_loss=_optional_float(raw.get("stop_loss")),
-                unrealized_pl_jpy=_optional_float(raw.get("unrealized_pl_jpy")) or 0.0,
-                owner=str(raw.get("owner") or ""),
+                take_profit=_optional_float(position_payload.get("take_profit")),
+                stop_loss=_optional_float(position_payload.get("stop_loss")),
+                unrealized_pl_jpy=_optional_float(position_payload.get("unrealized_pl_jpy")) or 0.0,
+                owner=str(position_payload.get("owner") or ""),
+                raw=raw_payload,
             )
         )
     return tuple(positions)

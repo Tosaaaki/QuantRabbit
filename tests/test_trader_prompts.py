@@ -1848,6 +1848,77 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("TP rebalance required" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_harvest" in reason for reason in route.reasons))
 
+    def test_operator_manual_tp_opt_out_does_not_create_tp_rebalance_route(self) -> None:
+        """Router TP probe must preserve the operator-manual opt-out packet."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            operator_packet = {
+                "packet_type": "OPERATOR_MANUAL_POSITION",
+                "auto_tp_modify_allowed": False,
+                "auto_sl_attach_allowed": False,
+                "loss_side_auto_close_allowed": False,
+                "same_theme_auto_add_allowed": False,
+                "system_pl_counted": False,
+            }
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": 30000,
+                        "entry_price": 1.14048,
+                        "take_profit": 1.13610,
+                        "stop_loss": None,
+                        "owner": "operator_manual",
+                        "unrealized_pl_jpy": -9123.0,
+                        "operator_manual_position": operator_packet,
+                        "raw": {"operator_manual_position": operator_packet},
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["EUR_USD"] = {
+                "bid": 1.1420,
+                "ask": 1.1421,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["pair_charts"].write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "confluence": {
+                                    "h4_atr_pips": 19.2,
+                                    "tf_agreement_score": 0.33,
+                                    "range_24h_sigma_multiple": 4.62,
+                                },
+                                "views": [
+                                    {"granularity": "M5", "indicators": {"atr_pips": 3.0}},
+                                    {"granularity": "H4", "indicators": {"atr_pips": 19.2}},
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("TP rebalance required" in reason for reason in route.reasons))
+
     def test_sl_free_trader_no_broker_tp_runner_does_not_force_position_branch(self) -> None:
         # Missing broker TP is preserved as a no-broker-TP runner under the
         # SL-free runtime unless explicit TP repair is enabled. It must not
