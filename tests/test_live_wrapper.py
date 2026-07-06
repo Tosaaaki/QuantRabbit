@@ -203,6 +203,8 @@ class LiveWrapperTest(unittest.TestCase):
             (root / "data" / "guardian_trigger_contract.json").write_text('{"generated_at_utc":"tracked"}\n')
             (root / "data" / "guardian_receipt_consumption.json").write_text('{"status":"tracked"}\n')
             (root / "data" / "guardian_receipt_operator_review.json").write_text('{"status":"tracked"}\n')
+            (root / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"tracked"}\n')
+            (root / "docs" / "as_proof_pack_queue.md").write_text("tracked proof report\n")
             _run(["git", "add", "."], cwd=root)
             _run(["git", "commit", "-m", "initial"], cwd=root)
             _run(["git", "branch", "-m", "main"], cwd=root)
@@ -211,6 +213,8 @@ class LiveWrapperTest(unittest.TestCase):
             (root / "data" / "guardian_trigger_contract.json").write_text('{"generated_at_utc":"runtime"}\n')
             (root / "data" / "guardian_receipt_consumption.json").write_text('{"status":"runtime"}\n')
             (root / "data" / "guardian_receipt_operator_review.json").write_text('{"status":"runtime"}\n')
+            (root / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"runtime"}\n')
+            (root / "docs" / "as_proof_pack_queue.md").write_text("runtime proof report\n")
             env["QR_SYNC_DEV_ROOT"] = str(root)
             env["QR_SYNC_MAIN_BRANCH"] = "main"
             env["QR_SYNC_MARKER_PATH"] = str(root / "docs" / "sync_report.md")
@@ -227,7 +231,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(capture.exists())
             self.assertIn("live sync failed with status=37", result.stderr)
-            self.assertIn("receipt-state drift is present", result.stderr)
+            self.assertIn("proof-evidence drift is present", result.stderr)
 
     def test_empty_verdict_marker_is_removed_before_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

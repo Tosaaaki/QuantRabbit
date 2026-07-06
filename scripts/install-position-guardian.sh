@@ -71,12 +71,43 @@ status_path() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md \
-    || "$path" == docs/*_report.close_reentry.md \
-    || "$path" == docs/guardian_action_review.md \
-    || "$path" == data/guardian_trigger_contract.json \
-    || "$path" == data/guardian_receipt_consumption.json \
-    || "$path" == data/guardian_receipt_operator_review.json ]]
+  case "$path" in
+    docs/*_report.md|\
+docs/*_report.close_reentry.md|\
+docs/guardian_action_review.md|\
+docs/as_lane_candidate_board.md|\
+docs/as_proof_pack_queue.md|\
+docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
+docs/audjpy_short_breakout_failure_repair_proof.md|\
+docs/historical_only_to_fresh_proof_replay.md|\
+docs/manual_eurusd_tp_replacement_provenance.md|\
+docs/portfolio_4x_path_planner.md|\
+docs/post_gate_capture_economics_decomposition.md|\
+docs/post_gate_expectancy_gap_trace.md|\
+docs/post_gate_gap_family_repair_table.md|\
+docs/profitability_acceptance_blocker_reconciliation.md|\
+docs/remaining_profitability_p0_decomposition.md|\
+docs/rolling_30d_4x_firepower_board.md|\
+data/guardian_trigger_contract.json|\
+data/guardian_receipt_consumption.json|\
+data/guardian_receipt_operator_review.json|\
+data/as_lane_candidate_board.json|\
+data/as_proof_pack_queue.json|\
+data/audjpy_short_breakout_failure_limit_proof_pack.json|\
+data/audjpy_short_breakout_failure_repair_proof.json|\
+data/historical_only_to_fresh_proof_replay.json|\
+data/manual_eurusd_tp_replacement_provenance.json|\
+data/portfolio_4x_path_planner.json|\
+data/post_gate_capture_economics_decomposition.json|\
+data/post_gate_expectancy_gap_trace.json|\
+data/post_gate_gap_family_repair_table.json|\
+data/profitability_acceptance_blocker_reconciliation.json|\
+data/remaining_profitability_p0_decomposition.json|\
+data/rolling_30d_4x_firepower_board.json)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 assert_only_report_drift() {
@@ -90,7 +121,7 @@ assert_only_report_drift() {
     fi
   done < <(git -C "$LIVE_ROOT" status --short --untracked-files=all)
   if [[ "$dirty" -ne 0 ]]; then
-    die "live worktree must be clean except report/action-review/guardian-contract/receipt-state runtime drift." 3
+    die "live worktree must be clean except report/action-review/guardian-contract/receipt/proof-evidence runtime drift." 3
   fi
 }
 

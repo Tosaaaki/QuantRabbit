@@ -76,6 +76,29 @@ class PositionGuardianInstallTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("preflight OK", result.stdout)
 
+    def test_check_preflight_allows_proof_evidence_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            (live / "data").mkdir(exist_ok=True)
+            (live / "docs").mkdir(exist_ok=True)
+            (live / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"runtime"}\n')
+            (live / "docs" / "as_proof_pack_queue.md").write_text("runtime proof report\n")
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--check"],
+                env=_install_env(live=live, home=home),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("preflight OK", result.stdout)
+
     def test_check_preflight_blocks_non_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

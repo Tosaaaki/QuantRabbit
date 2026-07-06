@@ -1477,6 +1477,8 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "profitability-acceptance",
         "qr-trader-run-watchdog",
         "trader-support-bot",
+        "as-live-ready-evidence-loop",
+        "as-4x-proof-path",
         "trader-repair-orchestrator",
     }
 )
@@ -2281,6 +2283,14 @@ def _guardian_receipt_consumption_step() -> dict[str, Any]:
     return {"argv": ["guardian-receipt-consumption"], "required": True}
 
 
+def _as_live_ready_evidence_loop_step() -> dict[str, Any]:
+    return {"argv": ["as-live-ready-evidence-loop"], "required": True}
+
+
+def _as_4x_proof_path_step() -> dict[str, Any]:
+    return {"argv": ["as-4x-proof-path"], "required": True}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2382,6 +2392,8 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        _as_live_ready_evidence_loop_step(),
+        _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
@@ -2439,6 +2451,8 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        _as_live_ready_evidence_loop_step(),
+        _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
@@ -2473,6 +2487,8 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        _as_live_ready_evidence_loop_step(),
+        _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
@@ -2507,6 +2523,8 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        _as_live_ready_evidence_loop_step(),
+        _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
@@ -2545,6 +2563,23 @@ def _run_direct_autotrade_audit_sidecars() -> dict[str, Any] | None:
     )
     _write_json(DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST, digest)
     return digest
+
+
+def _run_repository_tool(rel_path: str) -> int:
+    """Run a repository-local read-only artifact builder by file path."""
+    import importlib.util
+
+    path = ROOT / rel_path
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load repository tool: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[path.stem] = module
+    spec.loader.exec_module(module)
+    main_func = getattr(module, "main", None)
+    if not callable(main_func):
+        raise RuntimeError(f"repository tool has no callable main(): {path}")
+    return int(main_func())
 
 
 def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
@@ -3855,6 +3890,15 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--bidask-replay-validation", type=Path, default=None)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
+
+    sub.add_parser(
+        "as-live-ready-evidence-loop",
+        help="Rebuild read-only A/S LIVE_READY firepower, proof-pack queue, and lane board artifacts.",
+    )
+    sub.add_parser(
+        "as-4x-proof-path",
+        help="Rebuild read-only post-gate proof-path and portfolio 4x planner artifacts.",
+    )
 
     p_repair_orchestrator = sub.add_parser(
         "trader-repair-orchestrator",
@@ -6527,6 +6571,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == STATUS_READY else 2
+    if args.command == "as-live-ready-evidence-loop":
+        return _run_repository_tool("tools/build_as_live_ready_evidence_loop.py")
+    if args.command == "as-4x-proof-path":
+        return _run_repository_tool("tools/build_as_4x_proof_path.py")
     if args.command == "trader-repair-orchestrator":
         try:
             from quant_rabbit.trader_repair_orchestrator import (

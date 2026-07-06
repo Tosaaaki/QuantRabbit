@@ -109,12 +109,43 @@ acquire_lock() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md \
-    || "$path" == docs/*_report.close_reentry.md \
-    || "$path" == docs/guardian_action_review.md \
-    || "$path" == data/guardian_trigger_contract.json \
-    || "$path" == data/guardian_receipt_consumption.json \
-    || "$path" == data/guardian_receipt_operator_review.json ]]
+  case "$path" in
+    docs/*_report.md|\
+docs/*_report.close_reentry.md|\
+docs/guardian_action_review.md|\
+docs/as_lane_candidate_board.md|\
+docs/as_proof_pack_queue.md|\
+docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
+docs/audjpy_short_breakout_failure_repair_proof.md|\
+docs/historical_only_to_fresh_proof_replay.md|\
+docs/manual_eurusd_tp_replacement_provenance.md|\
+docs/portfolio_4x_path_planner.md|\
+docs/post_gate_capture_economics_decomposition.md|\
+docs/post_gate_expectancy_gap_trace.md|\
+docs/post_gate_gap_family_repair_table.md|\
+docs/profitability_acceptance_blocker_reconciliation.md|\
+docs/remaining_profitability_p0_decomposition.md|\
+docs/rolling_30d_4x_firepower_board.md|\
+data/guardian_trigger_contract.json|\
+data/guardian_receipt_consumption.json|\
+data/guardian_receipt_operator_review.json|\
+data/as_lane_candidate_board.json|\
+data/as_proof_pack_queue.json|\
+data/audjpy_short_breakout_failure_limit_proof_pack.json|\
+data/audjpy_short_breakout_failure_repair_proof.json|\
+data/historical_only_to_fresh_proof_replay.json|\
+data/manual_eurusd_tp_replacement_provenance.json|\
+data/portfolio_4x_path_planner.json|\
+data/post_gate_capture_economics_decomposition.json|\
+data/post_gate_expectancy_gap_trace.json|\
+data/post_gate_gap_family_repair_table.json|\
+data/profitability_acceptance_blocker_reconciliation.json|\
+data/remaining_profitability_p0_decomposition.json|\
+data/rolling_30d_4x_firepower_board.json)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 clear_runtime_verdict_markers() {
@@ -150,7 +181,7 @@ can_continue_after_sync_failure() {
       continue
     fi
     if ! is_report_path "$path"; then
-      echo "[run-autotrade-live] live sync failed and runtime has non-report/receipt-state drift: ${line}" >&2
+      echo "[run-autotrade-live] live sync failed and runtime has non-evidence drift: ${line}" >&2
       return 1
     fi
   done < <(git -C "$ROOT_DIR" status --short --untracked-files=all 2>/dev/null) || return 1
@@ -167,7 +198,7 @@ if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtim
   set -e
   if [[ "$sync_status" -ne 0 ]]; then
     if can_continue_after_sync_failure; then
-      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only report/action-review/guardian-contract/receipt-state drift is present; continuing this trader cycle." >&2
+      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only report/action-review/guardian-contract/receipt/proof-evidence drift is present; continuing this trader cycle." >&2
     else
       exit "$sync_status"
     fi

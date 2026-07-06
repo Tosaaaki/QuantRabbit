@@ -328,7 +328,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # generate-predictive-limits → position sidecars → guardian-trigger-contract →
 # guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
-# trader-support-bot → trader-repair-orchestrator) in one
+# trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
+# trader-repair-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -581,6 +582,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → guardian-receipt-consumption
 #   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
+#   → as-live-ready-evidence-loop → as-4x-proof-path
 #   → trader-repair-orchestrator
 # and prints one compact digest.
 #
@@ -650,7 +652,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   profit-capture misses, fresh-entry send allowed flag, repair-frontier lanes,
 #   and explicit operator actions. It never loads launchd, sends orders, closes
 #   positions, cancels entries, or wakes the trader.
-# - trader-repair-orchestrator is read-only and runs after trader-support-bot.
+# - as-live-ready-evidence-loop and as-4x-proof-path are read-only artifact
+#   builders that run after trader-support-bot. They refresh
+#   `data/rolling_30d_4x_firepower_board.json`, `data/as_proof_pack_queue.json`,
+#   `data/as_lane_candidate_board.json`, and `data/portfolio_4x_path_planner.json`
+#   from the final broker/target/order/profitability/support packet so A/S proof
+#   queue and 4x math cannot stay stale after `cycle-refresh`.
+# - trader-repair-orchestrator is read-only and runs after those A/S proof
+#   artifacts.
 #   It converts `repair_requests` into a Codex repair queue with suggested
 #   files, test commands, verification commands, commit/live-sync requirement,
 #   and a top-level `codex_work_order` that an external Codex automation can
