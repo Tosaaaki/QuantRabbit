@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Side
-from quant_rabbit.operator_manual import is_operator_managed_manual_owner
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
 from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_PAIR_CHARTS,
@@ -584,6 +584,35 @@ class PositionManager:
         reasons.append(
             "manual/tagless position: TP-only profit management enabled; SL and loss-close management disabled"
         )
+        if operator_manual_tp_modify_blocked(position):
+            action = ACTION_HOLD_SL_FREE
+            reasons.append(
+                "operator-manual packet sets auto_tp_modify_allowed=false; preserving existing/missing broker TP"
+            )
+            if remaining_risk is not None:
+                reasons.append(f"remaining risk about {remaining_risk:.0f} JPY (observed only; no SL action)")
+            elif position.stop_loss is not None:
+                reasons.append("remaining risk cannot be converted to JPY from current broker snapshot")
+            if remaining_reward is not None:
+                reasons.append(f"remaining reward about {remaining_reward:.0f} JPY")
+            elif position.take_profit is not None:
+                reasons.append("remaining reward cannot be converted to JPY from current broker snapshot")
+            return ManagedPosition(
+                trade_id=position.trade_id,
+                pair=position.pair,
+                side=position.side.value,
+                units=position.units,
+                action=action,
+                unrealized_pl_jpy=round(position.unrealized_pl_jpy, 4),
+                remaining_risk_jpy=round(remaining_risk, 2) if remaining_risk is not None else None,
+                remaining_reward_jpy=round(remaining_reward, 2) if remaining_reward is not None else None,
+                same_direction_score=same_score,
+                opposite_direction_score=opposite_score,
+                recommended_stop_loss=None,
+                recommended_take_profit=None,
+                reasons=tuple(reasons),
+                owner=position.owner.value,
+            )
 
         if position.take_profit is None:
             if not _missing_tp_repair_enabled():

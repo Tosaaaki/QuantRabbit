@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T06:08:36Z",
+  "generated_at_utc": "2026-07-06T08:54:11Z",
   "live_side_effects": [],
   "mode": "read_only_audjpy_short_breakout_failure_repair_proof",
   "rows": [
@@ -324,8 +324,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 52953.7698,
-          "margin_used_jpy": 222180.0
+          "margin_available_jpy": 58042.5066,
+          "margin_used_jpy": 222328.8
         },
         "margin_requirement_min_lot_jpy": 4483.56,
         "margin_requirement_realistic_size_jpy": 13450.68,
@@ -695,8 +695,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 52953.7698,
-          "margin_used_jpy": 222180.0
+          "margin_available_jpy": 58042.5066,
+          "margin_used_jpy": 222328.8
         },
         "margin_requirement_min_lot_jpy": 4486.76,
         "margin_requirement_realistic_size_jpy": 13460.28,

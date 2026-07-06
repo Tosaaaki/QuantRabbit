@@ -422,7 +422,7 @@
     "performance_basis": "funding_adjusted",
     "rolling_30d_multiplier_funding_adjusted_is_kpi": true
   },
-  "generated_at_utc": "2026-07-06T06:08:31Z",
+  "generated_at_utc": "2026-07-06T08:51:35Z",
   "live_ready_lanes": 0,
   "live_side_effects": [],
   "manual_eurusd_472987": {

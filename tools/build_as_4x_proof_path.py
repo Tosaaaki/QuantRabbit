@@ -544,9 +544,40 @@ def build_manual_eurusd_tp_replacement_provenance(generated_at: str, ctx: dict[s
 
 def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
     acceptance = ctx["acceptance"]
+    broker_mutation_audit = _load_json("data/broker_mutation_bypass_audit.json")
     current_codes = _acceptance_codes(acceptance)
     blocker_codes = _acceptance_blocker_codes(acceptance)
     rows = [
+        _profitability_reconciliation_row(
+            code="OPERATOR_MANUAL_TP_OPT_OUT_BYPASS",
+            classification=(
+                "FIXED_NEEDS_CLEAN_WINDOW"
+                if _nested(broker_mutation_audit, "conclusion", "position_manager_gateway_bypass_fixed") is True
+                else "ACTIVE_BLOCKER"
+            ),
+            current_codes=current_codes,
+            blocker_codes=blocker_codes,
+            evidence_summary={
+                "broker_mutation_audit": "data/broker_mutation_bypass_audit.json",
+                "tp_rebalance_incident_contained": _nested(
+                    broker_mutation_audit, "conclusion", "tp_rebalance_incident_contained"
+                ),
+                "position_manager_gateway_bypass_fixed": _nested(
+                    broker_mutation_audit, "conclusion", "position_manager_gateway_bypass_fixed"
+                ),
+                "manual_trade_472987_untouched": _nested(
+                    broker_mutation_audit, "conclusion", "manual_trade_472987_untouched"
+                ),
+                "last_transaction_id": _nested(broker_mutation_audit, "broker_truth", "last_transaction_id"),
+                "active_take_profit_order": _nested(broker_mutation_audit, "broker_truth", "orders", 0, "order_id"),
+            },
+            clearance_condition=(
+                "Keep a clean proof window where tp_rebalancer, PositionManager, and "
+                "PositionProtectionGateway all preserve operator-manual packets with "
+                "auto_tp_modify_allowed=false, and broker transaction IDs do not advance "
+                "from unauthorized TP/SL/close writes."
+            ),
+        ),
         _profitability_reconciliation_row(
             code="SELF_IMPROVEMENT_P0_PRESENT",
             classification="ACTIVE_BLOCKER" if _self_p0_items(ctx["self_audit"]) else "STALE_SUPERSEDED",
@@ -665,9 +696,11 @@ def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx
             "data/remaining_profitability_p0_decomposition.json",
             "data/as_lane_candidate_board.json",
             "data/as_proof_pack_queue.json",
+            "data/broker_mutation_bypass_audit.json",
         ],
         "classification_values": [
             "ACTIVE_BLOCKER",
+            "FIXED_NEEDS_CLEAN_WINDOW",
             "CONTAINED_NOT_CLEARED",
             "TAXONOMY_DUPLICATE",
             "STALE_SUPERSEDED",
@@ -687,8 +720,9 @@ def build_profitability_acceptance_blocker_reconciliation(generated_at: str, ctx
         },
         "rows": rows,
         "permission_boundary": (
-            "No row in this reconciliation creates live permission. ACTIVE, contained, duplicate, and evidence-gap rows all keep "
-            "normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together."
+            "No row in this reconciliation creates live permission. ACTIVE, fixed-needs-clean-window, contained, duplicate, "
+            "and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, "
+            "GPT verifier, and guardian gates pass together."
         ),
         "live_side_effects": [],
     }
@@ -1399,7 +1433,20 @@ def _profitability_reconciliation_row(
     blocker = code in blocker_codes
     stale = classification == "STALE_SUPERSEDED"
     still_blocks_acceptance = bool(blocker and not stale)
-    still_blocks_fresh_entries = bool((present or blocker or classification in {"CONTAINED_NOT_CLEARED", "TAXONOMY_DUPLICATE"}) and not stale)
+    still_blocks_fresh_entries = bool(
+        (
+            present
+            or blocker
+            or classification
+            in {
+                "FIXED_NEEDS_CLEAN_WINDOW",
+                "CONTAINED_NOT_CLEARED",
+                "TAXONOMY_DUPLICATE",
+                "EVIDENCE_GAP",
+            }
+        )
+        and not stale
+    )
     return {
         "code": code,
         "classification": classification,

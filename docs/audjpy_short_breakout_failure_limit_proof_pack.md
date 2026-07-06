@@ -1,6 +1,6 @@
 # AUD_JPY SHORT BREAKOUT_FAILURE LIMIT Proof Pack
 
-- Generated: `2026-07-06T06:08:36Z`
+- Generated: `2026-07-06T08:54:11Z`
 - Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
 - Classification: `REPAIR_REQUIRED`
 - Standalone 4x: `False`

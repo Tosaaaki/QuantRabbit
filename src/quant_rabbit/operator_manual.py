@@ -112,6 +112,22 @@ def is_operator_manual_position(position: BrokerPosition | dict[str, Any]) -> bo
     return False
 
 
+def operator_manual_tp_modify_blocked(position: BrokerPosition | dict[str, Any]) -> bool:
+    """Return true when an operator-manual packet explicitly opts out of TP edits."""
+    if not is_operator_manual_position(position):
+        return False
+    packet = operator_manual_packet(position)
+    return _explicit_false(packet.get("auto_tp_modify_allowed"))
+
+
+def operator_manual_packet(position: BrokerPosition | dict[str, Any]) -> dict[str, Any]:
+    raw = _raw_value(position)
+    packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
+    if not packet and isinstance(position, dict) and isinstance(position.get("operator_manual_position"), dict):
+        packet = position["operator_manual_position"]
+    return dict(packet)
+
+
 def is_operator_managed_manual_owner(owner: Owner | str) -> bool:
     value = owner.value if isinstance(owner, Owner) else str(owner or "").lower()
     return value in {Owner.MANUAL.value, Owner.UNKNOWN.value, Owner.OPERATOR_MANUAL.value}
@@ -462,9 +478,15 @@ def _has_system_lane_or_gateway_receipt(position: BrokerPosition) -> bool:
 
 
 def _position_operator_packet(position: BrokerPosition) -> dict[str, Any]:
-    raw = position.raw if isinstance(position.raw, dict) else {}
-    packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
-    return dict(packet)
+    return operator_manual_packet(position)
+
+
+def _explicit_false(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"0", "false", "no", "off"}
+    return False
 
 
 def _raw_value(position: BrokerPosition | dict[str, Any]) -> dict[str, Any]:

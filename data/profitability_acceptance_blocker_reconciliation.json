@@ -1,16 +1,38 @@
 {
   "classification_values": [
     "ACTIVE_BLOCKER",
+    "FIXED_NEEDS_CLEAN_WINDOW",
     "CONTAINED_NOT_CLEARED",
     "TAXONOMY_DUPLICATE",
     "STALE_SUPERSEDED",
     "EVIDENCE_GAP"
   ],
-  "generated_at_utc": "2026-07-06T06:08:36Z",
+  "generated_at_utc": "2026-07-06T08:54:11Z",
   "live_side_effects": [],
   "mode": "read_only_profitability_acceptance_blocker_reconciliation",
-  "permission_boundary": "No row in this reconciliation creates live permission. ACTIVE, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.",
+  "permission_boundary": "No row in this reconciliation creates live permission. ACTIVE, fixed-needs-clean-window, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.",
   "rows": [
+    {
+      "can_create_live_permission": false,
+      "classification": "FIXED_NEEDS_CLEAN_WINDOW",
+      "clearance_condition": "Keep a clean proof window where tp_rebalancer, PositionManager, and PositionProtectionGateway all preserve operator-manual packets with auto_tp_modify_allowed=false, and broker transaction IDs do not advance from unauthorized TP/SL/close writes.",
+      "code": "OPERATOR_MANUAL_TP_OPT_OUT_BYPASS",
+      "contained_by": null,
+      "duplicate_of": null,
+      "evidence_summary": {
+        "active_take_profit_order": "472996",
+        "broker_mutation_audit": "data/broker_mutation_bypass_audit.json",
+        "last_transaction_id": "472996",
+        "manual_trade_472987_untouched": true,
+        "position_manager_gateway_bypass_fixed": true,
+        "tp_rebalance_incident_contained": true
+      },
+      "present_as_current_blocker": false,
+      "present_in_current_acceptance": false,
+      "still_blocks_acceptance": false,
+      "still_blocks_fresh_entries": true,
+      "still_blocks_live_ready": true
+    },
     {
       "can_create_live_permission": false,
       "classification": "ACTIVE_BLOCKER",
@@ -500,7 +522,8 @@
     "data/memory_health.json",
     "data/remaining_profitability_p0_decomposition.json",
     "data/as_lane_candidate_board.json",
-    "data/as_proof_pack_queue.json"
+    "data/as_proof_pack_queue.json",
+    "data/broker_mutation_bypass_audit.json"
   ],
   "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
   "summary": {
@@ -511,6 +534,7 @@
       "ACTIVE_BLOCKER": 3,
       "CONTAINED_NOT_CLEARED": 2,
       "EVIDENCE_GAP": 4,
+      "FIXED_NEEDS_CLEAN_WINDOW": 1,
       "STALE_SUPERSEDED": 2,
       "TAXONOMY_DUPLICATE": 1
     },

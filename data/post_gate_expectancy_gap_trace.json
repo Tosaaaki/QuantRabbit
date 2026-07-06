@@ -4555,7 +4555,7 @@
       "wins": 20
     }
   ],
-  "generated_at_utc": "2026-07-06T06:08:36Z",
+  "generated_at_utc": "2026-07-06T08:54:11Z",
   "largest_loss_trades": [
     {
       "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
@@ -4801,7 +4801,7 @@
     "position_present": true,
     "position_side": "SHORT",
     "position_units": 30000,
-    "position_unrealized_pl_jpy": -12271.0884,
+    "position_unrealized_pl_jpy": -6828.0027,
     "same_theme_auto_add_allowed": false,
     "system_occupancy_counted": null,
     "system_pl_counted": false,

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
     ACTION_PROFIT_PROTECT,
@@ -439,6 +440,43 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(client.dependent_orders[0][1]["takeProfit"]["price"], "1.17500")
             self.assertNotIn("stopLoss", client.dependent_orders[0][1])
 
+    def test_operator_manual_auto_tp_modify_false_blocks_take_profit_replace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_REPAIR_TAKE_PROFIT, stop=None, take_profit=1.1750),
+                snapshot=_snapshot(
+                    owner=Owner.OPERATOR_MANUAL,
+                    take_profit=1.1741,
+                    stop_loss=None,
+                    raw={
+                        "operator_manual_position": {
+                            "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                            "classification": "OPERATOR_MANUAL",
+                            "management_intent": "KEEP",
+                            "auto_tp_modify_allowed": False,
+                            "auto_sl_attach_allowed": False,
+                            "loss_side_auto_close_allowed": False,
+                            "same_theme_auto_add_allowed": False,
+                        }
+                    },
+                ),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.dependent_orders, [])
+            report = (root / "exec.md").read_text()
+            self.assertIn("OPERATOR_MANUAL_TP_MODIFY_FORBIDDEN", report)
+            self.assertIn("auto_tp_modify_allowed=false", report)
+
     def test_manual_position_blocks_stop_loss_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -631,6 +669,7 @@ def _snapshot(
     quote_bid: float = 1.1738,
     quote_ask: float = 1.1739,
     fetched_at_utc: datetime | None = None,
+    raw: dict[str, Any] | None = None,
 ) -> BrokerSnapshot:
     now = fetched_at_utc or datetime.now(timezone.utc)
     return BrokerSnapshot(
@@ -646,6 +685,7 @@ def _snapshot(
                 take_profit=take_profit,
                 stop_loss=stop_loss,
                 owner=owner,
+                raw=raw or {},
             ),
         ),
         quotes={"EUR_USD": Quote("EUR_USD", bid=quote_bid, ask=quote_ask, timestamp_utc=now)},

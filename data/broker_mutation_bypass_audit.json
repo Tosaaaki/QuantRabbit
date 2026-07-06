@@ -1,0 +1,300 @@
+{
+  "generated_at_utc": "2026-07-06T08:54:19Z",
+  "mode": "read_only_broker_mutation_bypass_audit",
+  "permission_boundary": "This audit does not create live permission. It only records broker mutation paths and containment status. Fresh entries remain blocked unless acceptance, proof, RiskEngine, LiveOrderGateway, GPT verifier, guardian, and live-send flags all pass.",
+  "broker_truth": {
+    "snapshot_path": "data/broker_snapshot.json",
+    "last_transaction_id": "472996",
+    "positions": [
+      {
+        "trade_id": "472987",
+        "pair": "EUR_USD",
+        "side": "SHORT",
+        "units": 30000,
+        "owner": "operator_manual",
+        "take_profit": 1.13968,
+        "stop_loss": null,
+        "operator_packet_auto_tp_modify_allowed": false,
+        "operator_packet_auto_sl_attach_allowed": false,
+        "operator_packet_loss_side_auto_close_allowed": false,
+        "operator_packet_same_theme_auto_add_allowed": false
+      }
+    ],
+    "orders": [
+      {
+        "order_id": "472996",
+        "order_type": "TAKE_PROFIT",
+        "trade_id": "472987",
+        "price": 1.13968,
+        "state": "PENDING"
+      }
+    ],
+    "protected_trade_ids": [
+      "472987"
+    ],
+    "protected_order_ids": [
+      "472988",
+      "472994",
+      "472996"
+    ],
+    "transaction_advanced_during_audit": false
+  },
+  "final_read_only_broker_truth": {
+    "dev_snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
+    "live_snapshot_fetched_at_utc": "2026-07-06T08:53:59.558238+00:00",
+    "dev_last_transaction_id": "472996",
+    "live_last_transaction_id": "472996",
+    "dev_position_trade_id": "472987",
+    "live_position_trade_id": "472987",
+    "dev_active_take_profit_order_id": "472996",
+    "live_active_take_profit_order_id": "472996"
+  },
+  "static_search_summary": {
+    "oanda_write_methods_centralized_in": "src/quant_rabbit/broker/oanda.py",
+    "http_trade_write_methods": [
+      "OandaExecutionClient.post_order_json -> POST /orders",
+      "OandaExecutionClient.cancel_order -> PUT /orders/{id}/cancel",
+      "OandaExecutionClient.replace_trade_dependent_orders -> PUT /trades/{id}/orders",
+      "OandaExecutionClient.close_trade -> blocked before IO",
+      "OandaExecutionClient.close_trade_with_provenance -> PUT /trades/{id}/close after provenance validation"
+    ],
+    "other_http_writes": [
+      "tools/slack_post.py posts Slack only; not a broker mutation path"
+    ],
+    "raw_close_fallback": "blocked"
+  },
+  "paths": [
+    {
+      "id": "fresh_entry_live_order_gateway",
+      "mutation": "create broker entry order",
+      "low_level_method": "OandaExecutionClient.post_order_json",
+      "callers": [
+        "src/quant_rabbit/broker/execution.py:LiveOrderGateway.run",
+        "src/quant_rabbit/broker/execution.py:LiveOrderGateway.run_batch",
+        "src/quant_rabbit/automation.py:AutoTradeCycle via LiveOrderGateway",
+        "src/quant_rabbit/guardian_action_cycle.py:_run_live_order_gateway"
+      ],
+      "required_guards": [
+        "send=true",
+        "confirm_live=true for live-send paths",
+        "QR_LIVE_ENABLED/live_enabled when send validation is active",
+        "RiskEngine allowed",
+        "StrategyProfile live validation",
+        "intent status/projection freshness checks",
+        "self-improvement audit gateway checks",
+        "verified GPT decision checks",
+        "target-path live-send checks",
+        "guardian action and guardian receipt consumption checks",
+        "SL lint/attached-stop checks"
+      ],
+      "operator_manual_protection": [
+        "RiskEngine blocks same-theme add to operator_manual 472987 unless operator_authorized_manual_overlap=true",
+        "operator manual exposure is observed but does not count as system P/L proof"
+      ],
+      "status": "SAFE_BLOCKED_BY_CURRENT_ARTIFACTS",
+      "current_evidence": [
+        "data/order_intents.json has 82 DRY_RUN_BLOCKED rows and zero LIVE_READY rows",
+        "data/guardian_receipt_consumption.json normal_routing_allowed=false",
+        "data/guardian_receipt_operator_review.json normal_routing_allowed=false"
+      ]
+    },
+    {
+      "id": "pending_order_cancel",
+      "mutation": "cancel broker pending entry order",
+      "low_level_method": "OandaExecutionClient.cancel_order",
+      "callers": [
+        "src/quant_rabbit/automation.py pending_cancel_order_ids",
+        "src/quant_rabbit/automation.py _cancel_gpt_pending_orders"
+      ],
+      "required_guards": [
+        "send=true",
+        "live_enabled=true",
+        "GPT verifier accepted CANCEL_PENDING or accepted TRADE with verified cancel_order_ids for GPT path",
+        "pending ids must match visible trader-owned pending entry ids or self-improvement forced review ids",
+        "current-thesis/live-ready pending preservation prevents cancellation when a still-current pending entry exists"
+      ],
+      "operator_manual_protection": [
+        "manual/operator pending exposure is not used as a trader cancel target"
+      ],
+      "status": "SAFE_FOR_TRADER_PENDING_ONLY"
+    },
+    {
+      "id": "position_gateway_dependent_order_replace",
+      "mutation": "replace broker dependent stopLoss/takeProfit order",
+      "low_level_method": "OandaExecutionClient.replace_trade_dependent_orders",
+      "callers": [
+        "src/quant_rabbit/broker/position_execution.py:PositionProtectionGateway.run"
+      ],
+      "required_guards": [
+        "send=true for broker mutation",
+        "live_enabled=true for broker mutation",
+        "manual/tagless stop-loss writes are blocked",
+        "stop update cannot widen risk",
+        "take-profit update must pass side/price validation"
+      ],
+      "operator_manual_protection": [
+        "operator_manual_tp_modify_blocked(position) now blocks takeProfit replacements when auto_tp_modify_allowed=false"
+      ],
+      "status": "FIXED",
+      "regression_tests": [
+        "tests.test_position_protection_gateway.PositionProtectionGatewayTest.test_operator_manual_auto_tp_modify_false_blocks_take_profit_replace"
+      ]
+    },
+    {
+      "id": "position_manager_manual_tp_repair",
+      "mutation": "upstream proposal that could lead to dependent takeProfit replace",
+      "low_level_method": "none directly",
+      "callers": [
+        "src/quant_rabbit/strategy/position_manager.py:PositionManager._manage_manual_take_profit_position"
+      ],
+      "required_guards": [
+        "manual/tagless path never proposes SL or loss close",
+        "missing TP repair requires QR_ENABLE_MISSING_TP_REPAIR=1",
+        "operator_manual_tp_modify_blocked(position) now prevents missing/existing TP modification proposals"
+      ],
+      "operator_manual_protection": [
+        "472987-style packet with auto_tp_modify_allowed=false returns ACTION_HOLD_SL_FREE and recommended_take_profit=null"
+      ],
+      "status": "FIXED",
+      "regression_tests": [
+        "tests.test_position_manager.PositionManagerTest.test_operator_manual_auto_tp_modify_false_blocks_missing_tp_repair",
+        "tests.test_position_manager.PositionManagerTest.test_operator_manual_auto_tp_modify_false_keeps_existing_tp_unchanged"
+      ]
+    },
+    {
+      "id": "tp_rebalancer_dependent_order_replace",
+      "mutation": "replace broker takeProfit order for stale harvest/reanchor",
+      "low_level_method": "OandaExecutionClient.replace_trade_dependent_orders",
+      "callers": [
+        "src/quant_rabbit/strategy/tp_rebalancer.py:apply_tp_adjustments"
+      ],
+      "required_guards": [
+        "dry_run defaults prevent broker mutation unless explicitly disabled",
+        "compute_all_tp_adjustments skips operator manual packets with auto_tp_modify_allowed=false",
+        "raw operator packet from broker snapshot is preserved"
+      ],
+      "operator_manual_protection": [
+        "472987-style packet is skipped before apply phase"
+      ],
+      "status": "SAFE_FIXED_PREEXISTING",
+      "regression_tests": [
+        "tests.test_tp_rebalancer.TpRebalancerTest.test_operator_manual_auto_tp_modify_false_blocks_stale_harvest_reanchor"
+      ]
+    },
+    {
+      "id": "trailing_sl_dependent_order_replace",
+      "mutation": "tighten broker stopLoss order",
+      "low_level_method": "OandaExecutionClient.replace_trade_dependent_orders",
+      "callers": [
+        "src/quant_rabbit/strategy/trailing_sl.py:apply_trailing_sls"
+      ],
+      "required_guards": [
+        "eligible positions must be Owner.TRADER",
+        "position must already have broker stop_loss",
+        "optional QR_TRAILING_SL_FROM_TRADE_ID threshold",
+        "dry_run prevents broker mutation"
+      ],
+      "operator_manual_protection": [
+        "manual/unknown/operator_manual positions are skipped"
+      ],
+      "status": "SAFE"
+    },
+    {
+      "id": "position_gateway_market_close",
+      "mutation": "close broker trade",
+      "low_level_method": "OandaExecutionClient.close_trade_with_provenance",
+      "callers": [
+        "src/quant_rabbit/broker/position_execution.py:PositionProtectionGateway.run",
+        "src/quant_rabbit/automation.py:_close_gpt_trades"
+      ],
+      "required_guards": [
+        "send=true",
+        "live_enabled=true",
+        "close_trade_with_provenance only; raw close_trade fallback is blocked",
+        "manual/tagless market close is blocked",
+        "loss-side REVIEW_EXIT requires GPT CLOSE Gate A/B or structural explicit opt-in path",
+        "spread close gate must pass"
+      ],
+      "operator_manual_protection": [
+        "472987 operator_manual cannot be loss-closed by this path"
+      ],
+      "status": "SAFE"
+    },
+    {
+      "id": "adverse_partial_close",
+      "mutation": "partial close broker trade at adverse P/L",
+      "low_level_method": "OandaExecutionClient.close_trade_with_provenance",
+      "callers": [
+        "src/quant_rabbit/strategy/adverse_partial_close.py:apply_partial_closes"
+      ],
+      "required_guards": [
+        "compute_all_partial_closes only accepts owner=trader",
+        "kill switch QR_DISABLE_ADVERSE_PARTIAL_CLOSE=1",
+        "CLI live sends are dry-run by default and require send/confirm/live",
+        "raw close fallback is blocked"
+      ],
+      "operator_manual_protection": [
+        "manual/unknown/operator_manual positions are skipped before action generation"
+      ],
+      "status": "SAFE"
+    },
+    {
+      "id": "profit_partial_close",
+      "mutation": "partial close broker trade at profitable P/L",
+      "low_level_method": "OandaExecutionClient.close_trade_with_provenance",
+      "callers": [
+        "src/quant_rabbit/strategy/profit_partial_close.py:apply_profit_partial_closes"
+      ],
+      "required_guards": [
+        "profit_pips must be positive and ATR milestone-derived",
+        "send=true",
+        "live_enabled=true",
+        "confirm_live=true",
+        "raw close fallback is blocked"
+      ],
+      "operator_manual_protection": [
+        "manual/unknown/operator_manual are allowed only for profit-side partial close, not SL writes or loss closes"
+      ],
+      "status": "SAFE_BY_CONTRACT_PROFIT_ONLY"
+    },
+    {
+      "id": "guardian_action_cycle",
+      "mutation": "gateway-mediated entry handoff only",
+      "low_level_method": "none directly",
+      "callers": [
+        "src/quant_rabbit/guardian_action_cycle.py:run_guardian_action_cycle",
+        "tools/guardian_wake_dispatcher.py:_maybe_gateway_handoff"
+      ],
+      "required_guards": [
+        "no direct OANDA write methods in guardian_action_cycle",
+        "entry handoff requires QR_LIVE_ENABLED=1, QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=1, QR_GUARDIAN_ACTION_EXECUTE=1",
+        "accepted receipt with new_information=true",
+        "RiskEngine and LiveOrderGateway revalidation"
+      ],
+      "operator_manual_protection": [
+        "manual loss close is forbidden by strict receipt issues",
+        "guardian manual P/L is not counted as system P/L"
+      ],
+      "status": "SAFE_DEFAULT_OFF"
+    }
+  ],
+  "current_blockers": [
+    "PROFITABILITY_ACCEPTANCE_BLOCKED",
+    "SELF_IMPROVEMENT_P0_PRESENT",
+    "NEGATIVE_EXPECTANCY_ACTIVE",
+    "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+    "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+    "NO_LIVE_READY_LANES"
+  ],
+  "conclusion": {
+    "tp_rebalance_incident_contained": true,
+    "position_manager_gateway_bypass_fixed": true,
+    "manual_trade_472987_untouched": true,
+    "fresh_entries_allowed": false,
+    "normal_routing_allowed": false,
+    "live_ready": 0,
+    "as_proof_candidate": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+    "as_proof_candidate_status": "DRY_RUN_BLOCKED"
+  }
+}

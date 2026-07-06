@@ -1,10 +1,10 @@
 # Manual EUR_USD TP Replacement Provenance
 
-- Generated: `2026-07-06T06:08:36Z`
+- Generated: `2026-07-06T08:54:11Z`
 - Manual trade: `472987`
 - Audit order: `472994` classified `PROVENANCE_UNKNOWN_BLOCK_AUTOMATION` with lifecycle `REPLACED`
 - Active broker TP: `472996` at `1.13968` classified `PROVENANCE_UNKNOWN_BLOCK_AUTOMATION`
-- Snapshot last transaction: `472996` fetched `2026-07-06T05:51:56.023182+00:00`
+- Snapshot last transaction: `472996` fetched `2026-07-06T08:53:59.140771+00:00`
 - Gateway receipt search: `NO_LOCAL_QUANTRABBIT_GATEWAY_RECEIPT_FOUND`
 - Can automation use or modify this TP: `False`
 

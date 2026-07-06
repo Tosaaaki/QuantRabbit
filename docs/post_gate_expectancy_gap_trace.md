@@ -1,6 +1,6 @@
 # Post-Gate Expectancy Gap Trace
 
-- Generated: `2026-07-06T06:08:36Z`
+- Generated: `2026-07-06T08:54:11Z`
 - Scope: `manual_excluded_plus_both_market_close_leak_and_residual_family_filters`
 - Trades: `196`; net JPY: `-1194.4656`; expectancy/trade: `-6.0942`
 - Remaining gap to zero: `1194.4656` JPY

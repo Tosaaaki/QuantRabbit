@@ -1,6 +1,6 @@
 # Profitability Acceptance Blocker Reconciliation
 
-- Generated: `2026-07-06T06:08:36Z`
+- Generated: `2026-07-06T08:54:11Z`
 - Status: `PROFITABILITY_ACCEPTANCE_BLOCKED`
 - Normal routing: `BLOCKED`
 - A/S LIVE_READY path exists: `False`
@@ -8,6 +8,7 @@
 
 | code | classification | current blocker | blocks fresh entries | clearance |
 |---|---|---|---|---|
+| `OPERATOR_MANUAL_TP_OPT_OUT_BYPASS` | `FIXED_NEEDS_CLEAN_WINDOW` | `False` | `True` | Keep a clean proof window where tp_rebalancer, PositionManager, and PositionProtectionGateway all preserve operator-manual packets with auto_tp_modify_allowed=false, and broker transaction IDs do not advance from unauthorized TP/SL/close writes. |
 | `SELF_IMPROVEMENT_P0_PRESENT` | `ACTIVE_BLOCKER` | `True` | `True` | Regenerate memory-health and self-improvement-audit with zero P0 findings. |
 | `NEGATIVE_EXPECTANCY_ACTIVE` | `ACTIVE_BLOCKER` | `True` | `True` | Accepted realized capture economics must become non-negative without promoting blocked historical families. |
 | `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE` | `ACTIVE_BLOCKER` | `True` | `True` | TP-proven segments must no longer be net-damaged by unproven MARKET_ORDER_TRADE_CLOSE leakage. |
@@ -23,4 +24,4 @@
 
 ## Boundary
 
-No row in this reconciliation creates live permission. ACTIVE, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.
+No row in this reconciliation creates live permission. ACTIVE, fixed-needs-clean-window, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.

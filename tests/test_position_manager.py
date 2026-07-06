@@ -2288,6 +2288,108 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior
 
+    def test_operator_manual_auto_tp_modify_false_blocks_missing_tp_repair(self) -> None:
+        prior = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+        os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _pair_charts(root, atr_pips=10.0)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=datetime.now(timezone.utc),
+                    positions=(
+                        BrokerPosition(
+                            trade_id="472987",
+                            pair="EUR_USD",
+                            side=Side.SHORT,
+                            units=30000,
+                            entry_price=1.14048,
+                            unrealized_pl_jpy=-922.0941,
+                            take_profit=None,
+                            stop_loss=None,
+                            owner=Owner.OPERATOR_MANUAL,
+                            raw={
+                                "operator_manual_position": {
+                                    "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                                    "classification": "OPERATOR_MANUAL",
+                                    "management_intent": "KEEP",
+                                    "auto_tp_modify_allowed": False,
+                                    "auto_sl_attach_allowed": False,
+                                    "loss_side_auto_close_allowed": False,
+                                    "same_theme_auto_add_allowed": False,
+                                }
+                            },
+                        ),
+                    ),
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.14070, 1.14078, timestamp_utc=datetime.now(timezone.utc))},
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                managed = result.positions[0]
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(managed.action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(managed.recommended_stop_loss)
+                self.assertIsNone(managed.recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("auto_tp_modify_allowed=false", report)
+                self.assertNotIn("manual/tagless TP repair candidate", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            else:
+                os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior
+
+    def test_operator_manual_auto_tp_modify_false_keeps_existing_tp_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=120, short_score=160)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime.now(timezone.utc),
+                positions=(
+                    BrokerPosition(
+                        trade_id="472987",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=30000,
+                        entry_price=1.14048,
+                        unrealized_pl_jpy=-922.0941,
+                        take_profit=1.13968,
+                        stop_loss=None,
+                        owner=Owner.OPERATOR_MANUAL,
+                        raw={
+                            "operator_manual_position": {
+                                "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                                "classification": "OPERATOR_MANUAL",
+                                "management_intent": "KEEP",
+                                "auto_tp_modify_allowed": False,
+                            }
+                        },
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.14070, 1.14078, timestamp_utc=datetime.now(timezone.utc))},
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            managed = result.positions[0]
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(managed.action, ACTION_HOLD_SL_FREE)
+            self.assertIsNone(managed.recommended_stop_loss)
+            self.assertIsNone(managed.recommended_take_profit)
+            self.assertIn("auto_tp_modify_allowed=false", (root / "pm.md").read_text())
+
     def test_operator_manual_position_with_existing_tp_keeps_stop_loss_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

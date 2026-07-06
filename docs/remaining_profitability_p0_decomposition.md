@@ -1,6 +1,6 @@
 # Remaining Profitability P0 Decomposition
 
-- Generated: `2026-07-06T06:08:31Z`
+- Generated: `2026-07-06T08:51:35Z`
 - Rows: `4`
 - Can create live permission: `False`
 

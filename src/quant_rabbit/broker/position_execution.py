@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
-from quant_rabbit.operator_manual import is_operator_managed_manual_owner
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
@@ -279,6 +279,18 @@ class PositionProtectionGateway:
                         "price": _price(position.pair, float(managed.recommended_stop_loss)),
                     }
         if managed.recommended_take_profit is not None:
+            if operator_manual_tp_modify_blocked(position):
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "OPERATOR_MANUAL_TP_MODIFY_FORBIDDEN",
+                        "message": (
+                            "operator-manual packet sets auto_tp_modify_allowed=false; "
+                            "take-profit replacement requires explicit operator authorization"
+                        ),
+                    }
+                )
+                return action
             current_tp = position.take_profit
             new_tp = float(managed.recommended_take_profit)
             tp_changed = current_tp is None or abs(new_tp - current_tp) > 1e-7

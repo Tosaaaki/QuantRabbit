@@ -908,7 +908,7 @@
     "required_daily_return_pct": 5.412477,
     "sum_expected_daily_return_pct": 8.1576
   },
-  "generated_at_utc": "2026-07-06T06:08:36Z",
+  "generated_at_utc": "2026-07-06T08:54:11Z",
   "global_blockers": {
     "memory_status": "MEMORY_HEALTH_BLOCKED",
     "profitability_acceptance_blockers": [
@@ -972,7 +972,7 @@
     "position_present": true,
     "position_side": "SHORT",
     "position_units": 30000,
-    "position_unrealized_pl_jpy": -12271.0884,
+    "position_unrealized_pl_jpy": -6828.0027,
     "same_theme_auto_add_allowed": false,
     "system_occupancy_counted": null,
     "system_pl_counted": false,
