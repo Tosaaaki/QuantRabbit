@@ -1,9 +1,9 @@
 # Portfolio 4x Path Planner
 
-- Generated: `2026-07-06T08:54:11Z`
+- Generated: `2026-07-06T09:04:10Z`
 - Status: `NO_LIVE_READY_PORTFOLIO`
 - Can reach 4x now: `False`
-- Non-hard-excluded candidates: `53`
+- Non-hard-excluded candidates: `55`
 - Standalone math candidates: `2`
 - Fastest mathematical basket reaches required return: `True`; live eligible `False`
 
@@ -12,20 +12,20 @@
 | rank | lane | class | daily % | score | distance | units | blockers |
 |---:|---|---|---:|---:|---:|---:|---:|
 | 1 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` | `REPAIR_REQUIRED` | 3.7891 | 63.3128 | 5 | 3000 | 4 |
-| 2 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` | `REPAIR_REQUIRED` | 3.7891 | 56.3128 | 6 | 3000 | 6 |
-| 3 | `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.741 | 45.928 | 7 | 3000 | 8 |
-| 4 | `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.1576 | 45.2608 | 7 | 0 | 8 |
+| 2 | `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` | `REPAIR_REQUIRED` | 3.7891 | 54.8128 | 6 | 3000 | 7 |
+| 3 | `range_trader:GBP_USD:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 8.1576 | 45.2608 | 7 | 0 | 8 |
+| 4 | `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 7.741 | 44.428 | 7 | 3000 | 9 |
 | 5 | `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` | `HISTORICAL_ONLY` | 3.8521 | 10.3168 | 6 | 0 | 11 |
 | 6 | `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` | `EVIDENCE_GAP` | None | 10.0 | 7 | 4000 | 4 |
 | 7 | `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT` | `EVIDENCE_GAP` | None | 10.0 | 7 | 4000 | 4 |
 | 8 | `range_trader:NZD_CHF:SHORT:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | 0.5 | 6 | 1000 | 5 |
 | 9 | `range_trader:AUD_CHF:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | -1.0 | 6 | 1000 | 6 |
-| 10 | `range_trader:AUD_CHF:LONG:RANGE_ROTATION:MARKET` | `HISTORICAL_ONLY` | None | -2.5 | 6 | 1000 | 7 |
+| 10 | `range_trader:AUD_CHF:LONG:RANGE_ROTATION:MARKET` | `HISTORICAL_ONLY` | None | -4.0 | 6 | 1000 | 8 |
 | 11 | `range_trader:NZD_CHF:SHORT:RANGE_ROTATION:MARKET` | `HISTORICAL_ONLY` | None | -4.0 | 6 | 1000 | 8 |
-| 12 | `range_trader:GBP_JPY:SHORT:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | -7.5 | 6 | 1000 | 5 |
-| 13 | `range_trader:USD_JPY:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | -7.5 | 6 | 4000 | 5 |
-| 14 | `range_trader:AUD_JPY:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 1.0895 | -8.784 | 6 | 0 | 9 |
-| 15 | `range_trader:AUD_JPY:LONG:RANGE_ROTATION:MARKET` | `HISTORICAL_ONLY` | 1.0895 | -8.784 | 6 | 0 | 9 |
+| 12 | `range_trader:AUD_JPY:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | 1.0895 | -7.284 | 6 | 0 | 8 |
+| 13 | `range_trader:AUD_JPY:LONG:RANGE_ROTATION:MARKET` | `HISTORICAL_ONLY` | 1.0895 | -7.284 | 6 | 0 | 8 |
+| 14 | `range_trader:AUD_JPY:SHORT:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | -7.5 | 6 | 3000 | 5 |
+| 15 | `range_trader:EUR_CHF:LONG:RANGE_ROTATION` | `HISTORICAL_ONLY` | None | -7.5 | 6 | 1000 | 5 |
 
 ## Global Blockers
 

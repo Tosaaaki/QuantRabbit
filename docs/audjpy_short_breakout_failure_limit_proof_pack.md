@@ -1,6 +1,6 @@
 # AUD_JPY SHORT BREAKOUT_FAILURE LIMIT Proof Pack
 
-- Generated: `2026-07-06T08:54:11Z`
+- Generated: `2026-07-06T09:04:10Z`
 - Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
 - Classification: `REPAIR_REQUIRED`
 - Standalone 4x: `False`
@@ -17,9 +17,9 @@
 
 ## Geometry / Margin
 
-- Entry / TP / SL: `112.169` / `111.832` / `112.294`
-- Reward/risk: `2.6960000000000264`; reward/loss pips `33.70000000000033` / `12.5`
-- Units / risk / margin: `3000` / `375.0` / `13460.28`
+- Entry / TP / SL: `112.502` / `112.165` / `112.627`
+- Reward/risk: `2.6959999999999127`; reward/loss pips `33.69999999999891` / `12.5`
+- Units / risk / margin: `3000` / `375.0` / `13500.24`
 
 ## Failed Checks
 

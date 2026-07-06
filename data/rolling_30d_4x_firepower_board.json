@@ -1,5 +1,5 @@
 {
-  "all_candidate_count": 53,
+  "all_candidate_count": 55,
   "candidates": [
     {
       "active_days": 33,
@@ -7,8 +7,8 @@
       "avg_win_jpy": 331.6,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -71,14 +71,15 @@
       "avg_win_jpy": 388.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": true,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
@@ -102,8 +103,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
-      "margin_requirement_min_lot_jpy": 4483.56,
-      "margin_requirement_realistic_size_jpy": 13450.68,
+      "margin_requirement_min_lot_jpy": 4496.88,
+      "margin_requirement_realistic_size_jpy": 13490.64,
       "max_loss_jpy": 418.0,
       "method": "TREND_CONTINUATION",
       "order_type": "STOP-ENTRY",
@@ -135,8 +136,8 @@
       "avg_win_jpy": 155.9,
       "broker_margin_context": {
         "broker_margin_free_units": 30000,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -202,14 +203,15 @@
       "avg_win_jpy": 992.7,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": true,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
@@ -231,8 +233,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
-      "margin_requirement_min_lot_jpy": 4483.56,
-      "margin_requirement_realistic_size_jpy": 13450.68,
+      "margin_requirement_min_lot_jpy": 4496.88,
+      "margin_requirement_realistic_size_jpy": 13490.64,
       "max_loss_jpy": 418.0,
       "method": "BREAKOUT_FAILURE",
       "order_type": "STOP-ENTRY",
@@ -264,8 +266,8 @@
       "avg_win_jpy": 992.7,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": true,
@@ -291,8 +293,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
-      "margin_requirement_min_lot_jpy": 4486.76,
-      "margin_requirement_realistic_size_jpy": 13460.28,
+      "margin_requirement_min_lot_jpy": 4500.08,
+      "margin_requirement_realistic_size_jpy": 13500.24,
       "max_loss_jpy": 418.0,
       "method": "BREAKOUT_FAILURE",
       "order_type": "LIMIT",
@@ -324,14 +326,13 @@
       "avg_win_jpy": 52.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
-        "RANGE_COUNTERTREND_RR_TOO_LOW",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_FORMING_HTF_TREND_CONFLICT",
@@ -389,14 +390,13 @@
       "avg_win_jpy": 52.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
-        "RANGE_COUNTERTREND_RR_TOO_LOW",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "RANGE_MARKET_NOT_AT_RAIL",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
@@ -454,8 +454,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -483,8 +483,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:AUD_CHF:LONG:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 4492.228,
-      "margin_requirement_realistic_size_jpy": 4492.228,
+      "margin_requirement_min_lot_jpy": 4500.866,
+      "margin_requirement_realistic_size_jpy": 4500.866,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
@@ -516,14 +516,15 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
         "RANGE_COUNTERTREND_RR_TOO_LOW",
+        "RANGE_MARKET_NOT_AT_RAIL",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_FORMING_HTF_TREND_CONFLICT",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
@@ -546,8 +547,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:AUD_CHF:LONG:RANGE_ROTATION:MARKET",
-      "margin_requirement_min_lot_jpy": 4494.807,
-      "margin_requirement_realistic_size_jpy": 4494.807,
+      "margin_requirement_min_lot_jpy": 4508.05,
+      "margin_requirement_realistic_size_jpy": 4508.05,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "MARKET",
@@ -579,15 +580,14 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
@@ -608,8 +608,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 4486.76,
-      "margin_requirement_realistic_size_jpy": 13460.28,
+      "margin_requirement_min_lot_jpy": 4500.08,
+      "margin_requirement_realistic_size_jpy": 13500.24,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
@@ -636,27 +636,25 @@
       "win_rate": null
     },
     {
-      "active_days": 31,
+      "active_days": 29,
       "avg_loss_jpy": 1063.9,
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
-        "RANGE_COUNTERTREND_RR_TOO_LOW",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
+        "RANGE_FORMING_HTF_TREND_CONFLICT",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
-      "estimated_trades_per_day_available": 12.0323,
+      "estimated_trades_per_day_available": 36.5862,
       "exact_proof_gaps": [
         "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
         "GUARDIAN_OPERATOR_REVIEW_BLOCKER",
@@ -670,25 +668,25 @@
       "expected_jpy_per_trade": null,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
-      "lane_id": "range_trader:CAD_JPY:LONG:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 4552.96,
-      "margin_requirement_realistic_size_jpy": 9105.92,
+      "lane_id": "range_trader:EUR_CHF:LONG:RANGE_ROTATION",
+      "margin_requirement_min_lot_jpy": 7424.378,
+      "margin_requirement_realistic_size_jpy": 7424.378,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
-      "pair": "CAD_JPY",
+      "pair": "EUR_CHF",
       "proof_gap_count": 6,
-      "realistic_units": 2000,
+      "realistic_units": 1000,
       "required_trades_per_day_to_contribute_to_30d_4x": null,
       "risk_allowed": false,
-      "sample_count": 373,
+      "sample_count": 1061,
       "side": "LONG",
       "source_evidence": {
         "bidask_rule_generated_at_utc": "2026-07-03T14:52:18.653002Z",
-        "bidask_rule_name": "CAD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "bidask_rule_name": "EUR_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
         "capture_economics_status": "NEGATIVE_EXPECTANCY",
-        "capture_take_profit_scope_key": "CAD_JPY|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+        "capture_take_profit_scope_key": "EUR_CHF|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
         "historical_only": true,
         "positive_rotation_mode": null,
         "positive_rotation_proof_collection_ready": null
@@ -696,16 +694,16 @@
       "spread_included_expectancy": null,
       "status": "DRY_RUN_BLOCKED",
       "wilson_lower": null,
-      "win_rate": 0.0107
+      "win_rate": 0.1093
     },
     {
-      "active_days": 31,
+      "active_days": 29,
       "avg_loss_jpy": 1063.9,
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -713,13 +711,13 @@
       "current_blockers": [
         "RANGE_COUNTERTREND_RR_TOO_LOW",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
+        "RANGE_FORMING_HTF_TREND_CONFLICT",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "STRATEGY_NOT_ELIGIBLE"
       ],
-      "estimated_trades_per_day_available": 12.0323,
+      "estimated_trades_per_day_available": 36.5862,
       "exact_proof_gaps": [
         "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
         "GUARDIAN_OPERATOR_REVIEW_BLOCKER",
@@ -733,25 +731,25 @@
       "expected_jpy_per_trade": null,
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
-      "lane_id": "range_trader:CAD_JPY:LONG:RANGE_ROTATION:MARKET",
-      "margin_requirement_min_lot_jpy": 4554.72,
-      "margin_requirement_realistic_size_jpy": 9109.44,
+      "lane_id": "range_trader:EUR_CHF:LONG:RANGE_ROTATION:MARKET",
+      "margin_requirement_min_lot_jpy": 7426.799,
+      "margin_requirement_realistic_size_jpy": 7426.799,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "MARKET",
-      "pair": "CAD_JPY",
+      "pair": "EUR_CHF",
       "proof_gap_count": 6,
-      "realistic_units": 2000,
+      "realistic_units": 1000,
       "required_trades_per_day_to_contribute_to_30d_4x": null,
       "risk_allowed": false,
-      "sample_count": 373,
+      "sample_count": 1061,
       "side": "LONG",
       "source_evidence": {
         "bidask_rule_generated_at_utc": "2026-07-03T14:52:18.653002Z",
-        "bidask_rule_name": "CAD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "bidask_rule_name": "EUR_CHF_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
         "capture_economics_status": "NEGATIVE_EXPECTANCY",
-        "capture_take_profit_scope_key": "CAD_JPY|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+        "capture_take_profit_scope_key": "EUR_CHF|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
         "historical_only": true,
         "positive_rotation_mode": null,
         "positive_rotation_proof_collection_ready": null
@@ -759,7 +757,7 @@
       "spread_included_expectancy": null,
       "status": "DRY_RUN_BLOCKED",
       "wilson_lower": null,
-      "win_rate": 0.0107
+      "win_rate": 0.1093
     },
     {
       "active_days": 31,
@@ -767,15 +765,15 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
+        "LOSS_ASYMMETRY_GUARD_EXCEEDED",
         "RANGE_COUNTERTREND_RR_TOO_LOW",
-        "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
@@ -795,14 +793,14 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 8636.52,
-      "margin_requirement_realistic_size_jpy": 8636.52,
-      "max_loss_jpy": 418.0,
+      "margin_requirement_min_lot_jpy": 8655.84,
+      "margin_requirement_realistic_size_jpy": 34623.36,
+      "max_loss_jpy": 2871.8597,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
       "pair": "GBP_JPY",
       "proof_gap_count": 6,
-      "realistic_units": 1000,
+      "realistic_units": 4000,
       "required_trades_per_day_to_contribute_to_30d_4x": null,
       "risk_allowed": false,
       "sample_count": 657,
@@ -828,8 +826,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -859,8 +857,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION:MARKET",
-      "margin_requirement_min_lot_jpy": 8633.04,
-      "margin_requirement_realistic_size_jpy": 8633.04,
+      "margin_requirement_min_lot_jpy": 8652.48,
+      "margin_requirement_realistic_size_jpy": 8652.48,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "MARKET",
@@ -892,8 +890,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -920,8 +918,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:NZD_CHF:SHORT:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 3692.787,
-      "margin_requirement_realistic_size_jpy": 3692.787,
+      "margin_requirement_min_lot_jpy": 3698.789,
+      "margin_requirement_realistic_size_jpy": 3698.789,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
@@ -953,8 +951,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -984,8 +982,8 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:NZD_CHF:SHORT:RANGE_ROTATION:MARKET",
-      "margin_requirement_min_lot_jpy": 3687.79,
-      "margin_requirement_realistic_size_jpy": 3687.79,
+      "margin_requirement_min_lot_jpy": 3694.187,
+      "margin_requirement_realistic_size_jpy": 3694.187,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "MARKET",
@@ -1017,15 +1015,17 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
@@ -1045,14 +1045,14 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION",
-      "margin_requirement_min_lot_jpy": 6463.0,
-      "margin_requirement_realistic_size_jpy": 25852.0,
+      "margin_requirement_min_lot_jpy": null,
+      "margin_requirement_realistic_size_jpy": 0.0,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "LIMIT",
       "pair": "USD_JPY",
       "proof_gap_count": 6,
-      "realistic_units": 4000,
+      "realistic_units": 0,
       "required_trades_per_day_to_contribute_to_30d_4x": null,
       "risk_allowed": false,
       "sample_count": 843,
@@ -1078,14 +1078,14 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
-        "RANGE_COUNTERTREND_RR_TOO_LOW",
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "RANGE_MARKET_NOT_AT_RAIL",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
@@ -1109,14 +1109,14 @@
       "hard_excluded": false,
       "hard_exclusion_reasons": [],
       "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION:MARKET",
-      "margin_requirement_min_lot_jpy": 6472.0,
-      "margin_requirement_realistic_size_jpy": 6472.0,
+      "margin_requirement_min_lot_jpy": null,
+      "margin_requirement_realistic_size_jpy": 0.0,
       "max_loss_jpy": 418.0,
       "method": "RANGE_ROTATION",
       "order_type": "MARKET",
       "pair": "USD_JPY",
       "proof_gap_count": 6,
-      "realistic_units": 1000,
+      "realistic_units": 0,
       "required_trades_per_day_to_contribute_to_30d_4x": null,
       "risk_allowed": false,
       "sample_count": 843,
@@ -1142,8 +1142,8 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
@@ -1158,6 +1158,7 @@
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
         "STRATEGY_METHOD_PROFILE_MISSING"
       ],
       "estimated_trades_per_day_available": 47.4545,
@@ -1208,14 +1209,15 @@
       "avg_win_jpy": 418.0,
       "broker_margin_context": {
         "broker_margin_free_units": 0,
-        "margin_available_jpy": 58042.5066,
-        "margin_used_jpy": 222328.8
+        "margin_available_jpy": 58307.7306,
+        "margin_used_jpy": 222307.2
       },
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "candidate_daily_expected_return_pct_ge_required": false,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "TREND_MARKET_NOT_OPERATING_TREND",
@@ -1224,6 +1226,7 @@
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
         "STRATEGY_METHOD_PROFILE_MISSING"
       ],
       "estimated_trades_per_day_available": 47.4545,
@@ -1269,7 +1272,7 @@
       "win_rate": null
     }
   ],
-  "generated_at_utc": "2026-07-06T08:51:35Z",
+  "generated_at_utc": "2026-07-06T09:04:03Z",
   "hard_exclusions": [
     {
       "hard_exclusion_reasons": [
@@ -1554,12 +1557,12 @@
     "as_live_ready_path_exists": false,
     "can_create_live_permission_rows": 0,
     "can_enter_proof_pack_rows": 2,
-    "candidate_rows_after_hard_exclusions": 53,
+    "candidate_rows_after_hard_exclusions": 55,
     "hard_excluded_rows": 29,
     "normal_routing_status": "BLOCKED",
     "p0_dependency_count": 4,
     "rows_meeting_required_daily_return_prefilter": 2,
-    "total_order_intent_rows": 82
+    "total_order_intent_rows": 84
   },
   "target_math": {
     "capital_flows_30d": 100000.0,

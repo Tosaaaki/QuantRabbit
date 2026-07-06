@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T08:54:11Z",
+  "generated_at_utc": "2026-07-06T09:04:10Z",
   "live_side_effects": [],
   "mode": "read_only_audjpy_short_breakout_failure_repair_proof",
   "rows": [
@@ -9,6 +9,7 @@
       "classification": "REPAIR_REQUIRED",
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
@@ -324,11 +325,11 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 58042.5066,
-          "margin_used_jpy": 222328.8
+          "margin_available_jpy": 58307.7306,
+          "margin_used_jpy": 222307.2
         },
-        "margin_requirement_min_lot_jpy": 4483.56,
-        "margin_requirement_realistic_size_jpy": 13450.68,
+        "margin_requirement_min_lot_jpy": 4496.88,
+        "margin_requirement_realistic_size_jpy": 13490.64,
         "realistic_units": 3000,
         "risk_allowed": false
       },
@@ -695,11 +696,11 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 58042.5066,
-          "margin_used_jpy": 222328.8
+          "margin_available_jpy": 58307.7306,
+          "margin_used_jpy": 222307.2
         },
-        "margin_requirement_min_lot_jpy": 4486.76,
-        "margin_requirement_realistic_size_jpy": 13460.28,
+        "margin_requirement_min_lot_jpy": 4500.08,
+        "margin_requirement_realistic_size_jpy": 13500.24,
         "realistic_units": 3000,
         "risk_allowed": false
       },

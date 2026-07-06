@@ -7,7 +7,7 @@
     "STALE_SUPERSEDED",
     "EVIDENCE_GAP"
   ],
-  "generated_at_utc": "2026-07-06T08:54:11Z",
+  "generated_at_utc": "2026-07-06T09:04:10Z",
   "live_side_effects": [],
   "mode": "read_only_profitability_acceptance_blocker_reconciliation",
   "permission_boundary": "No row in this reconciliation creates live permission. ACTIVE, fixed-needs-clean-window, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.",
@@ -42,7 +42,7 @@
       "duplicate_of": null,
       "evidence_summary": {
         "memory_blockers": [
-          "forecast_history latest row predates broker snapshot (forecast=2026-07-06T01:58:08.871602+00:00, snapshot=2026-07-06T05:51:56.023182+00:00)"
+          "order_intents contains 1 memory/telemetry blocker(s)"
         ],
         "memory_status": "MEMORY_HEALTH_BLOCKED",
         "self_improvement_p0_codes": [

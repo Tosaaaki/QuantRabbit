@@ -207,7 +207,7 @@
       ]
     }
   },
-  "generated_at_utc": "2026-07-06T08:54:11Z",
+  "generated_at_utc": "2026-07-06T09:04:10Z",
   "live_side_effects": [],
   "mode": "read_only_historical_only_to_fresh_proof_replay",
   "rolling_30d_target_math": {
@@ -305,8 +305,8 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 58042.5066,
-          "margin_used_jpy": 222328.8
+          "margin_available_jpy": 58307.7306,
+          "margin_used_jpy": 222307.2
         },
         "margin_requirement_realistic_size_jpy": 0.0,
         "realistic_units": 0,
@@ -361,6 +361,7 @@
       "classification": "HISTORICAL_ONLY",
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
@@ -691,10 +692,10 @@
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 58042.5066,
-          "margin_used_jpy": 222328.8
+          "margin_available_jpy": 58307.7306,
+          "margin_used_jpy": 222307.2
         },
-        "margin_requirement_realistic_size_jpy": 13450.68,
+        "margin_requirement_realistic_size_jpy": 13490.64,
         "realistic_units": 3000,
         "risk_allowed": false
       },

@@ -6,7 +6,7 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-06T08:51:35Z",
+  "generated_at_utc": "2026-07-06T09:04:03Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
   "queue": [
@@ -53,6 +53,7 @@
       "can_enter_proof_pack": true,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",
         "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
@@ -135,6 +136,7 @@
       "can_enter_proof_pack": false,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "REWARD_RISK_TOO_LOW",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "PATTERN_REVERSAL_CHASE",
         "EXHAUSTION_RANGE_CHASE",

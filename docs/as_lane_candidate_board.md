@@ -1,6 +1,6 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-06T08:51:35Z`
+- Generated: `2026-07-06T09:04:03Z`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
@@ -20,8 +20,8 @@
 
 ## Firepower Summary
 
-- `total_order_intent_rows`: `82`
-- `candidate_rows_after_hard_exclusions`: `53`
+- `total_order_intent_rows`: `84`
+- `candidate_rows_after_hard_exclusions`: `55`
 - `hard_excluded_rows`: `29`
 - `rows_meeting_required_daily_return_prefilter`: `2`
 - `can_create_live_permission_rows`: `0`

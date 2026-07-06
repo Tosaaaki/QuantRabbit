@@ -403,12 +403,12 @@
     "as_live_ready_path_exists": false,
     "can_create_live_permission_rows": 0,
     "can_enter_proof_pack_rows": 2,
-    "candidate_rows_after_hard_exclusions": 53,
+    "candidate_rows_after_hard_exclusions": 55,
     "hard_excluded_rows": 29,
     "normal_routing_status": "BLOCKED",
     "p0_dependency_count": 4,
     "rows_meeting_required_daily_return_prefilter": 2,
-    "total_order_intent_rows": 82
+    "total_order_intent_rows": 84
   },
   "funding_adjusted_30d_status": {
     "broker_nav_jpy": 270740.4982,
@@ -422,7 +422,7 @@
     "performance_basis": "funding_adjusted",
     "rolling_30d_multiplier_funding_adjusted_is_kpi": true
   },
-  "generated_at_utc": "2026-07-06T08:51:35Z",
+  "generated_at_utc": "2026-07-06T09:04:03Z",
   "live_ready_lanes": 0,
   "live_side_effects": [],
   "manual_eurusd_472987": {

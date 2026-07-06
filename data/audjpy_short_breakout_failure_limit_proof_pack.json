@@ -37,7 +37,7 @@
   ],
   "forecast_executability": {
     "executable": false,
-    "forecast_confidence": 0.5867,
+    "forecast_confidence": 0.5244,
     "forecast_direction": "RANGE",
     "forecast_market_support_ok": false,
     "range_forecast_requires_range_rotation": true,
@@ -356,30 +356,30 @@
     "price_truth_status": "PRICE_TRUTH_OK",
     "status": "EVIDENCE_GAP_UNDER_SAMPLED"
   },
-  "generated_at_utc": "2026-07-06T08:54:11Z",
+  "generated_at_utc": "2026-07-06T09:04:10Z",
   "geometry": {
     "blockers": [
       "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
     ],
-    "entry": 112.169,
+    "entry": 112.502,
     "loss_pips": 12.5,
     "order_type": "LIMIT",
-    "reward_pips": 33.70000000000033,
-    "reward_risk": 2.6960000000000264,
-    "sl": 112.294,
+    "reward_pips": 33.69999999999891,
+    "reward_risk": 2.6959999999999127,
+    "sl": 112.627,
     "spread_pips": 1.6000000000005343,
-    "tp": 111.832
+    "tp": 112.165
   },
   "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
   "live_side_effects": [],
   "margin_and_risk": {
     "broker_margin_context": {
       "broker_margin_free_units": 0,
-      "margin_available_jpy": 58042.5066,
-      "margin_used_jpy": 222328.8
+      "margin_available_jpy": 58307.7306,
+      "margin_used_jpy": 222307.2
     },
-    "estimated_margin_jpy": 13460.28,
-    "margin_requirement_min_lot_jpy": 4486.76,
+    "estimated_margin_jpy": 13500.24,
+    "margin_requirement_min_lot_jpy": 4500.08,
     "realistic_units": 3000,
     "risk_allowed": false,
     "risk_jpy": 375.0
@@ -464,10 +464,10 @@
         "blockers": [
           "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
         ],
-        "entry": 112.169,
-        "reward_risk": 2.6960000000000264,
-        "sl": 112.294,
-        "tp": 111.832
+        "entry": 112.502,
+        "reward_risk": 2.6959999999999127,
+        "sl": 112.627,
+        "tp": 112.165
       },
       "proof": "geometry proof",
       "status": "PRESENT_BUT_NOT_PERMISSION"

@@ -1,6 +1,6 @@
 # Historical-Only To Fresh Proof Replay
 
-- Generated: `2026-07-06T08:54:11Z`
+- Generated: `2026-07-06T09:04:10Z`
 - Fresh replay: `logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json`
 - Price truth: `PRICE_TRUTH_OK`
 - Adoption level: `PAIR_LOCAL_RANK_ONLY`
