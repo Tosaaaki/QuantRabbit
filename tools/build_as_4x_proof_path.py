@@ -734,10 +734,15 @@ def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str,
     rankings = [portfolio_rank_row(row, ctx) for row in all_candidates]
     rankings.sort(key=lambda item: (-item["rank_score"], item["proof_distance"], item["lane_id"]))
     required_pct = _float(_nested(ctx["firepower"], "target_math", "required_calendar_daily_return_funding_adjusted_pct")) or 0.0
-    standalone = [row for row in rankings if (row.get("expected_daily_return_pct_on_funding_adjusted_equity") or 0.0) >= required_pct]
-    mathematical_basket = accumulate_unique_basket(rankings, required_pct)
+    math_eligible = [row for row in rankings if row.get("math_candidate_eligible") is True]
+    standalone = [
+        row
+        for row in math_eligible
+        if (row.get("expected_daily_return_pct_on_funding_adjusted_equity") or 0.0) >= required_pct
+    ]
+    mathematical_basket = accumulate_unique_basket(math_eligible, required_pct)
     repair_only_basket = accumulate_unique_basket(
-        [row for row in rankings if row["proof_classification"] == "REPAIR_REQUIRED"],
+        [row for row in math_eligible if row["proof_classification"] == "REPAIR_REQUIRED"],
         required_pct,
     )
     return {
@@ -760,6 +765,8 @@ def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str,
         "ranking_contract": "Only non-hard-excluded candidates are ranked. Ranking is repair-priority only and cannot create permission.",
         "summary": {
             "non_hard_excluded_candidates": len(all_candidates),
+            "math_candidate_eligible_candidates": len(math_eligible),
+            "planner_rejected_candidates": sum(1 for row in rankings if row.get("math_candidate_eligible") is False),
             "standalone_math_candidates_meeting_required_return": len(standalone),
             "standalone_live_ready_candidates": 0,
             "proof_ready_candidates": sum(1 for row in rankings if row["proof_classification"] == "PROOF_READY"),
@@ -1009,6 +1016,9 @@ def all_firepower_candidates(ctx: dict[str, Any]) -> list[dict[str, Any]]:
 def portfolio_rank_row(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     proof = ctx["proof_by_lane"].get(row.get("lane_id")) or {}
     classification = proof.get("proof_classification") or proof_classification_from_row(row)
+    math_exclusion_reasons = portfolio_math_exclusion_reasons(row)
+    if math_exclusion_reasons:
+        classification = "REJECTED"
     proof_distance = _int(proof.get("proof_distance"))
     if proof_distance is None:
         proof_distance = _int(row.get("proof_gap_count")) or 99
@@ -1016,7 +1026,14 @@ def portfolio_rank_row(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, An
     margin = _float(row.get("margin_requirement_realistic_size_jpy"))
     evidence_score = {"PROOF_READY": 100.0, "REPAIR_REQUIRED": 55.0, "EVIDENCE_GAP": 40.0, "HISTORICAL_ONLY": 20.0, "REJECTED": 0.0}.get(classification, 10.0)
     margin_score = 12.0 if margin and margin < 5000 else 4.0 if margin else 0.0
-    rank_score = _round(daily_pct * 8.0 + evidence_score + margin_score - proof_distance * 4.0 - len(row.get("current_blockers") or []) * 1.5)
+    rank_score = _round(
+        daily_pct * 8.0
+        + evidence_score
+        + margin_score
+        - proof_distance * 4.0
+        - len(row.get("current_blockers") or []) * 1.5
+        - (100.0 if math_exclusion_reasons else 0.0)
+    )
     return {
         "lane_id": row.get("lane_id"),
         "pair": row.get("pair"),
@@ -1035,9 +1052,22 @@ def portfolio_rank_row(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, An
         "concentration_key": f"{row.get('pair')}|{row.get('side')}|{row.get('method')}",
         "current_blocker_count": len(row.get("current_blockers") or []),
         "current_blockers": row.get("current_blockers") or [],
+        "math_candidate_eligible": not math_exclusion_reasons,
+        "math_exclusion_reasons": math_exclusion_reasons,
         "can_create_live_permission": False,
         "can_enter_proof_pack": bool(row.get("can_enter_proof_pack")),
     }
+
+
+def portfolio_math_exclusion_reasons(row: dict[str, Any]) -> list[str]:
+    blockers = {str(code) for code in row.get("current_blockers") or []}
+    source = row.get("source_evidence") if isinstance(row.get("source_evidence"), dict) else {}
+    reasons: list[str] = []
+    if "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE" in blockers:
+        reasons.append("spread_included_bidask_replay_negative_for_exact_lane")
+    if source.get("bidask_rule_status") == "LIVE_BLOCK_NEGATIVE_EXPECTANCY":
+        reasons.append("packaged_bidask_rule_live_block_negative_expectancy")
+    return reasons
 
 
 def accumulate_unique_basket(rows: list[dict[str, Any]], required_pct: float) -> dict[str, Any]:

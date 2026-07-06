@@ -94,6 +94,75 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertFalse(evidence["live_grade_support"])
         self.assertFalse(evidence["can_create_live_permission"])
 
+    def test_portfolio_planner_excludes_negative_bidask_from_mathematical_basket(self) -> None:
+        negative_bidask = {
+            "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
+            "pair": "USD_CHF",
+            "side": "LONG",
+            "method": "TREND_CONTINUATION",
+            "order_type": "STOP-ENTRY",
+            "source_evidence": {
+                "historical_only": True,
+                "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+            },
+            "expected_daily_return_pct_on_funding_adjusted_equity": 34.3,
+            "expected_jpy_per_trade": 2263.4,
+            "estimated_trades_per_day_available": 27.3,
+            "realistic_units": 1000,
+            "margin_requirement_realistic_size_jpy": 6500.0,
+            "risk_allowed": False,
+            "proof_gap_count": 7,
+            "current_blockers": [
+                "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            ],
+        }
+        repair_candidate = {
+            "lane_id": "range_trader:CAD_JPY:SHORT:RANGE_ROTATION",
+            "pair": "CAD_JPY",
+            "side": "SHORT",
+            "method": "RANGE_ROTATION",
+            "order_type": "LIMIT",
+            "source_evidence": {"historical_only": False},
+            "expected_daily_return_pct_on_funding_adjusted_equity": 6.2,
+            "expected_jpy_per_trade": 420.0,
+            "estimated_trades_per_day_available": 26.7,
+            "realistic_units": 3000,
+            "margin_requirement_realistic_size_jpy": 13700.0,
+            "risk_allowed": False,
+            "proof_gap_count": 6,
+            "current_blockers": [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            ],
+        }
+        ctx = {
+            "proof_by_lane": {},
+            "firepower": {
+                "target_math": {
+                    "required_calendar_daily_return_funding_adjusted_pct": 5.0,
+                }
+            },
+            "acceptance": {},
+            "support": {},
+            "memory": {},
+            "broker": {},
+        }
+
+        with patch.object(proof_path, "all_firepower_candidates", return_value=[negative_bidask, repair_candidate]):
+            payload = proof_path.build_portfolio_planner("2026-07-06T00:00:00Z", ctx)
+
+        self.assertEqual(payload["summary"]["non_hard_excluded_candidates"], 2)
+        self.assertEqual(payload["summary"]["math_candidate_eligible_candidates"], 1)
+        self.assertEqual(payload["summary"]["planner_rejected_candidates"], 1)
+        self.assertEqual(payload["standalone_math_candidates"][0]["lane_id"], repair_candidate["lane_id"])
+        self.assertEqual(payload["fastest_mathematical_basket"]["components"][0]["lane_id"], repair_candidate["lane_id"])
+        rejected = next(row for row in payload["candidate_rankings"] if row["lane_id"] == negative_bidask["lane_id"])
+        self.assertEqual(rejected["proof_classification"], "REJECTED")
+        self.assertFalse(rejected["math_candidate_eligible"])
+        self.assertIn("spread_included_bidask_replay_negative_for_exact_lane", rejected["math_exclusion_reasons"])
+        self.assertIn("packaged_bidask_rule_live_block_negative_expectancy", rejected["math_exclusion_reasons"])
+
     def test_gbpusd_breakout_failure_market_close_is_blocked_family_repair(self) -> None:
         rows = [
             evidence_loop.Outcome(
