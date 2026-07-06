@@ -1279,6 +1279,102 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 [item["code"] for item in payload["actionable_requests"]],
             )
 
+    def test_guardian_operator_review_frontier_is_approval_bound_not_codex_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                        source_findings=["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+                        evidence_summary={
+                            "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            "co_blocker_codes": [
+                                "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                                "EXHAUSTION_RANGE_CHASE",
+                            ],
+                            "example_lane_ids": [
+                                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+                            ],
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="frontier guardian",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_APPROVAL_REQUIRED)
+            payload = json.loads(output.read_text())
+            frontier = payload["queue"][0]
+            self.assertEqual(frontier["automation_status"], "WAITING_FOR_OPERATOR_APPROVAL")
+            self.assertTrue(frontier["requires_explicit_operator_approval"])
+            self.assertEqual(frontier["approval_dependency"]["code"], "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+            self.assertIn(
+                "guardian_operator_review",
+                frontier["automation_contract"]["requires_explicit_operator_approval_for"],
+            )
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(
+                payload["queue_summary"]["approval_required_request_codes"],
+                ["REPAIR_FRONTIER_LANE_BLOCKER"],
+            )
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertIn("approval-bound", payload["loop_engineering_prompt"]["current_hypothesis"])
+
+    def test_guardian_co_blocker_does_not_hide_bidask_evidence_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                        source_findings=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                        evidence_summary={
+                            "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                            "co_blocker_codes": [
+                                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            ],
+                            "example_lane_ids": [
+                                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+                            ],
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="frontier bidask",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            frontier = payload["queue"][0]
+            self.assertEqual(frontier["automation_status"], "READY_FOR_CODEX_IMPLEMENTATION")
+            self.assertFalse(frontier["requires_explicit_operator_approval"])
+            self.assertEqual(payload["selected_request"]["code"], "REPAIR_FRONTIER_LANE_BLOCKER")
+            self.assertEqual(payload["approval_required_requests"], [])
+
     def test_quote_freshness_frontier_wait_is_not_codex_implementation_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

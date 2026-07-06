@@ -106,6 +106,11 @@ REPAIR_SELECTION_REASONS = {
         "Codex must not synthesize PASS for old closes."
     ),
 }
+OPERATOR_REVIEW_APPROVAL_BLOCKERS = {
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+    "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+    "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+}
 
 
 @dataclass(frozen=True)
@@ -1196,7 +1201,7 @@ def _codex_work_order(
 
 def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, Any]:
     contract = request.get("automation_contract") if isinstance(request.get("automation_contract"), dict) else {}
-    dependency_wait = _approval_dependency_wait(request)
+    dependency_wait = _approval_dependency_wait(request) or _operator_review_dependency_wait(request)
     explicit = bool(request.get("requires_explicit_operator_approval")) or dependency_wait is not None
     allowed_actions = [str(item) for item in contract.get("codex_may_execute", []) or []]
     approval_actions = [str(item) for item in contract.get("requires_explicit_operator_approval_for", []) or []]
@@ -1205,6 +1210,13 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
         allowed_actions = list(REPAIR_AUTOMATION_ALLOWED_ACTIONS)
     if not approval_actions:
         approval_actions = list(REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS)
+    if dependency_wait and dependency_wait.get("requires_explicit_operator_approval_for"):
+        approval_actions = _dedupe_strings(
+            [
+                *approval_actions,
+                *dependency_wait.get("requires_explicit_operator_approval_for", []),
+            ]
+        )
     if not forbidden_actions:
         forbidden_actions = list(REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS)
 
@@ -1265,7 +1277,7 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
                     else "wait_for_required_live_evidence_or_acceptance_window"
                 ),
                 (
-                    "execute_only_the_approved_gateway_or_launchd_action"
+                    "execute_only_the_approved_external_or_gateway_action"
                     if automation_status == AUTOMATION_OPERATOR_APPROVAL
                     else "refresh_support_artifacts_without_live_side_effects"
                 ),
@@ -1366,6 +1378,37 @@ def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
             "heartbeat and rerun execution-timing-audit after a live evidence window."
         ),
     }
+
+
+def _operator_review_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
+    if not _request_targets_operator_review_clearance(request):
+        return None
+    return {
+        "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "reason": (
+            "The selected repair request is blocked by an expired guardian receipt that "
+            "requires a fresh explicit operator review. Codex must not clear this by "
+            "changing intent, risk, or gateway code."
+        ),
+        "clearance": (
+            "Record an explicit local operator decision via the guardian receipt operator-review "
+            "flow, then rebuild guardian-receipt-consumption, generate-intents, "
+            "trader-support-bot, and trader-repair-orchestrator."
+        ),
+        "requires_explicit_operator_approval_for": ["guardian_operator_review"],
+    }
+
+
+def _request_targets_operator_review_clearance(request: dict[str, Any]) -> bool:
+    code = str(request.get("code") or "")
+    if code != "REPAIR_FRONTIER_LANE_BLOCKER":
+        return False
+    evidence = request.get("evidence_summary") if isinstance(request.get("evidence_summary"), dict) else {}
+    primary = str(evidence.get("code") or evidence.get("blocker_code") or "").upper()
+    source_findings = {item.upper() for item in _dedupe_strings(request.get("source_findings"))}
+    if primary in OPERATOR_REVIEW_APPROVAL_BLOCKERS:
+        return True
+    return bool(source_findings.intersection(OPERATOR_REVIEW_APPROVAL_BLOCKERS))
 
 
 def _optional_positive(value: Any) -> bool:
