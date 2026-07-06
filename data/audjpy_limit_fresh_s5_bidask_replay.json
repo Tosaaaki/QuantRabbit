@@ -1,0 +1,484 @@
+{
+  "classification": "REPAIR_REQUIRED",
+  "current_queue_context": {
+    "can_create_live_permission": false,
+    "can_enter_proof_pack": true,
+    "current_blockers": [
+      "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+      "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+      "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+    ],
+    "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
+    "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
+    "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+    "method": "BREAKOUT_FAILURE",
+    "missing_proof": {
+      "active_day_floor": true,
+      "attached_tp_proof": true,
+      "daily_stability_floor": true,
+      "forecast_executable_proof": true,
+      "fresh_744h_replay": true,
+      "geometry_proof": true,
+      "gpt_verifier_pass": false,
+      "live_order_gateway_pass": false,
+      "market_close_absence_or_close_gate_proof": true,
+      "no_guardian_operator_review_blocker": false,
+      "no_stale_packaged_rule": true,
+      "positive_day_rate_floor": true,
+      "residual_family_absence": true,
+      "risk_engine_pass": false,
+      "s5_bidask_spread_included_replay": false,
+      "sample_count_floor": true
+    },
+    "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
+    "order_type": "LIMIT",
+    "pair": "AUD_JPY",
+    "proof_classification": "REPAIR_REQUIRED",
+    "proof_distance": 5,
+    "side": "SHORT"
+  },
+  "direct_down_reference": {
+    "active_days": 5,
+    "avg_loss_pips": 7.0,
+    "avg_win_pips": 4.2,
+    "daily_distribution": [
+      {
+        "avg_realized_pips": 10.0,
+        "date": "2026-06-08",
+        "realized_pips": 10.0,
+        "samples": 1,
+        "sl_rate": 0.0,
+        "timeout_rate": 0.0,
+        "tp_rate": 1.0,
+        "win_rate": 1.0
+      },
+      {
+        "avg_realized_pips": -7.0,
+        "date": "2026-06-10",
+        "realized_pips": -7.0,
+        "samples": 1,
+        "sl_rate": 1.0,
+        "timeout_rate": 0.0,
+        "tp_rate": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "avg_realized_pips": 1.52,
+        "date": "2026-06-17",
+        "realized_pips": 7.6,
+        "samples": 5,
+        "sl_rate": 0.2,
+        "timeout_rate": 0.8,
+        "tp_rate": 0.0,
+        "win_rate": 0.8
+      },
+      {
+        "avg_realized_pips": 0.6,
+        "date": "2026-06-19",
+        "realized_pips": 0.6,
+        "samples": 1,
+        "sl_rate": 0.0,
+        "timeout_rate": 1.0,
+        "tp_rate": 0.0,
+        "win_rate": 1.0
+      },
+      {
+        "avg_realized_pips": -7.0,
+        "date": "2026-06-22",
+        "realized_pips": -7.0,
+        "samples": 1,
+        "sl_rate": 1.0,
+        "timeout_rate": 0.0,
+        "tp_rate": 0.0,
+        "win_rate": 0.0
+      }
+    ],
+    "expectancy_pips": 0.466667,
+    "max_daily_sample_share": 0.5556,
+    "max_loss_pips": -7.0,
+    "net_pl_pips": 4.2,
+    "note": "Direct DOWN forecasts are not the requested HARVEST fade shape; included as a reference only.",
+    "pessimistic_expectancy_pips": -3.03299,
+    "positive_day_rate": 0.6,
+    "profit_factor": 1.2,
+    "replay_window_utc": {
+      "first": "2026-06-08T09:16:58.534064Z",
+      "last": "2026-06-21T23:50:13.256823Z"
+    },
+    "sample_count": 9,
+    "sl_rate": 0.333333,
+    "spread_included": true,
+    "timeout_rate": 0.555556,
+    "tp_rate": 0.111111,
+    "wilson_95_win_rate_lower": 0.354197,
+    "win_rate": 0.666667,
+    "worst_loss_abs_pips": 7.0
+  },
+  "exact_shape_replay": {
+    "active_days": 6,
+    "avg_loss_pips": 6.231343,
+    "avg_win_pips": 7.967164,
+    "daily_distribution": [
+      {
+        "avg_realized_pips": 1.1927,
+        "date": "2026-05-15",
+        "realized_pips": 146.7,
+        "samples": 123,
+        "sl_rate": 0.3821,
+        "timeout_rate": 0.2358,
+        "tp_rate": 0.3821,
+        "win_rate": 0.5203
+      },
+      {
+        "avg_realized_pips": -2.5,
+        "date": "2026-05-21",
+        "realized_pips": -15.0,
+        "samples": 6,
+        "sl_rate": 0.3333,
+        "timeout_rate": 0.5,
+        "tp_rate": 0.1667,
+        "win_rate": 0.1667
+      },
+      {
+        "avg_realized_pips": -2.2,
+        "date": "2026-06-02",
+        "realized_pips": -4.4,
+        "samples": 2,
+        "sl_rate": 0.5,
+        "timeout_rate": 0.5,
+        "tp_rate": 0.0,
+        "win_rate": 0.5
+      },
+      {
+        "avg_realized_pips": -7.0,
+        "date": "2026-06-05",
+        "realized_pips": -7.0,
+        "samples": 1,
+        "sl_rate": 1.0,
+        "timeout_rate": 0.0,
+        "tp_rate": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "avg_realized_pips": -7.0,
+        "date": "2026-06-08",
+        "realized_pips": -7.0,
+        "samples": 1,
+        "sl_rate": 1.0,
+        "timeout_rate": 0.0,
+        "tp_rate": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "avg_realized_pips": 1.5,
+        "date": "2026-06-22",
+        "realized_pips": 3.0,
+        "samples": 2,
+        "sl_rate": 0.5,
+        "timeout_rate": 0.0,
+        "tp_rate": 0.5,
+        "win_rate": 0.5
+      }
+    ],
+    "expectancy_pips": 0.861481,
+    "max_daily_sample_share": 0.9111,
+    "max_loss_pips": -7.0,
+    "net_pl_pips": 116.3,
+    "pessimistic_expectancy_pips": -0.364079,
+    "positive_day_rate": 0.3333,
+    "profit_factor": 1.278563,
+    "replay_window_utc": {
+      "first": "2026-05-14T15:15:47.378998Z",
+      "last": "2026-06-22T05:47:46.506094Z"
+    },
+    "sample_count": 135,
+    "sl_rate": 0.392593,
+    "spread_included": true,
+    "timeout_rate": 0.244444,
+    "tp_rate": 0.362963,
+    "wilson_95_win_rate_lower": 0.413231,
+    "win_rate": 0.496296,
+    "worst_loss_abs_pips": 7.0
+  },
+  "generated_at_utc": "2026-07-06T10:10:06.406105Z",
+  "live_side_effects": [],
+  "mode": "read_only_audjpy_limit_fresh_s5_bidask_replay",
+  "rank_only_precision_subset": {
+    "active_days": 2,
+    "avg_loss_pips": 5.74,
+    "avg_win_pips": 7.984,
+    "daily_distribution": [
+      {
+        "avg_realized_pips": 3.1026,
+        "date": "2026-05-15",
+        "realized_pips": 117.9,
+        "samples": 38,
+        "sl_rate": 0.2895,
+        "timeout_rate": 0.2632,
+        "tp_rate": 0.4474,
+        "win_rate": 0.6316
+      },
+      {
+        "avg_realized_pips": -2.2,
+        "date": "2026-06-02",
+        "realized_pips": -4.4,
+        "samples": 2,
+        "sl_rate": 0.5,
+        "timeout_rate": 0.5,
+        "tp_rate": 0.0,
+        "win_rate": 0.5
+      }
+    ],
+    "expectancy_pips": 2.8375,
+    "max_daily_sample_share": 0.95,
+    "max_loss_pips": -7.0,
+    "net_pl_pips": 113.5,
+    "note": "Higher-confidence subset is useful as rank-only evidence, but it cannot create permission while daily stability fails.",
+    "pessimistic_expectancy_pips": 0.714694,
+    "positive_day_rate": 0.5,
+    "profit_factor": 2.318235,
+    "replay_window_utc": {
+      "first": "2026-05-15T00:57:38.766844Z",
+      "last": "2026-06-02T11:48:16.313126Z"
+    },
+    "sample_count": 40,
+    "sl_rate": 0.3,
+    "spread_included": true,
+    "timeout_rate": 0.275,
+    "tp_rate": 0.425,
+    "validator_rule": {
+      "active_days": 2,
+      "adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+      "audit_report": "logs/reports/forecast_improvement/audjpy_limit_fresh_s5_probe/oanda_history_replay_validate_20260706T100206Z.json",
+      "avg_daily_realized_pips": 56.75,
+      "avg_daily_samples": 20.0,
+      "avg_final_pips": 4.8425,
+      "avg_mae_pips": 7.61,
+      "avg_mfe_pips": 10.8475,
+      "best_daily_realized_pips": 117.9,
+      "campaign_timezone": "Asia/Tokyo",
+      "confidence_bucket": "0.75-0.90",
+      "contrarian_edge": true,
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.95,
+        "current_positive_day_rate": 0.5,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 1,
+        "missing_positive_days_at_current_requirement": 1,
+        "reasons": [
+          "NEEDS_MORE_ACTIVE_DAYS",
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 2,
+        "status": "INSUFFICIENT_ACTIVE_DAYS"
+      },
+      "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+      "direction": "DOWN",
+      "directional_hit_rate": 0.65,
+      "faded_direction": "UP",
+      "first_day": "2026-05-15",
+      "flat_days": 0,
+      "forecast_direction": "UP",
+      "granularity": "S5",
+      "horizon_bucket": "31-60m",
+      "last_day": "2026-06-02",
+      "live_grade": false,
+      "max_daily_sample_share": 0.95,
+      "max_daily_samples": 38,
+      "max_stop_pips": 7.2,
+      "max_target_pips": 11.0,
+      "median_final_pips": 5.0,
+      "min_daily_samples": 2,
+      "min_target_pips": 9.8,
+      "name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+      "negative_days": 1,
+      "optimized_avg_realized_pips": 2.8375,
+      "optimized_profit_factor": 2.3182,
+      "optimized_stop_loss_pips": 7.0,
+      "optimized_take_profit_pips": 10.0,
+      "optimized_win_rate": 0.625,
+      "pair": "AUD_JPY",
+      "positive_day_rate": 0.5,
+      "positive_days": 1,
+      "samples": 40,
+      "side": "SHORT",
+      "source_avg_final_pips": -9.7425,
+      "source_avg_mae_pips": 15.73,
+      "source_avg_mfe_pips": 3.305,
+      "source_directional_hit_rate": 0.25,
+      "worst_daily_realized_pips": -4.4
+    },
+    "wilson_95_win_rate_lower": 0.470322,
+    "win_rate": 0.625,
+    "worst_loss_abs_pips": 7.0
+  },
+  "remaining_blockers": [
+    "S5_DAILY_SAMPLE_CONCENTRATED",
+    "S5_POSITIVE_DAY_RATE_LOW",
+    "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+    "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+    "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
+    "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
+    "RISK_ENGINE_PASS_MISSING",
+    "S5_BIDASK_SPREAD_INCLUDED_REPLAY_NOT_PROVEN_FOR_LIVE",
+    "FORECAST_EXECUTABLE_PROOF_STILL_REQUIRED_BEFORE_LIVE",
+    "PROFITABILITY_ACCEPTANCE_BLOCKED"
+  ],
+  "replay_context": {
+    "candle_stats": {
+      "history_candles": 24228,
+      "history_files": 1,
+      "history_filtered_rows": 399348,
+      "history_pairs": 1,
+      "history_raw_rows": 423576,
+      "history_skipped_rows": 0
+    },
+    "history_dir": "logs/replay/oanda_history/20260705T180445Z",
+    "live_side_effects": [],
+    "load_stats": {
+      "deduped_directional_rows": 156,
+      "pair_filter": [
+        "AUD_JPY"
+      ],
+      "raw_directional_rows": 1500,
+      "skipped_duplicate_rows": 86,
+      "skipped_invalid_rows": 0,
+      "skipped_pair_filter_rows": 1258
+    },
+    "pending_future_truth_rows": 0,
+    "price_truth_coverage": {
+      "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+      "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+      "blockers": [
+        "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
+        "COLLECT_MORE_FORECAST_SAMPLES"
+      ],
+      "candidate_rule_validation_blocked": false,
+      "deduped_directional_rows": 156,
+      "evaluated_rows": 144,
+      "future_price_truth_window_group_count": 0,
+      "global_currency_validation_blocked": true,
+      "history_candles": 24228,
+      "history_fetch_command": null,
+      "history_fetch_command_count": 0,
+      "history_fetch_command_mode": "WINDOWED",
+      "history_fetch_commands": [],
+      "history_files": 1,
+      "missing_pair_directions": [],
+      "missing_pairs": [],
+      "missing_price_truth_samples": 0,
+      "missing_price_window_group_count": 0,
+      "pending_future_truth_rows": 0,
+      "pending_future_truth_window_group_count": 0,
+      "pending_future_truth_window_groups": [],
+      "raw_directional_rows": 1500,
+      "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
+      "required_min_evaluated_rows": 30,
+      "status": "PRICE_TRUTH_OK",
+      "under_sampled_missing_evaluated_samples": 21,
+      "under_sampled_pair_direction_count": 2,
+      "under_sampled_pair_directions": [
+        "AUD_JPY:DOWN",
+        "AUD_JPY:UP"
+      ],
+      "unscorable_no_market_rows": 12,
+      "unscorable_no_market_window_group_count": 1,
+      "unscorable_no_market_window_groups": [
+        {
+          "count": 12,
+          "date": "2026-05-16",
+          "needed_from_utc": "2026-05-16T01:04:43.766664Z",
+          "needed_to_utc": "2026-05-16T07:34:02.100697Z",
+          "pair_directions": [
+            "AUD_JPY:DOWN",
+            "AUD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_JPY"
+          ]
+        }
+      ],
+      "warnings": [
+        "FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW"
+      ]
+    },
+    "score_stats": {
+      "evaluated_rows": 144,
+      "missing_price_window_groups": [],
+      "pending_future_truth_rows": 0,
+      "pending_future_truth_window_groups": [],
+      "skipped_no_pair_candles": 0,
+      "skipped_no_price_window": 0,
+      "unscorable_no_market_rows": 12,
+      "unscorable_no_market_window_groups": [
+        {
+          "count": 12,
+          "date": "2026-05-16",
+          "needed_from_utc": "2026-05-16T01:04:43.766664Z",
+          "needed_to_utc": "2026-05-16T07:34:02.100697Z",
+          "pair_directions": [
+            "AUD_JPY:DOWN",
+            "AUD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_JPY"
+          ]
+        }
+      ]
+    },
+    "source": "data/forecast_history.jsonl",
+    "truth_source": "local OANDA S5 bid/ask candles; UP entry=ask/exit=bid, DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss",
+    "unscorable_no_market_rows": 12,
+    "validator_report": "logs/reports/forecast_improvement/audjpy_limit_fresh_s5_probe/oanda_history_replay_validate_latest.json"
+  },
+  "requested_shape": {
+    "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
+    "forecast_direction_faded": "UP",
+    "method": "BREAKOUT_FAILURE",
+    "order_type": "LIMIT",
+    "pair": "AUD_JPY",
+    "side": "SHORT",
+    "stop_loss_pips": 7.0,
+    "take_profit_pips": 10.0,
+    "trade_direction": "DOWN"
+  },
+  "source_artifacts": [
+    "data/forecast_history.jsonl",
+    "logs/replay/oanda_history/20260705T180445Z",
+    "logs/reports/forecast_improvement/audjpy_limit_fresh_s5_probe/oanda_history_replay_validate_latest.json",
+    "data/as_proof_pack_queue.json",
+    "data/as_lane_candidate_board.json"
+  ],
+  "thresholds": {
+    "expectancy_requires_positive": true,
+    "failed_reasons": [
+      "S5_DAILY_SAMPLE_CONCENTRATED",
+      "S5_POSITIVE_DAY_RATE_LOW"
+    ],
+    "max_daily_sample_share": 0.7,
+    "meets_exact_s5_proof_thresholds": false,
+    "min_active_days": 3,
+    "min_positive_day_rate": 0.666667,
+    "min_samples": 30,
+    "results": {
+      "active_day_floor": true,
+      "daily_stability_floor": false,
+      "positive_day_rate_floor": false,
+      "sample_count_floor": true,
+      "spread_included_expectancy_positive": true
+    },
+    "spread_included": true
+  }
+}

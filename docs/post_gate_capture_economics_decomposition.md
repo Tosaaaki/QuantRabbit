@@ -1,6 +1,6 @@
 # Post-Gate Capture Economics Decomposition
 
-- Generated: `2026-07-06T09:37:49Z`
+- Generated: `2026-07-06T10:11:23Z`
 - Capture economics status: `NEGATIVE_EXPECTANCY`
 - NEGATIVE_EXPECTANCY_ACTIVE should remain: `True`
 

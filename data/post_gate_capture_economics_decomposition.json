@@ -209,7 +209,7 @@
     "wins": 137
   },
   "capture_economics_status": "NEGATIVE_EXPECTANCY",
-  "generated_at_utc": "2026-07-06T09:37:49Z",
+  "generated_at_utc": "2026-07-06T10:11:23Z",
   "live_side_effects": [],
   "mode": "read_only_post_gate_capture_economics_decomposition",
   "negative_expectancy_active_should_remain": true,

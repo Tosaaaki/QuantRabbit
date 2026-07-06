@@ -848,6 +848,7 @@ def _build_proof_pack_queue(
     firepower: dict[str, Any],
     p0_decomposition: dict[str, Any],
 ) -> dict[str, Any]:
+    audjpy_fresh_s5 = _load_json("data/audjpy_limit_fresh_s5_bidask_replay.json")
     candidates = [
         row for row in firepower.get("candidates") or []
         if row.get("can_enter_proof_pack") or row.get("candidate_daily_expected_return_pct_ge_required")
@@ -855,7 +856,9 @@ def _build_proof_pack_queue(
     queue = []
     for row in candidates[:12]:
         missing = _missing_proof_map(row)
-        classification = _proof_classification(row, missing)
+        _apply_audjpy_limit_fresh_s5(row, missing, audjpy_fresh_s5)
+        current_blockers = _current_blockers_with_audjpy_limit_fresh_s5(row, audjpy_fresh_s5)
+        classification = _proof_classification({**row, "current_blockers": current_blockers}, missing)
         queue.append(
             {
                 "lane_id": row.get("lane_id"),
@@ -867,7 +870,7 @@ def _build_proof_pack_queue(
                 "expected_daily_return_pct_on_funding_adjusted_equity": row.get("expected_daily_return_pct_on_funding_adjusted_equity"),
                 "proof_classification": classification,
                 "missing_proof": missing,
-                "current_blockers": row.get("current_blockers"),
+                "current_blockers": current_blockers,
                 "can_create_live_permission": False,
                 "can_enter_proof_pack": bool(classification in {"EVIDENCE_GAP", "REPAIR_REQUIRED"} and not row.get("hard_excluded")),
                 "proof_distance": sum(1 for value in missing.values() if value is not True),
@@ -882,6 +885,8 @@ def _build_proof_pack_queue(
             "data/rolling_30d_4x_firepower_board.json",
             "data/remaining_profitability_p0_decomposition.json",
             "data/order_intents.json",
+            "data/audjpy_limit_fresh_s5_bidask_replay.json",
+            "docs/audjpy_limit_fresh_s5_bidask_replay.md",
         ],
         "classification_values": ["PROOF_READY", "EVIDENCE_GAP", "REPAIR_REQUIRED", "REJECTED", "HISTORICAL_ONLY"],
         "summary": {
@@ -952,6 +957,8 @@ def _update_as_board(
                 "docs/audjpy_short_breakout_failure_repair_proof.md",
                 "data/audjpy_short_breakout_failure_limit_proof_pack.json",
                 "docs/audjpy_short_breakout_failure_limit_proof_pack.md",
+                "data/audjpy_limit_fresh_s5_bidask_replay.json",
+                "docs/audjpy_limit_fresh_s5_bidask_replay.md",
                 "data/manual_eurusd_tp_replacement_provenance.json",
                 "docs/manual_eurusd_tp_replacement_provenance.md",
                 "data/profitability_acceptance_blocker_reconciliation.json",
@@ -1301,6 +1308,48 @@ def _proof_classification(row: dict[str, Any], missing: dict[str, Any]) -> str:
     if any("NEGATIVE_EXPECTANCY" in item or "SPREAD_TOO_WIDE" in item or "STALE_QUOTE" in item for item in blockers):
         return "REPAIR_REQUIRED"
     return "EVIDENCE_GAP"
+
+
+def _apply_audjpy_limit_fresh_s5(
+    row: dict[str, Any],
+    missing: dict[str, Any],
+    artifact: dict[str, Any],
+) -> None:
+    if not _is_audjpy_limit_target(row) or not artifact:
+        return
+    thresholds = _nested(artifact, "thresholds", "results") or {}
+    exact_pass = bool(_nested(artifact, "thresholds", "meets_exact_s5_proof_thresholds"))
+    for key in (
+        "sample_count_floor",
+        "active_day_floor",
+        "daily_stability_floor",
+        "positive_day_rate_floor",
+    ):
+        if key in thresholds:
+            missing[key] = thresholds.get(key) is True
+    missing["s5_bidask_spread_included_replay"] = exact_pass
+
+
+def _current_blockers_with_audjpy_limit_fresh_s5(
+    row: dict[str, Any],
+    artifact: dict[str, Any],
+) -> list[str]:
+    blockers = [str(item) for item in row.get("current_blockers") or []]
+    if _is_audjpy_limit_target(row) and artifact:
+        for reason in _nested(artifact, "thresholds", "failed_reasons") or []:
+            if str(reason) not in blockers:
+                blockers.append(str(reason))
+    return blockers
+
+
+def _is_audjpy_limit_target(row: dict[str, Any]) -> bool:
+    return (
+        row.get("pair") == "AUD_JPY"
+        and row.get("side") == "SHORT"
+        and row.get("method") == "BREAKOUT_FAILURE"
+        and row.get("order_type") == "LIMIT"
+        and row.get("exit_shape") == "TP_PROOF_COLLECTION_HARVEST"
+    )
 
 
 def _source_evidence(metadata: dict[str, Any], rule: dict[str, Any]) -> dict[str, Any]:

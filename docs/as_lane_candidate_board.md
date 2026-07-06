@@ -1,6 +1,6 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-06T09:37:49Z`
+- Generated: `2026-07-06T10:11:23Z`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
@@ -39,9 +39,9 @@
 
 ## Closest Candidate
 
-- Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
+- Lane: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE`
 - Classification: `REPAIR_REQUIRED`
-- Proof distance: `5`
+- Proof distance: `6`
 - Can create live permission: `False`
 
 ## Exact Blocker Preventing LIVE_READY
@@ -71,6 +71,8 @@
 - `docs/audjpy_short_breakout_failure_repair_proof.md`
 - `data/audjpy_short_breakout_failure_limit_proof_pack.json`
 - `docs/audjpy_short_breakout_failure_limit_proof_pack.md`
+- `data/audjpy_limit_fresh_s5_bidask_replay.json`
+- `docs/audjpy_limit_fresh_s5_bidask_replay.md`
 - `data/manual_eurusd_tp_replacement_provenance.json`
 - `docs/manual_eurusd_tp_replacement_provenance.md`
 - `data/profitability_acceptance_blocker_reconciliation.json`
