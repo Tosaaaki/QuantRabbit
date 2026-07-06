@@ -1,6 +1,6 @@
 # Scout Mode Readiness Check
 
-- Generated: `2026-07-06T13:36:34Z`
+- Generated: `2026-07-06T14:39:46Z`
 - Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
 
 ## Classification
@@ -14,21 +14,27 @@ The contract is ready for the operator to review, but it is not approved and it 
 
 ## Why Blocked
 
-- Exact operator approval text is missing.
+- Exact operator approval text is missing as a standalone operator approval directive.
 - `LIVE_READY=0`.
 - `PROOF_READY=0`.
 - Normal routing remains `BLOCKED`.
 - AUD_JPY SHORT BREAKOUT_FAILURE LIMIT remains `EVIDENCE_GAP`.
-- Fresh max loss JPY cap has not been recalculated.
+- Fresh max loss JPY cap has not been recalculated against the `200 JPY` cap.
 - RiskEngine pass is missing.
 - LiveOrderGateway pass is missing.
 - GPT verifier pass is missing.
 - Guardian/operator review pass is missing.
 - Profitability blockers remain proof-collection risk, not `LIVE_READY`.
 
+## Required Approval Text
+
+`I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.`
+
+The exact text appearing as a required string in the objective is not counted as operator approval.
+
 ## Reference Quote
 
-The local snapshot shows AUD_JPY bid `112.455`, ask `112.471`, timestamp `2026-07-06T08:54:03.755665+00:00`. This is reference only and stale for execution. Any approved scout run must fetch a fresh quote and recalculate max loss JPY. The diagnostic estimate is about `125 JPY` at `1000u`.
+The local snapshot shows AUD_JPY bid `112.455`, ask `112.471`, timestamp `2026-07-06T08:54:03.755665+00:00`. This is reference only and stale for execution. Any approved scout run must fetch a fresh quote and recalculate max loss JPY. The diagnostic estimate is about `125 JPY` at `1000u`, inside the required `200 JPY` cap, but it is not executable proof.
 
 ## Expected Outcome Now
 

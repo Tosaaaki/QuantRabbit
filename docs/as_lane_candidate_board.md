@@ -1,10 +1,12 @@
 # A/S Lane Candidate Board
 
-- Generated: `2026-07-06T10:11:23Z`
+- Generated: `2026-07-06T14:39:46Z`
 - Total lanes: `73`
 - LIVE_READY lanes: `0`
 - A/S LIVE_READY path exists: `False`
 - Normal routing: `BLOCKED`
+- Scout execution: `BLOCKED_APPROVAL_MISSING`
+- Scout order sent: `false`
 
 ## 30D 4X Target Math
 
@@ -50,6 +52,15 @@
 - P0 rows: `MEMORY_HEALTH_BLOCKED, NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, MARKET_CLOSE_LEAK_FAMILY_BLOCKED`
 - Global blockers: `NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, MARKET_CLOSE_LEAK_FAMILY_BLOCKED, SELF_IMPROVEMENT_P0_PRESENT, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE`
 - A/S LIVE_READY stays zero: `True`
+
+## Scout Execution Receipt
+
+- Receipt: `data/scout_execution_receipt.json`
+- Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
+- Approval detected: `false`
+- Order sent: `false`
+- Normal routing created: `false`
+- LIVE_READY marked: `false`
 
 ## New Evidence Loop Artifacts
 

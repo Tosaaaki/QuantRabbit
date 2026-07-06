@@ -1,6 +1,6 @@
 # Operator Approved Scout Mode Contract
 
-- Generated: `2026-07-06T13:36:34Z`
+- Generated: `2026-07-06T14:39:46Z`
 - Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
 - Mode: proof-collection scout
 - Status: contract only; no execution permission.
@@ -19,7 +19,7 @@
 - No market chase. `MARKET` and `STOP-ENTRY` are prohibited for this approval.
 - One order only.
 - Default units: `1000u` unless RiskEngine computes a lower allowed size or no-trade.
-- Max loss JPY cap must be recalculated from a fresh broker snapshot and fresh AUD_JPY quote before any approved run. The current diagnostic estimate is about `125 JPY` at `1000u`, derived from `375 JPY` at `3000u`; this is reference only.
+- Max loss JPY cap is `200 JPY` for the exact approval text and must still be recalculated from a fresh broker snapshot and fresh AUD_JPY quote before any approved run. The current diagnostic estimate is about `125 JPY` at `1000u`, derived from `375 JPY` at `3000u`; this is reference only.
 - No averaging.
 - No same-theme add.
 - No auto retry.
@@ -54,9 +54,9 @@ Stop without staging or sending if any condition appears:
 
 ## Required Approval Text
 
-`I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.`
+`I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.`
 
-The blanks must be filled with freshly recalculated values. Approval for this scout does not approve any retry, same-theme add, averaging, market chase, TP/SL modification, EUR_USD `472987` action, TP `472996` action, or later run.
+The text must match exactly. Approval for this scout does not approve any retry, same-theme add, averaging, market chase, TP/SL modification, EUR_USD `472987` action, TP `472996` action, or later run.
 
 ## Sources
 

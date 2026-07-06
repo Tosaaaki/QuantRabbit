@@ -6,9 +6,19 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-06T10:11:23Z",
+  "generated_at_utc": "2026-07-06T14:39:46Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
+  "scout_execution_summary": {
+    "candidate_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+    "execution_state": "BLOCKED",
+    "approval_detected": false,
+    "order_sent": false,
+    "rejection_reason": "APPROVAL_MISSING",
+    "normal_routing_created": false,
+    "live_ready_marked": false,
+    "receipt_path": "data/scout_execution_receipt.json"
+  },
   "queue": [
     {
       "can_create_live_permission": false,

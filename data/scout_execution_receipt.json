@@ -1,0 +1,109 @@
+{
+  "generated_at_utc": "2026-07-06T14:39:46Z",
+  "mode": "operator_approved_scout_execution_receipt",
+  "candidate_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+  "candidate": {
+    "pair": "AUD_JPY",
+    "side": "SHORT",
+    "method": "BREAKOUT_FAILURE",
+    "order_type": "LIMIT",
+    "proof_collection_mode": true
+  },
+  "approval": {
+    "required": true,
+    "exact_required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.",
+    "detected": false,
+    "detection_reason": "The exact text was present only as the required approval string in the objective; no standalone operator approval directive for this run was supplied.",
+    "approval_scope": "this run only"
+  },
+  "execution_decision": {
+    "execution_state": "BLOCKED",
+    "order_sent": false,
+    "rejection_reason": "APPROVAL_MISSING",
+    "broker_transaction_id": null,
+    "gateway_receipt": null,
+    "proof_collection_receipt": null,
+    "normal_routing_created": false,
+    "live_ready_status": "NOT_LIVE_READY",
+    "execution_flags_enabled": false
+  },
+  "safety_constraints": {
+    "normal_routing_allowed": false,
+    "market_order_allowed": false,
+    "limit_only": true,
+    "no_chase": true,
+    "no_retry": true,
+    "no_averaging": true,
+    "no_same_theme_add": true,
+    "do_not_close_positions": true,
+    "do_not_cancel_existing_orders": true,
+    "do_not_modify_eurusd_472987": true,
+    "do_not_modify_tp_472996": true,
+    "do_not_push_origin_main": true
+  },
+  "preflight": {
+    "short_circuit_gate": "operator_approval",
+    "fresh_broker_snapshot": "NOT_RUN_APPROVAL_MISSING",
+    "fresh_aud_jpy_quote": "NOT_RUN_APPROVAL_MISSING",
+    "spread_acceptable": "NOT_RUN_APPROVAL_MISSING",
+    "risk_engine_pass": false,
+    "live_order_gateway_pass": false,
+    "gpt_verifier_pass": false,
+    "guardian_operator_review_pass": false,
+    "execution_flags_scout_only": false,
+    "max_loss_lte_200_jpy": "NOT_RECALCULATED_APPROVAL_MISSING",
+    "units_lte_1000": true,
+    "order_type_limit": true,
+    "candidate_id_exact": true,
+    "last_transaction_id_expected": "472996",
+    "last_transaction_id_source": "data/broker_snapshot.json"
+  },
+  "local_broker_evidence": {
+    "source": "data/broker_snapshot.json",
+    "snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
+    "last_transaction_id": "472996",
+    "aud_jpy_quote_timestamp_utc": "2026-07-06T08:54:03.755665+00:00",
+    "aud_jpy_bid": 112.455,
+    "aud_jpy_ask": 112.471,
+    "quote_is_fresh_for_execution": false,
+    "manual_eurusd_472987": {
+      "present": true,
+      "owner": "operator_manual",
+      "classification": "OPERATOR_MANUAL",
+      "management_intent": "KEEP",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "units": 30000,
+      "take_profit": 1.13968,
+      "stop_loss": null,
+      "auto_tp_modify_allowed": false,
+      "auto_sl_attach_allowed": false,
+      "loss_side_auto_close_allowed": false,
+      "same_theme_auto_add_allowed": false
+    },
+    "tp_472996": {
+      "present": true,
+      "trade_id": "472987",
+      "order_type": "TAKE_PROFIT",
+      "state": "PENDING",
+      "price": 1.13968,
+      "untouched_by_this_run": true
+    }
+  },
+  "notion_reference": {
+    "page_title": "quant-rabbit-profitability-evidence-repair-2026-07-03",
+    "page_id": "392f1c8e-53a7-81af-a467-d6ce4635b5cd",
+    "read_only": true,
+    "summary": "The memory mirror records no broker actions and confirms EUR_USD 472987 as OPERATOR_MANUAL / KEEP in the prior safety context."
+  },
+  "updated_artifacts": [
+    "data/scout_execution_receipt.json",
+    "docs/scout_execution_receipt.md",
+    "data/scout_mode_readiness_check.json",
+    "docs/scout_mode_readiness_check.md",
+    "data/as_proof_pack_queue.json",
+    "docs/as_proof_pack_queue.md",
+    "docs/as_lane_candidate_board.md"
+  ],
+  "live_side_effects": []
+}

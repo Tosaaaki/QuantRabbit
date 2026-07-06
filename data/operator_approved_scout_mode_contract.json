@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T13:36:34Z",
+  "generated_at_utc": "2026-07-06T14:39:46Z",
   "mode": "proof-collection scout",
   "status": "CONTRACT_ONLY_NOT_EXECUTION",
   "candidate": {
@@ -22,11 +22,10 @@
     "required": true,
     "present": false,
     "scope": "this run only",
-    "exact_required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.",
-    "approval_must_include_recalculated_values": [
-      "max loss JPY",
-      "units"
-    ],
+    "exact_required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.",
+    "approval_must_match_exact_text": true,
+    "approved_max_loss_jpy_cap": 200,
+    "approved_units_cap": 1000,
     "approval_does_not_override_preflight": true
   },
   "order_contract": {
@@ -43,10 +42,11 @@
     "units_rule": "Use 1000 units unless RiskEngine computes a lower allowed size or no-trade; if computed size is below the production lot floor or any gate fails, do not trade.",
     "max_loss_jpy_cap": {
       "must_recalculate_from_fresh_quote": true,
-      "executable_cap_jpy": null,
+      "executable_cap_jpy": 200,
       "reference_estimate_jpy_at_1000u": 125.0,
       "reference_estimate_source": "data/audjpy_limit_live_ready_decision.json reported 375.0 JPY risk at 3000u for the dry-run LIMIT geometry; 1000u is therefore about 125 JPY before fresh quote/RiskEngine recalculation.",
-      "reference_estimate_is_not_permission": true
+      "reference_estimate_is_not_permission": true,
+      "fresh_recalculation_must_be_less_than_or_equal_to_executable_cap_jpy": true
     },
     "no_averaging": true,
     "no_same_theme_add": true,

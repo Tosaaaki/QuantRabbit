@@ -37,13 +37,16 @@ class ScoutModeContractTests(unittest.TestCase):
 
         max_loss = payload["order_contract"]["max_loss_jpy_cap"]
         self.assertTrue(max_loss["must_recalculate_from_fresh_quote"])
-        self.assertIsNone(max_loss["executable_cap_jpy"])
+        self.assertEqual(max_loss["executable_cap_jpy"], 200)
         self.assertEqual(max_loss["reference_estimate_jpy_at_1000u"], 125.0)
         self.assertTrue(max_loss["reference_estimate_is_not_permission"])
         self.assertEqual(
             payload["operator_approval"]["exact_required_text"],
-            "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.",
+            "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.",
         )
+        self.assertEqual(payload["operator_approval"]["approved_max_loss_jpy_cap"], 200)
+        self.assertEqual(payload["operator_approval"]["approved_units_cap"], 1000)
+        self.assertTrue(max_loss["fresh_recalculation_must_be_less_than_or_equal_to_executable_cap_jpy"])
 
     def test_contract_preflight_stop_conditions_and_manual_protection_are_complete(self) -> None:
         payload = load_json("data/operator_approved_scout_mode_contract.json")
@@ -94,6 +97,9 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertEqual(payload["readiness"]["next_required"], "APPROVAL_REQUIRED")
         self.assertEqual(payload["readiness"]["execution_state"], "BLOCKED")
         self.assertFalse(payload["approval"]["present"])
+        self.assertFalse(payload["approval"]["detected_as_operator_approval"])
+        self.assertEqual(payload["scout_execution_decision"]["order_sent"], False)
+        self.assertEqual(payload["scout_execution_decision"]["reason"], "APPROVAL_MISSING")
         self.assertTrue(payload["fresh_quote_reference_only"]["reference_is_stale_for_execution"])
         self.assertTrue(payload["fresh_quote_reference_only"]["must_recalculate_from_fresh_quote"])
         self.assertTrue(payload["expected_outcome"]["no_order"])
@@ -113,6 +119,24 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertIn("Current readiness: `NOT_APPROVED`", readiness)
         self.assertIn("Execution state: `BLOCKED`", readiness)
         self.assertIn("No order.", readiness)
+
+    def test_scout_execution_receipt_blocks_without_approval(self) -> None:
+        payload = load_json("data/scout_execution_receipt.json")
+
+        self.assertEqual(
+            payload["candidate_id"],
+            "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+        )
+        self.assertFalse(payload["approval"]["detected"])
+        self.assertEqual(payload["execution_decision"]["execution_state"], "BLOCKED")
+        self.assertFalse(payload["execution_decision"]["order_sent"])
+        self.assertEqual(payload["execution_decision"]["rejection_reason"], "APPROVAL_MISSING")
+        self.assertFalse(payload["execution_decision"]["normal_routing_created"])
+        self.assertFalse(payload["execution_decision"]["execution_flags_enabled"])
+        self.assertTrue(payload["safety_constraints"]["limit_only"])
+        self.assertFalse(payload["safety_constraints"]["market_order_allowed"])
+        self.assertEqual(payload["preflight"]["last_transaction_id_expected"], "472996")
+        self.assertEqual(payload["local_broker_evidence"]["tp_472996"]["state"], "PENDING")
 
 
 if __name__ == "__main__":

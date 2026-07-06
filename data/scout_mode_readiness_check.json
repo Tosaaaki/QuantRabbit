@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T13:36:34Z",
+  "generated_at_utc": "2026-07-06T14:39:46Z",
   "mode": "scout_mode_readiness_check",
   "candidate": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
   "classification_values": [
@@ -16,7 +16,9 @@
   },
   "approval": {
     "present": false,
-    "required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.",
+    "required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss 200 JPY, units 1000, this run only.",
+    "detected_as_operator_approval": false,
+    "detection_reason": "The exact text was present only as a required approval string in the objective, not as a standalone operator approval directive for this run.",
     "approval_required_before": [
       "execution flags",
       "order staging",
@@ -31,10 +33,15 @@
     "gpt_verifier": "REQUIRED_NOT_PASSED",
     "guardian_operator_review": "REQUIRED_NOT_PASSED",
     "manual_eurusd_472987_protection": "REQUIRED_CONFIRMED_BY_LOCAL_SNAPSHOT_AND_MUST_RECHECK",
-    "broker_last_transaction_id": "MUST_RECHECK_BEFORE_ANY_APPROVED_RUN"
+    "broker_last_transaction_id": "MUST_RECHECK_BEFORE_ANY_APPROVED_RUN",
+    "candidate_id_exact": "PASS_LOCAL_CONTRACT",
+    "order_type_limit_only": "PASS_LOCAL_CONTRACT",
+    "max_loss_cap_jpy": 200,
+    "units_cap": 1000
   },
   "current_blockers": [
     "operator approval missing",
+    "exact approval text not detected as an operator approval directive",
     "LIVE_READY=0",
     "PROOF_READY=0",
     "normal routing BLOCKED",
@@ -46,12 +53,22 @@
     "guardian/operator review missing",
     "profitability blockers remain proof-collection risk, not LIVE_READY"
   ],
+  "scout_execution_decision": {
+    "order_sent": false,
+    "reason": "APPROVAL_MISSING",
+    "gateway_receipt": null,
+    "broker_transaction_id": null,
+    "execution_flags_enabled": false,
+    "normal_routing_created": false,
+    "live_ready_marked": false
+  },
   "fresh_quote_reference_only": {
     "broker_snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
     "aud_jpy_bid": 112.455,
     "aud_jpy_ask": 112.471,
     "quote_timestamp_utc": "2026-07-06T08:54:03.755665+00:00",
     "reference_max_loss_jpy_at_1000u": 125.0,
+    "approved_max_loss_cap_jpy": 200,
     "reference_is_stale_for_execution": true,
     "must_recalculate_from_fresh_quote": true
   },

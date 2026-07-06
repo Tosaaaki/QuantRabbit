@@ -1,9 +1,11 @@
 # A/S Proof-Pack Queue
 
-- Generated: `2026-07-06T10:11:23Z`
+- Generated: `2026-07-06T14:39:46Z`
 - Queue count: `4`
 - PROOF_READY: `0`
 - Can create live permission: `0`
+- Scout execution: `BLOCKED_APPROVAL_MISSING`
+- Scout order sent: `false`
 
 | lane | class | daily % | distance | can enter proof pack | blockers |
 |---|---|---:|---:|---|---|
@@ -18,3 +20,11 @@
 - `range_trader:GBP_USD:LONG:RANGE_ROTATION`: fresh_744h_replay, s5_bidask_spread_included_replay, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
 - `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION`: fresh_744h_replay, s5_bidask_spread_included_replay, geometry_proof, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
 - `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`: s5_bidask_spread_included_replay, daily_stability_floor, positive_day_rate_floor, risk_engine_pass, live_order_gateway_pass, gpt_verifier_pass, no_guardian_operator_review_blocker
+
+## Scout Execution Update
+
+- Receipt: `data/scout_execution_receipt.json`
+- Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
+- Required approval was not detected as a standalone operator approval directive.
+- No order was staged or sent.
+- Normal routing remains `BLOCKED`; this proof queue creates no live permission.
