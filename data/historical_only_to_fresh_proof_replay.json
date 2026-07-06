@@ -7,12 +7,12 @@
     "HISTORICAL_ONLY"
   ],
   "execution_timing_744h_summary": {
-    "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
-    "historical_pre_repair_loss_closes_profit_capture_missed": 1,
-    "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
+    "generated_at_utc": "2026-07-06T14:06:32.428132+00:00",
+    "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+    "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
     "lookback_basis": "execution_timing_audit current local artifact",
-    "loss_close_repair_replay_delta_jpy": 466.2,
-    "loss_closes_audited": 8,
+    "loss_close_repair_replay_delta_jpy": 18787.1621,
+    "loss_closes_audited": 39,
     "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
     "post_repair_live_evidence_loss_closes_audited": 5,
     "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
@@ -20,94 +20,1107 @@
   },
   "fresh_replay_summary": {
     "adoption_summary": {
-      "has_live_grade_support": false,
+      "has_live_grade_support": true,
       "has_rank_only_support": true,
-      "live_grade_support_rules": 0,
-      "negative_block_rules": 1,
+      "live_grade_support_rules": 10,
+      "negative_block_rules": 52,
       "rank_only_blocker_counts": {
-        "INSUFFICIENT_ACTIVE_DAYS": 2,
-        "NEEDS_HIGHER_POSITIVE_DAY_RATE": 2,
-        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION": 2,
-        "NEEDS_MORE_ACTIVE_DAYS": 2
+        "DAILY_PNL_UNSTABLE": 4,
+        "DAILY_SAMPLE_CONCENTRATED": 1,
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE": 4,
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION": 1
       },
-      "rank_only_support_rules": 2
+      "rank_only_support_rules": 5
     },
     "forecast_sample_coverage": {
       "min_active_days_for_daily_stability": 3,
       "min_directional_samples_for_precision_rule": 30,
-      "pair_count": 2,
-      "pair_direction_count": 4,
+      "pair_count": 28,
+      "pair_direction_count": 56,
       "pairs": [
         {
-          "evaluated_samples": 144,
-          "forecast_samples": 156,
+          "evaluated_samples": 3004,
+          "forecast_samples": 3109,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 105
+        },
+        {
+          "evaluated_samples": 2729,
+          "forecast_samples": 2768,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_JPY",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 37
+        },
+        {
+          "evaluated_samples": 2631,
+          "forecast_samples": 2731,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 100
+        },
+        {
+          "evaluated_samples": 2612,
+          "forecast_samples": 2720,
           "missing_evaluated_samples_to_min_directional": 0,
           "missing_price_truth_samples": 0,
           "pair": "AUD_JPY",
-          "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 12
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 106
         },
         {
-          "evaluated_samples": 13,
-          "forecast_samples": 14,
-          "missing_evaluated_samples_to_min_directional": 17,
+          "evaluated_samples": 1606,
+          "forecast_samples": 1637,
+          "missing_evaluated_samples_to_min_directional": 0,
           "missing_price_truth_samples": 0,
-          "pair": "GBP_USD",
+          "pair": "CHF_JPY",
+          "pending_future_truth_samples": 1,
+          "unscorable_no_market_samples": 30
+        },
+        {
+          "evaluated_samples": 1579,
+          "forecast_samples": 1612,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_JPY",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 31
+        },
+        {
+          "evaluated_samples": 1541,
+          "forecast_samples": 1675,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CAD",
           "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 1
+          "unscorable_no_market_samples": 134
+        },
+        {
+          "evaluated_samples": 1538,
+          "forecast_samples": 1568,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 30
+        },
+        {
+          "evaluated_samples": 1510,
+          "forecast_samples": 1537,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_CAD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 25
+        },
+        {
+          "evaluated_samples": 1497,
+          "forecast_samples": 1506,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_GBP",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 9
+        },
+        {
+          "evaluated_samples": 1444,
+          "forecast_samples": 1512,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CHF",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 66
+        },
+        {
+          "evaluated_samples": 1414,
+          "forecast_samples": 1442,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 28
+        },
+        {
+          "evaluated_samples": 1393,
+          "forecast_samples": 1400,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CAD_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "evaluated_samples": 1382,
+          "forecast_samples": 1430,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_AUD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 48
+        },
+        {
+          "evaluated_samples": 1380,
+          "forecast_samples": 1449,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_AUD",
+          "pending_future_truth_samples": 16,
+          "unscorable_no_market_samples": 53
+        },
+        {
+          "evaluated_samples": 1374,
+          "forecast_samples": 1439,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_USD",
+          "pending_future_truth_samples": 3,
+          "unscorable_no_market_samples": 62
+        },
+        {
+          "evaluated_samples": 1373,
+          "forecast_samples": 1500,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 127
+        },
+        {
+          "evaluated_samples": 1369,
+          "forecast_samples": 1393,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_JPY",
+          "pending_future_truth_samples": 5,
+          "unscorable_no_market_samples": 19
+        },
+        {
+          "evaluated_samples": 1362,
+          "forecast_samples": 1376,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_NZD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 14
+        },
+        {
+          "evaluated_samples": 1306,
+          "forecast_samples": 1341,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 35
+        },
+        {
+          "evaluated_samples": 1304,
+          "forecast_samples": 1332,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 28
+        },
+        {
+          "evaluated_samples": 1287,
+          "forecast_samples": 1296,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 9
+        },
+        {
+          "evaluated_samples": 1233,
+          "forecast_samples": 1254,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CHF",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 19
+        },
+        {
+          "evaluated_samples": 1180,
+          "forecast_samples": 1229,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_NZD",
+          "pending_future_truth_samples": 1,
+          "unscorable_no_market_samples": 48
+        },
+        {
+          "evaluated_samples": 1178,
+          "forecast_samples": 1194,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_NZD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 14
+        },
+        {
+          "evaluated_samples": 1163,
+          "forecast_samples": 1287,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CAD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 124
+        },
+        {
+          "evaluated_samples": 1148,
+          "forecast_samples": 1182,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 34
+        },
+        {
+          "evaluated_samples": 1131,
+          "forecast_samples": 1167,
+          "missing_evaluated_samples_to_min_directional": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CAD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 34
         }
       ],
-      "pending_future_truth_samples": 0,
+      "pending_future_truth_samples": 42,
       "under_sampled_pair_directions": [
         {
           "coverage_gap_reasons": [
-            "INSUFFICIENT_EVALUATED_SAMPLES",
-            "INSUFFICIENT_ACTIVE_DAYS"
-          ],
-          "direction": "UP",
-          "evaluated_active_days": 2,
-          "evaluated_samples": 2,
-          "forecast_active_days": 2,
-          "forecast_samples": 2,
-          "missing_active_days": 1,
-          "missing_evaluated_samples": 28,
-          "missing_price_truth_samples": 0,
-          "pair": "GBP_USD",
-          "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 0
-        },
-        {
-          "coverage_gap_reasons": [
-            "INSUFFICIENT_EVALUATED_SAMPLES",
             "NO_MARKET_SESSION_UNSCORABLE"
           ],
           "direction": "DOWN",
-          "evaluated_active_days": 5,
-          "evaluated_samples": 9,
-          "forecast_active_days": 6,
-          "forecast_samples": 18,
+          "evaluated_active_days": 31,
+          "evaluated_samples": 620,
+          "forecast_active_days": 32,
+          "forecast_samples": 637,
           "missing_active_days": 0,
-          "missing_evaluated_samples": 21,
+          "missing_evaluated_samples": 0,
           "missing_price_truth_samples": 0,
-          "pair": "AUD_JPY",
+          "pair": "AUD_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 17
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 890,
+          "forecast_active_days": 34,
+          "forecast_samples": 900,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_CAD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 8
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 529,
+          "forecast_active_days": 33,
+          "forecast_samples": 538,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_CHF",
           "pending_future_truth_samples": 0,
           "unscorable_no_market_samples": 9
         },
         {
           "coverage_gap_reasons": [
-            "INSUFFICIENT_EVALUATED_SAMPLES",
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 39,
+          "evaluated_samples": 1362,
+          "forecast_active_days": 41,
+          "forecast_samples": 1382,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 18
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 36,
+          "evaluated_samples": 1250,
+          "forecast_active_days": 36,
+          "forecast_samples": 1338,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 88
+        },
+        {
+          "coverage_gap_reasons": [
             "NO_MARKET_SESSION_UNSCORABLE"
           ],
           "direction": "DOWN",
-          "evaluated_active_days": 6,
-          "evaluated_samples": 11,
-          "forecast_active_days": 7,
-          "forecast_samples": 12,
+          "evaluated_active_days": 26,
+          "evaluated_samples": 499,
+          "forecast_active_days": 27,
+          "forecast_samples": 510,
           "missing_active_days": 0,
-          "missing_evaluated_samples": 19,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_NZD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 11
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 35,
+          "evaluated_samples": 863,
+          "forecast_active_days": 35,
+          "forecast_samples": 866,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_NZD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 3
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 35,
+          "evaluated_samples": 978,
+          "forecast_active_days": 37,
+          "forecast_samples": 1098,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 120
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 22,
+          "evaluated_samples": 395,
+          "forecast_active_days": 23,
+          "forecast_samples": 402,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "AUD_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 29,
+          "evaluated_samples": 547,
+          "forecast_active_days": 29,
+          "forecast_samples": 554,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CAD_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 30,
+          "evaluated_samples": 790,
+          "forecast_active_days": 33,
+          "forecast_samples": 906,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CAD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 116
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 373,
+          "forecast_active_days": 31,
+          "forecast_samples": 381,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CAD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 8
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 25,
+          "evaluated_samples": 473,
+          "forecast_active_days": 26,
+          "forecast_samples": 481,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CHF_JPY",
+          "pending_future_truth_samples": 1,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 33,
+          "evaluated_samples": 1133,
+          "forecast_active_days": 35,
+          "forecast_samples": 1156,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "CHF_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 23
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 25,
+          "evaluated_samples": 388,
+          "forecast_active_days": 27,
+          "forecast_samples": 406,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_AUD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 18
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 994,
+          "forecast_active_days": 33,
+          "forecast_samples": 1024,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_AUD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 30
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 27,
+          "evaluated_samples": 563,
+          "forecast_active_days": 27,
+          "forecast_samples": 581,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 18
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 743,
+          "forecast_active_days": 31,
+          "forecast_samples": 760,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 17
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 22,
+          "evaluated_samples": 477,
+          "forecast_active_days": 23,
+          "forecast_samples": 485,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 8
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 29,
+          "evaluated_samples": 1061,
+          "forecast_active_days": 30,
+          "forecast_samples": 1083,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 22
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 28,
+          "evaluated_samples": 708,
+          "forecast_active_days": 28,
+          "forecast_samples": 716,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_GBP",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 8
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 27,
+          "evaluated_samples": 789,
+          "forecast_active_days": 27,
+          "forecast_samples": 790,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_GBP",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 1
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 38,
+          "evaluated_samples": 1163,
+          "forecast_active_days": 39,
+          "forecast_samples": 1178,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_JPY",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 13
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 33,
+          "evaluated_samples": 1566,
+          "forecast_active_days": 34,
+          "forecast_samples": 1590,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 24
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 35,
+          "evaluated_samples": 767,
+          "forecast_active_days": 35,
+          "forecast_samples": 783,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_NZD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 14
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 35,
+          "evaluated_samples": 1621,
+          "forecast_active_days": 38,
+          "forecast_samples": 1722,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 101
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 1383,
+          "forecast_active_days": 32,
+          "forecast_samples": 1387,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "EUR_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 4
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 34,
+          "evaluated_samples": 532,
+          "forecast_active_days": 34,
+          "forecast_samples": 548,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_AUD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 16
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 34,
+          "evaluated_samples": 848,
+          "forecast_active_days": 34,
+          "forecast_samples": 901,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_AUD",
+          "pending_future_truth_samples": 16,
+          "unscorable_no_market_samples": 37
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 737,
+          "forecast_active_days": 34,
+          "forecast_samples": 771,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 34
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 28,
+          "evaluated_samples": 454,
+          "forecast_active_days": 28,
+          "forecast_samples": 457,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 3
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 33,
+          "evaluated_samples": 960,
+          "forecast_active_days": 34,
+          "forecast_samples": 985,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 25
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 665,
+          "forecast_active_days": 32,
+          "forecast_samples": 677,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_JPY",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 10
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 914,
+          "forecast_active_days": 33,
+          "forecast_samples": 935,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 21
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 26,
+          "evaluated_samples": 425,
+          "forecast_active_days": 28,
+          "forecast_samples": 433,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_NZD",
+          "pending_future_truth_samples": 1,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 37,
+          "evaluated_samples": 755,
+          "forecast_active_days": 38,
+          "forecast_samples": 796,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_NZD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 41
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 37,
+          "evaluated_samples": 1205,
+          "forecast_active_days": 39,
+          "forecast_samples": 1288,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
           "missing_price_truth_samples": 0,
           "pair": "GBP_USD",
           "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 83
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 34,
+          "evaluated_samples": 1426,
+          "forecast_active_days": 34,
+          "forecast_samples": 1443,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "GBP_USD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 17
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 496,
+          "forecast_active_days": 32,
+          "forecast_samples": 522,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CAD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 24
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 26,
+          "evaluated_samples": 635,
+          "forecast_active_days": 28,
+          "forecast_samples": 645,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 10
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 436,
+          "forecast_active_days": 33,
+          "forecast_samples": 440,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 4
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 797,
+          "forecast_active_days": 33,
+          "forecast_samples": 814,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_CHF",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 15
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 34,
+          "evaluated_samples": 794,
+          "forecast_active_days": 34,
+          "forecast_samples": 810,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 16
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 31,
+          "evaluated_samples": 510,
+          "forecast_active_days": 32,
+          "forecast_samples": 522,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_JPY",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 12
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 32,
+          "evaluated_samples": 817,
+          "forecast_active_days": 35,
+          "forecast_samples": 870,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_USD",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 51
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 26,
+          "evaluated_samples": 557,
+          "forecast_active_days": 27,
+          "forecast_samples": 569,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "NZD_USD",
+          "pending_future_truth_samples": 1,
+          "unscorable_no_market_samples": 11
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 25,
+          "evaluated_samples": 291,
+          "forecast_active_days": 25,
+          "forecast_samples": 298,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 35,
+          "evaluated_samples": 1250,
+          "forecast_active_days": 38,
+          "forecast_samples": 1377,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CAD",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 127
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 27,
+          "evaluated_samples": 459,
+          "forecast_active_days": 29,
+          "forecast_samples": 468,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CHF",
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 7
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE"
+          ],
+          "direction": "UP",
+          "evaluated_active_days": 36,
+          "evaluated_samples": 985,
+          "forecast_active_days": 38,
+          "forecast_samples": 1044,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_CHF",
+          "pending_future_truth_samples": 0,
+          "unscorable_no_market_samples": 59
+        },
+        {
+          "coverage_gap_reasons": [
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
+          ],
+          "direction": "DOWN",
+          "evaluated_active_days": 30,
+          "evaluated_samples": 525,
+          "forecast_active_days": 31,
+          "forecast_samples": 531,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
+          "missing_price_truth_samples": 0,
+          "pair": "USD_JPY",
+          "pending_future_truth_samples": 5,
           "unscorable_no_market_samples": 1
         },
         {
@@ -115,26 +1128,23 @@
             "NO_MARKET_SESSION_UNSCORABLE"
           ],
           "direction": "UP",
-          "evaluated_active_days": 6,
-          "evaluated_samples": 135,
-          "forecast_active_days": 7,
-          "forecast_samples": 138,
+          "evaluated_active_days": 37,
+          "evaluated_samples": 844,
+          "forecast_active_days": 39,
+          "forecast_samples": 862,
           "missing_active_days": 0,
           "missing_evaluated_samples": 0,
           "missing_price_truth_samples": 0,
-          "pair": "AUD_JPY",
+          "pair": "USD_JPY",
           "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 3
+          "unscorable_no_market_samples": 18
         }
       ],
-      "unscorable_no_market_samples": 13
+      "unscorable_no_market_samples": 1376
     },
-    "generated_at_utc": "2026-07-06T01:36:34.760297Z",
+    "generated_at_utc": "2026-07-03T21:32:21.458212Z",
     "granularity": "S5",
-    "pair_filter": [
-      "AUD_JPY",
-      "GBP_USD"
-    ],
+    "pair_filter": [],
     "path": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
     "price_truth_coverage": {
       "adoption_level": "PAIR_LOCAL_RANK_ONLY",
@@ -144,169 +1154,722 @@
         "COLLECT_MORE_FORECAST_SAMPLES"
       ],
       "candidate_rule_validation_blocked": false,
-      "deduped_directional_rows": 170,
-      "evaluated_rows": 157,
+      "deduped_directional_rows": 45086,
+      "evaluated_rows": 43668,
       "future_price_truth_window_group_count": 0,
       "global_currency_validation_blocked": true,
-      "history_candles": 49294,
+      "history_candles": 6825160,
       "history_fetch_command": null,
       "history_fetch_command_count": 0,
       "history_fetch_command_mode": "WINDOWED",
       "history_fetch_commands": [],
-      "history_files": 2,
+      "history_files": 57,
       "missing_pair_directions": [],
       "missing_pairs": [],
       "missing_price_truth_samples": 0,
       "missing_price_window_group_count": 0,
-      "pending_future_truth_rows": 0,
-      "pending_future_truth_window_group_count": 0,
-      "pending_future_truth_window_groups": [],
-      "raw_directional_rows": 1489,
-      "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
-      "required_min_evaluated_rows": 30,
-      "status": "PRICE_TRUTH_OK",
-      "under_sampled_missing_evaluated_samples": 68,
-      "under_sampled_pair_direction_count": 4,
-      "under_sampled_pair_directions": [
-        "GBP_USD:UP",
-        "AUD_JPY:DOWN",
-        "GBP_USD:DOWN",
-        "AUD_JPY:UP"
-      ],
-      "unscorable_no_market_rows": 13,
-      "unscorable_no_market_window_group_count": 2,
-      "unscorable_no_market_window_groups": [
+      "pending_future_truth_rows": 42,
+      "pending_future_truth_window_group_count": 2,
+      "pending_future_truth_window_groups": [
         {
-          "count": 12,
-          "date": "2026-05-16",
-          "needed_from_utc": "2026-05-16T01:04:43.766664Z",
-          "needed_to_utc": "2026-05-16T07:34:02.100697Z",
+          "count": 1,
+          "date": "2026-07-02",
+          "needed_from_utc": "2026-07-02T22:00:00.565212Z",
+          "needed_to_utc": "2026-07-03T22:10:00.565212Z",
           "pair_directions": [
-            "AUD_JPY:DOWN",
-            "AUD_JPY:UP"
+            "GBP_AUD:UP"
           ],
           "pairs": [
-            "AUD_JPY"
+            "GBP_AUD"
           ]
         },
         {
-          "count": 1,
-          "date": "2026-06-26",
-          "needed_from_utc": "2026-06-26T05:30:01.386799Z",
-          "needed_to_utc": "2026-06-27T05:40:01.386799Z",
+          "count": 41,
+          "date": "2026-07-03",
+          "needed_from_utc": "2026-07-03T00:35:38.785710Z",
+          "needed_to_utc": "2026-07-04T12:20:36.412069Z",
           "pair_directions": [
+            "AUD_CAD:UP",
+            "AUD_JPY:DOWN",
+            "CHF_JPY:DOWN",
+            "EUR_JPY:DOWN",
+            "EUR_NZD:UP",
+            "GBP_AUD:UP",
+            "GBP_JPY:DOWN",
+            "GBP_NZD:DOWN",
+            "NZD_CAD:DOWN",
+            "NZD_CHF:UP",
+            "NZD_USD:DOWN",
+            "NZD_USD:UP",
+            "USD_CHF:DOWN",
+            "USD_JPY:DOWN"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_JPY",
+            "CHF_JPY",
+            "EUR_JPY",
+            "EUR_NZD",
+            "GBP_AUD",
+            "GBP_JPY",
+            "GBP_NZD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_USD",
+            "USD_CHF",
+            "USD_JPY"
+          ]
+        }
+      ],
+      "raw_directional_rows": 46299,
+      "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
+      "required_min_evaluated_rows": 30,
+      "status": "PRICE_TRUTH_OK",
+      "under_sampled_missing_evaluated_samples": 0,
+      "under_sampled_pair_direction_count": 52,
+      "under_sampled_pair_directions": [
+        "AUD_CAD:DOWN",
+        "AUD_CAD:UP",
+        "AUD_CHF:UP",
+        "AUD_JPY:DOWN",
+        "AUD_JPY:UP",
+        "AUD_NZD:DOWN",
+        "AUD_NZD:UP",
+        "AUD_USD:DOWN",
+        "AUD_USD:UP",
+        "CAD_CHF:UP",
+        "CAD_JPY:DOWN",
+        "CAD_JPY:UP",
+        "CHF_JPY:DOWN",
+        "CHF_JPY:UP",
+        "EUR_AUD:DOWN",
+        "EUR_AUD:UP",
+        "EUR_CAD:DOWN",
+        "EUR_CAD:UP",
+        "EUR_CHF:DOWN",
+        "EUR_CHF:UP",
+        "EUR_GBP:DOWN",
+        "EUR_GBP:UP",
+        "EUR_JPY:DOWN",
+        "EUR_JPY:UP"
+      ],
+      "unscorable_no_market_rows": 1376,
+      "unscorable_no_market_window_group_count": 16,
+      "unscorable_no_market_window_groups": [
+        {
+          "count": 5,
+          "date": "2026-05-15",
+          "needed_from_utc": "2026-05-15T20:01:45.869617Z",
+          "needed_to_utc": "2026-05-15T21:32:14.175118Z",
+          "pair_directions": [
+            "AUD_JPY:DOWN",
+            "EUR_JPY:UP",
+            "EUR_USD:UP",
             "GBP_USD:DOWN"
           ],
           "pairs": [
+            "AUD_JPY",
+            "EUR_JPY",
+            "EUR_USD",
             "GBP_USD"
+          ]
+        },
+        {
+          "count": 131,
+          "date": "2026-05-22",
+          "needed_from_utc": "2026-05-22T20:06:52.371079Z",
+          "needed_to_utc": "2026-05-23T00:56:30.889753Z",
+          "pair_directions": [
+            "AUD_JPY:UP",
+            "EUR_AUD:DOWN",
+            "EUR_CHF:DOWN",
+            "EUR_JPY:UP",
+            "EUR_USD:DOWN",
+            "GBP_AUD:UP",
+            "GBP_USD:DOWN",
+            "GBP_USD:UP",
+            "USD_CAD:UP"
+          ],
+          "pairs": [
+            "AUD_JPY",
+            "EUR_AUD",
+            "EUR_CHF",
+            "EUR_JPY",
+            "EUR_USD",
+            "GBP_AUD",
+            "GBP_USD",
+            "USD_CAD"
+          ]
+        },
+        {
+          "count": 56,
+          "date": "2026-05-23",
+          "needed_from_utc": "2026-05-23T00:05:03.380018Z",
+          "needed_to_utc": "2026-05-23T03:36:24.019194Z",
+          "pair_directions": [
+            "AUD_JPY:UP",
+            "GBP_USD:DOWN"
+          ],
+          "pairs": [
+            "AUD_JPY",
+            "GBP_USD"
+          ]
+        },
+        {
+          "count": 39,
+          "date": "2026-05-29",
+          "needed_from_utc": "2026-05-29T20:06:25.864411Z",
+          "needed_to_utc": "2026-05-30T00:15:11.707211Z",
+          "pair_directions": [
+            "AUD_CAD:UP",
+            "AUD_CHF:UP",
+            "AUD_JPY:UP",
+            "AUD_NZD:DOWN",
+            "AUD_USD:UP",
+            "CHF_JPY:UP",
+            "EUR_AUD:DOWN",
+            "EUR_JPY:DOWN",
+            "EUR_USD:DOWN",
+            "GBP_AUD:DOWN",
+            "GBP_JPY:UP",
+            "GBP_NZD:DOWN",
+            "GBP_USD:UP",
+            "NZD_CAD:UP",
+            "NZD_CHF:UP",
+            "NZD_USD:UP",
+            "USD_CAD:DOWN",
+            "USD_CHF:DOWN",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_CHF",
+            "AUD_JPY",
+            "AUD_NZD",
+            "AUD_USD",
+            "CHF_JPY",
+            "EUR_AUD",
+            "EUR_JPY",
+            "EUR_USD",
+            "GBP_AUD",
+            "GBP_JPY",
+            "GBP_NZD",
+            "GBP_USD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_USD",
+            "USD_CAD",
+            "USD_CHF",
+            "USD_JPY"
+          ]
+        },
+        {
+          "count": 102,
+          "date": "2026-05-30",
+          "needed_from_utc": "2026-05-30T00:07:50.535127Z",
+          "needed_to_utc": "2026-05-30T07:17:30.985913Z",
+          "pair_directions": [
+            "AUD_CAD:UP",
+            "AUD_CHF:UP",
+            "AUD_JPY:UP",
+            "AUD_NZD:DOWN",
+            "AUD_USD:UP",
+            "CHF_JPY:UP",
+            "EUR_AUD:DOWN",
+            "GBP_AUD:DOWN",
+            "GBP_JPY:UP",
+            "GBP_NZD:DOWN",
+            "GBP_USD:UP",
+            "NZD_CAD:UP",
+            "NZD_CHF:UP",
+            "NZD_USD:UP",
+            "USD_CAD:DOWN",
+            "USD_CHF:DOWN",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_CHF",
+            "AUD_JPY",
+            "AUD_NZD",
+            "AUD_USD",
+            "CHF_JPY",
+            "EUR_AUD",
+            "GBP_AUD",
+            "GBP_JPY",
+            "GBP_NZD",
+            "GBP_USD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_USD",
+            "USD_CAD",
+            "USD_CHF",
+            "USD_JPY"
+          ]
+        },
+        {
+          "count": 408,
+          "date": "2026-06-05",
+          "needed_from_utc": "2026-06-05T05:12:31.112484Z",
+          "needed_to_utc": "2026-06-06T21:04:17.006970Z",
+          "pair_directions": [
+            "AUD_CAD:DOWN",
+            "AUD_CHF:UP",
+            "AUD_JPY:DOWN",
+            "AUD_NZD:DOWN",
+            "AUD_NZD:UP",
+            "AUD_USD:DOWN",
+            "CAD_CHF:UP",
+            "CAD_JPY:DOWN",
+            "CAD_JPY:UP",
+            "CHF_JPY:UP",
+            "EUR_AUD:UP",
+            "EUR_CAD:DOWN",
+            "EUR_CHF:UP",
+            "EUR_GBP:DOWN",
+            "EUR_JPY:UP",
+            "EUR_NZD:UP",
+            "EUR_USD:UP",
+            "GBP_AUD:UP",
+            "GBP_CAD:UP",
+            "GBP_CHF:UP",
+            "GBP_JPY:UP",
+            "GBP_NZD:UP",
+            "GBP_USD:DOWN",
+            "GBP_USD:UP",
+            "NZD_CAD:DOWN",
+            "NZD_CHF:DOWN",
+            "NZD_CHF:UP",
+            "NZD_JPY:UP",
+            "USD_CAD:UP",
+            "USD_CHF:UP",
+            "USD_JPY:DOWN",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_CHF",
+            "AUD_JPY",
+            "AUD_NZD",
+            "AUD_USD",
+            "CAD_CHF",
+            "CAD_JPY",
+            "CHF_JPY",
+            "EUR_AUD",
+            "EUR_CAD",
+            "EUR_CHF",
+            "EUR_GBP",
+            "EUR_JPY",
+            "EUR_NZD",
+            "EUR_USD",
+            "GBP_AUD",
+            "GBP_CAD",
+            "GBP_CHF",
+            "GBP_JPY",
+            "GBP_NZD",
+            "GBP_USD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_JPY",
+            "USD_CAD",
+            "USD_CHF",
+            "USD_JPY"
+          ]
+        },
+        {
+          "count": 19,
+          "date": "2026-06-06",
+          "needed_from_utc": "2026-06-06T01:27:44.090673Z",
+          "needed_to_utc": "2026-06-07T01:38:18.934180Z",
+          "pair_directions": [
+            "AUD_CAD:DOWN",
+            "AUD_CHF:UP",
+            "AUD_JPY:DOWN",
+            "AUD_NZD:DOWN",
+            "CAD_JPY:UP",
+            "CHF_JPY:UP",
+            "EUR_AUD:UP",
+            "EUR_CAD:DOWN",
+            "EUR_CHF:UP",
+            "EUR_GBP:UP",
+            "EUR_JPY:UP",
+            "GBP_AUD:UP",
+            "GBP_CAD:UP",
+            "GBP_CHF:UP",
+            "GBP_JPY:UP",
+            "GBP_NZD:UP",
+            "NZD_JPY:UP",
+            "USD_CAD:UP",
+            "USD_CHF:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_CHF",
+            "AUD_JPY",
+            "AUD_NZD",
+            "CAD_JPY",
+            "CHF_JPY",
+            "EUR_AUD",
+            "EUR_CAD",
+            "EUR_CHF",
+            "EUR_GBP",
+            "EUR_JPY",
+            "GBP_AUD",
+            "GBP_CAD",
+            "GBP_CHF",
+            "GBP_JPY",
+            "GBP_NZD",
+            "NZD_JPY",
+            "USD_CAD",
+            "USD_CHF"
+          ]
+        },
+        {
+          "count": 34,
+          "date": "2026-06-07",
+          "needed_from_utc": "2026-06-07T14:16:15.729831Z",
+          "needed_to_utc": "2026-06-08T17:20:46.795415Z",
+          "pair_directions": [
+            "AUD_CAD:DOWN",
+            "AUD_JPY:DOWN",
+            "CHF_JPY:UP",
+            "EUR_AUD:UP",
+            "EUR_CHF:UP",
+            "EUR_JPY:UP",
+            "GBP_CAD:UP",
+            "GBP_CHF:UP",
+            "GBP_JPY:UP",
+            "GBP_USD:DOWN",
+            "NZD_CAD:DOWN",
+            "NZD_CHF:UP",
+            "NZD_JPY:UP",
+            "USD_CAD:UP",
+            "USD_CHF:UP",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_JPY",
+            "CHF_JPY",
+            "EUR_AUD",
+            "EUR_CHF",
+            "EUR_JPY",
+            "GBP_CAD",
+            "GBP_CHF",
+            "GBP_JPY",
+            "GBP_USD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_JPY",
+            "USD_CAD",
+            "USD_CHF",
+            "USD_JPY"
+          ]
+        },
+        {
+          "count": 14,
+          "date": "2026-06-11",
+          "needed_from_utc": "2026-06-11T20:55:26.485276Z",
+          "needed_to_utc": "2026-06-13T00:02:58.481769Z",
+          "pair_directions": [
+            "AUD_USD:DOWN"
+          ],
+          "pairs": [
+            "AUD_USD"
+          ]
+        },
+        {
+          "count": 248,
+          "date": "2026-06-12",
+          "needed_from_utc": "2026-06-12T00:24:34.876205Z",
+          "needed_to_utc": "2026-06-13T20:43:11.831212Z",
+          "pair_directions": [
+            "AUD_CAD:UP",
+            "AUD_JPY:UP",
+            "AUD_USD:DOWN",
+            "CAD_CHF:UP",
+            "CAD_JPY:DOWN",
+            "EUR_AUD:DOWN",
+            "EUR_CAD:UP",
+            "EUR_CHF:UP",
+            "EUR_JPY:DOWN",
+            "EUR_JPY:UP",
+            "EUR_NZD:UP",
+            "EUR_USD:DOWN",
+            "GBP_AUD:DOWN",
+            "GBP_CAD:UP",
+            "GBP_CHF:DOWN",
+            "GBP_JPY:DOWN",
+            "GBP_NZD:UP",
+            "GBP_USD:DOWN",
+            "GBP_USD:UP",
+            "NZD_CAD:DOWN",
+            "NZD_CHF:DOWN",
+            "NZD_JPY:DOWN",
+            "NZD_USD:DOWN",
+            "USD_CAD:UP",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_CAD",
+            "AUD_JPY",
+            "AUD_USD",
+            "CAD_CHF",
+            "CAD_JPY",
+            "EUR_AUD",
+            "EUR_CAD",
+            "EUR_CHF",
+            "EUR_JPY",
+            "EUR_NZD",
+            "EUR_USD",
+            "GBP_AUD",
+            "GBP_CAD",
+            "GBP_CHF",
+            "GBP_JPY",
+            "GBP_NZD",
+            "GBP_USD",
+            "NZD_CAD",
+            "NZD_CHF",
+            "NZD_JPY",
+            "NZD_USD",
+            "USD_CAD",
+            "USD_JPY"
+          ]
+        },
+        {
+          "count": 11,
+          "date": "2026-06-18",
+          "needed_from_utc": "2026-06-18T22:32:01.562415Z",
+          "needed_to_utc": "2026-06-19T23:56:04.402816Z",
+          "pair_directions": [
+            "USD_CAD:UP"
+          ],
+          "pairs": [
+            "USD_CAD"
+          ]
+        },
+        {
+          "count": 249,
+          "date": "2026-06-19",
+          "needed_from_utc": "2026-06-18T23:57:17.794052Z",
+          "needed_to_utc": "2026-06-20T21:15:58.242834Z",
+          "pair_directions": [
+            "AUD_USD:DOWN",
+            "CAD_JPY:DOWN",
+            "EUR_AUD:DOWN",
+            "EUR_CAD:DOWN",
+            "EUR_JPY:DOWN",
+            "EUR_USD:DOWN",
+            "GBP_AUD:DOWN",
+            "GBP_CAD:UP",
+            "GBP_JPY:DOWN",
+            "GBP_NZD:UP",
+            "GBP_USD:DOWN",
+            "NZD_CHF:UP",
+            "NZD_JPY:DOWN",
+            "NZD_USD:DOWN",
+            "USD_CAD:UP",
+            "USD_CHF:UP",
+            "USD_JPY:UP"
+          ],
+          "pairs": [
+            "AUD_USD",
+            "CAD_JPY",
+            "EUR_AUD",
+            "EUR_CAD",
+            "EUR_JPY",
+            "EUR_USD",
+            "GBP_AUD",
+            "GBP_CAD",
+            "GBP_JPY",
+            "GBP_NZD",
+            "GBP_USD",
+            "NZD_CHF",
+            "NZD_JPY",
+            "NZD_USD",
+            "USD_CAD",
+            "USD_CHF",
+            "USD_JPY"
           ]
         }
       ],
       "warnings": [
-        "FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW"
+        "FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW",
+        "FORECAST_ROWS_WITH_PENDING_FUTURE_TRUTH_WINDOW"
       ]
     }
   },
-  "generated_at_utc": "2026-07-06T09:42:39Z",
+  "generated_at_utc": "2026-07-06T15:11:03Z",
   "live_side_effects": [],
   "mode": "read_only_historical_only_to_fresh_proof_replay",
   "rolling_30d_target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 274914.8862,
-    "funding_adjusted_equity": 174914.8862,
+    "current_equity_raw": 280353.4689,
+    "funding_adjusted_equity": 180353.4689,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 699659.5448,
-    "remaining_to_4x_funding_adjusted": 510825.3346,
-    "remaining_to_4x_raw": 410825.3346,
-    "required_active_day_return_funding_adjusted_pct": 7.452467,
-    "required_calendar_daily_profit_jpy": 9467.228,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.412477,
-    "rolling_30d_multiplier_funding_adjusted": 1.020298,
-    "rolling_30d_multiplier_raw": 1.60361,
-    "rolling_30d_start_equity": 171435.0552,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 721413.8756,
+    "remaining_to_4x_funding_adjusted": 520866.7519,
+    "remaining_to_4x_raw": 420866.7519,
+    "required_active_day_return_funding_adjusted_pct": 8.240683,
+    "required_calendar_daily_profit_jpy": 10783.2888,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.978975,
+    "rolling_30d_multiplier_funding_adjusted": 1.028798,
+    "rolling_30d_multiplier_raw": 1.599232,
+    "rolling_30d_start_equity": 175305.0552,
     "sizing_basis": "raw_nav",
-    "target_equity_from_rolling_start_4x_jpy": 685740.2208
+    "target_equity_from_rolling_start_4x_jpy": 701220.2208
   },
   "rows": [
     {
       "can_create_live_permission": false,
       "classification": "HISTORICAL_ONLY",
       "current_blockers": [
+        "REWARD_RISK_TOO_LOW",
+        "RANGE_COUNTERTREND_RR_TOO_LOW",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "MATRIX_REPAIR_REJECT_CONTEXT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "FORECAST_WATCH_ONLY",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "STRATEGY_NOT_ELIGIBLE"
+        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
       ],
       "decision": "rank_repair_work_only_no_live_permission",
       "estimated_trades_per_day_available": 43.0303,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 8.1576,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9116,
       "expected_jpy_per_trade": 331.6,
       "fresh_744h_replay": {
-        "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
-        "historical_pre_repair_loss_closes_profit_capture_missed": 1,
-        "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
+        "generated_at_utc": "2026-07-06T14:06:32.428132+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
         "lookback_basis": "execution_timing_audit current local artifact",
-        "loss_close_repair_replay_delta_jpy": 466.2,
-        "loss_closes_audited": 8,
+        "loss_close_repair_replay_delta_jpy": 18787.1621,
+        "loss_closes_audited": 39,
         "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
         "post_repair_live_evidence_loss_closes_audited": 5,
         "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
         "status": "OK"
       },
-      "fresh_replay_status": "EVIDENCE_GAP_UNDER_SAMPLED",
+      "fresh_replay_status": "REJECTED_NEGATIVE_EXPECTANCY",
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
         "can_create_live_permission": false,
         "contrarian_or_rank_only_rules": [],
-        "direct_rules": [],
+        "direct_rules": [
+          {
+            "active_days": 34,
+            "adoption_blockers": [
+              "NEGATIVE_EXPECTANCY"
+            ],
+            "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260703T213221Z.json",
+            "avg_daily_realized_pips": -78.6235,
+            "avg_daily_samples": 41.9412,
+            "avg_final_pips": -5.894,
+            "avg_mae_pips": 11.9315,
+            "avg_mfe_pips": 3.6022,
+            "best_daily_realized_pips": -4.0,
+            "blocks_live_support": true,
+            "campaign_timezone": "Asia/Tokyo",
+            "daily_stability_gap": {
+              "current_max_daily_sample_share": 0.1339,
+              "current_positive_day_rate": 0.0,
+              "max_allowed_daily_sample_share": 0.7,
+              "missing_active_days": 0,
+              "missing_positive_days_at_current_requirement": 23,
+              "reasons": [
+                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              ],
+              "required_active_days": 3,
+              "required_positive_day_rate": 0.6667,
+              "required_positive_days_at_current_requirement": 23,
+              "status": "DAILY_PNL_UNSTABLE"
+            },
+            "daily_stability_status": "DAILY_PNL_UNSTABLE",
+            "direction": "UP",
+            "directional_hit_rate": 0.2952,
+            "first_day": "2026-05-15",
+            "flat_days": 0,
+            "granularity": "S5",
+            "last_day": "2026-07-04",
+            "live_grade": false,
+            "max_daily_sample_share": 0.1339,
+            "max_daily_samples": 191,
+            "median_final_pips": -3.5,
+            "min_daily_samples": 3,
+            "name": "GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+            "negative_days": 34,
+            "optimized_avg_realized_pips": -1.8746,
+            "optimized_profit_factor": 0.0322,
+            "optimized_stop_loss_pips": 2.0,
+            "optimized_take_profit_pips": 2.0,
+            "optimized_win_rate": 0.0316,
+            "pair": "GBP_USD",
+            "positive_day_rate": 0.0,
+            "positive_days": 0,
+            "samples": 1426,
+            "side": "LONG",
+            "worst_daily_realized_pips": -370.0
+          }
+        ],
         "direction": "UP",
         "direction_coverage": {
           "coverage_gap_reasons": [
-            "INSUFFICIENT_EVALUATED_SAMPLES",
-            "INSUFFICIENT_ACTIVE_DAYS"
+            "NO_MARKET_SESSION_UNSCORABLE"
           ],
           "direction": "UP",
-          "evaluated_active_days": 2,
-          "evaluated_samples": 2,
-          "forecast_active_days": 2,
-          "forecast_samples": 2,
-          "missing_active_days": 1,
-          "missing_evaluated_samples": 28,
+          "evaluated_active_days": 34,
+          "evaluated_samples": 1426,
+          "forecast_active_days": 34,
+          "forecast_samples": 1443,
+          "missing_active_days": 0,
+          "missing_evaluated_samples": 0,
           "missing_price_truth_samples": 0,
           "pair": "GBP_USD",
           "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 0
+          "unscorable_no_market_samples": 17
         },
-        "direction_segment": {},
+        "direction_segment": {
+          "adverse_side_invalidation_rate": 0.9751359751359752,
+          "avg_final_pips": -5.89396914445998,
+          "avg_mae_pips": 11.931486676016862,
+          "avg_mfe_pips": 3.6022440392707225,
+          "direction": "UP",
+          "hit_rate": 0.2952314165497896,
+          "invalidation_touch_rate": 0.6533864541832669,
+          "median_final_pips": -3.5000000000007248,
+          "n": 1426,
+          "pair": "GBP_USD",
+          "reward_side_target_rate": 0.9277699859747546,
+          "target_before_invalidation_rate": 0.27981220657276995,
+          "target_touch_rate": 0.31216931216931215
+        },
         "live_grade_support": false,
         "pair": "GBP_USD",
         "pair_coverage": {
-          "evaluated_samples": 13,
-          "forecast_samples": 14,
-          "missing_evaluated_samples_to_min_directional": 17,
+          "evaluated_samples": 2631,
+          "forecast_samples": 2731,
+          "missing_evaluated_samples_to_min_directional": 0,
           "missing_price_truth_samples": 0,
           "pair": "GBP_USD",
           "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 1
+          "unscorable_no_market_samples": 100
         },
         "price_truth_blockers": [
           "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
           "COLLECT_MORE_FORECAST_SAMPLES"
         ],
         "price_truth_status": "PRICE_TRUTH_OK",
-        "status": "EVIDENCE_GAP_UNDER_SAMPLED"
+        "status": "REJECTED_NEGATIVE_EXPECTANCY"
       },
       "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
       "margin": {
         "broker_margin_context": {
           "broker_margin_free_units": 0,
-          "margin_available_jpy": 58307.7306,
-          "margin_used_jpy": 222307.2
+          "margin_available_jpy": 58098.7314,
+          "margin_used_jpy": 222463.2
         },
         "margin_requirement_realistic_size_jpy": 0.0,
         "realistic_units": 0,
@@ -353,395 +1916,166 @@
         "margin_and_risk_engine_pass": false,
         "s5_live_grade": false
       },
-      "required_calendar_daily_return_funding_adjusted_pct": 5.412477,
+      "required_calendar_daily_return_funding_adjusted_pct": 5.978975,
       "side": "LONG"
     },
     {
       "can_create_live_permission": false,
       "classification": "HISTORICAL_ONLY",
-      "current_blockers": [
-        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "REWARD_RISK_TOO_LOW",
-        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "PATTERN_REVERSAL_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "STRATEGY_NOT_ELIGIBLE"
-      ],
+      "current_blockers": [],
       "decision": "rank_repair_work_only_no_live_permission",
-      "estimated_trades_per_day_available": 34.8974,
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.741,
-      "expected_jpy_per_trade": 388.0,
+      "estimated_trades_per_day_available": null,
+      "expected_daily_return_pct_on_funding_adjusted_equity": null,
+      "expected_jpy_per_trade": null,
       "fresh_744h_replay": {
-        "generated_at_utc": "2026-07-06T01:58:38.527953+00:00",
-        "historical_pre_repair_loss_closes_profit_capture_missed": 1,
-        "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
+        "generated_at_utc": "2026-07-06T14:06:32.428132+00:00",
+        "historical_pre_repair_loss_closes_profit_capture_missed": 14,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 13,
         "lookback_basis": "execution_timing_audit current local artifact",
-        "loss_close_repair_replay_delta_jpy": 466.2,
-        "loss_closes_audited": 8,
+        "loss_close_repair_replay_delta_jpy": 18787.1621,
+        "loss_closes_audited": 39,
         "permission_boundary": "System-level 744h timing replay is diagnostic; it is not a lane-specific live permission receipt.",
         "post_repair_live_evidence_loss_closes_audited": 5,
         "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
         "status": "OK"
       },
-      "fresh_replay_status": "EVIDENCE_GAP_UNDER_SAMPLED",
+      "fresh_replay_status": "REJECTED_NEGATIVE_EXPECTANCY",
       "fresh_s5_bidask_replay": {
         "adoption_level": "PAIR_LOCAL_RANK_ONLY",
         "can_create_live_permission": false,
-        "contrarian_or_rank_only_rules": [
+        "contrarian_or_rank_only_rules": [],
+        "direct_rules": [
           {
-            "active_days": 2,
+            "active_days": 39,
             "adoption_blockers": [
-              "INSUFFICIENT_ACTIVE_DAYS",
-              "NEEDS_MORE_ACTIVE_DAYS",
-              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+              "NEGATIVE_EXPECTANCY"
             ],
-            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
-            "avg_daily_realized_pips": 56.75,
-            "avg_daily_samples": 20.0,
-            "avg_final_pips": 4.8425,
-            "avg_mae_pips": 7.61,
-            "avg_mfe_pips": 10.8475,
-            "best_daily_realized_pips": 117.9,
+            "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260703T213221Z.json",
+            "avg_daily_realized_pips": -69.8462,
+            "avg_daily_samples": 34.9231,
+            "avg_final_pips": -3.3692,
+            "avg_mae_pips": 11.7778,
+            "avg_mfe_pips": 6.5404,
+            "best_daily_realized_pips": -2.0,
+            "blocks_live_support": true,
             "campaign_timezone": "Asia/Tokyo",
-            "confidence_bucket": "0.75-0.90",
-            "contrarian_edge": true,
             "daily_stability_gap": {
-              "current_max_daily_sample_share": 0.95,
-              "current_positive_day_rate": 0.5,
+              "current_max_daily_sample_share": 0.1535,
+              "current_positive_day_rate": 0.0,
               "max_allowed_daily_sample_share": 0.7,
-              "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 1,
+              "missing_active_days": 0,
+              "missing_positive_days_at_current_requirement": 27,
               "reasons": [
-                "NEEDS_MORE_ACTIVE_DAYS",
-                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
                 "NEEDS_HIGHER_POSITIVE_DAY_RATE"
               ],
               "required_active_days": 3,
               "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 2,
-              "status": "INSUFFICIENT_ACTIVE_DAYS"
+              "required_positive_days_at_current_requirement": 27,
+              "status": "DAILY_PNL_UNSTABLE"
             },
-            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+            "daily_stability_status": "DAILY_PNL_UNSTABLE",
             "direction": "DOWN",
-            "directional_hit_rate": 0.65,
-            "faded_direction": "UP",
+            "directional_hit_rate": 0.3495,
             "first_day": "2026-05-15",
             "flat_days": 0,
-            "forecast_direction": "UP",
             "granularity": "S5",
-            "horizon_bucket": "31-60m",
-            "last_day": "2026-06-02",
+            "last_day": "2026-07-03",
             "live_grade": false,
-            "max_daily_sample_share": 0.95,
-            "max_daily_samples": 38,
-            "max_stop_pips": 7.2,
-            "max_target_pips": 11.0,
-            "median_final_pips": 5.0,
-            "min_daily_samples": 2,
-            "min_target_pips": 9.8,
-            "name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-            "negative_days": 1,
-            "optimized_avg_realized_pips": 2.8375,
-            "optimized_profit_factor": 2.3182,
-            "optimized_stop_loss_pips": 7.0,
-            "optimized_take_profit_pips": 10.0,
-            "optimized_win_rate": 0.625,
+            "max_daily_sample_share": 0.1535,
+            "max_daily_samples": 209,
+            "median_final_pips": -2.8,
+            "min_daily_samples": 1,
+            "name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+            "negative_days": 39,
+            "optimized_avg_realized_pips": -2.0,
+            "optimized_profit_factor": 0.0,
+            "optimized_stop_loss_pips": 2.0,
+            "optimized_take_profit_pips": 2.0,
+            "optimized_win_rate": 0.0,
             "pair": "AUD_JPY",
-            "positive_day_rate": 0.5,
-            "positive_days": 1,
-            "samples": 40,
+            "positive_day_rate": 0.0,
+            "positive_days": 0,
+            "samples": 1362,
             "side": "SHORT",
-            "source_avg_final_pips": -9.7425,
-            "source_avg_mae_pips": 15.73,
-            "source_avg_mfe_pips": 3.305,
-            "source_directional_hit_rate": 0.25,
-            "worst_daily_realized_pips": -4.4
-          },
-          {
-            "active_days": 2,
-            "adoption_blockers": [
-              "INSUFFICIENT_ACTIVE_DAYS",
-              "NEEDS_MORE_ACTIVE_DAYS",
-              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-            ],
-            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260706T013634Z.json",
-            "avg_daily_realized_pips": 56.75,
-            "avg_daily_samples": 20.0,
-            "avg_final_pips": 4.8425,
-            "avg_mae_pips": 7.61,
-            "avg_mfe_pips": 10.8475,
-            "best_daily_realized_pips": 117.9,
-            "campaign_timezone": "Asia/Tokyo",
-            "confidence_bucket": "0.75-0.90",
-            "contrarian_edge": true,
-            "daily_stability_gap": {
-              "current_max_daily_sample_share": 0.95,
-              "current_positive_day_rate": 0.5,
-              "max_allowed_daily_sample_share": 0.7,
-              "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 1,
-              "reasons": [
-                "NEEDS_MORE_ACTIVE_DAYS",
-                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-              ],
-              "required_active_days": 3,
-              "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 2,
-              "status": "INSUFFICIENT_ACTIVE_DAYS"
-            },
-            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
-            "direction": "DOWN",
-            "directional_hit_rate": 0.65,
-            "faded_direction": "UP",
-            "first_day": "2026-05-15",
-            "flat_days": 0,
-            "forecast_direction": "UP",
-            "granularity": "S5",
-            "last_day": "2026-06-02",
-            "live_grade": false,
-            "max_daily_sample_share": 0.95,
-            "max_daily_samples": 38,
-            "max_stop_pips": 7.2,
-            "max_target_pips": 11.0,
-            "median_final_pips": 5.0,
-            "min_daily_samples": 2,
-            "min_target_pips": 9.8,
-            "name": "AUD_JPY_UP_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-            "negative_days": 1,
-            "optimized_avg_realized_pips": 2.8375,
-            "optimized_profit_factor": 2.3182,
-            "optimized_stop_loss_pips": 7.0,
-            "optimized_take_profit_pips": 10.0,
-            "optimized_win_rate": 0.625,
-            "pair": "AUD_JPY",
-            "positive_day_rate": 0.5,
-            "positive_days": 1,
-            "samples": 40,
-            "side": "SHORT",
-            "source_avg_final_pips": -9.7425,
-            "source_avg_mae_pips": 15.73,
-            "source_avg_mfe_pips": 3.305,
-            "source_directional_hit_rate": 0.25,
-            "worst_daily_realized_pips": -4.4
-          },
-          {
-            "active_days": 2,
-            "adoption_blockers": [
-              "INSUFFICIENT_ACTIVE_DAYS",
-              "NEEDS_MORE_ACTIVE_DAYS",
-              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-            ],
-            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "avg_daily_realized_pips": 56.75,
-            "avg_daily_samples": 20.0,
-            "best_daily_realized_pips": 117.9,
-            "campaign_timezone": "Asia/Tokyo",
-            "confidence_bucket": "0.75-0.90",
-            "daily_stability_gap": {
-              "current_max_daily_sample_share": 0.95,
-              "current_positive_day_rate": 0.5,
-              "max_allowed_daily_sample_share": 0.7,
-              "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 1,
-              "reasons": [
-                "NEEDS_MORE_ACTIVE_DAYS",
-                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-              ],
-              "required_active_days": 3,
-              "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 2,
-              "status": "INSUFFICIENT_ACTIVE_DAYS"
-            },
-            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
-            "direction": "DOWN",
-            "first_day": "2026-05-15",
-            "flat_days": 0,
-            "forecast_direction": "UP",
-            "last_day": "2026-06-02",
-            "live_grade": false,
-            "max_daily_sample_share": 0.95,
-            "max_daily_samples": 38,
-            "min_daily_samples": 2,
-            "name": "AUD_JPY_UP_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-            "negative_days": 1,
-            "optimized_avg_realized_pips": 2.8375,
-            "optimized_profit_factor": 2.3182,
-            "optimized_win_rate": 0.625,
-            "pair": "AUD_JPY",
-            "positive_day_rate": 0.5,
-            "positive_days": 1,
-            "samples": 40,
-            "worst_daily_realized_pips": -4.4
-          },
-          {
-            "active_days": 2,
-            "adoption_blockers": [
-              "INSUFFICIENT_ACTIVE_DAYS",
-              "NEEDS_MORE_ACTIVE_DAYS",
-              "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-              "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-            ],
-            "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-            "avg_daily_realized_pips": 56.75,
-            "avg_daily_samples": 20.0,
-            "best_daily_realized_pips": 117.9,
-            "campaign_timezone": "Asia/Tokyo",
-            "confidence_bucket": "0.75-0.90",
-            "daily_stability_gap": {
-              "current_max_daily_sample_share": 0.95,
-              "current_positive_day_rate": 0.5,
-              "max_allowed_daily_sample_share": 0.7,
-              "missing_active_days": 1,
-              "missing_positive_days_at_current_requirement": 1,
-              "reasons": [
-                "NEEDS_MORE_ACTIVE_DAYS",
-                "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
-                "NEEDS_HIGHER_POSITIVE_DAY_RATE"
-              ],
-              "required_active_days": 3,
-              "required_positive_day_rate": 0.6667,
-              "required_positive_days_at_current_requirement": 2,
-              "status": "INSUFFICIENT_ACTIVE_DAYS"
-            },
-            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
-            "direction": "DOWN",
-            "first_day": "2026-05-15",
-            "flat_days": 0,
-            "forecast_direction": "UP",
-            "horizon_bucket": "31-60m",
-            "last_day": "2026-06-02",
-            "live_grade": false,
-            "max_daily_sample_share": 0.95,
-            "max_daily_samples": 38,
-            "min_daily_samples": 2,
-            "name": "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-            "negative_days": 1,
-            "optimized_avg_realized_pips": 2.8375,
-            "optimized_profit_factor": 2.3182,
-            "optimized_win_rate": 0.625,
-            "pair": "AUD_JPY",
-            "positive_day_rate": 0.5,
-            "positive_days": 1,
-            "samples": 40,
-            "worst_daily_realized_pips": -4.4
+            "worst_daily_realized_pips": -418.0
           }
         ],
-        "direct_rules": [],
         "direction": "DOWN",
         "direction_coverage": {
           "coverage_gap_reasons": [
-            "INSUFFICIENT_EVALUATED_SAMPLES",
-            "NO_MARKET_SESSION_UNSCORABLE"
+            "NO_MARKET_SESSION_UNSCORABLE",
+            "PENDING_FUTURE_TRUTH_WINDOW"
           ],
           "direction": "DOWN",
-          "evaluated_active_days": 5,
-          "evaluated_samples": 9,
-          "forecast_active_days": 6,
-          "forecast_samples": 18,
+          "evaluated_active_days": 39,
+          "evaluated_samples": 1362,
+          "forecast_active_days": 41,
+          "forecast_samples": 1382,
           "missing_active_days": 0,
-          "missing_evaluated_samples": 21,
+          "missing_evaluated_samples": 0,
           "missing_price_truth_samples": 0,
           "pair": "AUD_JPY",
-          "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 9
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 18
         },
         "direction_segment": {
-          "adverse_side_invalidation_rate": 1.0,
-          "avg_final_pips": -3.4555555555554758,
-          "avg_mae_pips": 11.888888888888813,
-          "avg_mfe_pips": 6.955555555555293,
+          "adverse_side_invalidation_rate": 0.9779735682819384,
+          "avg_final_pips": -3.369162995594738,
+          "avg_mae_pips": 11.777826725403845,
+          "avg_mfe_pips": 6.540381791483098,
           "direction": "DOWN",
-          "hit_rate": 0.6666666666666666,
-          "invalidation_touch_rate": 0.3333333333333333,
-          "median_final_pips": 2.1000000000000796,
-          "n": 9,
+          "hit_rate": 0.34948604992657856,
+          "invalidation_touch_rate": 0.6696696696696697,
+          "median_final_pips": -2.80000000000058,
+          "n": 1362,
           "pair": "AUD_JPY",
-          "reward_side_target_rate": 0.6666666666666666,
-          "target_before_invalidation_rate": 0.3333333333333333,
-          "target_touch_rate": 0.3333333333333333
+          "reward_side_target_rate": 0.920704845814978,
+          "target_before_invalidation_rate": 0.2342007434944238,
+          "target_touch_rate": 0.34768740031897927
         },
         "live_grade_support": false,
         "pair": "AUD_JPY",
         "pair_coverage": {
-          "evaluated_samples": 144,
-          "forecast_samples": 156,
+          "evaluated_samples": 2612,
+          "forecast_samples": 2720,
           "missing_evaluated_samples_to_min_directional": 0,
           "missing_price_truth_samples": 0,
           "pair": "AUD_JPY",
-          "pending_future_truth_samples": 0,
-          "unscorable_no_market_samples": 12
+          "pending_future_truth_samples": 2,
+          "unscorable_no_market_samples": 106
         },
         "price_truth_blockers": [
           "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
           "COLLECT_MORE_FORECAST_SAMPLES"
         ],
         "price_truth_status": "PRICE_TRUTH_OK",
-        "status": "EVIDENCE_GAP_UNDER_SAMPLED"
+        "status": "REJECTED_NEGATIVE_EXPECTANCY"
       },
       "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
       "margin": {
-        "broker_margin_context": {
-          "broker_margin_free_units": 0,
-          "margin_available_jpy": 58307.7306,
-          "margin_used_jpy": 222307.2
-        },
-        "margin_requirement_realistic_size_jpy": 13490.64,
-        "realistic_units": 3000,
-        "risk_allowed": false
+        "broker_margin_context": null,
+        "margin_requirement_realistic_size_jpy": null,
+        "realistic_units": null,
+        "risk_allowed": null
       },
-      "meets_4x_required_daily_return_prefilter": true,
-      "method": "TREND_CONTINUATION",
-      "missing_proof": {
-        "active_day_floor": true,
-        "attached_tp_proof": true,
-        "daily_stability_floor": true,
-        "forecast_executable_proof": true,
-        "fresh_744h_replay": false,
-        "geometry_proof": false,
-        "gpt_verifier_pass": false,
-        "live_order_gateway_pass": false,
-        "market_close_absence_or_close_gate_proof": true,
-        "no_guardian_operator_review_blocker": false,
-        "no_stale_packaged_rule": true,
-        "positive_day_rate_floor": true,
-        "residual_family_absence": true,
-        "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": false,
-        "sample_count_floor": true
-      },
-      "order_type": "STOP-ENTRY",
-      "packaged_historical_evidence": {
-        "bidask_rule_generated_at_utc": "2026-07-03T14:52:18.653002Z",
-        "bidask_rule_name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
-        "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-        "capture_economics_status": "NEGATIVE_EXPECTANCY",
-        "capture_take_profit_scope_key": "AUD_JPY|SHORT|TREND_CONTINUATION|TAKE_PROFIT_ORDER",
-        "historical_only": true,
-        "positive_rotation_mode": null,
-        "positive_rotation_proof_collection_ready": null
-      },
+      "meets_4x_required_daily_return_prefilter": false,
+      "method": null,
+      "missing_proof": {},
+      "order_type": null,
+      "packaged_historical_evidence": null,
       "pair": "AUD_JPY",
       "proof_checks": {
         "fresh_forecast_executable": true,
-        "geometry_proof": false,
+        "geometry_proof": true,
         "gpt_verifier_pass": false,
-        "guardian_clear": false,
+        "guardian_clear": true,
         "live_order_gateway_pass": false,
         "margin_and_risk_engine_pass": false,
         "s5_live_grade": false
       },
-      "required_calendar_daily_return_funding_adjusted_pct": 5.412477,
-      "side": "SHORT"
+      "required_calendar_daily_return_funding_adjusted_pct": 5.978975,
+      "side": null
     }
   ],
   "source_artifacts": [

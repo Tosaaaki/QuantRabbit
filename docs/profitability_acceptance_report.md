@@ -1,22 +1,21 @@
 # Profitability Acceptance
 
 - Status: `PROFITABILITY_ACCEPTANCE_BLOCKED`
-- Generated: `2026-07-06T01:58:50.390861+00:00`
-- Findings: `9`
+- Generated: `2026-07-06T15:10:34.642527+00:00`
+- Findings: `8`
 
 ## Findings
 
 | Priority | Code | Message |
 | --- | --- | --- |
-| `P0` | `SELF_IMPROVEMENT_P0_PRESENT` | self-improvement audit still has 1 P0 finding(s) |
+| `P0` | `SELF_IMPROVEMENT_P0_PRESENT` | self-improvement audit still has 2 P0 finding(s) |
 | `P0` | `NEGATIVE_EXPECTANCY_ACTIVE` | capture economics is still NEGATIVE_EXPECTANCY |
 | `P0` | `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE` | 1 TP-proven segment(s) are still net-damaged by MARKET_ORDER_TRADE_CLOSE leakage |
 | `P0` | `MARKET_CLOSE_LEAK_FAMILY_BLOCKED` | EUR_USD LONG BREAKOUT_FAILURE system-gateway MARKET_ORDER_TRADE_CLOSE loss family remains blocked from fresh-entry and repair-exit live routing until the exact exception proof stack exists. |
 | `P0` | `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE` | 30-day OANDA candle replay says the current TP-progress repair improves loss-side closes, but the replayed loss-close P/L is still net negative |
-| `P1` | `PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP` | 5 projection bucket(s) clear headline precision but fail economic precision after TIMEOUT/no-touch penalties |
 | `P1` | `BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN` | S5 bid/ask replay has price truth for loaded samples, but pair-direction sample coverage is too thin to claim all-currency high-turn readiness |
 | `P1` | `NO_LIVE_READY_TARGET_COVERAGE` | daily target is open but there are no LIVE_READY lanes |
-| `P1` | `REPAIR_FRONTIER_BLOCKED` | 11 repair-mode candidate(s) exist, but none currently clear live gates |
+| `P1` | `REPAIR_FRONTIER_BLOCKED` | 9 repair-mode candidate(s) exist, but none currently clear live gates |
 
 ## Metrics
 
@@ -1809,7 +1808,7 @@
     "history_fetch_command": null,
     "negative_rules": 52,
     "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
-    "path": "/Users/tossaki/App/QuantRabbit/src/quant_rabbit/bidask_replay_precision_rules.json",
+    "path": "/Users/tossaki/App/QuantRabbit-live/src/quant_rabbit/bidask_replay_precision_rules.json",
     "price_truth_coverage": {
       "adoption_level": "PAIR_LOCAL_RANK_ONLY",
       "all_currency_sample_coverage_status": "UNDER_SAMPLED",
@@ -2054,12 +2053,12 @@
       "trades": 98
     },
     "overall": {
-      "expectancy_jpy_per_trade": -177.4,
-      "net_jpy": -40616.9,
-      "payoff_ratio": 0.393,
+      "expectancy_jpy_per_trade": -176.2,
+      "net_jpy": -41225.9,
+      "payoff_ratio": 0.412,
       "profit_factor": null,
-      "trades": 229,
-      "win_rate": 0.5983
+      "trades": 234,
+      "win_rate": 0.5855
     },
     "status": "NEGATIVE_EXPECTANCY",
     "take_profit": {
@@ -2070,24 +2069,24 @@
     "tp_proven_market_close_leak_segments": 1
   },
   "execution_ledger_close_leak": {
-    "audit_now_utc": "2026-07-06T01:58:50.390861+00:00",
+    "audit_now_utc": "2026-07-06T15:10:34.642527+00:00",
     "execution_timing_audit": {
-      "generated_at_utc": "2026-07-06T01:07:00.756897+00:00",
+      "generated_at_utc": "2026-07-06T14:06:32.428132+00:00",
       "label_counts": {
         "LOSS_CLOSE_CONTAINED_RISK": 19,
         "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE": 13
       },
       "loaded": true,
       "loss_close_actual_pl_jpy": -39275.3429,
-      "loss_close_counterfactual_profit_capture_delta_jpy": 18731.1971,
-      "loss_close_counterfactual_profit_capture_jpy": 3547.1025,
-      "loss_close_counterfactual_profit_capture_pl_jpy": -20544.1458,
+      "loss_close_counterfactual_profit_capture_delta_jpy": 18741.9316,
+      "loss_close_counterfactual_profit_capture_jpy": 3557.837,
+      "loss_close_counterfactual_profit_capture_pl_jpy": -20533.4113,
       "loss_close_repair_replay_block_reasons": {
         "BELOW_NOISE_FLOOR": 1
       },
-      "loss_close_repair_replay_counterfactual_pl_jpy": -20500.5457,
-      "loss_close_repair_replay_delta_jpy": 18774.7972,
-      "loss_close_repair_replay_profit_capture_jpy": 3830.1817,
+      "loss_close_repair_replay_counterfactual_pl_jpy": -20488.1808,
+      "loss_close_repair_replay_delta_jpy": 18787.1621,
+      "loss_close_repair_replay_profit_capture_jpy": 3842.5466,
       "loss_closes_profit_capture_missed": 14,
       "loss_closes_repair_replay_triggered": 13,
       "loss_market_close_rows": 32,
@@ -2588,9 +2587,9 @@
           "trade_id": "472792"
         },
         {
-          "counterfactual_delta_jpy": 606.5364,
+          "counterfactual_delta_jpy": 607.3459,
           "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-          "counterfactual_jpy": 367.0573,
+          "counterfactual_jpy": 367.8668,
           "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
           "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
           "pair": "AUD_NZD",
@@ -2605,9 +2604,9 @@
           "trade_id": "472632"
         },
         {
-          "counterfactual_delta_jpy": 777.8047,
+          "counterfactual_delta_jpy": 779.5554,
           "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-          "counterfactual_jpy": 612.6353,
+          "counterfactual_jpy": 614.386,
           "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
           "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
           "pair": "USD_CAD",
@@ -2622,9 +2621,9 @@
           "trade_id": "472318"
         },
         {
-          "counterfactual_delta_jpy": 340.6732,
+          "counterfactual_delta_jpy": 342.084,
           "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-          "counterfactual_jpy": 311.7965,
+          "counterfactual_jpy": 313.2073,
           "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
           "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
           "pair": "EUR_USD",
@@ -2639,9 +2638,9 @@
           "trade_id": "472280"
         },
         {
-          "counterfactual_delta_jpy": 1267.7279,
+          "counterfactual_delta_jpy": 1268.0124,
           "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-          "counterfactual_jpy": 285.9337,
+          "counterfactual_jpy": 286.2182,
           "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
           "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
           "pair": "GBP_CHF",
@@ -3202,8 +3201,8 @@
           "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
           "pair": "USD_CAD",
           "realized_pl_jpy": -165.1694,
-          "repair_counterfactual_delta_jpy": 830.681,
-          "repair_counterfactual_jpy": 665.5116,
+          "repair_counterfactual_delta_jpy": 832.5828,
+          "repair_counterfactual_jpy": 667.4134,
           "repair_noise_floor_pips": 1.7,
           "repair_profit_pips": 7.3,
           "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -3218,8 +3217,8 @@
           "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
           "pair": "EUR_USD",
           "realized_pl_jpy": -28.8767,
-          "repair_counterfactual_delta_jpy": 388.2683,
-          "repair_counterfactual_jpy": 359.3916,
+          "repair_counterfactual_delta_jpy": 389.8944,
+          "repair_counterfactual_jpy": 361.0177,
           "repair_noise_floor_pips": 1.6,
           "repair_profit_pips": 3.7,
           "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -3234,8 +3233,8 @@
           "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
           "pair": "GBP_CHF",
           "realized_pl_jpy": -981.7942,
-          "repair_counterfactual_delta_jpy": 1280.8881,
-          "repair_counterfactual_jpy": 299.0939,
+          "repair_counterfactual_delta_jpy": 1281.1857,
+          "repair_counterfactual_jpy": 299.3915,
           "repair_noise_floor_pips": 2.8,
           "repair_profit_pips": 7.5,
           "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -3250,8 +3249,8 @@
           "lane_id": "trend_trader:EUR_AUD:LONG:TREND_CONTINUATION",
           "pair": "EUR_AUD",
           "realized_pl_jpy": -6.7428,
-          "repair_counterfactual_delta_jpy": 123.4724,
-          "repair_counterfactual_jpy": 116.7296,
+          "repair_counterfactual_delta_jpy": 124.0216,
+          "repair_counterfactual_jpy": 117.2788,
           "repair_noise_floor_pips": 3.7,
           "repair_profit_pips": 5.2,
           "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -3333,11 +3332,11 @@
       "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
       "window_from_utc": "2026-05-26T07:03:46.222763+00:00",
       "window_lookback_hours": 744.0,
-      "window_to_utc": "2026-07-06T01:07:00.756897+00:00"
+      "window_to_utc": "2026-07-06T14:06:32.428132+00:00"
     },
-    "gateway_event_stream_events": 34718,
-    "gateway_event_stream_lag_minutes": 45.073,
-    "gateway_event_stream_latest_ts_utc": "2026-07-06T01:13:45.999239+00:00",
+    "gateway_event_stream_events": 34740,
+    "gateway_event_stream_lag_minutes": 57.036,
+    "gateway_event_stream_latest_ts_utc": "2026-07-06T14:13:32.482832+00:00",
     "gateway_event_stream_market_close_gap_minutes": 0.0,
     "gateway_event_stream_stale": false,
     "gateway_market_closes": 99,
@@ -3362,7 +3361,7 @@
     "recent_contained_risk_loss_closes": 0,
     "recent_contained_risk_loss_examples": [],
     "recent_contained_risk_loss_net_jpy": 0,
-    "recent_cutoff_utc": "2026-06-29T01:58:50.390861+00:00",
+    "recent_cutoff_utc": "2026-06-29T15:10:34.642527+00:00",
     "recent_gateway_market_closes": 0,
     "recent_leak_loss_by_lane": [],
     "recent_leak_loss_closes": 0,
@@ -3381,10 +3380,10 @@
   },
   "finding_counts": {
     "P0": 5,
-    "P1": 4,
+    "P1": 3,
     "P2": 0
   },
-  "generated_at_utc": "2026-07-06T01:58:50.390861+00:00",
+  "generated_at_utc": "2026-07-06T15:10:34.642527+00:00",
   "oanda_campaign_firepower": {
     "contract": "audit-only merged firepower estimate from pair-shard validation evidence; it does not grant live permission, size orders, or waive gateway gates",
     "evidence_queue": {
@@ -3417,7 +3416,7 @@
       "weighted_return_pct_per_trade_at_risk_lens": 0.659453
     },
     "minimum_return_pct": 5.0,
-    "path": "/Users/tossaki/App/QuantRabbit/src/quant_rabbit/oanda_universal_rotation_precision_rules.json",
+    "path": "/Users/tossaki/App/QuantRabbit-live/src/quant_rabbit/oanda_universal_rotation_precision_rules.json",
     "per_trade_risk_pct_lens": 1.0,
     "report_exists": true,
     "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
@@ -3425,58 +3424,57 @@
     "target_return_pct": 10.0
   },
   "order_capture_freshness": {
-    "capture_economics_generated_at_utc": "2026-07-06T01:57:35.731924+00:00",
+    "capture_economics_generated_at_utc": "2026-07-06T15:00:25.989242+00:00",
     "capture_generated_after_order_intents": false,
-    "capture_trades": 229,
+    "capture_trades": 234,
     "intent_capture_economics_trades": [
-      229
+      234
     ],
     "metadata_trade_count_mismatch": false,
     "mismatch_examples": [],
-    "order_intents_generated_at_utc": "2026-07-06T01:58:22.732022+00:00"
+    "order_intents_generated_at_utc": "2026-07-06T15:02:44.070184+00:00"
   },
   "order_intents": {
-    "candidate_count": 82,
-    "dry_run_blocked_lanes": 82,
-    "generated_at_utc": "2026-07-06T01:58:22.732022+00:00",
+    "candidate_count": 101,
+    "dry_run_blocked_lanes": 101,
+    "generated_at_utc": "2026-07-06T15:02:44.070184+00:00",
     "live_ready_lanes": 0,
     "repair_frontier": {
-      "blocked_count": 11,
-      "candidate_count": 11,
+      "blocked_count": 9,
+      "candidate_count": 9,
       "examples": [
         {
           "blocker_codes": [
-            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
             "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
           ],
-          "blocker_count": 4,
-          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
-          "method": "BREAKOUT_FAILURE",
-          "oanda_campaign_matching_vehicle_key": null,
-          "order_type": "LIMIT",
-          "pair": "AUD_JPY",
-          "positive_rotation_pessimistic_expectancy_jpy": 189.9205,
-          "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
-          "risk_allowed": false,
-          "side": "SHORT",
-          "status": "DRY_RUN_BLOCKED"
-        },
-        {
-          "blocker_codes": [
-            "REWARD_RISK_TOO_LOW",
-            "EXHAUSTION_RANGE_CHASE",
-            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
-          ],
-          "blocker_count": 4,
+          "blocker_count": 3,
           "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
           "method": "BREAKOUT_FAILURE",
           "oanda_campaign_matching_vehicle_key": null,
           "order_type": "LIMIT",
           "pair": "EUR_USD",
-          "positive_rotation_pessimistic_expectancy_jpy": 324.7652,
+          "positive_rotation_pessimistic_expectancy_jpy": 332.5961,
+          "repair_mode": "TP_PROVEN_HARVEST",
+          "risk_allowed": false,
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "blocker_codes": [
+            "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+          ],
+          "blocker_count": 4,
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "oanda_campaign_matching_vehicle_key": null,
+          "order_type": "STOP-ENTRY",
+          "pair": "EUR_USD",
+          "positive_rotation_pessimistic_expectancy_jpy": 332.5961,
           "repair_mode": "TP_PROVEN_HARVEST",
           "risk_allowed": false,
           "side": "LONG",
@@ -3486,27 +3484,8 @@
           "blocker_codes": [
             "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
             "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
-          ],
-          "blocker_count": 4,
-          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
-          "method": "BREAKOUT_FAILURE",
-          "oanda_campaign_matching_vehicle_key": null,
-          "order_type": "STOP-ENTRY",
-          "pair": "EUR_USD",
-          "positive_rotation_pessimistic_expectancy_jpy": 304.0708,
-          "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
-          "risk_allowed": false,
-          "side": "SHORT",
-          "status": "DRY_RUN_BLOCKED"
-        },
-        {
-          "blocker_codes": [
-            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-            "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
           ],
           "blocker_count": 4,
           "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
@@ -3514,7 +3493,7 @@
           "oanda_campaign_matching_vehicle_key": null,
           "order_type": "LIMIT",
           "pair": "EUR_USD",
-          "positive_rotation_pessimistic_expectancy_jpy": 304.0708,
+          "positive_rotation_pessimistic_expectancy_jpy": 313.0289,
           "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
           "risk_allowed": false,
           "side": "SHORT",
@@ -3522,33 +3501,12 @@
         },
         {
           "blocker_codes": [
-            "REWARD_RISK_TOO_LOW",
-            "PATTERN_REVERSAL_CHASE",
-            "EXHAUSTION_RANGE_CHASE",
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
             "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
           ],
-          "blocker_count": 5,
-          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
-          "method": "BREAKOUT_FAILURE",
-          "oanda_campaign_matching_vehicle_key": null,
-          "order_type": "STOP-ENTRY",
-          "pair": "EUR_USD",
-          "positive_rotation_pessimistic_expectancy_jpy": 324.7652,
-          "repair_mode": "TP_PROVEN_HARVEST",
-          "risk_allowed": false,
-          "side": "LONG",
-          "status": "DRY_RUN_BLOCKED"
-        },
-        {
-          "blocker_codes": [
-            "RANGE_COUNTERTREND_RR_TOO_LOW",
-            "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
-          ],
-          "blocker_count": 5,
+          "blocker_count": 4,
           "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
           "method": "RANGE_ROTATION",
           "oanda_campaign_matching_vehicle_key": "GBP_JPY|SHORT|range_reversion|tp1_sl1",
@@ -3563,19 +3521,20 @@
         {
           "blocker_codes": [
             "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+            "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
             "PATTERN_REVERSAL_CHASE",
             "EXHAUSTION_RANGE_CHASE",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
           ],
-          "blocker_count": 6,
-          "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+          "blocker_count": 7,
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
           "method": "BREAKOUT_FAILURE",
           "oanda_campaign_matching_vehicle_key": null,
           "order_type": "STOP-ENTRY",
-          "pair": "AUD_JPY",
-          "positive_rotation_pessimistic_expectancy_jpy": 189.9205,
+          "pair": "EUR_USD",
+          "positive_rotation_pessimistic_expectancy_jpy": 313.0289,
           "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
           "risk_allowed": false,
           "side": "SHORT",
@@ -3584,20 +3543,65 @@
         {
           "blocker_codes": [
             "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-            "REWARD_RISK_TOO_LOW",
-            "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
-            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+            "MATRIX_REPAIR_REJECT_CONTEXT",
+            "EXHAUSTION_RANGE_CHASE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
             "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
           ],
-          "blocker_count": 6,
-          "lane_id": "trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION",
-          "method": "TREND_CONTINUATION",
-          "oanda_campaign_matching_vehicle_key": "EUR_JPY|SHORT|trend_continuation|tp1_sl1",
-          "order_type": "STOP-ENTRY",
-          "pair": "EUR_JPY",
+          "blocker_count": 7,
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+          "method": "BREAKOUT_FAILURE",
+          "oanda_campaign_matching_vehicle_key": null,
+          "order_type": "LIMIT",
+          "pair": "GBP_USD",
+          "positive_rotation_pessimistic_expectancy_jpy": 96.2767,
+          "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
+          "risk_allowed": false,
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "blocker_codes": [
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "EXHAUSTION_RANGE_CHASE",
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "blocker_count": 7,
+          "lane_id": "range_trader:AUD_JPY:LONG:RANGE_ROTATION",
+          "method": "RANGE_ROTATION",
+          "oanda_campaign_matching_vehicle_key": "AUD_JPY|LONG|range_reversion|tp0.75_sl0.75",
+          "order_type": "LIMIT",
+          "pair": "AUD_JPY",
           "positive_rotation_pessimistic_expectancy_jpy": null,
           "repair_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+          "risk_allowed": false,
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "blocker_codes": [
+            "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+            "REWARD_RISK_TOO_LOW",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "EXHAUSTION_RANGE_CHASE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+          ],
+          "blocker_count": 7,
+          "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+          "method": "RANGE_ROTATION",
+          "oanda_campaign_matching_vehicle_key": null,
+          "order_type": "LIMIT",
+          "pair": "EUR_USD",
+          "positive_rotation_pessimistic_expectancy_jpy": 6.9084,
+          "repair_mode": "TP_PROOF_COLLECTION_HARVEST",
           "risk_allowed": false,
           "side": "SHORT",
           "status": "DRY_RUN_BLOCKED"
@@ -3606,31 +3610,31 @@
       "live_ready_count": 0,
       "top_remaining_blockers": [
         {
-          "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-          "count": 11
+          "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+          "count": 9
         },
         {
-          "code": "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+          "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
           "count": 9
         },
         {
           "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-          "count": 8
-        },
-        {
-          "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-          "count": 8
+          "count": 6
         },
         {
           "code": "EXHAUSTION_RANGE_CHASE",
           "count": 5
         },
         {
-          "code": "REWARD_RISK_TOO_LOW",
-          "count": 5
+          "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+          "count": 4
         },
         {
-          "code": "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+          "code": "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
+          "count": 3
+        },
+        {
+          "code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
           "count": 3
         },
         {
@@ -3638,70 +3642,70 @@
           "count": 3
         },
         {
-          "code": "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+          "code": "LOSS_ASYMMETRY_GUARD_EXCEEDED",
           "count": 2
         },
         {
-          "code": "PATTERN_REVERSAL_CHASE",
+          "code": "MATRIX_REPAIR_REJECT_CONTEXT",
           "count": 2
         }
       ]
     },
     "top_blockers": [
       {
+        "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+        "count": 101
+      },
+      {
         "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "count": 82
-      },
-      {
-        "code": "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-        "count": 80
-      },
-      {
-        "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "count": 73
+        "count": 101
       },
       {
         "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "count": 71
+        "count": 92
+      },
+      {
+        "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "count": 88
       },
       {
         "code": "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
-        "count": 38
+        "count": 60
       },
       {
         "code": "EXHAUSTION_RANGE_CHASE",
-        "count": 37
+        "count": 44
       },
       {
-        "code": "RANGE_ROTATION_BROADER_LOCATION_CHASE",
-        "count": 27
-      },
-      {
-        "code": "SPREAD_TOO_WIDE",
-        "count": 27
-      },
-      {
-        "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "count": 26
+        "code": "RANGE_COUNTERTREND_RR_TOO_LOW",
+        "count": 39
       },
       {
         "code": "STRATEGY_NOT_ELIGIBLE",
-        "count": 23
+        "count": 39
+      },
+      {
+        "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "count": 36
+      },
+      {
+        "code": "FORECAST_WATCH_ONLY",
+        "count": 30
       }
     ]
   },
   "profit_capture_replay_repair": {
-    "active_counterfactual_profit_capture_pl_jpy": -20500.5457,
+    "active_counterfactual_profit_capture_pl_jpy": -20488.1808,
     "capture_market_close_net_jpy": -74151.8,
     "capture_take_profit_net_jpy": 48804.8,
     "clearance_condition": "execution-timing-audit must report zero post-repair live-evidence loss_closes_repair_replay_triggered with the current production-gate replay contract after TP-progress TAKE_PROFIT_MARKET / guardian repair has run on live broker truth; pre-repair historical misses remain diagnostic unless a post-repair production gate also proves an executable profit capture",
-    "counterfactual_profit_capture_delta_jpy": 18774.7972,
-    "counterfactual_profit_capture_jpy": 3830.1817,
-    "execution_timing_generated_at_utc": "2026-07-06T01:07:00.756897+00:00",
+    "counterfactual_profit_capture_delta_jpy": 18787.1621,
+    "counterfactual_profit_capture_jpy": 3842.5466,
+    "execution_timing_generated_at_utc": "2026-07-06T14:06:32.428132+00:00",
     "execution_timing_loaded": true,
     "execution_timing_window_from_utc": "2026-05-26T07:03:46.222763+00:00",
     "execution_timing_window_lookback_hours": 744.0,
-    "execution_timing_window_to_utc": "2026-07-06T01:07:00.756897+00:00",
+    "execution_timing_window_to_utc": "2026-07-06T14:06:32.428132+00:00",
     "guardian_profit_capture_inactive": false,
     "loss_close_repair_replay_block_reasons": {
       "BELOW_NOISE_FLOOR": 1
@@ -3765,13 +3769,14 @@
     "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
     "pre_repair_historical_loss_closes_profit_capture_missed": 14,
     "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
-    "raw_counterfactual_profit_capture_pl_jpy": -20544.1458,
+    "raw_counterfactual_profit_capture_pl_jpy": -20533.4113,
     "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
     "repair_replay_contract_present": true,
-    "repair_replay_counterfactual_pl_jpy": -20500.5457,
+    "repair_replay_counterfactual_pl_jpy": -20488.1808,
     "replay_repair_proved": false,
     "self_improvement_p0_codes": [
-      "EXECUTION_LEDGER_STALE"
+      "MEMORY_HEALTH_BLOCKED",
+      "TARGET_OPEN_NO_LIVE_READY_LANES"
     ],
     "self_improvement_profit_capture_context": false,
     "top_entry_quality_residual_groups": [
@@ -4261,9 +4266,9 @@
         "trade_id": "472792"
       },
       {
-        "counterfactual_delta_jpy": 606.5364,
+        "counterfactual_delta_jpy": 607.3459,
         "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-        "counterfactual_jpy": 367.0573,
+        "counterfactual_jpy": 367.8668,
         "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
         "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
         "pair": "AUD_NZD",
@@ -4278,9 +4283,9 @@
         "trade_id": "472632"
       },
       {
-        "counterfactual_delta_jpy": 777.8047,
+        "counterfactual_delta_jpy": 779.5554,
         "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-        "counterfactual_jpy": 612.6353,
+        "counterfactual_jpy": 614.386,
         "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
         "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
         "pair": "USD_CAD",
@@ -4295,9 +4300,9 @@
         "trade_id": "472318"
       },
       {
-        "counterfactual_delta_jpy": 340.6732,
+        "counterfactual_delta_jpy": 342.084,
         "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-        "counterfactual_jpy": 311.7965,
+        "counterfactual_jpy": 313.2073,
         "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
         "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
         "pair": "EUR_USD",
@@ -4312,9 +4317,9 @@
         "trade_id": "472280"
       },
       {
-        "counterfactual_delta_jpy": 1267.7279,
+        "counterfactual_delta_jpy": 1268.0124,
         "counterfactual_exit": "TP_PROGRESS_CAPTURE",
-        "counterfactual_jpy": 285.9337,
+        "counterfactual_jpy": 286.2182,
         "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
         "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
         "pair": "GBP_CHF",
@@ -4875,8 +4880,8 @@
         "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
         "pair": "USD_CAD",
         "realized_pl_jpy": -165.1694,
-        "repair_counterfactual_delta_jpy": 830.681,
-        "repair_counterfactual_jpy": 665.5116,
+        "repair_counterfactual_delta_jpy": 832.5828,
+        "repair_counterfactual_jpy": 667.4134,
         "repair_noise_floor_pips": 1.7,
         "repair_profit_pips": 7.3,
         "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -4891,8 +4896,8 @@
         "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
         "pair": "EUR_USD",
         "realized_pl_jpy": -28.8767,
-        "repair_counterfactual_delta_jpy": 388.2683,
-        "repair_counterfactual_jpy": 359.3916,
+        "repair_counterfactual_delta_jpy": 389.8944,
+        "repair_counterfactual_jpy": 361.0177,
         "repair_noise_floor_pips": 1.6,
         "repair_profit_pips": 3.7,
         "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -4907,8 +4912,8 @@
         "lane_id": "trend_trader:GBP_CHF:LONG:TREND_CONTINUATION",
         "pair": "GBP_CHF",
         "realized_pl_jpy": -981.7942,
-        "repair_counterfactual_delta_jpy": 1280.8881,
-        "repair_counterfactual_jpy": 299.0939,
+        "repair_counterfactual_delta_jpy": 1281.1857,
+        "repair_counterfactual_jpy": 299.3915,
         "repair_noise_floor_pips": 2.8,
         "repair_profit_pips": 7.5,
         "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -4923,8 +4928,8 @@
         "lane_id": "trend_trader:EUR_AUD:LONG:TREND_CONTINUATION",
         "pair": "EUR_AUD",
         "realized_pl_jpy": -6.7428,
-        "repair_counterfactual_delta_jpy": 123.4724,
-        "repair_counterfactual_jpy": 116.7296,
+        "repair_counterfactual_delta_jpy": 124.0216,
+        "repair_counterfactual_jpy": 117.2788,
         "repair_noise_floor_pips": 3.7,
         "repair_profit_pips": 5.2,
         "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
@@ -5007,22 +5012,52 @@
     "waiting_for_post_repair_sample": false
   },
   "projection_precision": {
-    "economic_precision_edges": 10,
-    "economic_precision_gaps": 5,
+    "economic_precision_edges": 20,
+    "economic_precision_gaps": 0,
     "ledger_exists": true,
     "top_edges": [
       {
-        "bucket": "_all_pairs:_all_regimes",
+        "bucket": "AUD_CHF:UNCLEAR",
         "economic_hit_rate": 1.0,
         "economic_hit_rate_wilson_lower": 0.963,
         "economic_samples": 100,
         "hit_rate": 1.0,
         "hit_rate_wilson_lower": 0.963,
-        "pair": "_all_pairs",
+        "pair": "AUD_CHF",
         "passes_economic_precision": true,
-        "regime": "_all_regimes",
+        "regime": "UNCLEAR",
         "samples": 100,
         "signal_name": "bb_squeeze_expansion_imminent",
+        "timeout_count": 0,
+        "timeout_rate": 0.0
+      },
+      {
+        "bucket": "USD_JPY:RANGE",
+        "economic_hit_rate": 1.0,
+        "economic_hit_rate_wilson_lower": 0.963,
+        "economic_samples": 100,
+        "hit_rate": 1.0,
+        "hit_rate_wilson_lower": 0.963,
+        "pair": "USD_JPY",
+        "passes_economic_precision": true,
+        "regime": "RANGE",
+        "samples": 100,
+        "signal_name": "bb_squeeze_expansion_imminent",
+        "timeout_count": 0,
+        "timeout_rate": 0.0
+      },
+      {
+        "bucket": "EUR_USD:TREND",
+        "economic_hit_rate": 1.0,
+        "economic_hit_rate_wilson_lower": 0.963,
+        "economic_samples": 100,
+        "hit_rate": 1.0,
+        "hit_rate_wilson_lower": 0.963,
+        "pair": "EUR_USD",
+        "passes_economic_precision": true,
+        "regime": "TREND",
+        "samples": 100,
+        "signal_name": "liquidity_sweep_low_down",
         "timeout_count": 0,
         "timeout_rate": 0.0
       },
@@ -5037,7 +5072,7 @@
         "passes_economic_precision": true,
         "regime": "UNCLEAR",
         "samples": 100,
-        "signal_name": "session_expansion_london",
+        "signal_name": "liquidity_sweep_low_down",
         "timeout_count": 0,
         "timeout_rate": 0.0
       },
@@ -5052,119 +5087,19 @@
         "passes_economic_precision": true,
         "regime": "_all_regimes",
         "samples": 100,
-        "signal_name": "session_expansion_london",
-        "timeout_count": 0,
-        "timeout_rate": 0.0
-      },
-      {
-        "bucket": "_all_pairs:TREND",
-        "economic_hit_rate": 0.99,
-        "economic_hit_rate_wilson_lower": 0.9455,
-        "economic_samples": 100,
-        "hit_rate": 0.99,
-        "hit_rate_wilson_lower": 0.9455,
-        "pair": "_all_pairs",
-        "passes_economic_precision": true,
-        "regime": "TREND",
-        "samples": 100,
-        "signal_name": "bb_squeeze_expansion_imminent",
-        "timeout_count": 0,
-        "timeout_rate": 0.0
-      },
-      {
-        "bucket": "_all_pairs:_all_regimes",
-        "economic_hit_rate": 0.98,
-        "economic_hit_rate_wilson_lower": 0.93,
-        "economic_samples": 100,
-        "hit_rate": 0.98,
-        "hit_rate_wilson_lower": 0.93,
-        "pair": "_all_pairs",
-        "passes_economic_precision": true,
-        "regime": "_all_regimes",
-        "samples": 100,
-        "signal_name": "session_expansion_ny",
+        "signal_name": "liquidity_sweep_low_down",
         "timeout_count": 0,
         "timeout_rate": 0.0
       }
     ],
-    "top_gaps": [
-      {
-        "bucket": "_all_pairs:UNCLEAR",
-        "economic_hit_rate": 0.43,
-        "economic_hit_rate_wilson_lower": 0.3373,
-        "economic_samples": 100,
-        "hit_rate": 1.0,
-        "hit_rate_wilson_lower": 0.918,
-        "pair": "_all_pairs",
-        "regime": "UNCLEAR",
-        "samples": 43,
-        "signal_name": "session_expansion_ny",
-        "timeout_count": 57,
-        "timeout_rate": 0.57
-      },
-      {
-        "bucket": "EUR_USD:_all_regimes",
-        "economic_hit_rate": 0.57,
-        "economic_hit_rate_wilson_lower": 0.4722,
-        "economic_samples": 100,
-        "hit_rate": 1.0,
-        "hit_rate_wilson_lower": 0.9369,
-        "pair": "EUR_USD",
-        "regime": "_all_regimes",
-        "samples": 57,
-        "signal_name": "session_expansion_ny",
-        "timeout_count": 43,
-        "timeout_rate": 0.43
-      },
-      {
-        "bucket": "EUR_USD:TREND",
-        "economic_hit_rate": 0.62,
-        "economic_hit_rate_wilson_lower": 0.5221,
-        "economic_samples": 100,
-        "hit_rate": 1.0,
-        "hit_rate_wilson_lower": 0.9417,
-        "pair": "EUR_USD",
-        "regime": "TREND",
-        "samples": 62,
-        "signal_name": "bb_squeeze_expansion_imminent",
-        "timeout_count": 38,
-        "timeout_rate": 0.38
-      },
-      {
-        "bucket": "EUR_USD:_all_regimes",
-        "economic_hit_rate": 0.62,
-        "economic_hit_rate_wilson_lower": 0.5221,
-        "economic_samples": 100,
-        "hit_rate": 1.0,
-        "hit_rate_wilson_lower": 0.9417,
-        "pair": "EUR_USD",
-        "regime": "_all_regimes",
-        "samples": 62,
-        "signal_name": "bb_squeeze_expansion_imminent",
-        "timeout_count": 38,
-        "timeout_rate": 0.38
-      },
-      {
-        "bucket": "AUD_JPY:UNCLEAR",
-        "economic_hit_rate": 0.946,
-        "economic_hit_rate_wilson_lower": 0.879,
-        "economic_samples": 92,
-        "hit_rate": 0.967,
-        "hit_rate_wilson_lower": 0.9065,
-        "pair": "AUD_JPY",
-        "regime": "UNCLEAR",
-        "samples": 90,
-        "signal_name": "liquidity_sweep_high",
-        "timeout_count": 2,
-        "timeout_rate": 0.0217
-      }
-    ]
+    "top_gaps": []
   },
   "self_improvement": {
     "p0_codes": [
-      "EXECUTION_LEDGER_STALE"
+      "MEMORY_HEALTH_BLOCKED",
+      "TARGET_OPEN_NO_LIVE_READY_LANES"
     ],
-    "p0_findings": 1,
+    "p0_findings": 2,
     "p1_findings": 8,
     "status": "SELF_IMPROVEMENT_BLOCKED"
   },

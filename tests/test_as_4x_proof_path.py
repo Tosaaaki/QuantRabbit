@@ -8,6 +8,42 @@ from tools import build_as_live_ready_evidence_loop as evidence_loop
 
 
 class As4xProofPathTests(unittest.TestCase):
+    def test_as_board_overwrites_stale_order_intent_timestamp_and_total_lanes(self) -> None:
+        firepower = evidence_loop._build_firepower_board(
+            generated_at="2026-07-06T15:04:28Z",
+            order_intents={
+                "generated_at_utc": "2026-07-06T15:02:44.070184+00:00",
+                "results": [],
+            },
+            daily={
+                "funding_adjusted_equity": 183428.3742,
+                "required_calendar_daily_return_funding_adjusted": 5.898554,
+            },
+            broker={},
+            blocked={
+                "market_close_trade_ids": set(),
+                "residual_trade_ids": set(),
+                "residual_keys": set(),
+                "market_close_family_key": ("EUR_USD", "LONG", "BREAKOUT_FAILURE"),
+            },
+            p0_decomposition={"rows": []},
+        )
+
+        board = evidence_loop._update_as_board(
+            generated_at="2026-07-06T15:04:28Z",
+            board={
+                "order_intents_generated_at_utc": "2026-07-05T17:17:54.720362+00:00",
+                "total_lanes": 73,
+            },
+            daily={},
+            p0_decomposition={"rows": [], "dependency_graph": []},
+            firepower=firepower,
+            proof_queue={"queue": []},
+        )
+
+        self.assertEqual(board["order_intents_generated_at_utc"], "2026-07-06T15:02:44.070184+00:00")
+        self.assertEqual(board["total_lanes"], 0)
+
     def test_historical_or_negative_bidask_replay_is_not_live_grade_proof(self) -> None:
         missing = evidence_loop._missing_proof_map(
             {

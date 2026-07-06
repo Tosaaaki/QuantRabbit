@@ -1,18 +1,18 @@
 # Memory Health Report
 
-- Generated at UTC: `2026-07-06T01:58:22.891057+00:00`
-- Status: `MEMORY_HEALTH_PASS`
+- Generated at UTC: `2026-07-06T15:02:44.342933+00:00`
+- Status: `MEMORY_HEALTH_BLOCKED`
 
 ## Layers
 
-- `short_term`: `PASS`
+- `short_term`: `BLOCK`
 - `medium_term`: `PASS`
 - `long_term`: `PASS`
 - `position_memory`: `PASS`
 
 ## Issues
 
-- None
+- `BLOCK` `short_term` `SHORT_ORDER_INTENTS_MEMORY_BLOCKERS`: order_intents contains 2 memory/telemetry blocker(s)
 
 ## Contract
 

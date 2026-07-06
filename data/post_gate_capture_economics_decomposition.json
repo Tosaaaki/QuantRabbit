@@ -48,13 +48,9 @@
       "470859",
       "470898",
       "470904",
-      "470945",
-      "470951",
       "470971",
       "471008",
       "471020",
-      "471061",
-      "471077",
       "471213",
       "471216",
       "471219",
@@ -63,9 +59,6 @@
       "471923",
       "471979",
       "472037",
-      "472149",
-      "472222",
-      "472230",
       "472819"
     ],
     "residual_family_trade_ids": [
@@ -97,31 +90,15 @@
       "472952"
     ],
     "unknown_unverified_gateway_close_trade_ids": [
-      "470266",
-      "470279",
       "470348",
-      "470353",
-      "470356",
       "470359",
       "470362",
       "470365",
       "470368",
-      "470395",
       "470400",
       "470403",
       "470415",
       "470427",
-      "470440",
-      "470446",
-      "470461",
-      "470464",
-      "470468",
-      "470494",
-      "470497",
-      "470500",
-      "470503",
-      "470519",
-      "470529",
       "470644",
       "470655",
       "470713",
@@ -135,14 +112,7 @@
       "470859",
       "470898",
       "470904",
-      "470945",
-      "470951",
       "470971",
-      "471008",
-      "471061",
-      "471077",
-      "471089",
-      "471174",
       "471232",
       "471255",
       "471414",
@@ -154,92 +124,53 @@
       "472071",
       "472075",
       "472088",
-      "472094",
-      "472109",
-      "472149",
-      "472156",
-      "472161",
-      "472174",
-      "472190",
-      "472193",
-      "472208",
-      "472222",
-      "472230",
-      "472233",
-      "472252",
-      "472280",
-      "472312",
-      "472318",
-      "472322",
-      "472336",
-      "472352",
-      "472380",
-      "472427",
-      "472445",
-      "472450",
-      "472458",
-      "472497",
-      "472530",
-      "472550",
-      "472590",
-      "472632",
-      "472655",
-      "472667",
-      "472683",
-      "472692",
-      "472716",
-      "472743",
-      "472819",
-      "472840",
-      "472848",
-      "472861",
-      "472876"
+      "472094"
     ]
   },
   "capture_economics_overall": {
-    "avg_loss_jpy": 1063.9,
+    "avg_loss_jpy": 1015.3,
     "avg_win_jpy": 418.0,
-    "breakeven_payoff_at_win_rate": 0.672,
-    "expectancy_jpy_per_trade": -177.4,
-    "losses": 92,
-    "net_jpy": -40616.9,
-    "payoff_ratio": 0.393,
-    "trades": 229,
-    "win_rate": 0.5983,
+    "breakeven_payoff_at_win_rate": 0.708,
+    "expectancy_jpy_per_trade": -176.2,
+    "losses": 97,
+    "net_jpy": -41225.9,
+    "payoff_ratio": 0.412,
+    "trades": 234,
+    "win_rate": 0.5855,
     "wins": 137
   },
   "capture_economics_status": "NEGATIVE_EXPECTANCY",
-  "generated_at_utc": "2026-07-06T10:11:23Z",
+  "generated_at_utc": "2026-07-06T15:11:03Z",
   "live_side_effects": [],
   "mode": "read_only_post_gate_capture_economics_decomposition",
   "negative_expectancy_active_should_remain": true,
   "raw_broker_closed_context": {
-    "avg_loss_jpy": 1068.1966,
+    "avg_loss_jpy": 1058.7265,
     "avg_win_jpy": 648.3473,
-    "expectancy_jpy_per_trade": -12.3859,
-    "losses": 97,
+    "expectancy_jpy_per_trade": -12.8908,
+    "losses": 98,
     "max_loss_jpy": -11986.9276,
-    "net_jpy": -3121.243,
-    "profit_factor": 0.9699,
-    "trades": 252,
-    "win_rate": 0.6151,
+    "net_jpy": -3261.3702,
+    "profit_factor": 0.9686,
+    "trades": 253,
+    "win_rate": 0.6126,
     "wins": 155
   },
   "reason": "The accepted capture_economics artifact remains NEGATIVE_EXPECTANCY. Positive TP-only or post-filter scopes are proof-pack inputs only and do not create live permission.",
   "scopes": [
     {
-      "avg_loss_jpy": 1063.8981,
+      "avg_loss_jpy": 1015.3366,
       "avg_win_jpy": 417.9691,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -177.3662,
-      "losses": 92,
+      "expectancy_jpy_per_trade": -176.179,
+      "losses": 97,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -40616.8595,
+      "net_jpy": -41225.88,
       "note": "Trader-attributed realized ledger before post-gate exclusions; manual/tagless broker closes are excluded by attribution.",
       "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
-      "profit_factor": 0.585,
+      "profit_factor": 0.5814,
       "scope": "raw_realized_system_ledger",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -307,23 +238,23 @@
           "trade_id": "471216"
         }
       ],
-      "trades": 229,
-      "win_rate": 0.5983,
+      "trades": 234,
+      "win_rate": 0.5855,
       "wins": 137
     },
     {
-      "avg_loss_jpy": 1063.8981,
+      "avg_loss_jpy": 1015.3366,
       "avg_win_jpy": 417.9691,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -177.3662,
-      "losses": 92,
+      "expectancy_jpy_per_trade": -176.179,
+      "losses": 97,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -40616.8595,
+      "net_jpy": -41225.88,
       "note": "Explicit EUR_USD 472987 manual exclusion applied; no closed 472987 row exists.",
       "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
-      "profit_factor": 0.585,
+      "profit_factor": 0.5814,
       "scope": "manual_excluded_ledger",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -391,23 +322,23 @@
           "trade_id": "471216"
         }
       ],
-      "trades": 229,
-      "win_rate": 0.5983,
+      "trades": 234,
+      "win_rate": 0.5855,
       "wins": 137
     },
     {
-      "avg_loss_jpy": 973.9643,
+      "avg_loss_jpy": 926.622,
       "avg_win_jpy": 417.9691,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -114.9783,
-      "losses": 85,
+      "expectancy_jpy_per_trade": -115.1287,
+      "losses": 90,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -25525.193,
+      "net_jpy": -26134.2135,
       "note": "Manual exclusion plus current MARKET_CLOSE_LEAK_FAMILY_BLOCKED trade IDs removed.",
       "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
-      "profit_factor": 0.6917,
+      "profit_factor": 0.6866,
       "scope": "manual_excluded_plus_market_close_leak_family_blocked_excluded",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -475,23 +406,23 @@
           "trade_id": "470427"
         }
       ],
-      "trades": 222,
-      "win_rate": 0.6171,
+      "trades": 227,
+      "win_rate": 0.6035,
       "wins": 137
     },
     {
-      "avg_loss_jpy": 1114.3622,
+      "avg_loss_jpy": 1044.4637,
       "avg_win_jpy": 417.9691,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -80.2273,
-      "losses": 66,
+      "expectancy_jpy_per_trade": -81.2267,
+      "losses": 71,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -16286.1321,
+      "net_jpy": -16895.1526,
       "note": "Manual exclusion plus month-scale residual-family blocked trade IDs removed.",
       "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
-      "profit_factor": 0.7786,
+      "profit_factor": 0.7722,
       "scope": "manual_excluded_plus_residual_family_blocked_excluded",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -559,23 +490,23 @@
           "trade_id": "470427"
         }
       ],
-      "trades": 203,
-      "win_rate": 0.6749,
+      "trades": 208,
+      "win_rate": 0.6587,
       "wins": 137
     },
     {
-      "avg_loss_jpy": 990.7837,
+      "avg_loss_jpy": 922.8946,
       "avg_win_jpy": 417.9691,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -6.0942,
-      "losses": 59,
+      "expectancy_jpy_per_trade": -8.9726,
+      "losses": 64,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -1194.4656,
+      "net_jpy": -1803.4861,
       "note": "Manual exclusion plus both non-permission historical filters.",
       "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
-      "profit_factor": 0.9796,
+      "profit_factor": 0.9695,
       "scope": "manual_excluded_plus_both_market_close_leak_and_residual_family_filters",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -643,25 +574,41 @@
           "trade_id": "471414"
         }
       ],
-      "trades": 196,
-      "win_rate": 0.699,
+      "trades": 201,
+      "win_rate": 0.6816,
       "wins": 137
     },
     {
-      "avg_loss_jpy": 233.2207,
+      "avg_loss_jpy": 248.185,
       "avg_win_jpy": 426.9699,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": 380.4776,
-      "losses": 10,
-      "max_loss_jpy": -546.0,
-      "net_jpy": 54027.8164,
+      "expectancy_jpy_per_trade": 330.5192,
+      "losses": 22,
+      "max_loss_jpy": -981.7942,
+      "net_jpy": 50899.9535,
       "note": "Manual exclusion plus existing filters plus this run's BAN_FAMILY / MARKET_CLOSE_PATH_BLOCK containment rows. Non-negative here is containment, not permission.",
       "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
-      "profit_factor": 24.166,
+      "profit_factor": 10.3222,
       "scope": "manual_excluded_plus_existing_filters_plus_new_family_containment",
       "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_CHF",
+          "realized_pl_jpy": -981.7942,
+          "side": "LONG",
+          "trade_id": "472222"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "realized_pl_jpy": -672.0,
+          "side": "SHORT",
+          "trade_id": "470945"
+        },
         {
           "exit_reason": "STOP_LOSS_ORDER",
           "method": "BREAKOUT_FAILURE",
@@ -679,6 +626,14 @@
           "trade_id": "471000"
         },
         {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "realized_pl_jpy": -371.194,
+          "side": "SHORT",
+          "trade_id": "470951"
+        },
+        {
           "exit_reason": "STOP_LOSS_ORDER",
           "method": "RANGE_ROTATION",
           "pair": "USD_JPY",
@@ -687,48 +642,24 @@
           "trade_id": "472792"
         },
         {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "realized_pl_jpy": -217.0,
+          "side": "SHORT",
+          "trade_id": "471077"
+        },
+        {
           "exit_reason": "STOP_LOSS_ORDER",
           "method": "BREAKOUT_FAILURE",
           "pair": "AUD_JPY",
           "realized_pl_jpy": -173.0,
           "side": "LONG",
           "trade_id": "470276"
-        },
-        {
-          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "USD_CAD",
-          "realized_pl_jpy": -172.863,
-          "side": "LONG",
-          "trade_id": "472109"
-        },
-        {
-          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "USD_CAD",
-          "realized_pl_jpy": -165.1694,
-          "side": "LONG",
-          "trade_id": "472318"
-        },
-        {
-          "exit_reason": "STOP_LOSS_ORDER",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "AUD_JPY",
-          "realized_pl_jpy": -158.0,
-          "side": "LONG",
-          "trade_id": "470261"
-        },
-        {
-          "exit_reason": "STOP_LOSS_ORDER",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "EUR_USD",
-          "realized_pl_jpy": -137.9884,
-          "side": "LONG",
-          "trade_id": "470270"
         }
       ],
-      "trades": 142,
-      "win_rate": 0.9296,
+      "trades": 154,
+      "win_rate": 0.8571,
       "wins": 132
     },
     {
@@ -835,18 +766,18 @@
       "wins": 24
     },
     {
-      "avg_loss_jpy": 1086.6462,
-      "avg_win_jpy": 222.6069,
+      "avg_loss_jpy": 1584.2928,
+      "avg_win_jpy": 30.1535,
       "can_clear_negative_expectancy_active": false,
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
-      "expectancy_jpy_per_trade": -762.7073,
-      "losses": 73,
+      "expectancy_jpy_per_trade": -1538.1658,
+      "losses": 34,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -73982.6065,
+      "net_jpy": -53835.8033,
       "note": "Market-close rows reconciled without durable local position-execution receipt.",
       "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
-      "profit_factor": 0.0674,
+      "profit_factor": 0.0006,
       "scope": "unknown_unverified_gateway_close_segments",
       "trade_ids_contributing_most_to_loss": [
         {
@@ -864,14 +795,6 @@
           "realized_pl_jpy": -8378.521,
           "side": "LONG",
           "trade_id": "470730"
-        },
-        {
-          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "GBP_USD",
-          "realized_pl_jpy": -3688.6643,
-          "side": "LONG",
-          "trade_id": "471008"
         },
         {
           "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
@@ -912,11 +835,19 @@
           "realized_pl_jpy": -2642.1057,
           "side": "SHORT",
           "trade_id": "471414"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2333.8215,
+          "side": "LONG",
+          "trade_id": "471817"
         }
       ],
-      "trades": 97,
-      "win_rate": 0.2474,
-      "wins": 24
+      "trades": 35,
+      "win_rate": 0.0286,
+      "wins": 1
     }
   ],
   "source_artifacts": [

@@ -1,6 +1,6 @@
 # Profitability Acceptance Blocker Reconciliation
 
-- Generated: `2026-07-06T09:42:39Z`
+- Generated: `2026-07-06T15:11:03Z`
 - Status: `PROFITABILITY_ACCEPTANCE_BLOCKED`
 - Normal routing: `BLOCKED`
 - A/S LIVE_READY path exists: `False`

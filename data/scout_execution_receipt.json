@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-06T14:39:46Z",
+  "generated_at_utc": "2026-07-06T15:07:56Z",
   "mode": "operator_approved_scout_execution_receipt",
   "candidate_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
   "candidate": {
@@ -19,7 +19,7 @@
   "execution_decision": {
     "execution_state": "BLOCKED",
     "order_sent": false,
-    "rejection_reason": "APPROVAL_MISSING",
+    "rejection_reason": "STALE_CANDIDATE_AND_APPROVAL_MISSING",
     "broker_transaction_id": null,
     "gateway_receipt": null,
     "proof_collection_receipt": null,
@@ -38,14 +38,14 @@
     "do_not_close_positions": true,
     "do_not_cancel_existing_orders": true,
     "do_not_modify_eurusd_472987": true,
-    "do_not_modify_tp_472996": true,
+    "do_not_modify_tp_472998": true,
     "do_not_push_origin_main": true
   },
   "preflight": {
     "short_circuit_gate": "operator_approval",
-    "fresh_broker_snapshot": "NOT_RUN_APPROVAL_MISSING",
-    "fresh_aud_jpy_quote": "NOT_RUN_APPROVAL_MISSING",
-    "spread_acceptable": "NOT_RUN_APPROVAL_MISSING",
+    "fresh_broker_snapshot": "PASS_READ_ONLY_2026-07-06T15:00:47.452920+00:00",
+    "fresh_aud_jpy_quote": "REFERENCE_ONLY_2026-07-06T15:00:47.339013+00:00",
+    "spread_acceptable": "NOT_RUN_STALE_CANDIDATE",
     "risk_engine_pass": false,
     "live_order_gateway_pass": false,
     "gpt_verifier_pass": false,
@@ -54,17 +54,18 @@
     "max_loss_lte_200_jpy": "NOT_RECALCULATED_APPROVAL_MISSING",
     "units_lte_1000": true,
     "order_type_limit": true,
-    "candidate_id_exact": true,
-    "last_transaction_id_expected": "472996",
+    "candidate_id_exact": false,
+    "candidate_id_status": "ABSENT_FROM_CURRENT_ORDER_INTENTS",
+    "last_transaction_id_expected": "472998",
     "last_transaction_id_source": "data/broker_snapshot.json"
   },
   "local_broker_evidence": {
     "source": "data/broker_snapshot.json",
-    "snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
-    "last_transaction_id": "472996",
-    "aud_jpy_quote_timestamp_utc": "2026-07-06T08:54:03.755665+00:00",
-    "aud_jpy_bid": 112.455,
-    "aud_jpy_ask": 112.471,
+    "snapshot_fetched_at_utc": "2026-07-06T15:00:47.452920+00:00",
+    "last_transaction_id": "472998",
+    "aud_jpy_quote_timestamp_utc": "2026-07-06T15:00:47.339013+00:00",
+    "aud_jpy_bid": 112.644,
+    "aud_jpy_ask": 112.66,
     "quote_is_fresh_for_execution": false,
     "manual_eurusd_472987": {
       "present": true,
@@ -74,19 +75,19 @@
       "pair": "EUR_USD",
       "side": "SHORT",
       "units": 30000,
-      "take_profit": 1.13968,
+      "take_profit": 1.1361,
       "stop_loss": null,
       "auto_tp_modify_allowed": false,
       "auto_sl_attach_allowed": false,
       "loss_side_auto_close_allowed": false,
       "same_theme_auto_add_allowed": false
     },
-    "tp_472996": {
+    "tp_472998": {
       "present": true,
       "trade_id": "472987",
       "order_type": "TAKE_PROFIT",
       "state": "PENDING",
-      "price": 1.13968,
+      "price": 1.1361,
       "untouched_by_this_run": true
     }
   },

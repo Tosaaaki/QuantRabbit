@@ -1,25 +1,25 @@
 # Capture Economics Report
 
-- Generated at UTC: `2026-07-06T01:57:35.731924+00:00`
+- Generated at UTC: `2026-07-06T15:00:25.989242+00:00`
 - Status: `NEGATIVE_EXPECTANCY`
-- Trades (trader-attributed, realized): `229`
-- Win rate: `59.8%`
-- Avg win / avg loss: `418.0` / `1063.9` JPY
-- Payoff ratio: `0.393` (breakeven at win rate: `0.672`)
-- Expectancy: `-177.4` JPY/trade, net `-40616.9` JPY
+- Trades (trader-attributed, realized): `234`
+- Win rate: `58.6%`
+- Avg win / avg loss: `418.0` / `1015.3` JPY
+- Payoff ratio: `0.412` (breakeven at win rate: `0.708`)
+- Expectancy: `-176.2` JPY/trade, net `-41225.9` JPY
 
 ## Repair Summary
 
 - Dominant loss exit: `MARKET_ORDER_TRADE_CLOSE` net `-74151.8` JPY
 - Strongest positive exit: `TAKE_PROFIT_ORDER` net `48804.8` JPY
-- Payoff gap to breakeven: `0.279`
+- Payoff gap to breakeven: `0.296`
 
 ## Segment Repair Priorities
 
 | pair | side | method | priority | n | TP n/gap | market-close net | net |
 |---|---|---|---|---|---|---|---|
-| `EUR_USD` | `LONG` | `BREAKOUT_FAILURE` | `PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK` | 30 | 20/0 | -15091.7 | -4056.9 |
-| `GBP_USD` | `LONG` | `BREAKOUT_FAILURE` | `COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK` | 23 | 10/10 | -22478.7 | -17245.2 |
+| `EUR_USD` | `LONG` | `BREAKOUT_FAILURE` | `PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK` | 32 | 20/0 | -15091.7 | -4288.9 |
+| `GBP_USD` | `LONG` | `BREAKOUT_FAILURE` | `COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK` | 24 | 10/10 | -22478.7 | -17385.3 |
 | `EUR_USD` | `SHORT` | `BREAKOUT_FAILURE` | `COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK` | 36 | 17/3 | -7636.3 | 3705.2 |
 | `EUR_USD` | `LONG` | `TREND_CONTINUATION` | `COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK` | 4 | 2/18 | -3307.4 | -2768.4 |
 | `AUD_JPY` | `LONG` | `BREAKOUT_FAILURE` | `COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK` | 13 | 2/18 | -3077.3 | -3240.2 |
@@ -33,7 +33,7 @@
 
 ## Action Items
 
-- repair exit payoff asymmetry before treating the daily target as arithmetically reachable: payoff_ratio=0.393 breakeven=0.672
+- repair exit payoff asymmetry before treating the daily target as arithmetically reachable: payoff_ratio=0.412 breakeven=0.708
 - contain MARKET_ORDER_TRADE_CLOSE drag (-74151.8 JPY): prefer attached TP, TP-rebalance, profit-side TAKE_PROFIT_MARKET, and require hard Gate A/B evidence for loss-side CLOSE
 - preserve profitable TAKE_PROFIT_ORDER behavior while repairing negative exit buckets
 
@@ -43,14 +43,14 @@
 |---|---|---|---|---|---|
 | `MARKET_ORDER_MARGIN_CLOSEOUT` | 4 | 0% | 0.0 | 2358.4 | -9433.7 |
 | `MARKET_ORDER_TRADE_CLOSE` | 98 | 24% | 222.6 | 1074.2 | -74151.8 |
-| `STOP_LOSS_ORDER` | 31 | 55% | 183.2 | 639.3 | -5836.2 |
+| `STOP_LOSS_ORDER` | 36 | 47% | 183.2 | 503.1 | -6445.2 |
 | `TAKE_PROFIT_ORDER` | 96 | 100% | 508.4 | 0.0 | 48804.8 |
 
 ## By ISO week
 
 | week | n | win% | payoff | net |
 |---|---|---|---|---|
-| `2026-W19` | 48 | 48% | 1.041 | -532.2 |
+| `2026-W19` | 53 | 43% | 1.193 | -1141.2 |
 | `2026-W20` | 63 | 56% | 0.238 | -35463.3 |
 | `2026-W21` | 20 | 95% | 0.65 | 7950.3 |
 | `2026-W22` | 12 | 92% | 0.073 | -656.7 |

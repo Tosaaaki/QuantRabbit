@@ -788,6 +788,77 @@
       "wins": 0
     },
     {
+      "avg_loss_jpy": 206.247,
+      "avg_win_jpy": null,
+      "can_create_live_permission": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -206.247,
+      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "largest_losses": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -454.9862,
+          "side": "LONG",
+          "trade_id": "471000",
+          "ts_utc": "2026-05-13T03:16:24.384717922Z"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -137.9884,
+          "side": "LONG",
+          "trade_id": "470270",
+          "ts_utc": "2026-05-06T17:44:04.096680205Z"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -128.5604,
+          "side": "LONG",
+          "trade_id": "470229",
+          "ts_utc": "2026-05-06T16:52:01.517044439Z"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -103.4529,
+          "side": "LONG",
+          "trade_id": "470247",
+          "ts_utc": "2026-05-06T16:58:14.699900411Z"
+        }
+      ],
+      "largest_wins": [],
+      "losses": 4,
+      "max_loss_jpy": -454.9862,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -824.9879,
+      "pair": "EUR_USD",
+      "profit_factor": 0.0,
+      "side": "LONG",
+      "trade_ids": [
+        "470229",
+        "470247",
+        "470270",
+        "471000"
+      ],
+      "trades": 4,
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
       "avg_loss_jpy": 299.0,
       "avg_win_jpy": null,
       "can_create_live_permission": false,
@@ -829,53 +900,6 @@
       "trade_ids": [
         "470984",
         "470992"
-      ],
-      "trades": 2,
-      "win_rate": 0.0,
-      "wins": 0
-    },
-    {
-      "avg_loss_jpy": 296.4873,
-      "avg_win_jpy": null,
-      "can_create_live_permission": false,
-      "exit_reason": "STOP_LOSS_ORDER",
-      "expectancy_jpy_per_trade": -296.4873,
-      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
-      "largest_losses": [
-        {
-          "exit_reason": "STOP_LOSS_ORDER",
-          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
-          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "EUR_USD",
-          "realized_pl_jpy": -454.9862,
-          "side": "LONG",
-          "trade_id": "471000",
-          "ts_utc": "2026-05-13T03:16:24.384717922Z"
-        },
-        {
-          "exit_reason": "STOP_LOSS_ORDER",
-          "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
-          "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
-          "method": "BREAKOUT_FAILURE",
-          "pair": "EUR_USD",
-          "realized_pl_jpy": -137.9884,
-          "side": "LONG",
-          "trade_id": "470270",
-          "ts_utc": "2026-05-06T17:44:04.096680205Z"
-        }
-      ],
-      "largest_wins": [],
-      "losses": 2,
-      "max_loss_jpy": -454.9862,
-      "method": "BREAKOUT_FAILURE",
-      "net_jpy": -592.9746,
-      "pair": "EUR_USD",
-      "profit_factor": 0.0,
-      "side": "LONG",
-      "trade_ids": [
-        "470270",
-        "471000"
       ],
       "trades": 2,
       "win_rate": 0.0,
@@ -1081,6 +1105,53 @@
       "wins": 0
     },
     {
+      "avg_loss_jpy": 118.44,
+      "avg_win_jpy": null,
+      "can_create_live_permission": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -118.44,
+      "family_id": "EUR_JPY|LONG|TREND_CONTINUATION|STOP_LOSS_ORDER",
+      "largest_losses": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_JPY|LONG|TREND_CONTINUATION|STOP_LOSS_ORDER",
+          "lane_id": "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_JPY",
+          "realized_pl_jpy": -129.72,
+          "side": "LONG",
+          "trade_id": "470235",
+          "ts_utc": "2026-05-06T16:57:01.922567340Z"
+        },
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "EUR_JPY|LONG|TREND_CONTINUATION|STOP_LOSS_ORDER",
+          "lane_id": "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_JPY",
+          "realized_pl_jpy": -107.16,
+          "side": "LONG",
+          "trade_id": "470243",
+          "ts_utc": "2026-05-06T16:55:10.617618517Z"
+        }
+      ],
+      "largest_wins": [],
+      "losses": 2,
+      "max_loss_jpy": -129.72,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -236.88,
+      "pair": "EUR_JPY",
+      "profit_factor": 0.0,
+      "side": "LONG",
+      "trade_ids": [
+        "470243",
+        "470235"
+      ],
+      "trades": 2,
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
       "avg_loss_jpy": 202.8305,
       "avg_win_jpy": null,
       "can_create_live_permission": false,
@@ -1145,6 +1216,41 @@
       "side": "SHORT",
       "trade_ids": [
         "470904"
+      ],
+      "trades": 1,
+      "win_rate": 0.0,
+      "wins": 0
+    },
+    {
+      "avg_loss_jpy": 140.1272,
+      "avg_win_jpy": null,
+      "can_create_live_permission": false,
+      "exit_reason": "STOP_LOSS_ORDER",
+      "expectancy_jpy_per_trade": -140.1272,
+      "family_id": "GBP_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "largest_losses": [
+        {
+          "exit_reason": "STOP_LOSS_ORDER",
+          "family_id": "GBP_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+          "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -140.1272,
+          "side": "LONG",
+          "trade_id": "470226",
+          "ts_utc": "2026-05-06T16:02:13.218974220Z"
+        }
+      ],
+      "largest_wins": [],
+      "losses": 1,
+      "max_loss_jpy": -140.1272,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -140.1272,
+      "pair": "GBP_USD",
+      "profit_factor": 0.0,
+      "side": "LONG",
+      "trade_ids": [
+        "470226"
       ],
       "trades": 1,
       "win_rate": 0.0,
@@ -4555,7 +4661,7 @@
       "wins": 20
     }
   ],
-  "generated_at_utc": "2026-07-06T09:42:39Z",
+  "generated_at_utc": "2026-07-06T15:11:03Z",
   "largest_loss_trades": [
     {
       "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
@@ -4788,7 +4894,7 @@
     "auto_sl_attach_allowed": false,
     "auto_tp_modify_allowed": false,
     "automation_blocked": true,
-    "current_manual_tp_order_id": "472996",
+    "current_manual_tp_order_id": "472998",
     "current_tp_provenance_classification": "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
     "expected_manual_tp_order_id": "472988",
     "expected_tp_order_present": false,
@@ -4801,12 +4907,12 @@
     "position_present": true,
     "position_side": "SHORT",
     "position_units": 30000,
-    "position_unrealized_pl_jpy": -6828.0027,
+    "position_unrealized_pl_jpy": -6832.5057,
     "same_theme_auto_add_allowed": false,
     "system_occupancy_counted": null,
     "system_pl_counted": false,
-    "take_profit_price": 1.13968,
-    "tp_create_time": "2026-07-06T02:07:40.776714619Z",
+    "take_profit_price": 1.1361,
+    "tp_create_time": "2026-07-06T09:35:00.713297492Z",
     "tp_order_present": true,
     "tp_replacement_chain": [
       {
@@ -4854,26 +4960,47 @@
       {
         "auto_modify_allowed": false,
         "automation_usable": false,
-        "cancel_request_id": null,
-        "cancel_transaction_id": null,
+        "cancel_request_id": "151595018329453110",
+        "cancel_transaction_id": "472997",
         "classification_reason": "No local QuantRabbit gateway receipt/client extension proves this TP mutation. Because the parent trade is operator-manual, the order is protected and automation-usable=false.",
         "created_at_utc": "2026-07-06T02:07:40.776714619Z",
         "event_type": "PROTECTION_CREATED",
-        "lifecycle": "ACTIVE_BROKER_TRUTH",
+        "lifecycle": "REPLACED",
         "local_gateway_receipt_count": 0,
         "order_id": "472996",
         "price": 1.13968,
         "provenance_classification": "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
         "reason": "REPLACEMENT",
-        "replaced_by_order_id": null,
+        "replaced_by_order_id": "472998",
         "replaces_order_id": "472994",
         "request_id": "205638101282415246",
         "source": "oanda",
         "trade_id": "472987",
         "user_id": 13679149
+      },
+      {
+        "auto_modify_allowed": false,
+        "automation_usable": false,
+        "cancel_request_id": null,
+        "cancel_transaction_id": null,
+        "classification_reason": "No local QuantRabbit gateway receipt/client extension proves this TP mutation. Because the parent trade is operator-manual, the order is protected and automation-usable=false.",
+        "created_at_utc": "2026-07-06T09:35:00.713297492Z",
+        "event_type": "PROTECTION_CREATED",
+        "lifecycle": "ACTIVE_BROKER_TRUTH",
+        "local_gateway_receipt_count": 0,
+        "order_id": "472998",
+        "price": 1.1361,
+        "provenance_classification": "PROVENANCE_UNKNOWN_BLOCK_AUTOMATION",
+        "reason": "REPLACEMENT",
+        "replaced_by_order_id": null,
+        "replaces_order_id": "472996",
+        "request_id": "151595018329453110",
+        "source": "oanda",
+        "trade_id": "472987",
+        "user_id": 13679149
       }
     ],
-    "tp_replaces_order_id": "472994",
+    "tp_replaces_order_id": "472996",
     "untouched_by_this_run": true
   },
   "mode": "read_only_post_gate_expectancy_gap_trace",
@@ -6202,20 +6329,20 @@
     "can_create_live_permission": false,
     "definition": "Trader-attributed realized rows excluding the operator-manual EUR_USD trade, current MARKET_CLOSE_LEAK_FAMILY_BLOCKED trade IDs, and current month-scale residual-family blocked trade IDs.",
     "metrics": {
-      "avg_loss_jpy": 990.7837,
+      "avg_loss_jpy": 922.8946,
       "avg_win_jpy": 417.9691,
-      "expectancy_jpy_per_trade": -6.0942,
-      "losses": 59,
+      "expectancy_jpy_per_trade": -8.9726,
+      "losses": 64,
       "max_loss_jpy": -11986.9276,
-      "net_jpy": -1194.4656,
-      "profit_factor": 0.9796,
-      "trades": 196,
-      "win_rate": 0.699,
+      "net_jpy": -1803.4861,
+      "profit_factor": 0.9695,
+      "trades": 201,
+      "win_rate": 0.6816,
       "wins": 137
     },
     "name": "manual_excluded_plus_both_market_close_leak_and_residual_family_filters",
     "negative_expectancy_active_should_remain": true,
-    "remaining_gap_to_zero_jpy": 1194.4656
+    "remaining_gap_to_zero_jpy": 1803.4861
   },
   "source_artifacts": [
     "data/execution_ledger.db",
@@ -6711,6 +6838,17 @@
     },
     {
       "exit_reason": "STOP_LOSS_ORDER",
+      "family_id": "GBP_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_USD",
+      "realized_pl_jpy": -140.1272,
+      "side": "LONG",
+      "trade_id": "470226",
+      "ts_utc": "2026-05-06T16:02:13.218974220Z"
+    },
+    {
+      "exit_reason": "STOP_LOSS_ORDER",
       "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
       "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
       "method": "BREAKOUT_FAILURE",
@@ -6743,6 +6881,28 @@
       "ts_utc": "2026-05-07T00:11:48.346351904Z"
     },
     {
+      "exit_reason": "STOP_LOSS_ORDER",
+      "family_id": "EUR_JPY|LONG|TREND_CONTINUATION|STOP_LOSS_ORDER",
+      "lane_id": "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_JPY",
+      "realized_pl_jpy": -129.72,
+      "side": "LONG",
+      "trade_id": "470235",
+      "ts_utc": "2026-05-06T16:57:01.922567340Z"
+    },
+    {
+      "exit_reason": "STOP_LOSS_ORDER",
+      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "realized_pl_jpy": -128.5604,
+      "side": "LONG",
+      "trade_id": "470229",
+      "ts_utc": "2026-05-06T16:52:01.517044439Z"
+    },
+    {
       "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
       "family_id": "GBP_USD|LONG|BREAKOUT_FAILURE|MARKET_ORDER_TRADE_CLOSE",
       "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
@@ -6763,6 +6923,28 @@
       "side": "SHORT",
       "trade_id": "472149",
       "ts_utc": "2026-06-11T12:02:47.078233631Z"
+    },
+    {
+      "exit_reason": "STOP_LOSS_ORDER",
+      "family_id": "EUR_JPY|LONG|TREND_CONTINUATION|STOP_LOSS_ORDER",
+      "lane_id": "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_JPY",
+      "realized_pl_jpy": -107.16,
+      "side": "LONG",
+      "trade_id": "470243",
+      "ts_utc": "2026-05-06T16:55:10.617618517Z"
+    },
+    {
+      "exit_reason": "STOP_LOSS_ORDER",
+      "family_id": "EUR_USD|LONG|BREAKOUT_FAILURE|STOP_LOSS_ORDER",
+      "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "realized_pl_jpy": -103.4529,
+      "side": "LONG",
+      "trade_id": "470247",
+      "ts_utc": "2026-05-06T16:58:14.699900411Z"
     },
     {
       "exit_reason": "MARKET_ORDER_TRADE_CLOSE",

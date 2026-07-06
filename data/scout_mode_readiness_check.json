@@ -1,17 +1,19 @@
 {
-  "generated_at_utc": "2026-07-06T14:39:46Z",
+  "generated_at_utc": "2026-07-06T15:07:56Z",
   "mode": "scout_mode_readiness_check",
   "candidate": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
   "classification_values": [
     "NOT_APPROVED",
+    "STALE_CURRENT_PACKET",
+    "REJECTED_CURRENT_PACKET",
     "APPROVAL_REQUIRED",
-    "READY_FOR_OPERATOR_APPROVAL",
+    "STALE_NOT_READY_FOR_OPERATOR_APPROVAL",
     "BLOCKED"
   ],
   "readiness": {
-    "current": "NOT_APPROVED",
-    "contract_state": "READY_FOR_OPERATOR_APPROVAL",
-    "next_required": "APPROVAL_REQUIRED",
+    "current": "STALE_CURRENT_PACKET",
+    "contract_state": "STALE_NOT_READY_FOR_OPERATOR_APPROVAL",
+    "next_required": "SELECT_NEXT_CANDIDATE_OR_COLLECT_NEW_PROOF",
     "execution_state": "BLOCKED"
   },
   "approval": {
@@ -26,26 +28,29 @@
     ]
   },
   "preflight_state": {
-    "fresh_broker_snapshot": "REQUIRED_NOT_RUN_FOR_EXECUTION",
-    "fresh_quote": "REQUIRED_NOT_RUN_FOR_EXECUTION",
+    "fresh_broker_snapshot": "PASS_READ_ONLY_2026-07-06T15:00:47.452920+00:00",
+    "fresh_quote": "REFERENCE_ONLY_2026-07-06T15:00:47.339013+00:00",
     "risk_engine": "REQUIRED_NOT_PASSED",
     "live_order_gateway": "REQUIRED_NOT_PASSED",
     "gpt_verifier": "REQUIRED_NOT_PASSED",
     "guardian_operator_review": "REQUIRED_NOT_PASSED",
-    "manual_eurusd_472987_protection": "REQUIRED_CONFIRMED_BY_LOCAL_SNAPSHOT_AND_MUST_RECHECK",
-    "broker_last_transaction_id": "MUST_RECHECK_BEFORE_ANY_APPROVED_RUN",
-    "candidate_id_exact": "PASS_LOCAL_CONTRACT",
+    "manual_eurusd_472987_protection": "CONFIRMED_BY_FRESH_BROKER_TRUTH",
+    "broker_last_transaction_id": "472998",
+    "candidate_id_exact": "FAIL_ABSENT_FROM_CURRENT_ORDER_INTENTS",
     "order_type_limit_only": "PASS_LOCAL_CONTRACT",
     "max_loss_cap_jpy": 200,
     "units_cap": 1000
   },
   "current_blockers": [
+    "candidate absent from refreshed live order_intents",
+    "AUD_JPY DOWN S5 bid/ask direction evidence is REJECTED_NEGATIVE_EXPECTANCY",
+    "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT scout contract is stale and not ready for approval",
     "operator approval missing",
     "exact approval text not detected as an operator approval directive",
     "LIVE_READY=0",
     "PROOF_READY=0",
     "normal routing BLOCKED",
-    "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT remains EVIDENCE_GAP",
+    "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT exact proof remains EVIDENCE_GAP and not live-grade",
     "fresh max loss JPY cap not recalculated",
     "RiskEngine pass missing",
     "LiveOrderGateway pass missing",
@@ -55,7 +60,7 @@
   ],
   "scout_execution_decision": {
     "order_sent": false,
-    "reason": "APPROVAL_MISSING",
+    "reason": "STALE_CANDIDATE_AND_APPROVAL_MISSING",
     "gateway_receipt": null,
     "broker_transaction_id": null,
     "execution_flags_enabled": false,
@@ -63,10 +68,10 @@
     "live_ready_marked": false
   },
   "fresh_quote_reference_only": {
-    "broker_snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
-    "aud_jpy_bid": 112.455,
-    "aud_jpy_ask": 112.471,
-    "quote_timestamp_utc": "2026-07-06T08:54:03.755665+00:00",
+    "broker_snapshot_fetched_at_utc": "2026-07-06T15:00:47.452920+00:00",
+    "aud_jpy_bid": 112.644,
+    "aud_jpy_ask": 112.66,
+    "quote_timestamp_utc": "2026-07-06T15:00:47.339013+00:00",
     "reference_max_loss_jpy_at_1000u": 125.0,
     "approved_max_loss_cap_jpy": 200,
     "reference_is_stale_for_execution": true,
@@ -80,8 +85,8 @@
   },
   "manual_protection": {
     "trade_id": "472987",
-    "tp_order_id": "472996",
-    "status": "PROTECTED_RECHECK_REQUIRED",
+    "tp_order_id": "472998",
+    "status": "PROTECTED_CONFIRMED_FRESH_BROKER_TRUTH",
     "do_not_touch": true
   },
   "live_side_effects": []

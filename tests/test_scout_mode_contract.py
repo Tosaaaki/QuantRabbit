@@ -79,7 +79,7 @@ class ScoutModeContractTests(unittest.TestCase):
             self.assertIn(stop, payload["stop_conditions"])
         manual = payload["manual_protection"]
         self.assertEqual(manual["trade_id"], "472987")
-        self.assertEqual(manual["protected_take_profit_order_id"], "472996")
+        self.assertEqual(manual["protected_take_profit_order_id"], "472998")
         self.assertTrue(manual["do_not_touch_trade"])
         self.assertTrue(manual["do_not_modify_tp"])
         self.assertTrue(manual["do_not_add_sl"])
@@ -90,16 +90,23 @@ class ScoutModeContractTests(unittest.TestCase):
 
         self.assertEqual(
             payload["classification_values"],
-            ["NOT_APPROVED", "APPROVAL_REQUIRED", "READY_FOR_OPERATOR_APPROVAL", "BLOCKED"],
+            [
+                "NOT_APPROVED",
+                "STALE_CURRENT_PACKET",
+                "REJECTED_CURRENT_PACKET",
+                "APPROVAL_REQUIRED",
+                "STALE_NOT_READY_FOR_OPERATOR_APPROVAL",
+                "BLOCKED",
+            ],
         )
-        self.assertEqual(payload["readiness"]["current"], "NOT_APPROVED")
-        self.assertEqual(payload["readiness"]["contract_state"], "READY_FOR_OPERATOR_APPROVAL")
-        self.assertEqual(payload["readiness"]["next_required"], "APPROVAL_REQUIRED")
+        self.assertEqual(payload["readiness"]["current"], "STALE_CURRENT_PACKET")
+        self.assertEqual(payload["readiness"]["contract_state"], "STALE_NOT_READY_FOR_OPERATOR_APPROVAL")
+        self.assertEqual(payload["readiness"]["next_required"], "SELECT_NEXT_CANDIDATE_OR_COLLECT_NEW_PROOF")
         self.assertEqual(payload["readiness"]["execution_state"], "BLOCKED")
         self.assertFalse(payload["approval"]["present"])
         self.assertFalse(payload["approval"]["detected_as_operator_approval"])
         self.assertEqual(payload["scout_execution_decision"]["order_sent"], False)
-        self.assertEqual(payload["scout_execution_decision"]["reason"], "APPROVAL_MISSING")
+        self.assertEqual(payload["scout_execution_decision"]["reason"], "STALE_CANDIDATE_AND_APPROVAL_MISSING")
         self.assertTrue(payload["fresh_quote_reference_only"]["reference_is_stale_for_execution"])
         self.assertTrue(payload["fresh_quote_reference_only"]["must_recalculate_from_fresh_quote"])
         self.assertTrue(payload["expected_outcome"]["no_order"])
@@ -116,7 +123,8 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertIn("No auto retry", contract)
         self.assertIn("I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout", contract)
         self.assertIn("EUR_USD `472987` protected", contract)
-        self.assertIn("Current readiness: `NOT_APPROVED`", readiness)
+        self.assertIn("Current readiness: `STALE_CURRENT_PACKET`", readiness)
+        self.assertIn("Candidate is absent from refreshed live order_intents", readiness)
         self.assertIn("Execution state: `BLOCKED`", readiness)
         self.assertIn("No order.", readiness)
 
@@ -130,13 +138,14 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertFalse(payload["approval"]["detected"])
         self.assertEqual(payload["execution_decision"]["execution_state"], "BLOCKED")
         self.assertFalse(payload["execution_decision"]["order_sent"])
-        self.assertEqual(payload["execution_decision"]["rejection_reason"], "APPROVAL_MISSING")
+        self.assertEqual(payload["execution_decision"]["rejection_reason"], "STALE_CANDIDATE_AND_APPROVAL_MISSING")
         self.assertFalse(payload["execution_decision"]["normal_routing_created"])
         self.assertFalse(payload["execution_decision"]["execution_flags_enabled"])
         self.assertTrue(payload["safety_constraints"]["limit_only"])
         self.assertFalse(payload["safety_constraints"]["market_order_allowed"])
-        self.assertEqual(payload["preflight"]["last_transaction_id_expected"], "472996")
-        self.assertEqual(payload["local_broker_evidence"]["tp_472996"]["state"], "PENDING")
+        self.assertEqual(payload["preflight"]["candidate_id_status"], "ABSENT_FROM_CURRENT_ORDER_INTENTS")
+        self.assertEqual(payload["preflight"]["last_transaction_id_expected"], "472998")
+        self.assertEqual(payload["local_broker_evidence"]["tp_472998"]["state"], "PENDING")
 
 
 if __name__ == "__main__":

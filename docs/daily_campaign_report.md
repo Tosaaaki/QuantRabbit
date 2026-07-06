@@ -1,16 +1,16 @@
 # Daily 10% Campaign Plan
 
-- Generated at UTC: `2026-07-06T01:58:06.357391+00:00`
+- Generated at UTC: `2026-07-06T15:00:47.450318+00:00`
 - Start balance: `287186 JPY`
 - Target return: `10.0%`
 - Target JPY: `28719 JPY`
-- Per-trade loss cap: `1739 JPY` (`daily target state /Users/tossaki/App/QuantRabbit/data/daily_target_state.json`)
+- Per-trade loss cap: `2872 JPY` (`daily target state /Users/tossaki/App/QuantRabbit-live/data/daily_target_state.json`)
 - Director verdict: `BUILD_ORDER_INTENTS`
-- Coverage gap: 25 lanes can attempt receipts, but target 28719 JPY still requires actual TP/SL geometry and current tape confirmation.
+- Coverage gap: 28 lanes can attempt receipts, but target 28719 JPY still requires actual TP/SL geometry and current tape confirmation.
 
 ## Operating Rule
 
-The 10% number is a campaign target, not a profit guarantee. No lane becomes live without current market_context, entry, TP, SL, <=1739 JPY risk, and >=1.2R.
+The 10% number is a campaign target, not a profit guarantee. No lane becomes live without current market_context, entry, TP, SL, <=2872 JPY risk, and >=1.2R.
 
 ## Trader Desks
 
@@ -66,101 +66,116 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - reason: OANDA campaign_firepower high-precision vehicle; status=VERIFIED_TARGET_10_ROUTE_ESTIMATED, vehicle=USD_JPY|SHORT|range_reversion|tp1_sl1, valid_n=14, win=0.785714, Wilson95_lower=0.524103, PF=4.190396, estimated_daily_return_pct=0.928575
   - receipt: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
   - oanda_firepower: status=VERIFIED_TARGET_10_ROUTE_ESTIMATED vehicle=USD_JPY|SHORT|range_reversion|tp1_sl1 vehicle_count=1 estimated_daily_return_pct=0.928575 exit_shapes=tp1_sl1 live_permission=false
-- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=126
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=127
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=126
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=127
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=141
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=127
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=141
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=141
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=41
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=141
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=41
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=141
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
+  - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
+  - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=41
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
+  - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
+  - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=41
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
+  - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
+  - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=41
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `failure_trader` `EUR_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `failure_trader` `EUR_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `EUR_JPY LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `EUR_JPY LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `EUR_JPY LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `EUR_JPY LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - reason: CANDIDATE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
+  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=2872 JPY, and >=1.2R.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=126
-  - receipt: Produce a dry-run receipt proving old edge survives with <=1739 JPY risk before live use.
+- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=127
+  - receipt: Produce a dry-run receipt proving old edge survives with <=2872 JPY risk before live use.
   - blocker: old sizing broke the loss cap
-  - blocker: edge exists but old sizing broke the loss cap; require <=1739 JPY dry-run receipt before live use
+  - blocker: edge exists but old sizing broke the loss cap; require <=2872 JPY dry-run receipt before live use
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=141
-  - receipt: Produce a dry-run receipt proving old edge survives with <=1739 JPY risk before live use.
+- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=141
+  - receipt: Produce a dry-run receipt proving old edge survives with <=2872 JPY risk before live use.
   - blocker: old sizing broke the loss cap
-  - blocker: edge exists but old sizing broke the loss cap; require <=1739 JPY dry-run receipt before live use
+  - blocker: edge exists but old sizing broke the loss cap; require <=2872 JPY dry-run receipt before live use
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
-- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.63` missed_pressure=`103413.1`
-  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=2.63; story method pressure=41
-  - receipt: Produce a dry-run receipt proving old edge survives with <=1739 JPY risk before live use.
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`1.59` missed_pressure=`103413.1`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=6770.4, worst=-2891.0746; positive_tail=1100.1, target_rr=1.59; story method pressure=41
+  - receipt: Produce a dry-run receipt proving old edge survives with <=2872 JPY risk before live use.
   - blocker: old sizing broke the loss cap
-  - blocker: edge exists but old sizing broke the loss cap; require <=1739 JPY dry-run receipt before live use
+  - blocker: edge exists but old sizing broke the loss cap; require <=2872 JPY dry-run receipt before live use
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `failure_trader` `EUR_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
+  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
   - receipt: Arm only a trigger/pending-entry receipt; no market chase.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `EUR_JPY LONG` method=`RANGE_ROTATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
+  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
   - receipt: Use exact rail/box order intent only; missed move is not participation.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `EUR_JPY LONG` method=`TREND_CONTINUATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50` missed_pressure=`44436.0`
-  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2344.3, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
+  - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-2581.2, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
   - receipt: Arm only a trigger/pending-entry receipt; no market chase.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
@@ -175,23 +190,18 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `event_risk_trader` `EUR_GBP BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: central_bank=6, breakout_failure=2, range_rail=1
-  - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
-  - story: daily_state [day=2026-04-21 pnl=-878]: AUD_USD: SQUEEZE | weaker rebound than EUR/GBP and already stalling. NOW none. RELOAD short only on 0.71535/45 failure. OTHER SIDE long only on 0.71395/71405 defense. -> Edge C / Allocation C / SKIP.
-  - story: daily_state [day=2026-04-24 pnl=-472]: Macro chain: USD offered intraday -> supports EUR/GBP/AUD vs USD but does not justify bad prices | EUR soft data caps upside -> favors tactical box | GBP strongest -> long-only on pullback | JPY selectively bid -> USD_JPY sell-cap better th
 - `event_risk_trader` `EUR_JPY BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
   - reason: overlay from market story themes: intervention=108, range_rail=90, breakout_failure=79, spread_liquidity=34
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `event_risk_trader` `EUR_USD BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: range_rail=166, breakout_failure=105, spread_liquidity=40, intervention=28
+  - reason: overlay from market story themes: range_rail=166, breakout_failure=106, spread_liquidity=40, intervention=28
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `event_risk_trader` `GBP_JPY BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: spread_liquidity=78, intervention=60, range_rail=51, breakout_failure=46
+  - reason: overlay from market story themes: spread_liquidity=78, intervention=62, range_rail=51, breakout_failure=46
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
@@ -201,7 +211,7 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `event_risk_trader` `USD_JPY BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: breakout_failure=97, range_rail=92, intervention=80, spread_liquidity=27
+  - reason: overlay from market story themes: breakout_failure=97, range_rail=92, intervention=79, spread_liquidity=27
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
@@ -221,12 +231,12 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `position_manager` `EUR_USD BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: range_rail=166, breakout_failure=105, spread_liquidity=40, intervention=28
+  - reason: overlay from market story themes: range_rail=166, breakout_failure=106, spread_liquidity=40, intervention=28
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `position_manager` `GBP_JPY BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: spread_liquidity=78, intervention=60, range_rail=51, breakout_failure=46
+  - reason: overlay from market story themes: spread_liquidity=78, intervention=62, range_rail=51, breakout_failure=46
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
@@ -236,44 +246,44 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `position_manager` `USD_JPY BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00` missed_pressure=`0.0`
-  - reason: overlay from market story themes: breakout_failure=97, range_rail=92, intervention=80, spread_liquidity=27
+  - reason: overlay from market story themes: breakout_failure=97, range_rail=92, intervention=79, spread_liquidity=27
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `failure_trader` `AUD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`103914.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=56
-  - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+- `failure_trader` `AUD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`WATCH_ONLY` role=`OBSERVE` target_rr=`1.00` missed_pressure=`103914.0`
+  - reason: WATCH_ONLY; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=56
+  - receipt: Wait for more evidence; do not count this toward 10% coverage.
+  - blocker: missed seats were directionally correct, but realized seat net is negative; repair discovery filters before mining this edge
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `range_trader` `AUD_JPY LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`103914.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=46
-  - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+- `range_trader` `AUD_JPY LONG` method=`RANGE_ROTATION` adoption=`WATCH_ONLY` role=`OBSERVE` target_rr=`1.00` missed_pressure=`103914.0`
+  - reason: WATCH_ONLY; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=46
+  - receipt: Wait for more evidence; do not count this toward 10% coverage.
+  - blocker: missed seats were directionally correct, but realized seat net is negative; repair discovery filters before mining this edge
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `trend_trader` `AUD_JPY LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`103914.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=34
-  - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+- `trend_trader` `AUD_JPY LONG` method=`TREND_CONTINUATION` adoption=`WATCH_ONLY` role=`OBSERVE` target_rr=`1.00` missed_pressure=`103914.0`
+  - reason: WATCH_ONLY; pretrade_net=3152.2, live_net=-1059.2, worst=-1740.0; positive_tail=2259.0, target_rr=1.00; story method pressure=34
+  - receipt: Wait for more evidence; do not count this toward 10% coverage.
+  - blocker: missed seats were directionally correct, but realized seat net is negative; repair discovery filters before mining this edge
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `failure_trader` `GBP_USD LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`75336.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24407.6, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=48
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24547.8, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=48
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `range_trader` `GBP_USD LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`75336.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24407.6, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=66
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24547.8, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=66
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `trend_trader` `GBP_USD LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`75336.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24407.6, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=28
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=1341.7, live_net=-24547.8, worst=-11986.9276; positive_tail=876.0, target_rr=1.00; story method pressure=28
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `failure_trader` `GBP_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`50388.0`
@@ -294,40 +304,40 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `failure_trader` `EUR_JPY SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`39160.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3257.7, worst=-930.0; positive_tail=356.0, target_rr=1.00; story method pressure=83
+- `failure_trader` `EUR_JPY SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`45430.0`
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3688.9, worst=-930.0; positive_tail=413.0, target_rr=1.00; story method pressure=83
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `range_trader` `EUR_JPY SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`39160.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3257.7, worst=-930.0; positive_tail=356.0, target_rr=1.00; story method pressure=86
+- `range_trader` `EUR_JPY SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`45430.0`
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3688.9, worst=-930.0; positive_tail=413.0, target_rr=1.00; story method pressure=86
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
-- `trend_trader` `EUR_JPY SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`39160.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3257.7, worst=-930.0; positive_tail=356.0, target_rr=1.00; story method pressure=23
+- `trend_trader` `EUR_JPY SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`45430.0`
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-569.0, live_net=-3688.9, worst=-930.0; positive_tail=413.0, target_rr=1.00; story method pressure=23
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `failure_trader` `EUR_USD LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`38821.9`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-7909.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=126
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-8141.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=127
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `range_trader` `EUR_USD LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`38821.9`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-7909.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=141
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-8141.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=141
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `trend_trader` `EUR_USD LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`38821.9`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-7909.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=41
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=16174.0, live_net=-8141.3, worst=-8378.521; positive_tail=1141.8, target_rr=1.00; story method pressure=41
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: EUR/USD below 200-day MA
   - story: news_flow [day=2026-04-28 pnl=+3127]: WATCH: EUR/USD ~1.1725
 - `failure_trader` `GBP_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`30935.5`
@@ -349,19 +359,19 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
   - story: daily_state [day=2026-04-28 pnl=+3127]: Driving force: Fed wait-state and FOMC risk keep direct-USD pairs compressed; ADP weakness and euro/GBP bid are pushing against fresh USD longs, while Iran/Hormuz relief keeps JPY offered intraday. vs last session: rollover has passed, but
 - `failure_trader` `AUD_USD LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`28892.8`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-1668.2, worst=-1016.0; positive_tail=1520.7, target_rr=1.00; story method pressure=40
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-4358.9, worst=-2690.6967; positive_tail=1520.7, target_rr=1.00; story method pressure=40
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `AUD_USD LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`28892.8`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-1668.2, worst=-1016.0; positive_tail=1520.7, target_rr=1.00; story method pressure=69
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-4358.9, worst=-2690.6967; positive_tail=1520.7, target_rr=1.00; story method pressure=69
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `AUD_USD LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`28892.8`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-1668.2, worst=-1016.0; positive_tail=1520.7, target_rr=1.00; story method pressure=19
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-18.1, live_net=-4358.9, worst=-2690.6967; positive_tail=1520.7, target_rr=1.00; story method pressure=18
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
@@ -379,7 +389,7 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `AUD_USD SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`20391.0`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-3016.0, live_net=-2609.0, worst=-1705.6738; positive_tail=463.4, target_rr=1.00; story method pressure=19
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-3016.0, live_net=-2609.0, worst=-1705.6738; positive_tail=463.4, target_rr=1.00; story method pressure=18
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_USD | TREND-BULL | TREND-BULL | TREND-BULL | orderly green ladder after a shallow pullback, closes stay near the highs and EMA12 stays above EMA20 = controlled trend climb | NO: still a trend walk |
@@ -405,35 +415,35 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
 - `failure_trader` `AUD_JPY SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`10200.0`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-4533.9, live_net=-7195.2, worst=-3947.4; positive_tail=600.0, target_rr=1.00; story method pressure=56
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `AUD_JPY SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`10200.0`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-4533.9, live_net=-7195.2, worst=-3947.4; positive_tail=600.0, target_rr=1.00; story method pressure=46
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `AUD_JPY SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`10200.0`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-4533.9, live_net=-7195.2, worst=-3947.4; positive_tail=600.0, target_rr=1.00; story method pressure=34
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: quality_audit [day=2026-04-30 pnl=-4061]: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `failure_trader` `USD_JPY SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2458.1`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-943.8, worst=-340.2; positive_tail=43.1, target_rr=1.00; story method pressure=103
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-1407.8, worst=-464.0; positive_tail=43.1, target_rr=1.00; story method pressure=103
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `USD_JPY SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2458.1`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-943.8, worst=-340.2; positive_tail=43.1, target_rr=1.00; story method pressure=85
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-1407.8, worst=-464.0; positive_tail=43.1, target_rr=1.00; story method pressure=85
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `USD_JPY SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2458.1`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-943.8, worst=-340.2; positive_tail=43.1, target_rr=1.00; story method pressure=23
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-1407.8, worst=-464.0; positive_tail=43.1, target_rr=1.00; story method pressure=23
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
@@ -441,19 +451,19 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
 - `failure_trader` `USD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2056.3`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6522.8, worst=-3360.0; positive_tail=15.2, target_rr=1.00; story method pressure=103
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `range_trader` `USD_JPY LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2056.3`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6522.8, worst=-3360.0; positive_tail=15.2, target_rr=1.00; story method pressure=85
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `trend_trader` `USD_JPY LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`2056.3`
   - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6522.8, worst=-3360.0; positive_tail=15.2, target_rr=1.00; story method pressure=23
   - receipt: Do not trade until new evidence changes the strategy profile.
-  - blocker: historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - blocker: historical live loss exceeded the 2872 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_flow [day=2026-04-30 pnl=-4061]: WATCH: USD/JPY near 159.0
   - story: daily_state [day=2026-04-28 pnl=+3127]: Entries today: 3 fills / 6 new entry orders / 43 rejects. Broker truth this session: EUR_USD SHORT id=469806 live 5000u @1.17082 TP=1.17067, GBP_JPY LONG id=469802 live 3000u @215.721 TP=215.960, AUD_JPY LONG id=469795 live 2000u @114.552 T
 - `failure_trader` `EUR_GBP SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00` missed_pressure=`0.0`

@@ -1,9 +1,9 @@
 # Post-Gate Expectancy Gap Trace
 
-- Generated: `2026-07-06T09:42:39Z`
+- Generated: `2026-07-06T15:11:03Z`
 - Scope: `manual_excluded_plus_both_market_close_leak_and_residual_family_filters`
-- Trades: `196`; net JPY: `-1194.4656`; expectancy/trade: `-6.0942`
-- Remaining gap to zero: `1194.4656` JPY
+- Trades: `201`; net JPY: `-1803.4861`; expectancy/trade: `-8.9726`
+- Remaining gap to zero: `1803.4861` JPY
 - Can create live permission: `False`
 
 ## Largest Loss Families
@@ -43,5 +43,5 @@
 ## Safety
 
 - EUR_USD `472987` remains manual/read-only and excluded.
-- Expected TP `472988` active: `False`; current TP: `472996` at `1.13968`.
+- Expected TP `472988` active: `False`; current TP: `472998` at `1.1361`.
 - Replaced expected TP in broker truth: `True`; no live side effects from this run: `True`.

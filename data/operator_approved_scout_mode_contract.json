@@ -1,7 +1,7 @@
 {
-  "generated_at_utc": "2026-07-06T14:39:46Z",
+  "generated_at_utc": "2026-07-06T15:07:56Z",
   "mode": "proof-collection scout",
-  "status": "CONTRACT_ONLY_NOT_EXECUTION",
+  "status": "STALE_CONTRACT_NOT_EXECUTION",
   "candidate": {
     "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
     "pair": "AUD_JPY",
@@ -13,7 +13,9 @@
     "LIVE_READY": 0,
     "PROOF_READY": 0,
     "normal_routing": "BLOCKED",
-    "candidate_classification": "EVIDENCE_GAP",
+    "candidate_classification": "STALE_REJECTED_CURRENT_PACKET",
+    "candidate_present_in_current_order_intents": false,
+    "current_packet_rejection_reason": "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT is absent from refreshed live order_intents; broader AUD_JPY DOWN S5 bid/ask evidence is REJECTED_NEGATIVE_EXPECTANCY.",
     "can_create_live_permission": false,
     "execution_flags_enabled": false,
     "order_allowed_now": false
@@ -57,7 +59,8 @@
   "required_preflight": [
     {
       "name": "fresh broker snapshot",
-      "required": true
+      "required": true,
+      "latest_checked_at_utc": "2026-07-06T15:00:47.452920+00:00"
     },
     {
       "name": "fresh quote",
@@ -91,7 +94,7 @@
       "name": "manual EUR_USD 472987 protected",
       "required": true,
       "manual_trade_id": "472987",
-      "protected_tp_order_id": "472996"
+      "protected_tp_order_id": "472998"
     }
   ],
   "stop_conditions": [
@@ -110,7 +113,7 @@
     "pair": "EUR_USD",
     "classification": "OPERATOR_MANUAL",
     "management_intent": "KEEP",
-    "protected_take_profit_order_id": "472996",
+    "protected_take_profit_order_id": "472998",
     "do_not_touch_trade": true,
     "do_not_modify_tp": true,
     "do_not_add_sl": true,
@@ -125,7 +128,7 @@
     "enable execution flags",
     "mutate broker state",
     "touch EUR_USD 472987",
-    "touch TP 472996",
+    "touch TP 472998",
     "push origin/main"
   ],
   "source_provenance": {

@@ -696,6 +696,7 @@ def _build_firepower_board(
     top = rows[:20]
     return {
         "generated_at_utc": generated_at,
+        "order_intents_generated_at_utc": order_intents.get("generated_at_utc"),
         "mode": "read_only_rolling_30d_4x_firepower_board",
         "source_artifacts": [
             "data/order_intents.json",
@@ -916,6 +917,8 @@ def _update_as_board(
     updated.update(
         {
             "generated_at_utc": generated_at,
+            "order_intents_generated_at_utc": firepower.get("order_intents_generated_at_utc"),
+            "total_lanes": (firepower.get("summary") or {}).get("total_order_intent_rows"),
             "as_live_ready_path_exists": False,
             "live_ready_lanes": 0,
             "normal_routing_status": "BLOCKED",

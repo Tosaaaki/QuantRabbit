@@ -7,7 +7,7 @@
     "STALE_SUPERSEDED",
     "EVIDENCE_GAP"
   ],
-  "generated_at_utc": "2026-07-06T09:42:39Z",
+  "generated_at_utc": "2026-07-06T15:11:03Z",
   "live_side_effects": [],
   "mode": "read_only_profitability_acceptance_blocker_reconciliation",
   "permission_boundary": "No row in this reconciliation creates live permission. ACTIVE, fixed-needs-clean-window, contained, duplicate, and evidence-gap rows all keep normal routing blocked until acceptance, lane proof, RiskEngine, LiveOrderGateway, GPT verifier, and guardian gates pass together.",
@@ -42,11 +42,12 @@
       "duplicate_of": null,
       "evidence_summary": {
         "memory_blockers": [
-          "order_intents contains 1 memory/telemetry blocker(s)"
+          "order_intents contains 2 memory/telemetry blocker(s)"
         ],
         "memory_status": "MEMORY_HEALTH_BLOCKED",
         "self_improvement_p0_codes": [
-          "MEMORY_HEALTH_BLOCKED"
+          "MEMORY_HEALTH_BLOCKED",
+          "TARGET_OPEN_NO_LIVE_READY_LANES"
         ],
         "self_improvement_status": "SELF_IMPROVEMENT_BLOCKED"
       },
@@ -65,12 +66,12 @@
       "duplicate_of": null,
       "evidence_summary": {
         "evidence": {
-          "expectancy_jpy_per_trade": -177.4,
-          "net_jpy": -40616.9,
-          "payoff_ratio": 0.393,
+          "expectancy_jpy_per_trade": -176.2,
+          "net_jpy": -41225.9,
+          "payoff_ratio": 0.412,
           "profit_factor": null,
-          "trades": 229,
-          "win_rate": 0.5983
+          "trades": 234,
+          "win_rate": 0.5855
         },
         "message": "capture economics is still NEGATIVE_EXPECTANCY",
         "priority": "P0"
@@ -188,9 +189,9 @@
       "evidence_summary": {
         "evidence": {
           "_truncated_keys": 7,
-          "active_counterfactual_profit_capture_pl_jpy": -20492.5063,
-          "counterfactual_profit_capture_delta_jpy": 18782.8366,
-          "counterfactual_profit_capture_jpy": 3838.2211,
+          "active_counterfactual_profit_capture_pl_jpy": -20488.1808,
+          "counterfactual_profit_capture_delta_jpy": 18787.1621,
+          "counterfactual_profit_capture_jpy": 3842.5466,
           "loss_closes_profit_capture_missed": 14,
           "loss_closes_repair_replay_triggered": 13,
           "month_scale_residual_family_filters": {
@@ -208,8 +209,8 @@
             "improved_pl_jpy": -20863.5316,
             "loaded": true
           },
-          "raw_counterfactual_profit_capture_pl_jpy": -20537.1976,
-          "repair_replay_counterfactual_pl_jpy": -20492.5063,
+          "raw_counterfactual_profit_capture_pl_jpy": -20533.4113,
+          "repair_replay_counterfactual_pl_jpy": -20488.1808,
           "top_entry_quality_residual_groups": {
             "count": 10,
             "first": {
@@ -266,51 +267,12 @@
       "contained_by": null,
       "duplicate_of": null,
       "evidence_summary": {
-        "evidence": {
-          "gaps": {
-            "count": 5,
-            "first": {
-              "keys": [
-                "bucket",
-                "economic_hit_rate",
-                "economic_hit_rate_wilson_lower",
-                "economic_samples",
-                "hit_rate",
-                "hit_rate_wilson_lower",
-                "pair",
-                "regime",
-                "samples",
-                "signal_name",
-                "timeout_count",
-                "timeout_rate"
-              ]
-            }
-          },
-          "usable_edges": {
-            "count": 5,
-            "first": {
-              "keys": [
-                "bucket",
-                "economic_hit_rate",
-                "economic_hit_rate_wilson_lower",
-                "economic_samples",
-                "hit_rate",
-                "hit_rate_wilson_lower",
-                "pair",
-                "passes_economic_precision",
-                "regime",
-                "samples",
-                "signal_name",
-                "timeout_count"
-              ]
-            }
-          }
-        },
-        "message": "5 projection bucket(s) clear headline precision but fail economic precision after TIMEOUT/no-touch penalties",
-        "priority": "P1"
+        "evidence": null,
+        "message": null,
+        "priority": null
       },
       "present_as_current_blocker": false,
-      "present_in_current_acceptance": true,
+      "present_in_current_acceptance": false,
       "still_blocks_acceptance": false,
       "still_blocks_fresh_entries": true,
       "still_blocks_live_ready": true
@@ -393,7 +355,7 @@
       "duplicate_of": null,
       "evidence_summary": {
         "evidence": {
-          "candidate_count": 82,
+          "candidate_count": 101,
           "live_ready_lanes": 0,
           "remaining_target_jpy": 28718.6,
           "top_blockers": {
@@ -424,8 +386,8 @@
       "duplicate_of": null,
       "evidence_summary": {
         "evidence": {
-          "blocked_count": 11,
-          "candidate_count": 11,
+          "blocked_count": 9,
+          "candidate_count": 9,
           "examples": {
             "count": 8,
             "first": {
@@ -456,7 +418,7 @@
             }
           }
         },
-        "message": "11 repair-mode candidate(s) exist, but none currently clear live gates",
+        "message": "9 repair-mode candidate(s) exist, but none currently clear live gates",
         "priority": "P1"
       },
       "present_as_current_blocker": false,
@@ -473,8 +435,8 @@
       "contained_by": null,
       "duplicate_of": null,
       "evidence_summary": {
-        "execution_ledger_last_oanda_transaction_id": "472996",
-        "snapshot_last_transaction_id": "472996"
+        "execution_ledger_last_oanda_transaction_id": "472998",
+        "snapshot_last_transaction_id": "472998"
       },
       "present_as_current_blocker": false,
       "present_in_current_acceptance": false,

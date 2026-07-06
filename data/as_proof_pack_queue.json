@@ -6,42 +6,35 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-06T14:39:46Z",
+  "generated_at_utc": "2026-07-06T15:11:03Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
-  "scout_execution_summary": {
-    "candidate_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
-    "execution_state": "BLOCKED",
-    "approval_detected": false,
-    "order_sent": false,
-    "rejection_reason": "APPROVAL_MISSING",
-    "normal_routing_created": false,
-    "live_ready_marked": false,
-    "receipt_path": "data/scout_execution_receipt.json"
-  },
   "queue": [
     {
       "can_create_live_permission": false,
-      "can_enter_proof_pack": true,
+      "can_enter_proof_pack": false,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
         "REWARD_RISK_TOO_LOW",
-        "PATTERN_REVERSAL_CHASE",
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "MATRIX_REPAIR_REJECT_CONTEXT",
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "EXHAUSTION_RANGE_CHASE",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+        "STRATEGY_NOT_ELIGIBLE"
       ],
-      "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
-      "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
-      "method": "BREAKOUT_FAILURE",
+      "exit_shape": "ATTACHED_TECHNICAL_TP",
+      "expected_daily_return_pct_on_funding_adjusted_equity": 34.3376,
+      "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
       "missing_proof": {
         "active_day_floor": true,
         "attached_tp_proof": true,
         "daily_stability_floor": true,
         "forecast_executable_proof": true,
-        "fresh_744h_replay": true,
+        "fresh_744h_replay": false,
         "geometry_proof": false,
         "gpt_verifier_pass": false,
         "live_order_gateway_pass": false,
@@ -54,28 +47,30 @@
         "s5_bidask_spread_included_replay": false,
         "sample_count_floor": true
       },
-      "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
+      "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
       "order_type": "STOP-ENTRY",
-      "pair": "AUD_JPY",
-      "proof_classification": "REPAIR_REQUIRED",
-      "proof_distance": 6,
-      "side": "SHORT"
+      "pair": "USD_CHF",
+      "proof_classification": "HISTORICAL_ONLY",
+      "proof_distance": 7,
+      "side": "LONG"
     },
     {
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "current_blockers": [
+        "REWARD_RISK_TOO_LOW",
+        "RANGE_COUNTERTREND_RR_TOO_LOW",
         "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "MATRIX_REPAIR_REJECT_CONTEXT",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "FORECAST_WATCH_ONLY",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "STRATEGY_NOT_ELIGIBLE"
+        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
       ],
       "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 8.1576,
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9116,
       "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
       "method": "RANGE_ROTATION",
       "missing_proof": {
@@ -102,89 +97,6 @@
       "proof_classification": "HISTORICAL_ONLY",
       "proof_distance": 7,
       "side": "LONG"
-    },
-    {
-      "can_create_live_permission": false,
-      "can_enter_proof_pack": false,
-      "current_blockers": [
-        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "REWARD_RISK_TOO_LOW",
-        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "PATTERN_REVERSAL_CHASE",
-        "EXHAUSTION_RANGE_CHASE",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "STRATEGY_NOT_ELIGIBLE"
-      ],
-      "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.741,
-      "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
-      "method": "TREND_CONTINUATION",
-      "missing_proof": {
-        "active_day_floor": true,
-        "attached_tp_proof": true,
-        "daily_stability_floor": true,
-        "forecast_executable_proof": true,
-        "fresh_744h_replay": false,
-        "geometry_proof": false,
-        "gpt_verifier_pass": false,
-        "live_order_gateway_pass": false,
-        "market_close_absence_or_close_gate_proof": true,
-        "no_guardian_operator_review_blocker": false,
-        "no_stale_packaged_rule": true,
-        "positive_day_rate_floor": true,
-        "residual_family_absence": true,
-        "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": false,
-        "sample_count_floor": true
-      },
-      "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
-      "order_type": "STOP-ENTRY",
-      "pair": "AUD_JPY",
-      "proof_classification": "HISTORICAL_ONLY",
-      "proof_distance": 7,
-      "side": "SHORT"
-    },
-    {
-      "can_create_live_permission": false,
-      "can_enter_proof_pack": true,
-      "current_blockers": [
-        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
-        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "S5_DAILY_SAMPLE_CONCENTRATED",
-        "S5_POSITIVE_DAY_RATE_LOW"
-      ],
-      "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 3.7891,
-      "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
-      "method": "BREAKOUT_FAILURE",
-      "missing_proof": {
-        "active_day_floor": true,
-        "attached_tp_proof": true,
-        "daily_stability_floor": false,
-        "forecast_executable_proof": true,
-        "fresh_744h_replay": true,
-        "geometry_proof": true,
-        "gpt_verifier_pass": false,
-        "live_order_gateway_pass": false,
-        "market_close_absence_or_close_gate_proof": true,
-        "no_guardian_operator_review_blocker": false,
-        "no_stale_packaged_rule": true,
-        "positive_day_rate_floor": false,
-        "residual_family_absence": true,
-        "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": false,
-        "sample_count_floor": true
-      },
-      "notes": "Candidate has firepower or collection value, but current blockers require repair before proof can become permission.",
-      "order_type": "LIMIT",
-      "pair": "AUD_JPY",
-      "proof_classification": "EVIDENCE_GAP",
-      "proof_distance": 7,
-      "side": "SHORT"
     }
   ],
   "source_artifacts": [
@@ -198,7 +110,7 @@
     "as_live_ready_path_exists": false,
     "can_create_live_permission_count": 0,
     "proof_ready_count": 0,
-    "queue_count": 4,
-    "remaining_p0_rows": 4
+    "queue_count": 2,
+    "remaining_p0_rows": 5
   }
 }
