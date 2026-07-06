@@ -855,10 +855,30 @@ def _build_proof_pack_queue(
         if row.get("can_enter_proof_pack") or row.get("candidate_daily_expected_return_pct_ge_required")
     ]
     queue = []
+    rejected = []
     for row in candidates[:12]:
         missing = _missing_proof_map(row)
         _apply_audjpy_limit_fresh_s5(row, missing, audjpy_fresh_s5)
         current_blockers = _current_blockers_with_audjpy_limit_fresh_s5(row, audjpy_fresh_s5)
+        rejection_reasons = _proof_rejection_reasons(row, current_blockers)
+        if rejection_reasons:
+            rejected.append(
+                {
+                    "lane_id": row.get("lane_id"),
+                    "pair": row.get("pair"),
+                    "side": row.get("side"),
+                    "method": row.get("method"),
+                    "order_type": row.get("order_type"),
+                    "proof_classification": "REJECTED",
+                    "rejection_reasons": rejection_reasons,
+                    "current_blockers": current_blockers,
+                    "expected_daily_return_pct_on_funding_adjusted_equity": row.get("expected_daily_return_pct_on_funding_adjusted_equity"),
+                    "can_create_live_permission": False,
+                    "can_enter_proof_pack": False,
+                    "notes": "Rejected before proof work because the exact spread-included bid/ask replay is negative.",
+                }
+            )
+            continue
         classification = _proof_classification({**row, "current_blockers": current_blockers}, missing)
         queue.append(
             {
@@ -892,11 +912,13 @@ def _build_proof_pack_queue(
         "classification_values": ["PROOF_READY", "EVIDENCE_GAP", "REPAIR_REQUIRED", "REJECTED", "HISTORICAL_ONLY"],
         "summary": {
             "queue_count": len(queue),
+            "rejected_candidate_count": len(rejected),
             "proof_ready_count": sum(1 for item in queue if item["proof_classification"] == "PROOF_READY"),
             "can_create_live_permission_count": 0,
             "as_live_ready_path_exists": False,
             "remaining_p0_rows": len(p0_decomposition.get("rows") or []),
         },
+        "rejected_candidates": rejected,
         "queue": queue,
         "live_side_effects": [],
     }
@@ -1313,6 +1335,17 @@ def _proof_classification(row: dict[str, Any], missing: dict[str, Any]) -> str:
     return "EVIDENCE_GAP"
 
 
+def _proof_rejection_reasons(row: dict[str, Any], current_blockers: Iterable[Any]) -> list[str]:
+    blockers = {str(code) for code in current_blockers or []}
+    source = row.get("source_evidence") if isinstance(row.get("source_evidence"), dict) else {}
+    reasons: list[str] = []
+    if "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE" in blockers:
+        reasons.append("spread_included_bidask_replay_negative_for_exact_lane")
+    if source.get("bidask_rule_status") == "LIVE_BLOCK_NEGATIVE_EXPECTANCY":
+        reasons.append("packaged_bidask_rule_live_block_negative_expectancy")
+    return reasons
+
+
 def _apply_audjpy_limit_fresh_s5(
     row: dict[str, Any],
     missing: dict[str, Any],
@@ -1651,6 +1684,7 @@ def _proof_queue_md(payload: dict[str, Any]) -> str:
         "",
         f"- Generated: `{payload.get('generated_at_utc')}`",
         f"- Queue count: `{payload.get('summary', {}).get('queue_count')}`",
+        f"- Rejected candidates: `{payload.get('summary', {}).get('rejected_candidate_count')}`",
         f"- PROOF_READY: `{payload.get('summary', {}).get('proof_ready_count')}`",
         f"- Can create live permission: `0`",
         "",
@@ -1665,6 +1699,14 @@ def _proof_queue_md(payload: dict[str, Any]) -> str:
     for row in payload.get("queue") or []:
         missing = [key for key, value in (row.get("missing_proof") or {}).items() if value is not True]
         lines.append(f"- `{row.get('lane_id')}`: {', '.join(missing) or 'none'}")
+    rejected = payload.get("rejected_candidates") or []
+    if rejected:
+        lines.extend(["", "## Rejected Candidates", ""])
+        for row in rejected:
+            lines.append(
+                f"- `{row.get('lane_id')}`: {', '.join(row.get('rejection_reasons') or [])}; "
+                f"blockers={', '.join(row.get('current_blockers') or [])}"
+            )
     return "\n".join(lines) + "\n"
 
 

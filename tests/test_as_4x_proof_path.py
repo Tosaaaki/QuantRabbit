@@ -61,6 +61,63 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertFalse(missing["fresh_744h_replay"])
         self.assertFalse(missing["s5_bidask_spread_included_replay"])
 
+    def test_negative_bidask_replay_is_removed_from_proof_queue_frontier(self) -> None:
+        negative_bidask = {
+            "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
+            "pair": "USD_CHF",
+            "side": "LONG",
+            "method": "TREND_CONTINUATION",
+            "order_type": "STOP-ENTRY",
+            "source_evidence": {
+                "historical_only": True,
+                "bidask_rule_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+            },
+            "candidate_daily_expected_return_pct_ge_required": True,
+            "expected_daily_return_pct_on_funding_adjusted_equity": 34.3,
+            "current_blockers": ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+            "status": "DRY_RUN_BLOCKED",
+            "risk_allowed": False,
+            "can_enter_proof_pack": False,
+        }
+        next_candidate = {
+            "lane_id": "range_trader:CAD_JPY:SHORT:RANGE_ROTATION",
+            "pair": "CAD_JPY",
+            "side": "SHORT",
+            "method": "RANGE_ROTATION",
+            "order_type": "LIMIT",
+            "source_evidence": {"historical_only": False},
+            "candidate_daily_expected_return_pct_ge_required": False,
+            "expected_daily_return_pct_on_funding_adjusted_equity": 4.2,
+            "current_blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+            "status": "DRY_RUN_BLOCKED",
+            "risk_allowed": False,
+            "can_enter_proof_pack": True,
+        }
+
+        queue = evidence_loop._build_proof_pack_queue(
+            generated_at="2026-07-06T00:00:00Z",
+            firepower={"candidates": [negative_bidask, next_candidate]},
+            p0_decomposition={"rows": [{"row_code": "NEGATIVE_EXPECTANCY_ACTIVE"}]},
+        )
+        board = evidence_loop._update_as_board(
+            generated_at="2026-07-06T00:00:00Z",
+            board={},
+            daily={},
+            p0_decomposition={"rows": [], "dependency_graph": []},
+            firepower={"summary": {"total_order_intent_rows": 2}, "order_intents_generated_at_utc": "2026-07-06T00:00:00Z"},
+            proof_queue=queue,
+        )
+
+        self.assertEqual(queue["summary"]["queue_count"], 1)
+        self.assertEqual(queue["summary"]["rejected_candidate_count"], 1)
+        self.assertEqual(queue["queue"][0]["lane_id"], next_candidate["lane_id"])
+        self.assertEqual(queue["rejected_candidates"][0]["lane_id"], negative_bidask["lane_id"])
+        self.assertIn(
+            "spread_included_bidask_replay_negative_for_exact_lane",
+            queue["rejected_candidates"][0]["rejection_reasons"],
+        )
+        self.assertEqual(board["closest_candidate_to_proof_pack"]["lane_id"], next_candidate["lane_id"])
+
     def test_fresh_direction_evidence_marks_under_sampled_gap(self) -> None:
         replay = {
             "price_truth_coverage": {
