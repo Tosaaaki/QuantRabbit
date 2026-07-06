@@ -21,7 +21,8 @@ Invariants:
   below) and at least `MIN_TP_TO_MARKET_PIPS` from current price so
   the rebalance never fires the TP accidentally on the same tick.
 - Trader-owned plus operator-managed manual / unknown-owner positions
-  are eligible for TP-only profit capture. External positions are skipped.
+  are eligible for TP-only profit capture unless an operator-manual packet
+  explicitly disables TP modification. External positions are skipped.
 - Missing broker TP is not auto-created by default. A manually deleted TP is
   treated as an operator decision to run without a broker cap. Exception:
   when a runner is already in profit and the latest forecast / technical
@@ -119,6 +120,39 @@ def _insurance_tp_disabled() -> bool:
 
 def _profit_take_owner_allowed(owner: str) -> bool:
     return owner.strip().lower() in {"trader", "manual", "unknown", "operator_manual"}
+
+
+def _operator_manual_tp_modify_blocked(position: Any) -> bool:
+    packet = _operator_manual_packet(position)
+    if not packet:
+        return False
+    return _explicit_false(packet.get("auto_tp_modify_allowed"))
+
+
+def _operator_manual_packet(position: Any) -> dict[str, Any]:
+    raw = getattr(position, "raw", None)
+    if isinstance(raw, dict):
+        packet = raw.get("operator_manual_position")
+        if isinstance(packet, dict):
+            return packet
+    if isinstance(position, dict):
+        packet = position.get("operator_manual_position")
+        if isinstance(packet, dict):
+            return packet
+        raw = position.get("raw")
+        if isinstance(raw, dict):
+            packet = raw.get("operator_manual_position")
+            if isinstance(packet, dict):
+                return packet
+    return {}
+
+
+def _explicit_false(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"0", "false", "no", "off"}
+    return False
 
 
 def _optional_float(value: Any) -> Optional[float]:
@@ -919,6 +953,8 @@ def compute_all_tp_adjustments(
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
         if not _profit_take_owner_allowed(owner_str):
+            continue
+        if _operator_manual_tp_modify_blocked(position):
             continue
         pair = getattr(position, "pair", None)
         if not pair or pair not in quotes:

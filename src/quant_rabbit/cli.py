@@ -7536,6 +7536,11 @@ def main(argv: list[str] | None = None) -> int:
         positions = []
         for p in snapshot_payload.get("positions", []):
             try:
+                raw = p.get("raw") if isinstance(p.get("raw"), dict) else {}
+                if "operator_manual_position" not in raw and isinstance(
+                    p.get("operator_manual_position"), dict
+                ):
+                    raw = {**raw, "operator_manual_position": p["operator_manual_position"]}
                 positions.append(BrokerPosition(
                     trade_id=p.get("trade_id"),
                     pair=p.get("pair"),
@@ -7546,6 +7551,7 @@ def main(argv: list[str] | None = None) -> int:
                     stop_loss=p.get("stop_loss"),
                     unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
                     owner=_owner_tp(p.get("owner")),
+                    raw=raw,
                 ))
             except Exception:
                 continue

@@ -15,10 +15,12 @@ from quant_rabbit.strategy.tp_rebalancer import (
     _chart_context_from_chart,
     _extract_atr_pips,
     apply_tp_adjustments,
+    compute_all_tp_adjustments,
     compute_tp_adjustment,
     load_close_review_trade_ids,
     load_entry_thesis_blocker_trade_ids,
 )
+from quant_rabbit.models import BrokerPosition, Owner, Side
 
 
 class ComputeTPAdjustmentTest(unittest.TestCase):
@@ -105,6 +107,51 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
 
         self.assertIsNone(adj)
+
+    def test_operator_manual_auto_tp_modify_false_blocks_stale_harvest_reanchor(self) -> None:
+        """Regression for 2026-07-06 EUR_USD manual short.
+
+        Without the operator-manual packet guard, the stale-harvest branch
+        contracts 1.13600 to 1.13968 from the 1.14048 entry lock-in rule.
+        """
+        self._kill_switch_off()
+        position = BrokerPosition(
+            trade_id="472987",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=30000,
+            entry_price=1.14048,
+            take_profit=1.13600,
+            owner=Owner.OPERATOR_MANUAL,
+            raw={
+                "operator_manual_position": {
+                    "packet_type": "OPERATOR_MANUAL_POSITION",
+                    "auto_tp_modify_allowed": False,
+                }
+            },
+        )
+
+        adjustments = compute_all_tp_adjustments(
+            positions=[position],
+            quotes={"EUR_USD": {"bid": 1.1420, "ask": 1.1421}},
+            pair_charts={
+                "EUR_USD": {
+                    "pair": "EUR_USD",
+                    "confluence": {
+                        "h4_atr_pips": 19.2,
+                        "tf_agreement_score": 0.33,
+                        "range_24h_sigma_multiple": 4.62,
+                    },
+                    "views": [
+                        {"granularity": "M5", "indicators": {"atr_pips": 2.3}},
+                        {"granularity": "H4", "indicators": {"atr_pips": 19.2}},
+                    ],
+                }
+            },
+            market_reward_risk_fn=lambda _context: (1.5, []),
+        )
+
+        self.assertEqual([], adjustments)
 
     def test_expand_only_mode_blocks_contraction_when_in_profit(self) -> None:
         """LONG in profit (current > entry), small desired distance
