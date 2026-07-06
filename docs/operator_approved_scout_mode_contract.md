@@ -1,0 +1,69 @@
+# Operator Approved Scout Mode Contract
+
+- Generated: `2026-07-06T13:36:34Z`
+- Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
+- Mode: proof-collection scout
+- Status: contract only; no execution permission.
+
+## Current State
+
+- `LIVE_READY=0`
+- `PROOF_READY=0`
+- Normal routing: `BLOCKED`
+- Candidate classification: `EVIDENCE_GAP`
+- No order, cancel, close, SL/TP modification, execution flag, or broker-state mutation is authorized by this contract.
+
+## Scout Contract
+
+- Order type: `LIMIT` only.
+- No market chase. `MARKET` and `STOP-ENTRY` are prohibited for this approval.
+- One order only.
+- Default units: `1000u` unless RiskEngine computes a lower allowed size or no-trade.
+- Max loss JPY cap must be recalculated from a fresh broker snapshot and fresh AUD_JPY quote before any approved run. The current diagnostic estimate is about `125 JPY` at `1000u`, derived from `375 JPY` at `3000u`; this is reference only.
+- No averaging.
+- No same-theme add.
+- No auto retry.
+- No automatic TP/SL modification after placement unless separately approved.
+
+## Required Preflight
+
+Every item must pass after the exact operator approval text is present:
+
+- Fresh broker snapshot.
+- Fresh AUD_JPY quote.
+- RiskEngine pass with live-send validation.
+- LiveOrderGateway pass.
+- GPT verifier pass.
+- Guardian/operator-review pass.
+- Profitability blockers acknowledged as proof-collection risk, not `LIVE_READY`.
+- Manual EUR_USD `472987` protected, with TP `472996` not touched.
+
+## Stop Conditions
+
+Stop without staging or sending if any condition appears:
+
+- Stale quote.
+- Spread too wide.
+- Forecast mismatch.
+- RiskEngine fail.
+- Gateway fail.
+- GPT verifier fail.
+- Guardian/operator review missing.
+- Execution flags not explicitly approved.
+- Broker `last_transaction_id` unexpected.
+
+## Required Approval Text
+
+`I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.`
+
+The blanks must be filled with freshly recalculated values. Approval for this scout does not approve any retry, same-theme add, averaging, market chase, TP/SL modification, EUR_USD `472987` action, TP `472996` action, or later run.
+
+## Sources
+
+- Local: `data/audjpy_short_breakout_failure_limit_proof_pack.json`
+- Local: `data/audjpy_limit_live_ready_decision.json`
+- Local: `data/order_intents.json`
+- Local: `data/guardian_receipt_consumption.json`
+- Local: `data/guardian_receipt_operator_review.json`
+- Local: `data/broker_snapshot.json`
+- Notion read-only reference: `quant-rabbit-profitability-evidence-repair-2026-07-03` (`392f1c8e-53a7-81af-a467-d6ce4635b5cd`)

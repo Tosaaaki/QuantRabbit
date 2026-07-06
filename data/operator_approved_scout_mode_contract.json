@@ -1,0 +1,147 @@
+{
+  "generated_at_utc": "2026-07-06T13:36:34Z",
+  "mode": "proof-collection scout",
+  "status": "CONTRACT_ONLY_NOT_EXECUTION",
+  "candidate": {
+    "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+    "pair": "AUD_JPY",
+    "side": "SHORT",
+    "method": "BREAKOUT_FAILURE",
+    "order_type": "LIMIT"
+  },
+  "current_state_invariants": {
+    "LIVE_READY": 0,
+    "PROOF_READY": 0,
+    "normal_routing": "BLOCKED",
+    "candidate_classification": "EVIDENCE_GAP",
+    "can_create_live_permission": false,
+    "execution_flags_enabled": false,
+    "order_allowed_now": false
+  },
+  "operator_approval": {
+    "required": true,
+    "present": false,
+    "scope": "this run only",
+    "exact_required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.",
+    "approval_must_include_recalculated_values": [
+      "max loss JPY",
+      "units"
+    ],
+    "approval_does_not_override_preflight": true
+  },
+  "order_contract": {
+    "allowed_order_types": [
+      "LIMIT"
+    ],
+    "prohibited_order_types": [
+      "MARKET",
+      "STOP-ENTRY"
+    ],
+    "no_market_chase": true,
+    "one_order_only": true,
+    "default_units": 1000,
+    "units_rule": "Use 1000 units unless RiskEngine computes a lower allowed size or no-trade; if computed size is below the production lot floor or any gate fails, do not trade.",
+    "max_loss_jpy_cap": {
+      "must_recalculate_from_fresh_quote": true,
+      "executable_cap_jpy": null,
+      "reference_estimate_jpy_at_1000u": 125.0,
+      "reference_estimate_source": "data/audjpy_limit_live_ready_decision.json reported 375.0 JPY risk at 3000u for the dry-run LIMIT geometry; 1000u is therefore about 125 JPY before fresh quote/RiskEngine recalculation.",
+      "reference_estimate_is_not_permission": true
+    },
+    "no_averaging": true,
+    "no_same_theme_add": true,
+    "no_auto_retry": true,
+    "no_auto_tp_sl_modification_after_placement": true,
+    "tp_sl_modification_requires_separate_approval": true
+  },
+  "required_preflight": [
+    {
+      "name": "fresh broker snapshot",
+      "required": true
+    },
+    {
+      "name": "fresh quote",
+      "required": true,
+      "pair": "AUD_JPY",
+      "must_recalculate_max_loss_jpy": true
+    },
+    {
+      "name": "RiskEngine pass",
+      "required": true,
+      "for_live_send": true
+    },
+    {
+      "name": "LiveOrderGateway pass",
+      "required": true
+    },
+    {
+      "name": "GPT verifier pass",
+      "required": true
+    },
+    {
+      "name": "guardian/operator-review pass",
+      "required": true
+    },
+    {
+      "name": "profitability blockers acknowledged",
+      "required": true,
+      "acknowledgement": "NEGATIVE_EXPECTANCY and profitability P0s are proof-collection risk, not LIVE_READY permission."
+    },
+    {
+      "name": "manual EUR_USD 472987 protected",
+      "required": true,
+      "manual_trade_id": "472987",
+      "protected_tp_order_id": "472996"
+    }
+  ],
+  "stop_conditions": [
+    "stale quote",
+    "spread too wide",
+    "forecast mismatch",
+    "RiskEngine fail",
+    "Gateway fail",
+    "GPT verifier fail",
+    "guardian/operator review missing",
+    "execution flags not explicitly approved",
+    "broker last_transaction_id unexpected"
+  ],
+  "manual_protection": {
+    "trade_id": "472987",
+    "pair": "EUR_USD",
+    "classification": "OPERATOR_MANUAL",
+    "management_intent": "KEEP",
+    "protected_take_profit_order_id": "472996",
+    "do_not_touch_trade": true,
+    "do_not_modify_tp": true,
+    "do_not_add_sl": true,
+    "do_not_close": true,
+    "do_not_same_theme_add": true
+  },
+  "prohibited_actions": [
+    "place orders before explicit operator approval and successful preflight",
+    "cancel orders",
+    "close positions",
+    "modify SL/TP",
+    "enable execution flags",
+    "mutate broker state",
+    "touch EUR_USD 472987",
+    "touch TP 472996",
+    "push origin/main"
+  ],
+  "source_provenance": {
+    "local_artifacts": [
+      "data/audjpy_short_breakout_failure_limit_proof_pack.json",
+      "data/audjpy_limit_live_ready_decision.json",
+      "data/order_intents.json",
+      "data/guardian_receipt_consumption.json",
+      "data/guardian_receipt_operator_review.json",
+      "data/broker_snapshot.json"
+    ],
+    "notion_read_only_reference": {
+      "page_title": "quant-rabbit-profitability-evidence-repair-2026-07-03",
+      "page_id": "392f1c8e-53a7-81af-a467-d6ce4635b5cd",
+      "summary": "Memory mirror confirms no broker actions, EUR_USD 472987 OPERATOR_MANUAL/KEEP, and no-live-ready gates remained active as of the 2026-07-03 sync."
+    }
+  },
+  "live_side_effects": []
+}

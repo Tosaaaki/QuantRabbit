@@ -1,0 +1,71 @@
+{
+  "generated_at_utc": "2026-07-06T13:36:34Z",
+  "mode": "scout_mode_readiness_check",
+  "candidate": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+  "classification_values": [
+    "NOT_APPROVED",
+    "APPROVAL_REQUIRED",
+    "READY_FOR_OPERATOR_APPROVAL",
+    "BLOCKED"
+  ],
+  "readiness": {
+    "current": "NOT_APPROVED",
+    "contract_state": "READY_FOR_OPERATOR_APPROVAL",
+    "next_required": "APPROVAL_REQUIRED",
+    "execution_state": "BLOCKED"
+  },
+  "approval": {
+    "present": false,
+    "required_text": "I approve one AUD_JPY SHORT BREAKOUT_FAILURE LIMIT proof-collection scout, max loss ___ JPY, units ___, this run only.",
+    "approval_required_before": [
+      "execution flags",
+      "order staging",
+      "order sending"
+    ]
+  },
+  "preflight_state": {
+    "fresh_broker_snapshot": "REQUIRED_NOT_RUN_FOR_EXECUTION",
+    "fresh_quote": "REQUIRED_NOT_RUN_FOR_EXECUTION",
+    "risk_engine": "REQUIRED_NOT_PASSED",
+    "live_order_gateway": "REQUIRED_NOT_PASSED",
+    "gpt_verifier": "REQUIRED_NOT_PASSED",
+    "guardian_operator_review": "REQUIRED_NOT_PASSED",
+    "manual_eurusd_472987_protection": "REQUIRED_CONFIRMED_BY_LOCAL_SNAPSHOT_AND_MUST_RECHECK",
+    "broker_last_transaction_id": "MUST_RECHECK_BEFORE_ANY_APPROVED_RUN"
+  },
+  "current_blockers": [
+    "operator approval missing",
+    "LIVE_READY=0",
+    "PROOF_READY=0",
+    "normal routing BLOCKED",
+    "AUD_JPY SHORT BREAKOUT_FAILURE LIMIT remains EVIDENCE_GAP",
+    "fresh max loss JPY cap not recalculated",
+    "RiskEngine pass missing",
+    "LiveOrderGateway pass missing",
+    "GPT verifier pass missing",
+    "guardian/operator review missing",
+    "profitability blockers remain proof-collection risk, not LIVE_READY"
+  ],
+  "fresh_quote_reference_only": {
+    "broker_snapshot_fetched_at_utc": "2026-07-06T08:53:59.140771+00:00",
+    "aud_jpy_bid": 112.455,
+    "aud_jpy_ask": 112.471,
+    "quote_timestamp_utc": "2026-07-06T08:54:03.755665+00:00",
+    "reference_max_loss_jpy_at_1000u": 125.0,
+    "reference_is_stale_for_execution": true,
+    "must_recalculate_from_fresh_quote": true
+  },
+  "expected_outcome": {
+    "no_order": true,
+    "no_execution_flags": true,
+    "no_LIVE_READY": true,
+    "normal_routing_remains_BLOCKED": true
+  },
+  "manual_protection": {
+    "trade_id": "472987",
+    "tp_order_id": "472996",
+    "status": "PROTECTED_RECHECK_REQUIRED",
+    "do_not_touch": true
+  },
+  "live_side_effects": []
+}
