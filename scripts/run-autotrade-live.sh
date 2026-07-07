@@ -139,6 +139,7 @@ data/portfolio_4x_path_planner.json|\
 data/post_gate_capture_economics_decomposition.json|\
 data/post_gate_expectancy_gap_trace.json|\
 data/post_gate_gap_family_repair_table.json|\
+data/payoff_shape_diagnosis.json|\
 data/profitability_acceptance_blocker_reconciliation.json|\
 data/remaining_profitability_p0_decomposition.json|\
 data/rolling_30d_4x_firepower_board.json)

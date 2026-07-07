@@ -1,0 +1,4111 @@
+{
+  "family_stats": {
+    "BREAKOUT_FAILURE": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 1108.4,
+        "avg_win_jpy": 493.0,
+        "breakeven_payoff_at_win_rate": 0.7,
+        "expectancy_jpy_per_trade": -166.4,
+        "losses": 56,
+        "net_jpy": -22636.1,
+        "payoff_ratio": 0.445,
+        "trades": 136,
+        "win_rate": 0.5882,
+        "wins": 80
+      },
+      "expectancy_breakdown": {
+        "average_win_too_small_vs_average_loss": true,
+        "market_close_leak_active": true,
+        "month_scale_residual_negative": true,
+        "shape_positive_only_if": "TAKE_PROFIT_ORDER"
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 1197.2,
+        "avg_win_jpy": 212.2,
+        "breakeven_payoff_at_win_rate": 5.875,
+        "expectancy_jpy_per_trade": -992.2,
+        "losses": 47,
+        "net_jpy": -54571.6,
+        "payoff_ratio": 0.177,
+        "trades": 55,
+        "win_rate": 0.1455,
+        "wins": 8
+      },
+      "month_scale_residual": {
+        "actual_pl_jpy": -4081.1334,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 4
+        },
+        "diagnosis": null,
+        "live_permission_filter": null,
+        "method": "BREAKOUT_FAILURE",
+        "pair": null,
+        "repair_replay_pl_jpy": -4081.1334,
+        "repair_replay_triggered": 0,
+        "side": null
+      },
+      "stop_loss_order": {
+        "avg_loss_jpy": 236.3,
+        "avg_win_jpy": 137.2,
+        "breakeven_payoff_at_win_rate": 0.778,
+        "expectancy_jpy_per_trade": -26.2,
+        "losses": 7,
+        "net_jpy": -419.5,
+        "payoff_ratio": 0.581,
+        "trades": 16,
+        "win_rate": 0.5625,
+        "wins": 9
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 579.4,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 579.4,
+        "losses": 0,
+        "net_jpy": 36505.2,
+        "payoff_ratio": null,
+        "trades": 63,
+        "win_rate": 1.0,
+        "wins": 63
+      }
+    },
+    "RANGE_ROTATION": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 1168.0,
+        "avg_win_jpy": 266.2,
+        "breakeven_payoff_at_win_rate": 0.556,
+        "expectancy_jpy_per_trade": -246.0,
+        "losses": 20,
+        "net_jpy": -13777.4,
+        "payoff_ratio": 0.228,
+        "trades": 56,
+        "win_rate": 0.6429,
+        "wins": 36
+      },
+      "expectancy_breakdown": {
+        "average_win_too_small_vs_average_loss": true,
+        "market_close_leak_active": true,
+        "month_scale_residual_negative": true,
+        "shape_positive_only_if": "TAKE_PROFIT_ORDER"
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 1141.6,
+        "avg_win_jpy": 204.6,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -468.5,
+        "losses": 12,
+        "net_jpy": -11243.8,
+        "payoff_ratio": 0.179,
+        "trades": 24,
+        "win_rate": 0.5,
+        "wins": 12
+      },
+      "month_scale_residual": {
+        "actual_pl_jpy": -239.4791,
+        "block_reasons": {
+          "BELOW_NOISE_FLOOR": 1
+        },
+        "diagnosis": null,
+        "live_permission_filter": null,
+        "method": "RANGE_ROTATION",
+        "pair": null,
+        "repair_replay_pl_jpy": -239.4791,
+        "repair_replay_triggered": 0,
+        "side": null
+      },
+      "stop_loss_order": {
+        "avg_loss_jpy": 1042.4,
+        "avg_win_jpy": 95.4,
+        "breakeven_payoff_at_win_rate": 1.4,
+        "expectancy_jpy_per_trade": -568.3,
+        "losses": 7,
+        "net_jpy": -6819.7,
+        "payoff_ratio": 0.091,
+        "trades": 12,
+        "win_rate": 0.4167,
+        "wins": 5
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 350.0,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 350.0,
+        "losses": 0,
+        "net_jpy": 6650.8,
+        "payoff_ratio": null,
+        "trades": 19,
+        "win_rate": 1.0,
+        "wins": 19
+      }
+    },
+    "TREND_CONTINUATION": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 777.9,
+        "avg_win_jpy": 392.5,
+        "breakeven_payoff_at_win_rate": 0.762,
+        "expectancy_jpy_per_trade": -113.6,
+        "losses": 16,
+        "net_jpy": -4203.3,
+        "payoff_ratio": 0.505,
+        "trades": 37,
+        "win_rate": 0.5676,
+        "wins": 21
+      },
+      "expectancy_breakdown": {
+        "average_win_too_small_vs_average_loss": true,
+        "market_close_leak_active": true,
+        "month_scale_residual_negative": true,
+        "shape_positive_only_if": "TAKE_PROFIT_ORDER"
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 635.1,
+        "avg_win_jpy": 297.6,
+        "breakeven_payoff_at_win_rate": 3.75,
+        "expectancy_jpy_per_trade": -438.8,
+        "losses": 15,
+        "net_jpy": -8336.3,
+        "payoff_ratio": 0.469,
+        "trades": 19,
+        "win_rate": 0.2105,
+        "wins": 4
+      },
+      "month_scale_residual": {
+        "actual_pl_jpy": -3065.35,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 4,
+          "NO_PROFIT_CANDIDATE": 2
+        },
+        "diagnosis": null,
+        "live_permission_filter": null,
+        "method": "TREND_CONTINUATION",
+        "pair": null,
+        "repair_replay_pl_jpy": -3065.35,
+        "repair_replay_triggered": 0,
+        "side": null
+      },
+      "stop_loss_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 467.7,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 467.7,
+        "losses": 0,
+        "net_jpy": 1403.0,
+        "payoff_ratio": null,
+        "trades": 3,
+        "win_rate": 1.0,
+        "wins": 3
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 403.5,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 403.5,
+        "losses": 0,
+        "net_jpy": 5648.8,
+        "payoff_ratio": null,
+        "trades": 14,
+        "win_rate": 1.0,
+        "wins": 14
+      }
+    }
+  },
+  "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
+  "harvest_candidates": [
+    {
+      "classification": "HARVEST_POSITIVE_TP_PROVEN",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:LONG:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 7,
+      "market_close_net_jpy": -15091.7,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": -135.2,
+      "overall_net_jpy": -4056.9,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 0,
+      "shape_key": "EUR_USD|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 591.5,
+      "take_profit_expectancy_jpy": 591.5,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 11830.5,
+      "take_profit_trades": 20,
+      "take_profit_wins": 20,
+      "timing_regret": {
+        "avg_entry_touch_after_cancel_minutes": 31.0,
+        "avg_tp_touch_after_cancel_minutes": null,
+        "entry_touch_after_cancel_rate": 0.3333,
+        "estimated_missed_mfe_jpy": 84.3022,
+        "orders": 3,
+        "priority_class": "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED",
+        "tp_touched_after_cancel_rate": 0.0
+      }
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 10,
+      "market_close_net_jpy": -7636.3,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": 102.9,
+      "overall_net_jpy": 3705.2,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 3,
+      "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 613.2,
+      "take_profit_expectancy_jpy": 613.2,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 10424.5,
+      "take_profit_trades": 17,
+      "take_profit_wins": 17,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:GBP_USD:LONG:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "blocked_by_month_scale_replay",
+      "live_promotion_allowed": false,
+      "market_close_losses": 11,
+      "market_close_net_jpy": -22478.7,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2981.8961,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "BREAKOUT_FAILURE",
+        "pair": "GBP_USD",
+        "repair_replay_pl_jpy": -2981.8961,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "overall_expectancy_jpy_per_trade": -749.8,
+      "overall_net_jpy": -17245.2,
+      "pair": "GBP_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 10,
+      "shape_key": "GBP_USD|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 523.3,
+      "take_profit_expectancy_jpy": 523.3,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 5233.5,
+      "take_profit_trades": 10,
+      "take_profit_wins": 10,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:SHORT:RANGE_ROTATION:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "blocked_by_month_scale_replay",
+      "live_promotion_allowed": false,
+      "market_close_losses": 1,
+      "market_close_net_jpy": -2151.0,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2181.1565,
+        "block_reasons": {
+          "NO_PROFIT_CANDIDATE": 1
+        },
+        "diagnosis": "bad_entry_or_no_positive_excursion",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "EUR_USD",
+        "repair_replay_pl_jpy": -2181.1565,
+        "repair_replay_triggered": 0,
+        "side": "SHORT"
+      },
+      "overall_expectancy_jpy_per_trade": 139.1,
+      "overall_net_jpy": 2086.6,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 10,
+      "shape_key": "EUR_USD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 399.6,
+      "take_profit_expectancy_jpy": 399.6,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 3995.7,
+      "take_profit_trades": 10,
+      "take_profit_wins": 10,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:AUD_JPY:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 3,
+      "market_close_net_jpy": -3016.3,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": -133.8,
+      "overall_net_jpy": -1605.4,
+      "pair": "AUD_JPY",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 14,
+      "shape_key": "AUD_JPY|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 992.7,
+      "take_profit_expectancy_jpy": 992.7,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 5956.4,
+      "take_profit_trades": 6,
+      "take_profit_wins": 6,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:SHORT:TREND_CONTINUATION:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 2,
+      "market_close_net_jpy": -1202.1,
+      "method": "TREND_CONTINUATION",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": 30.2,
+      "overall_net_jpy": 211.3,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 15,
+      "shape_key": "EUR_USD|SHORT|TREND_CONTINUATION",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 282.7,
+      "take_profit_expectancy_jpy": 282.7,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 1413.4,
+      "take_profit_trades": 5,
+      "take_profit_wins": 5,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:GBP_USD:LONG:RANGE_ROTATION:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": null,
+      "market_close_net_jpy": null,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": -342.5,
+      "overall_net_jpy": -1369.8,
+      "pair": "GBP_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 17,
+      "shape_key": "GBP_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 331.6,
+      "take_profit_expectancy_jpy": 331.6,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 994.8,
+      "take_profit_trades": 3,
+      "take_profit_wins": 3,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:LONG:RANGE_ROTATION:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "blocked_by_month_scale_replay",
+      "live_promotion_allowed": false,
+      "market_close_losses": 2,
+      "market_close_net_jpy": -2633.6,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2333.8215,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "EUR_USD",
+        "repair_replay_pl_jpy": -2333.8215,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "overall_expectancy_jpy_per_trade": -320.5,
+      "overall_net_jpy": -1923.2,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 17,
+      "shape_key": "EUR_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 164.0,
+      "take_profit_expectancy_jpy": 164.0,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 492.0,
+      "take_profit_trades": 3,
+      "take_profit_wins": 3,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:AUD_CAD:LONG:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": null,
+      "market_close_net_jpy": null,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": 482.4,
+      "overall_net_jpy": 964.8,
+      "pair": "AUD_CAD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 18,
+      "shape_key": "AUD_CAD|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 482.4,
+      "take_profit_expectancy_jpy": 482.4,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 964.8,
+      "take_profit_trades": 2,
+      "take_profit_wins": 2,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:LONG:TREND_CONTINUATION:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 1,
+      "market_close_net_jpy": -3307.4,
+      "method": "TREND_CONTINUATION",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": -692.1,
+      "overall_net_jpy": -2768.4,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 18,
+      "shape_key": "EUR_USD|LONG|TREND_CONTINUATION",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 155.9,
+      "take_profit_expectancy_jpy": 155.9,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 311.8,
+      "take_profit_trades": 2,
+      "take_profit_wins": 2,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:AUD_JPY:LONG:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 6,
+      "market_close_net_jpy": -3077.3,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": -249.2,
+      "overall_net_jpy": -3240.2,
+      "pair": "AUD_JPY",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 18,
+      "shape_key": "AUD_JPY|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "take_profit_avg_win_jpy": 150.1,
+      "take_profit_expectancy_jpy": 150.1,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 300.1,
+      "take_profit_trades": 2,
+      "take_profit_wins": 2,
+      "timing_regret": null
+    },
+    {
+      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+      "evidence_refs": [
+        "capture:shape:GBP_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": null,
+      "market_close_net_jpy": null,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": 21.7,
+      "overall_net_jpy": 43.4,
+      "pair": "GBP_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 18,
+      "shape_key": "GBP_USD|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 21.7,
+      "take_profit_expectancy_jpy": 21.7,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 43.4,
+      "take_profit_trades": 2,
+      "take_profit_wins": 2,
+      "timing_regret": null
+    }
+  ],
+  "live_side_effects": [],
+  "mfe_mae_summary": {
+    "execution_timing": {
+      "canceled_order_mfe": {
+        "audited": 4,
+        "entry_touched": 2,
+        "estimated_missed_mfe_jpy": 714.3022,
+        "tp_touched": 1
+      },
+      "loss_close_mfe": {
+        "audited": 8,
+        "estimated_mfe_jpy": 606.7484,
+        "had_positive_mfe": 5
+      },
+      "post_close_runner": {
+        "audited": 6,
+        "estimated_followthrough_jpy": 3150.6487,
+        "left_runner_upside": 2
+      },
+      "summary": {
+        "avg_decision_lag_minutes_after_first_positive": 93.57,
+        "canceled_entry_touched_after_cancel": 2,
+        "canceled_entry_touched_after_cancel_rate": 0.5,
+        "canceled_estimated_missed_mfe_jpy": 714.3022,
+        "canceled_orders_audited": 4,
+        "canceled_positive_after_cancel_entry": 2,
+        "canceled_positive_after_cancel_entry_rate": 0.5,
+        "canceled_tp_touched_after_cancel": 1,
+        "canceled_tp_touched_after_cancel_rate": 0.25,
+        "historical_pre_repair_loss_closes_profit_capture_missed": 1,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": 1,
+        "loss_close_actual_pl_jpy": -8677.3834,
+        "loss_close_counterfactual_profit_capture_delta_jpy": 446.04,
+        "loss_close_counterfactual_profit_capture_jpy": 105.84,
+        "loss_close_counterfactual_profit_capture_pl_jpy": -8231.3434,
+        "loss_close_estimated_capture_gap_jpy": 214.2,
+        "loss_close_estimated_mfe_jpy": 606.7484,
+        "loss_close_repair_replay_actual_pl_jpy": -8677.3834,
+        "loss_close_repair_replay_block_reasons": {},
+        "loss_close_repair_replay_counterfactual_pl_jpy": -8211.1834,
+        "loss_close_repair_replay_delta_jpy": 466.2,
+        "loss_close_repair_replay_profit_capture_jpy": 126.0,
+        "loss_closes_audited": 8,
+        "loss_closes_had_positive_mfe": 5,
+        "loss_closes_had_positive_mfe_rate": 0.625,
+        "loss_closes_profit_capture_missed": 1,
+        "loss_closes_profit_capture_missed_rate": 0.125,
+        "loss_closes_repair_replay_triggered": 1,
+        "loss_closes_repair_replay_triggered_rate": 0.125,
+        "loss_closes_tp_touched_before_close": 0,
+        "loss_closes_tp_touched_before_close_rate": 0.0,
+        "loss_market_closes_audited": 1,
+        "loss_market_closes_contained_risk": 0,
+        "loss_market_closes_may_have_been_premature": 1,
+        "market_close_estimated_avoided_adverse_jpy": 7808.0,
+        "market_close_estimated_followthrough_jpy": 5158.3377,
+        "market_closes_audited": 6,
+        "market_closes_post_close_adverse": 3,
+        "market_closes_post_close_adverse_rate": 0.5,
+        "market_closes_post_close_continued": 3,
+        "market_closes_post_close_continued_rate": 0.5,
+        "market_closes_sl_touched_after_close": 2,
+        "market_closes_sl_touched_after_close_rate": 0.3333,
+        "market_closes_tp_touched_after_close": 3,
+        "market_closes_tp_touched_after_close_rate": 0.5,
+        "max_decision_lag_minutes_after_first_positive": 300.28,
+        "post_repair_live_evidence_loss_closes_audited": 5,
+        "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+        "post_repair_live_evidence_loss_closes_profit_capture_missed_rate": 0.0,
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered_rate": 0.0,
+        "post_repair_live_evidence_stop_loss_closes_profit_capture_missed": 0,
+        "pre_repair_historical_loss_closes_audited": 3,
+        "pre_repair_historical_loss_closes_profit_capture_missed": 1,
+        "pre_repair_historical_loss_closes_profit_capture_missed_rate": 0.3333,
+        "pre_repair_historical_loss_closes_repair_replay_triggered": 1,
+        "pre_repair_historical_loss_closes_repair_replay_triggered_rate": 0.3333,
+        "profit_market_closes_audited": 5,
+        "profit_market_closes_avoided_giveback": 3,
+        "profit_market_closes_left_runner_upside": 2,
+        "stop_loss_closes_profit_capture_missed": 1,
+        "top_entry_quality_residual_groups": [
+          {
+            "actual_pl_jpy": -2690.6967,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -2690.6967,
+                "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -2690.6967,
+                "repair_replay_triggered": false,
+                "trade_id": "472952"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "AUD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -2690.6967,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "LONG"
+          },
+          {
+            "actual_pl_jpy": -1705.6738,
+            "block_reasons": {
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -1705.6738,
+                "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1705.6738,
+                "repair_replay_triggered": false,
+                "trade_id": "472834"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "AUD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -1705.6738,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -1380.8008,
+            "block_reasons": {
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -1380.8008,
+                "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1380.8008,
+                "repair_replay_triggered": false,
+                "trade_id": "472743"
+              }
+            ],
+            "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "NZD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -1380.8008,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "LONG"
+          },
+          {
+            "actual_pl_jpy": -971.0121,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -971.0121,
+                "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -971.0121,
+                "repair_replay_triggered": false,
+                "trade_id": "472837"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "GBP_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -971.0121,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -844.2,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -844.2,
+                "lane_id": "range_trader:EUR_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -844.2,
+                "repair_replay_triggered": false,
+                "trade_id": "472903"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "EUR_JPY",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -844.2,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -744.8,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1,
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -464.0,
+                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -464.0,
+                "repair_replay_triggered": false,
+                "trade_id": "472900"
+              },
+              {
+                "actual_pl_jpy": -280.8,
+                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -280.8,
+                "repair_replay_triggered": false,
+                "trade_id": "472775"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 2,
+            "method": "RANGE_ROTATION",
+            "pair": "USD_JPY",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -744.8,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          }
+        ],
+        "top_entry_quality_residual_method_rollups": [
+          {
+            "actual_pl_jpy": -8337.1834,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 4,
+              "NO_PROFIT_CANDIDATE": 3
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -2690.6967,
+                "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "AUD_USD",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -2690.6967,
+                "repair_replay_triggered": false,
+                "side": "LONG",
+                "trade_id": "472952"
+              },
+              {
+                "actual_pl_jpy": -1705.6738,
+                "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "AUD_USD",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1705.6738,
+                "repair_replay_triggered": false,
+                "side": "SHORT",
+                "trade_id": "472834"
+              },
+              {
+                "actual_pl_jpy": -1380.8008,
+                "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "NZD_USD",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1380.8008,
+                "repair_replay_triggered": false,
+                "side": "LONG",
+                "trade_id": "472743"
+              }
+            ],
+            "exit_reasons": {
+              "MARKET_ORDER_TRADE_CLOSE": 1,
+              "STOP_LOSS_ORDER": 6
+            },
+            "group_count": 6,
+            "loss_closes": 7,
+            "method": "RANGE_ROTATION",
+            "pair_count": 5,
+            "pairs": [
+              "AUD_USD",
+              "EUR_JPY",
+              "GBP_USD",
+              "NZD_USD",
+              "USD_JPY"
+            ],
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -8337.1834,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side_count": 2,
+            "sides": [
+              "LONG",
+              "SHORT"
+            ]
+          }
+        ],
+        "top_repair_replay_residual_groups": [
+          {
+            "actual_pl_jpy": -2690.6967,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -2690.6967,
+                "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -2690.6967,
+                "repair_replay_triggered": false,
+                "trade_id": "472952"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "AUD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -2690.6967,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "LONG"
+          },
+          {
+            "actual_pl_jpy": -1705.6738,
+            "block_reasons": {
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -1705.6738,
+                "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1705.6738,
+                "repair_replay_triggered": false,
+                "trade_id": "472834"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "AUD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -1705.6738,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -1380.8008,
+            "block_reasons": {
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -1380.8008,
+                "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1380.8008,
+                "repair_replay_triggered": false,
+                "trade_id": "472743"
+              }
+            ],
+            "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "NZD_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -1380.8008,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "LONG"
+          },
+          {
+            "actual_pl_jpy": -971.0121,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -971.0121,
+                "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -971.0121,
+                "repair_replay_triggered": false,
+                "trade_id": "472837"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "GBP_USD",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -971.0121,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -844.2,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -844.2,
+                "lane_id": "range_trader:EUR_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -844.2,
+                "repair_replay_triggered": false,
+                "trade_id": "472903"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 1,
+            "method": "RANGE_ROTATION",
+            "pair": "EUR_JPY",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -844.2,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          },
+          {
+            "actual_pl_jpy": -744.8,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 1,
+              "NO_PROFIT_CANDIDATE": 1
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -464.0,
+                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -464.0,
+                "repair_replay_triggered": false,
+                "trade_id": "472900"
+              },
+              {
+                "actual_pl_jpy": -280.8,
+                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -280.8,
+                "repair_replay_triggered": false,
+                "trade_id": "472775"
+              }
+            ],
+            "exit_reason": "STOP_LOSS_ORDER",
+            "loss_closes": 2,
+            "method": "RANGE_ROTATION",
+            "pair": "USD_JPY",
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -744.8,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side": "SHORT"
+          }
+        ],
+        "top_repair_replay_residual_method_rollups": [
+          {
+            "actual_pl_jpy": -8337.1834,
+            "block_reasons": {
+              "BELOW_TP_PROGRESS_GATE": 4,
+              "NO_PROFIT_CANDIDATE": 3
+            },
+            "examples": [
+              {
+                "actual_pl_jpy": -2690.6967,
+                "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "AUD_USD",
+                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                "repair_replay_pl_jpy": -2690.6967,
+                "repair_replay_triggered": false,
+                "side": "LONG",
+                "trade_id": "472952"
+              },
+              {
+                "actual_pl_jpy": -1705.6738,
+                "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "AUD_USD",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1705.6738,
+                "repair_replay_triggered": false,
+                "side": "SHORT",
+                "trade_id": "472834"
+              },
+              {
+                "actual_pl_jpy": -1380.8008,
+                "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                "method": "RANGE_ROTATION",
+                "pair": "NZD_USD",
+                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                "repair_replay_pl_jpy": -1380.8008,
+                "repair_replay_triggered": false,
+                "side": "LONG",
+                "trade_id": "472743"
+              }
+            ],
+            "exit_reasons": {
+              "MARKET_ORDER_TRADE_CLOSE": 1,
+              "STOP_LOSS_ORDER": 6
+            },
+            "group_count": 6,
+            "loss_closes": 7,
+            "method": "RANGE_ROTATION",
+            "pair_count": 5,
+            "pairs": [
+              "AUD_USD",
+              "EUR_JPY",
+              "GBP_USD",
+              "NZD_USD",
+              "USD_JPY"
+            ],
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_pl_jpy": -8337.1834,
+            "repair_replay_triggered": 0,
+            "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            "side_count": 2,
+            "sides": [
+              "LONG",
+              "SHORT"
+            ]
+          }
+        ],
+        "top_tp_progress_repair_residual_groups": [],
+        "top_tp_progress_repair_residual_method_rollups": [],
+        "tp_progress_repair_live_evidence_boundary_reason": "Full TP-progress production replay contract deployed; 2026-06-22T09:35:39Z was TP-progress banking only.",
+        "tp_progress_repair_live_evidence_boundary_utc": "2026-06-22T17:54:26Z",
+        "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN"
+      }
+    },
+    "order_intent_bidask_replay": {
+      "by_family": {
+        "BREAKOUT_FAILURE": {
+          "avg_final_pips": -5.1515,
+          "avg_mae_pips": 14.3483,
+          "avg_mfe_pips": 5.394,
+          "blocks_live_support_packets": 21,
+          "negative_avg_final_packets": 21,
+          "packets": 45,
+          "sample_sum": 23697
+        },
+        "RANGE_ROTATION": {
+          "avg_final_pips": -3.7901,
+          "avg_mae_pips": 11.745,
+          "avg_mfe_pips": 5.3146,
+          "blocks_live_support_packets": 33,
+          "negative_avg_final_packets": 33,
+          "packets": 70,
+          "sample_sum": 29238
+        },
+        "TREND_CONTINUATION": {
+          "avg_final_pips": -4.817,
+          "avg_mae_pips": 14.3892,
+          "avg_mfe_pips": 5.4041,
+          "blocks_live_support_packets": 17,
+          "negative_avg_final_packets": 17,
+          "packets": 36,
+          "sample_sum": 17924
+        }
+      },
+      "by_pair": {
+        "AUD_CHF": {
+          "avg_final_pips": -2.0411,
+          "avg_mae_pips": 5.7157,
+          "avg_mfe_pips": 2.2821,
+          "blocks_live_support_packets": 2,
+          "negative_avg_final_packets": 2,
+          "packets": 4,
+          "sample_sum": 1512
+        },
+        "AUD_JPY": {
+          "avg_final_pips": -3.6274,
+          "avg_mae_pips": 11.4669,
+          "avg_mfe_pips": 5.5591,
+          "blocks_live_support_packets": 6,
+          "negative_avg_final_packets": 6,
+          "packets": 12,
+          "sample_sum": 7936
+        },
+        "AUD_USD": {
+          "avg_final_pips": -2.1798,
+          "avg_mae_pips": 9.1379,
+          "avg_mfe_pips": 5.7485,
+          "blocks_live_support_packets": 4,
+          "negative_avg_final_packets": 4,
+          "packets": 8,
+          "sample_sum": 2734
+        },
+        "CHF_JPY": {
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "blocks_live_support_packets": 7,
+          "negative_avg_final_packets": 7,
+          "packets": 14,
+          "sample_sum": 7889
+        },
+        "EUR_AUD": {
+          "avg_final_pips": -5.3594,
+          "avg_mae_pips": 17.4313,
+          "avg_mfe_pips": 10.7586,
+          "blocks_live_support_packets": 2,
+          "negative_avg_final_packets": 2,
+          "packets": 4,
+          "sample_sum": 1988
+        },
+        "EUR_CHF": {
+          "avg_final_pips": -1.9732,
+          "avg_mae_pips": 5.0864,
+          "avg_mfe_pips": 2.1696,
+          "blocks_live_support_packets": 2,
+          "negative_avg_final_packets": 2,
+          "packets": 4,
+          "sample_sum": 954
+        },
+        "EUR_JPY": {
+          "avg_final_pips": -4.0908,
+          "avg_mae_pips": 11.4948,
+          "avg_mfe_pips": 4.9026,
+          "blocks_live_support_packets": 14,
+          "negative_avg_final_packets": 14,
+          "packets": 28,
+          "sample_sum": 18991
+        },
+        "EUR_USD": {
+          "avg_final_pips": -2.8936,
+          "avg_mae_pips": 7.6197,
+          "avg_mfe_pips": 3.2954,
+          "blocks_live_support_packets": 4,
+          "negative_avg_final_packets": 4,
+          "packets": 15,
+          "sample_sum": 5532
+        },
+        "GBP_AUD": {
+          "avg_final_pips": -5.7043,
+          "avg_mae_pips": 18.0423,
+          "avg_mfe_pips": 6.7586,
+          "blocks_live_support_packets": 7,
+          "negative_avg_final_packets": 7,
+          "packets": 14,
+          "sample_sum": 3724
+        },
+        "GBP_JPY": {
+          "avg_final_pips": -4.0513,
+          "avg_mae_pips": 16.7497,
+          "avg_mfe_pips": 8.4708,
+          "blocks_live_support_packets": 4,
+          "negative_avg_final_packets": 4,
+          "packets": 8,
+          "sample_sum": 3142
+        },
+        "GBP_NZD": {
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "blocks_live_support_packets": 7,
+          "negative_avg_final_packets": 7,
+          "packets": 14,
+          "sample_sum": 5257
+        },
+        "GBP_USD": {
+          "avg_final_pips": -5.9085,
+          "avg_mae_pips": 11.9463,
+          "avg_mfe_pips": 3.6146,
+          "blocks_live_support_packets": 4,
+          "negative_avg_final_packets": 4,
+          "packets": 10,
+          "sample_sum": 5680
+        },
+        "NZD_USD": {
+          "avg_final_pips": -3.6204,
+          "avg_mae_pips": 7.2687,
+          "avg_mfe_pips": 2.1251,
+          "blocks_live_support_packets": 2,
+          "negative_avg_final_packets": 2,
+          "packets": 4,
+          "sample_sum": 1098
+        },
+        "USD_JPY": {
+          "avg_final_pips": -1.9361,
+          "avg_mae_pips": 9.1855,
+          "avg_mfe_pips": 4.4112,
+          "blocks_live_support_packets": 6,
+          "negative_avg_final_packets": 6,
+          "packets": 12,
+          "sample_sum": 4422
+        }
+      },
+      "by_session": {
+        "LONDON_KILLZONE": {
+          "avg_final_pips": -4.4387,
+          "avg_mae_pips": 13.1481,
+          "avg_mfe_pips": 5.3595,
+          "blocks_live_support_packets": 71,
+          "negative_avg_final_packets": 71,
+          "packets": 151,
+          "sample_sum": 70859
+        }
+      },
+      "overall": {
+        "avg_final_pips": -4.4387,
+        "avg_mae_pips": 13.1481,
+        "avg_mfe_pips": 5.3595,
+        "blocks_live_support_packets": 71,
+        "negative_avg_final_packets": 71,
+        "packets": 151,
+        "sample_sum": 70859
+      },
+      "top_negative_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "range_trader:GBP_NZD:LONG:RANGE_ROTATION",
+          "method": "RANGE_ROTATION",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "range_trader:GBP_NZD:LONG:RANGE_ROTATION:MARKET",
+          "method": "RANGE_ROTATION",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:LIMIT",
+          "method": "BREAKOUT_FAILURE",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:MARKET",
+          "method": "BREAKOUT_FAILURE",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "trend_trader:GBP_NZD:LONG:TREND_CONTINUATION",
+          "method": "TREND_CONTINUATION",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -7.7174,
+          "avg_mae_pips": 22.3776,
+          "avg_mfe_pips": 7.1256,
+          "lane_id": "trend_trader:GBP_NZD:LONG:TREND_CONTINUATION:MARKET",
+          "method": "TREND_CONTINUATION",
+          "name": "GBP_NZD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "GBP_NZD",
+          "samples": 751,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "lane_id": "range_trader:CHF_JPY:LONG:RANGE_ROTATION",
+          "method": "RANGE_ROTATION",
+          "name": "CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "CHF_JPY",
+          "samples": 1127,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "lane_id": "range_trader:CHF_JPY:LONG:RANGE_ROTATION:MARKET",
+          "method": "RANGE_ROTATION",
+          "name": "CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "CHF_JPY",
+          "samples": 1127,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "lane_id": "failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+          "method": "BREAKOUT_FAILURE",
+          "name": "CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "CHF_JPY",
+          "samples": 1127,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "lane_id": "failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE",
+          "method": "BREAKOUT_FAILURE",
+          "name": "CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "CHF_JPY",
+          "samples": 1127,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -6.3458,
+          "avg_mae_pips": 16.1307,
+          "avg_mfe_pips": 5.0983,
+          "lane_id": "failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE:MARKET",
+          "method": "BREAKOUT_FAILURE",
+          "name": "CHF_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "pair": "CHF_JPY",
+          "samples": 1127,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG"
+        }
+      ]
+    }
+  },
+  "missed_runner_cases": [
+    {
+      "close_at_utc": "2026-06-25T06:06:56.830954+00:00",
+      "estimated_post_close_adverse_jpy": 1199.685,
+      "estimated_post_close_favorable_jpy": 2099.4487,
+      "evidence_ref": "timing:market_close_counterfactuals",
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "post_close_adverse_pips": 14.8,
+      "post_close_favorable_pips": 25.9,
+      "post_close_path_label": "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE",
+      "realized_pl_jpy": 218.0282,
+      "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "tp_touch_minutes_after_market_close": 24.05,
+      "tp_touched_after_market_close": true,
+      "trade_id": "472819"
+    },
+    {
+      "close_at_utc": "2026-06-25T15:40:33.722230+00:00",
+      "estimated_post_close_adverse_jpy": 295.2,
+      "estimated_post_close_favorable_jpy": 1051.2,
+      "evidence_ref": "timing:market_close_counterfactuals",
+      "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "post_close_adverse_pips": 4.1,
+      "post_close_favorable_pips": 14.6,
+      "post_close_path_label": "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE",
+      "realized_pl_jpy": 432.0,
+      "shape_key": "USD_JPY|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "tp_touch_minutes_after_market_close": 0.44,
+      "tp_touched_after_market_close": true,
+      "trade_id": "472840"
+    },
+    {
+      "close_at_utc": "2026-06-25T19:16:37.296403+00:00",
+      "estimated_post_close_adverse_jpy": 584.0,
+      "estimated_post_close_favorable_jpy": 304.0,
+      "evidence_ref": "timing:market_close_counterfactuals",
+      "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "post_close_adverse_pips": 7.3,
+      "post_close_favorable_pips": 3.8,
+      "post_close_path_label": "PROFIT_CLOSE_AVOIDED_GIVEBACK",
+      "realized_pl_jpy": 224.0,
+      "shape_key": "USD_JPY|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp_touch_minutes_after_market_close": 13.38,
+      "tp_touched_after_market_close": true,
+      "trade_id": "472861"
+    }
+  ],
+  "missing_source_artifacts": [],
+  "next_evidence_actions": [
+    {
+      "code": "REFRESH_MONTH_SCALE_TIMING_AUDIT",
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
+      "read_only": true,
+      "success_condition": {
+        "artifact": "data/execution_timing_audit.json",
+        "checks": [
+          {
+            "json_path": "window.lookback_hours",
+            "operator": ">=",
+            "value": 720
+          },
+          {
+            "json_path": "summary.loss_closes_repair_replay_triggered",
+            "operator": "==",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "code": "REFRESH_CAPTURE_ECONOMICS_AFTER_LEDGER_SYNC",
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics",
+      "read_only": true,
+      "success_condition": {
+        "artifact": "data/capture_economics.json",
+        "checks": [
+          {
+            "json_path": "status",
+            "operator": "in",
+            "value": [
+              "POSITIVE_EXPECTANCY",
+              "NEGATIVE_EXPECTANCY"
+            ]
+          },
+          {
+            "json_path": "repair_summary.dominant_loss_exit_reason",
+            "operator": "!=",
+            "value": null
+          }
+        ]
+      }
+    },
+    {
+      "code": "RECHECK_MONTH_SCALE_RESIDUALS",
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+      "current_result": {
+        "current_residual_pl_jpy": -20504.5826,
+        "fresh_entries_must_remain_blocked": true
+      },
+      "read_only": true,
+      "success_condition": {
+        "artifact": "data/month_scale_tp_replay_residuals.json",
+        "checks": [
+          {
+            "json_path": "fresh_entries_must_remain_blocked",
+            "operator": "==",
+            "value": false
+          },
+          {
+            "json_path": "pl_summary.current_residual_pl_jpy",
+            "operator": ">=",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "code": "COLLECT_EXACT_HARVEST_TP_PROOF_GAPS",
+      "read_only": true,
+      "success_condition": {
+        "checks": [
+          {
+            "field": "take_profit_trades",
+            "operator": ">=",
+            "value": 20
+          },
+          {
+            "field": "take_profit_losses",
+            "operator": "==",
+            "value": 0
+          },
+          {
+            "field": "take_profit_expectancy_jpy",
+            "operator": ">",
+            "value": 0
+          }
+        ]
+      },
+      "target_shapes": [
+        {
+          "proof_gap_trades": 3,
+          "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+          "take_profit_losses": 0
+        },
+        {
+          "proof_gap_trades": 10,
+          "shape_key": "GBP_USD|LONG|BREAKOUT_FAILURE",
+          "take_profit_losses": 0
+        },
+        {
+          "proof_gap_trades": 10,
+          "shape_key": "EUR_USD|SHORT|RANGE_ROTATION",
+          "take_profit_losses": 0
+        },
+        {
+          "proof_gap_trades": 14,
+          "shape_key": "AUD_JPY|SHORT|BREAKOUT_FAILURE",
+          "take_profit_losses": 0
+        },
+        {
+          "proof_gap_trades": 15,
+          "shape_key": "EUR_USD|SHORT|TREND_CONTINUATION",
+          "take_profit_losses": 0
+        }
+      ]
+    },
+    {
+      "code": "NO_TRADE_ESCAPE_CONDITION",
+      "read_only": true,
+      "success_condition": {
+        "checks": [
+          {
+            "field": "spread_included_replay_net",
+            "operator": ">=",
+            "value": 0
+          },
+          {
+            "field": "month_scale_replay_net",
+            "operator": ">=",
+            "value": 0
+          },
+          {
+            "field": "current_live_blocker_codes",
+            "operator": "not_contains_any",
+            "value": [
+              "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+              "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"
+            ]
+          }
+        ]
+      },
+      "target_shapes": [
+        "AUD_JPY|SHORT|RANGE_ROTATION",
+        "AUD_USD|LONG|RANGE_ROTATION",
+        "NZD_CAD|SHORT|RANGE_ROTATION",
+        "GBP_CHF|LONG|TREND_CONTINUATION",
+        "GBP_USD|LONG|TREND_CONTINUATION"
+      ]
+    }
+  ],
+  "no_trade_shapes": [
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -3.365,
+          "avg_mae_pips": 11.781,
+          "avg_mfe_pips": 6.5452,
+          "lane_id": "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 1361,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -3171.0,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.365,
+          "avg_mae_pips": 11.781,
+          "avg_mfe_pips": 6.5452,
+          "name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 1361,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -3171.0,
+      "pair": "AUD_JPY",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "AUD_JPY|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "trades": 1
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -3.2122,
+          "avg_mae_pips": 7.2377,
+          "avg_mfe_pips": 2.7643,
+          "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 395,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+          ],
+          "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "avg_final_pips": -3.2122,
+          "avg_mae_pips": 7.2377,
+          "avg_mfe_pips": 2.7643,
+          "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 395,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -2690.7,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2690.6967,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "AUD_USD",
+        "repair_replay_pl_jpy": -2690.6967,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.2122,
+          "avg_mae_pips": 7.2377,
+          "avg_mfe_pips": 2.7643,
+          "name": "AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 395,
+          "session": "LONDON_KILLZONE"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.2122,
+          "avg_mae_pips": 7.2377,
+          "avg_mfe_pips": 2.7643,
+          "name": "AUD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 395,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -2690.7,
+      "pair": "AUD_USD",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "AUD_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "trades": 1
+    },
+    {
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json"
+      ],
+      "expectancy_jpy_per_trade": -1022.2,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2044.4543,
+        "block_reasons": {
+          "NO_PROFIT_CANDIDATE": 2
+        },
+        "diagnosis": "bad_entry_or_no_positive_excursion",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "NZD_CAD",
+        "repair_replay_pl_jpy": -2044.4543,
+        "repair_replay_triggered": 0,
+        "side": "SHORT"
+      },
+      "net_jpy": -2044.5,
+      "pair": "NZD_CAD",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "NZD_CAD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "trades": 2
+    },
+    {
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db"
+      ],
+      "expectancy_jpy_per_trade": -968.7,
+      "live_promotion_allowed": false,
+      "method": "TREND_CONTINUATION",
+      "net_jpy": -1937.5,
+      "pair": "GBP_CHF",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "GBP_CHF|LONG|TREND_CONTINUATION",
+      "side": "LONG",
+      "trades": 2
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -5.9085,
+          "avg_mae_pips": 11.9463,
+          "avg_mfe_pips": 3.6146,
+          "lane_id": "trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+          "live_promotion_allowed": false,
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 1420,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+          "live_promotion_allowed": false,
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -928.7,
+      "live_promotion_allowed": false,
+      "method": "TREND_CONTINUATION",
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -5.9085,
+          "avg_mae_pips": 11.9463,
+          "avg_mfe_pips": 3.6146,
+          "name": "GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 1420,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -1857.3,
+      "pair": "GBP_USD",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "GBP_USD|LONG|TREND_CONTINUATION",
+      "side": "LONG",
+      "trades": 2
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -1.1473,
+          "avg_mae_pips": 11.0381,
+          "avg_mfe_pips": 8.7328,
+          "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 972,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+          ],
+          "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "avg_final_pips": -1.1473,
+          "avg_mae_pips": 11.0381,
+          "avg_mfe_pips": 8.7328,
+          "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 972,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -1705.7,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -1705.6738,
+        "block_reasons": {
+          "NO_PROFIT_CANDIDATE": 1
+        },
+        "diagnosis": "bad_entry_or_no_positive_excursion",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "AUD_USD",
+        "repair_replay_pl_jpy": -1705.6738,
+        "repair_replay_triggered": 0,
+        "side": "SHORT"
+      },
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -1.1473,
+          "avg_mae_pips": 11.0381,
+          "avg_mfe_pips": 8.7328,
+          "name": "AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 972,
+          "session": "LONDON_KILLZONE"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -1.1473,
+          "avg_mae_pips": 11.0381,
+          "avg_mfe_pips": 8.7328,
+          "name": "AUD_USD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 972,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -1705.7,
+      "pair": "AUD_USD",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "AUD_USD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "trades": 1
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:MARKET",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:MARKET",
+          "live_promotion_allowed": false,
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_JPY",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -353.5,
+      "live_promotion_allowed": false,
+      "method": "BREAKOUT_FAILURE",
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.8407,
+          "avg_mae_pips": 11.8349,
+          "avg_mfe_pips": 6.2024,
+          "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 1147,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -1414.2,
+      "pair": "EUR_JPY",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "EUR_JPY|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "trades": 4
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "avg_final_pips": -3.6204,
+          "avg_mae_pips": 7.2687,
+          "avg_mfe_pips": 2.1251,
+          "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 549,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "avg_final_pips": -3.6204,
+          "avg_mae_pips": 7.2687,
+          "avg_mfe_pips": 2.1251,
+          "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "reason_code": "SPREAD_INCLUDED_REPLAY_NEGATIVE",
+          "samples": 549,
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents"
+        },
+        {
+          "blocker_codes": [
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "LONG",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -1380.8,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -1380.8008,
+        "block_reasons": {
+          "NO_PROFIT_CANDIDATE": 1
+        },
+        "diagnosis": "bad_entry_or_no_positive_excursion",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "NZD_USD",
+        "repair_replay_pl_jpy": -1380.8008,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "negative_replay_packets": [
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.6204,
+          "avg_mae_pips": 7.2687,
+          "avg_mfe_pips": 2.1251,
+          "name": "NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 549,
+          "session": "LONDON_KILLZONE"
+        },
+        {
+          "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+          "avg_final_pips": -3.6204,
+          "avg_mae_pips": 7.2687,
+          "avg_mfe_pips": 2.1251,
+          "name": "NZD_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+          "samples": 549,
+          "session": "LONDON_KILLZONE"
+        }
+      ],
+      "net_jpy": -1380.8,
+      "pair": "NZD_USD",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "NZD_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "trades": 1
+    },
+    {
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json"
+      ],
+      "expectancy_jpy_per_trade": -348.2,
+      "live_promotion_allowed": false,
+      "method": "TREND_CONTINUATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -1272.0771,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 2
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "TREND_CONTINUATION",
+        "pair": "EUR_CHF",
+        "repair_replay_pl_jpy": -1272.0771,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "net_jpy": -1044.5,
+      "pair": "EUR_CHF",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "EUR_CHF|LONG|TREND_CONTINUATION",
+      "side": "LONG",
+      "trades": 3
+    },
+    {
+      "current_intent_blockers": [
+        {
+          "blocker_codes": [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+          ],
+          "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "GBP_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        },
+        {
+          "blocker_codes": [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "STRATEGY_NOT_ELIGIBLE"
+          ],
+          "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION:MARKET",
+          "live_promotion_allowed": false,
+          "method": "RANGE_ROTATION",
+          "pair": "GBP_USD",
+          "reason_code": "CURRENT_INTENT_BLOCKED",
+          "session": "LONDON_KILLZONE",
+          "side": "SHORT",
+          "source": "order_intents",
+          "status": "DRY_RUN_BLOCKED"
+        }
+      ],
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db",
+        "data/month_scale_tp_replay_residuals.json",
+        "data/order_intents.json"
+      ],
+      "expectancy_jpy_per_trade": -971.0,
+      "live_promotion_allowed": false,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -971.0121,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "GBP_USD",
+        "repair_replay_pl_jpy": -971.0121,
+        "repair_replay_triggered": 0,
+        "side": "SHORT"
+      },
+      "net_jpy": -971.0,
+      "pair": "GBP_USD",
+      "reason_code": "MONTH_SCALE_REPLAY_NEGATIVE",
+      "shape_key": "GBP_USD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "trades": 1
+    },
+    {
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db"
+      ],
+      "expectancy_jpy_per_trade": -449.0,
+      "live_promotion_allowed": false,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -897.9,
+      "pair": "AUD_CHF",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "AUD_CHF|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "trades": 2
+    },
+    {
+      "evidence_refs": [
+        "data/capture_economics.json",
+        "data/execution_ledger.db"
+      ],
+      "expectancy_jpy_per_trade": -439.1,
+      "live_promotion_allowed": false,
+      "method": "BREAKOUT_FAILURE",
+      "net_jpy": -878.3,
+      "pair": "EUR_GBP",
+      "reason_code": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+      "shape_key": "EUR_GBP|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "trades": 2
+    }
+  ],
+  "overall_payoff_shape_verdict": {
+    "capture_economics_status": "NEGATIVE_EXPECTANCY",
+    "classification": "MIXED_HARVEST_PRIMARY",
+    "harvest_candidate_net_jpy": 41960.9,
+    "interpretation_for_4x": "4x requires a mixed shape with HARVEST as the accounting base and only evidence-scoped runners. RUNNER-only promotion is not supported while market-close leakage and month-scale replay remain negative.",
+    "live_promotion_allowed": false,
+    "live_promotion_blockers": [
+      "NEGATIVE_EXPECTANCY",
+      "MONTH_SCALE_REPLAY_NEGATIVE",
+      "REPLAY_BACKTEST_NEGATIVE"
+    ],
+    "month_scale_blocker": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+    "partial_tp_runner_tail_jpy": 2099.4487,
+    "primary_reason": "Broker TP/HARVEST buckets are the only clearly paying realized exit family, while timing audit shows some leftover runner tail; use TP-first only as diagnostic evidence.",
+    "replay_backtest_total_historical_net_jpy": -41482.8194,
+    "runner_candidate_tail_jpy": 0.0
+  },
+  "overheld_harvest_cases": [
+    {
+      "decision_lag_minutes_after_first_positive": 300.28,
+      "estimated_mfe_jpy_before_loss_close": 90.787,
+      "evidence_ref": "timing:loss_close_regrets",
+      "exit_reason": "STOP_LOSS_ORDER",
+      "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "mfe_pips_before_loss_close": 0.4,
+      "pair": "AUD_USD",
+      "profit_capture_missed_before_loss_close": false,
+      "realized_pl_jpy": -2690.6967,
+      "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+      "repair_replay_counterfactual_net_improvement_jpy": null,
+      "repair_replay_triggered_before_loss_close": false,
+      "shape_key": "AUD_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "tp_progress_before_loss_close": 0.0342,
+      "trade_id": "472952"
+    },
+    {
+      "decision_lag_minutes_after_first_positive": 41.42,
+      "estimated_mfe_jpy_before_loss_close": 218.8614,
+      "evidence_ref": "timing:loss_close_regrets",
+      "exit_reason": "STOP_LOSS_ORDER",
+      "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "mfe_pips_before_loss_close": 2.5,
+      "pair": "GBP_USD",
+      "profit_capture_missed_before_loss_close": false,
+      "realized_pl_jpy": -971.0121,
+      "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+      "repair_replay_counterfactual_net_improvement_jpy": null,
+      "repair_replay_triggered_before_loss_close": false,
+      "shape_key": "GBP_USD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp_progress_before_loss_close": 0.1799,
+      "trade_id": "472837"
+    },
+    {
+      "decision_lag_minutes_after_first_positive": 18.84,
+      "estimated_mfe_jpy_before_loss_close": 18.9,
+      "evidence_ref": "timing:loss_close_regrets",
+      "exit_reason": "STOP_LOSS_ORDER",
+      "lane_id": "range_trader:EUR_JPY:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "mfe_pips_before_loss_close": 0.3,
+      "pair": "EUR_JPY",
+      "profit_capture_missed_before_loss_close": false,
+      "realized_pl_jpy": -844.2,
+      "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+      "repair_replay_counterfactual_net_improvement_jpy": null,
+      "repair_replay_triggered_before_loss_close": false,
+      "shape_key": "EUR_JPY|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp_progress_before_loss_close": 0.0207,
+      "trade_id": "472903"
+    },
+    {
+      "decision_lag_minutes_after_first_positive": 64.32,
+      "estimated_mfe_jpy_before_loss_close": 64.0,
+      "evidence_ref": "timing:loss_close_regrets",
+      "exit_reason": "STOP_LOSS_ORDER",
+      "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "mfe_pips_before_loss_close": 0.8,
+      "pair": "USD_JPY",
+      "profit_capture_missed_before_loss_close": false,
+      "realized_pl_jpy": -464.0,
+      "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+      "repair_replay_counterfactual_net_improvement_jpy": null,
+      "repair_replay_triggered_before_loss_close": false,
+      "shape_key": "USD_JPY|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp_progress_before_loss_close": 0.1379,
+      "trade_id": "472900"
+    },
+    {
+      "decision_lag_minutes_after_first_positive": 42.99,
+      "estimated_mfe_jpy_before_loss_close": 214.2,
+      "evidence_ref": "timing:loss_close_regrets",
+      "exit_reason": "STOP_LOSS_ORDER",
+      "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "mfe_pips_before_loss_close": 3.4,
+      "pair": "USD_JPY",
+      "profit_capture_missed_before_loss_close": true,
+      "realized_pl_jpy": -340.2,
+      "repair_replay_block_reason": null,
+      "repair_replay_counterfactual_net_improvement_jpy": 466.2,
+      "repair_replay_triggered_before_loss_close": true,
+      "shape_key": "USD_JPY|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp_progress_before_loss_close": 0.6071,
+      "trade_id": "472792"
+    }
+  ],
+  "pair_stats": {
+    "AUD_CAD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 240.6,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 240.6,
+        "losses": 0,
+        "net_jpy": 1202.9,
+        "payoff_ratio": null,
+        "trades": 5,
+        "win_rate": 1.0,
+        "wins": 5
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 110.7,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 110.7,
+        "losses": 0,
+        "net_jpy": 221.5,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 16.6,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 16.6,
+        "losses": 0,
+        "net_jpy": 16.6,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 482.4,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 482.4,
+        "losses": 0,
+        "net_jpy": 964.8,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      }
+    },
+    "AUD_CHF": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 1215.4,
+        "avg_win_jpy": 251.1,
+        "breakeven_payoff_at_win_rate": 0.333,
+        "expectancy_jpy_per_trade": -115.6,
+        "losses": 1,
+        "net_jpy": -462.2,
+        "payoff_ratio": 0.207,
+        "trades": 4,
+        "win_rate": 0.75,
+        "wins": 3
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 1215.4,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -1215.4,
+        "losses": 1,
+        "net_jpy": -1215.4,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 215.9,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 215.9,
+        "losses": 0,
+        "net_jpy": 431.8,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 321.4,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 321.4,
+        "losses": 0,
+        "net_jpy": 321.4,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "AUD_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 853.6,
+        "avg_win_jpy": 565.7,
+        "breakeven_payoff_at_win_rate": 1.417,
+        "expectancy_jpy_per_trade": -266.3,
+        "losses": 17,
+        "net_jpy": -7723.4,
+        "payoff_ratio": 0.663,
+        "trades": 29,
+        "win_rate": 0.4138,
+        "wins": 12
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 864.0,
+        "avg_win_jpy": 46.0,
+        "breakeven_payoff_at_win_rate": 5.5,
+        "expectancy_jpy_per_trade": -724.0,
+        "losses": 11,
+        "net_jpy": -9411.5,
+        "payoff_ratio": 0.053,
+        "trades": 13,
+        "win_rate": 0.1538,
+        "wins": 2
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "avg_loss_jpy": 212.2,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -212.2,
+        "losses": 5,
+        "net_jpy": -1061.0,
+        "payoff_ratio": 0.0,
+        "trades": 5,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 669.7,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 669.7,
+        "losses": 0,
+        "net_jpy": 6696.5,
+        "payoff_ratio": null,
+        "trades": 10,
+        "win_rate": 1.0,
+        "wins": 10
+      }
+    },
+    "AUD_NZD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 350.9,
+        "avg_win_jpy": 43.6,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -153.7,
+        "losses": 2,
+        "net_jpy": -614.7,
+        "payoff_ratio": 0.124,
+        "trades": 4,
+        "win_rate": 0.5,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 350.9,
+        "avg_win_jpy": 43.6,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -153.7,
+        "losses": 2,
+        "net_jpy": -614.7,
+        "payoff_ratio": 0.124,
+        "trades": 4,
+        "win_rate": 0.5,
+        "wins": 2
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "AUD_USD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 2198.2,
+        "avg_win_jpy": 255.3,
+        "breakeven_payoff_at_win_rate": 2.0,
+        "expectancy_jpy_per_trade": -1380.3,
+        "losses": 2,
+        "net_jpy": -4141.0,
+        "payoff_ratio": 0.116,
+        "trades": 3,
+        "win_rate": 0.3333,
+        "wins": 1
+      },
+      "market_order_trade_close": {
+        "trades": 0
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -2690.6967,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "repair_replay_pl_jpy": -2690.6967,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        },
+        {
+          "actual_pl_jpy": -1705.6738,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "diagnosis": "bad_entry_or_no_positive_excursion",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_USD",
+          "repair_replay_pl_jpy": -1705.6738,
+          "repair_replay_triggered": 0,
+          "side": "SHORT"
+        }
+      ],
+      "month_scale_residual_net_jpy": -4396.3705,
+      "stop_loss_order": {
+        "avg_loss_jpy": 2198.2,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -2198.2,
+        "losses": 2,
+        "net_jpy": -4396.4,
+        "payoff_ratio": 0.0,
+        "trades": 2,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 255.3,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 255.3,
+        "losses": 0,
+        "net_jpy": 255.3,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "CAD_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 271.8,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 271.8,
+        "losses": 0,
+        "net_jpy": 543.6,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 271.8,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 271.8,
+        "losses": 0,
+        "net_jpy": 543.6,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "CHF_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 661.5,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -661.5,
+        "losses": 1,
+        "net_jpy": -661.5,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 661.5,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -661.5,
+        "losses": 1,
+        "net_jpy": -661.5,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "EUR_AUD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 6.7,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -6.7,
+        "losses": 1,
+        "net_jpy": -6.7,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 6.7,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -6.7,
+        "losses": 1,
+        "net_jpy": -6.7,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "EUR_CHF": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 436.7,
+        "avg_win_jpy": 330.6,
+        "breakeven_payoff_at_win_rate": 1.5,
+        "expectancy_jpy_per_trade": -129.8,
+        "losses": 3,
+        "net_jpy": -648.9,
+        "payoff_ratio": 0.757,
+        "trades": 5,
+        "win_rate": 0.4,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 436.7,
+        "avg_win_jpy": 227.5,
+        "breakeven_payoff_at_win_rate": 3.0,
+        "expectancy_jpy_per_trade": -270.6,
+        "losses": 3,
+        "net_jpy": -1082.6,
+        "payoff_ratio": 0.521,
+        "trades": 4,
+        "win_rate": 0.25,
+        "wins": 1
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -1272.0771,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 2
+          },
+          "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_CHF",
+          "repair_replay_pl_jpy": -1272.0771,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        }
+      ],
+      "month_scale_residual_net_jpy": -1272.0771,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 433.7,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 433.7,
+        "losses": 0,
+        "net_jpy": 433.7,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "EUR_GBP": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 392.1,
+        "avg_win_jpy": 237.0,
+        "breakeven_payoff_at_win_rate": 1.5,
+        "expectancy_jpy_per_trade": -140.5,
+        "losses": 3,
+        "net_jpy": -702.4,
+        "payoff_ratio": 0.604,
+        "trades": 5,
+        "win_rate": 0.4,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 392.1,
+        "avg_win_jpy": 12.8,
+        "breakeven_payoff_at_win_rate": 3.0,
+        "expectancy_jpy_per_trade": -290.9,
+        "losses": 3,
+        "net_jpy": -1163.5,
+        "payoff_ratio": 0.033,
+        "trades": 4,
+        "win_rate": 0.25,
+        "wins": 1
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 461.1,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 461.1,
+        "losses": 0,
+        "net_jpy": 461.1,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "EUR_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 500.1,
+        "avg_win_jpy": 503.1,
+        "breakeven_payoff_at_win_rate": 2.333,
+        "expectancy_jpy_per_trade": -199.1,
+        "losses": 7,
+        "net_jpy": -1991.2,
+        "payoff_ratio": 1.006,
+        "trades": 10,
+        "win_rate": 0.3,
+        "wins": 3
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 442.7,
+        "avg_win_jpy": 427.0,
+        "breakeven_payoff_at_win_rate": 3.0,
+        "expectancy_jpy_per_trade": -225.3,
+        "losses": 6,
+        "net_jpy": -1802.2,
+        "payoff_ratio": 0.965,
+        "trades": 8,
+        "win_rate": 0.25,
+        "wins": 2
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -1071.9,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "diagnosis": "bad_entry_or_no_positive_excursion",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_JPY",
+          "repair_replay_pl_jpy": -1071.9,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        }
+      ],
+      "month_scale_residual_net_jpy": -1071.9,
+      "stop_loss_order": {
+        "avg_loss_jpy": 844.2,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -844.2,
+        "losses": 1,
+        "net_jpy": -844.2,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 655.2,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 655.2,
+        "losses": 0,
+        "net_jpy": 655.2,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "EUR_USD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 1271.8,
+        "avg_win_jpy": 421.1,
+        "breakeven_payoff_at_win_rate": 0.361,
+        "expectancy_jpy_per_trade": -28.0,
+        "losses": 26,
+        "net_jpy": -2745.5,
+        "payoff_ratio": 0.331,
+        "trades": 98,
+        "win_rate": 0.7347,
+        "wins": 72
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 1403.1,
+        "avg_win_jpy": 124.1,
+        "breakeven_payoff_at_win_rate": 11.5,
+        "expectancy_jpy_per_trade": -1280.9,
+        "losses": 23,
+        "net_jpy": -32022.1,
+        "payoff_ratio": 0.088,
+        "trades": 25,
+        "win_rate": 0.08,
+        "wins": 2
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -2333.8215,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "repair_replay_pl_jpy": -2333.8215,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        },
+        {
+          "actual_pl_jpy": -2181.1565,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "diagnosis": "bad_entry_or_no_positive_excursion",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "EUR_USD",
+          "repair_replay_pl_jpy": -2181.1565,
+          "repair_replay_triggered": 0,
+          "side": "SHORT"
+        }
+      ],
+      "month_scale_residual_net_jpy": -4514.978,
+      "stop_loss_order": {
+        "avg_loss_jpy": 296.5,
+        "avg_win_jpy": 123.4,
+        "breakeven_payoff_at_win_rate": 0.154,
+        "expectancy_jpy_per_trade": 67.4,
+        "losses": 2,
+        "net_jpy": 1011.5,
+        "payoff_ratio": 0.416,
+        "trades": 15,
+        "win_rate": 0.8667,
+        "wins": 13
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 499.4,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 499.4,
+        "losses": 0,
+        "net_jpy": 28468.0,
+        "payoff_ratio": null,
+        "trades": 57,
+        "win_rate": 1.0,
+        "wins": 57
+      }
+    },
+    "GBP_AUD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 48.3,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -48.3,
+        "losses": 1,
+        "net_jpy": -48.3,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 48.3,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -48.3,
+        "losses": 1,
+        "net_jpy": -48.3,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "GBP_CHF": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 968.7,
+        "avg_win_jpy": 183.9,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -392.4,
+        "losses": 2,
+        "net_jpy": -1569.8,
+        "payoff_ratio": 0.19,
+        "trades": 4,
+        "win_rate": 0.5,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 968.7,
+        "avg_win_jpy": 72.0,
+        "breakeven_payoff_at_win_rate": 2.0,
+        "expectancy_jpy_per_trade": -621.8,
+        "losses": 2,
+        "net_jpy": -1865.5,
+        "payoff_ratio": 0.074,
+        "trades": 3,
+        "win_rate": 0.3333,
+        "wins": 1
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 295.7,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 295.7,
+        "losses": 0,
+        "net_jpy": 295.7,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "GBP_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 238.0,
+        "avg_win_jpy": 363.6,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": 62.8,
+        "losses": 1,
+        "net_jpy": 125.6,
+        "payoff_ratio": 1.528,
+        "trades": 2,
+        "win_rate": 0.5,
+        "wins": 1
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 238.0,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -238.0,
+        "losses": 1,
+        "net_jpy": -238.0,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 363.6,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 363.6,
+        "losses": 0,
+        "net_jpy": 363.6,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "GBP_USD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 2094.6,
+        "avg_win_jpy": 440.3,
+        "breakeven_payoff_at_win_rate": 0.778,
+        "expectancy_jpy_per_trade": -668.7,
+        "losses": 14,
+        "net_jpy": -21399.9,
+        "payoff_ratio": 0.21,
+        "trades": 32,
+        "win_rate": 0.5625,
+        "wins": 18
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 2097.3,
+        "avg_win_jpy": 295.8,
+        "breakeven_payoff_at_win_rate": 5.5,
+        "expectancy_jpy_per_trade": -1729.1,
+        "losses": 11,
+        "net_jpy": -22478.7,
+        "payoff_ratio": 0.141,
+        "trades": 13,
+        "win_rate": 0.1538,
+        "wins": 2
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -2981.8961,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "repair_replay_pl_jpy": -2981.8961,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        },
+        {
+          "actual_pl_jpy": -971.0121,
+          "block_reasons": {
+            "BELOW_TP_PROGRESS_GATE": 1
+          },
+          "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "GBP_USD",
+          "repair_replay_pl_jpy": -971.0121,
+          "repair_replay_triggered": 0,
+          "side": "SHORT"
+        }
+      ],
+      "month_scale_residual_net_jpy": -3952.9082,
+      "stop_loss_order": {
+        "avg_loss_jpy": 971.0,
+        "avg_win_jpy": 1061.5,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": 45.3,
+        "losses": 1,
+        "net_jpy": 90.5,
+        "payoff_ratio": 1.093,
+        "trades": 2,
+        "win_rate": 0.5,
+        "wins": 1
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 418.1,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 418.1,
+        "losses": 0,
+        "net_jpy": 6271.7,
+        "payoff_ratio": null,
+        "trades": 15,
+        "win_rate": 1.0,
+        "wins": 15
+      }
+    },
+    "NZD_CAD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 754.2,
+        "avg_win_jpy": 160.8,
+        "breakeven_payoff_at_win_rate": 3.0,
+        "expectancy_jpy_per_trade": -525.4,
+        "losses": 3,
+        "net_jpy": -2101.8,
+        "payoff_ratio": 0.213,
+        "trades": 4,
+        "win_rate": 0.25,
+        "wins": 1
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 754.2,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -754.2,
+        "losses": 3,
+        "net_jpy": -2262.6,
+        "payoff_ratio": 0.0,
+        "trades": 3,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -2044.4543,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 2
+          },
+          "diagnosis": "bad_entry_or_no_positive_excursion",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_CAD",
+          "repair_replay_pl_jpy": -2044.4543,
+          "repair_replay_triggered": 0,
+          "side": "SHORT"
+        }
+      ],
+      "month_scale_residual_net_jpy": -2044.4543,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 160.8,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 160.8,
+        "losses": 0,
+        "net_jpy": 160.8,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "NZD_CHF": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 96.6,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -96.6,
+        "losses": 1,
+        "net_jpy": -96.6,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 96.6,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -96.6,
+        "losses": 1,
+        "net_jpy": -96.6,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    },
+    "NZD_USD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 1380.8,
+        "avg_win_jpy": 77.5,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -651.6,
+        "losses": 1,
+        "net_jpy": -1303.3,
+        "payoff_ratio": 0.056,
+        "trades": 2,
+        "win_rate": 0.5,
+        "wins": 1
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 1380.8,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -1380.8,
+        "losses": 1,
+        "net_jpy": -1380.8,
+        "payoff_ratio": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "month_scale_residual_families": [
+        {
+          "actual_pl_jpy": -1380.8008,
+          "block_reasons": {
+            "NO_PROFIT_CANDIDATE": 1
+          },
+          "diagnosis": "bad_entry_or_no_positive_excursion",
+          "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+          "method": "RANGE_ROTATION",
+          "pair": "NZD_USD",
+          "repair_replay_pl_jpy": -1380.8008,
+          "repair_replay_triggered": 0,
+          "side": "LONG"
+        }
+      ],
+      "month_scale_residual_net_jpy": -1380.8008,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 77.5,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 77.5,
+        "losses": 0,
+        "net_jpy": 77.5,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "USD_CAD": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 319.4,
+        "avg_win_jpy": 395.6,
+        "breakeven_payoff_at_win_rate": 0.6,
+        "expectancy_jpy_per_trade": 127.5,
+        "losses": 3,
+        "net_jpy": 1019.9,
+        "payoff_ratio": 1.239,
+        "trades": 8,
+        "win_rate": 0.625,
+        "wins": 5
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 319.4,
+        "avg_win_jpy": 287.3,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -16.0,
+        "losses": 3,
+        "net_jpy": -96.1,
+        "payoff_ratio": 0.9,
+        "trades": 6,
+        "win_rate": 0.5,
+        "wins": 3
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 558.0,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 558.0,
+        "losses": 0,
+        "net_jpy": 1116.0,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      }
+    },
+    "USD_CHF": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 1565.1,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 1565.1,
+        "losses": 0,
+        "net_jpy": 3130.3,
+        "payoff_ratio": null,
+        "trades": 2,
+        "win_rate": 1.0,
+        "wins": 2
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 866.9,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 866.9,
+        "losses": 0,
+        "net_jpy": 866.9,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "trades": 0
+      },
+      "take_profit_order": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 2263.4,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 2263.4,
+        "losses": 0,
+        "net_jpy": 2263.4,
+        "payoff_ratio": null,
+        "trades": 1,
+        "win_rate": 1.0,
+        "wins": 1
+      }
+    },
+    "USD_JPY": {
+      "closed_trade_stats": {
+        "avg_loss_jpy": 361.7,
+        "avg_win_jpy": 221.1,
+        "breakeven_payoff_at_win_rate": 1.0,
+        "expectancy_jpy_per_trade": -70.3,
+        "losses": 3,
+        "net_jpy": -421.8,
+        "payoff_ratio": 0.611,
+        "trades": 6,
+        "win_rate": 0.5,
+        "wins": 3
+      },
+      "market_order_trade_close": {
+        "avg_loss_jpy": 0.0,
+        "avg_win_jpy": 221.1,
+        "breakeven_payoff_at_win_rate": 0.0,
+        "expectancy_jpy_per_trade": 221.1,
+        "losses": 0,
+        "net_jpy": 663.2,
+        "payoff_ratio": null,
+        "trades": 3,
+        "win_rate": 1.0,
+        "wins": 3
+      },
+      "month_scale_residual_families": [],
+      "month_scale_residual_net_jpy": 0.0,
+      "stop_loss_order": {
+        "avg_loss_jpy": 361.7,
+        "avg_win_jpy": 0.0,
+        "breakeven_payoff_at_win_rate": null,
+        "expectancy_jpy_per_trade": -361.7,
+        "losses": 3,
+        "net_jpy": -1085.0,
+        "payoff_ratio": 0.0,
+        "trades": 3,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "take_profit_order": {
+        "trades": 0
+      }
+    }
+  },
+  "partial_tp_runner_candidates": [
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|SHORT|BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|SHORT|BREAKOUT_FAILURE"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -7636.3,
+      "market_close_losses": 10,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 1,
+      "runner_tail_estimated_jpy": 2099.4487,
+      "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "tp1_evidence": {
+        "proof_gap_trades": 3,
+        "take_profit_avg_win_jpy": 613.2,
+        "take_profit_expectancy_jpy": 613.2,
+        "take_profit_losses": 0,
+        "take_profit_trades": 17
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:GBP_USD|LONG|BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "timing:runner:GBP_USD|LONG|BREAKOUT_FAILURE"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -22478.7,
+      "market_close_losses": 11,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2981.8961,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "BREAKOUT_FAILURE",
+        "pair": "GBP_USD",
+        "repair_replay_pl_jpy": -2981.8961,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "pair": "GBP_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "GBP_USD|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "tp1_evidence": {
+        "proof_gap_trades": 10,
+        "take_profit_avg_win_jpy": 523.3,
+        "take_profit_expectancy_jpy": 523.3,
+        "take_profit_losses": 0,
+        "take_profit_trades": 10
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|LONG|BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|LONG|BREAKOUT_FAILURE"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -15091.7,
+      "market_close_losses": 7,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "EUR_USD|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "tp1_evidence": {
+        "proof_gap_trades": 0,
+        "take_profit_avg_win_jpy": 591.5,
+        "take_profit_expectancy_jpy": 591.5,
+        "take_profit_losses": 0,
+        "take_profit_trades": 20
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|LONG|TREND_CONTINUATION:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|LONG|TREND_CONTINUATION"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -3307.4,
+      "market_close_losses": 1,
+      "method": "TREND_CONTINUATION",
+      "month_scale_blocker": null,
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "EUR_USD|LONG|TREND_CONTINUATION",
+      "side": "LONG",
+      "tp1_evidence": {
+        "proof_gap_trades": 18,
+        "take_profit_avg_win_jpy": 155.9,
+        "take_profit_expectancy_jpy": 155.9,
+        "take_profit_losses": 0,
+        "take_profit_trades": 2
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:AUD_JPY|LONG|BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "timing:runner:AUD_JPY|LONG|BREAKOUT_FAILURE"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -3077.3,
+      "market_close_losses": 6,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "pair": "AUD_JPY",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "AUD_JPY|LONG|BREAKOUT_FAILURE",
+      "side": "LONG",
+      "tp1_evidence": {
+        "proof_gap_trades": 18,
+        "take_profit_avg_win_jpy": 150.1,
+        "take_profit_expectancy_jpy": 150.1,
+        "take_profit_losses": 0,
+        "take_profit_trades": 2
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:AUD_JPY|SHORT|BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "timing:runner:AUD_JPY|SHORT|BREAKOUT_FAILURE"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -3016.3,
+      "market_close_losses": 3,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "pair": "AUD_JPY",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "AUD_JPY|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "tp1_evidence": {
+        "proof_gap_trades": 14,
+        "take_profit_avg_win_jpy": 992.7,
+        "take_profit_expectancy_jpy": 992.7,
+        "take_profit_losses": 0,
+        "take_profit_trades": 6
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|LONG|RANGE_ROTATION:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|LONG|RANGE_ROTATION"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -2633.6,
+      "market_close_losses": 2,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2333.8215,
+        "block_reasons": {
+          "BELOW_TP_PROGRESS_GATE": 1
+        },
+        "diagnosis": "entry_quality_or_premature_exit_below_tp_progress_gate",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "EUR_USD",
+        "repair_replay_pl_jpy": -2333.8215,
+        "repair_replay_triggered": 0,
+        "side": "LONG"
+      },
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "EUR_USD|LONG|RANGE_ROTATION",
+      "side": "LONG",
+      "tp1_evidence": {
+        "proof_gap_trades": 17,
+        "take_profit_avg_win_jpy": 164.0,
+        "take_profit_expectancy_jpy": 164.0,
+        "take_profit_losses": 0,
+        "take_profit_trades": 3
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|SHORT|RANGE_ROTATION:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|SHORT|RANGE_ROTATION"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -2151.0,
+      "market_close_losses": 1,
+      "method": "RANGE_ROTATION",
+      "month_scale_blocker": {
+        "actual_pl_jpy": -2181.1565,
+        "block_reasons": {
+          "NO_PROFIT_CANDIDATE": 1
+        },
+        "diagnosis": "bad_entry_or_no_positive_excursion",
+        "live_permission_filter": "block matching pair/side/method until replay clears or exact TP proof overrides with all gates passed",
+        "method": "RANGE_ROTATION",
+        "pair": "EUR_USD",
+        "repair_replay_pl_jpy": -2181.1565,
+        "repair_replay_triggered": 0,
+        "side": "SHORT"
+      },
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "EUR_USD|SHORT|RANGE_ROTATION",
+      "side": "SHORT",
+      "tp1_evidence": {
+        "proof_gap_trades": 10,
+        "take_profit_avg_win_jpy": 399.6,
+        "take_profit_expectancy_jpy": 399.6,
+        "take_profit_losses": 0,
+        "take_profit_trades": 10
+      }
+    },
+    {
+      "classification": "PARTIAL_TP_THEN_SMALL_RUNNER_DIAGNOSTIC",
+      "evidence_refs": [
+        "capture:shape:EUR_USD|SHORT|TREND_CONTINUATION:TAKE_PROFIT_ORDER",
+        "timing:runner:EUR_USD|SHORT|TREND_CONTINUATION"
+      ],
+      "live_promotion_allowed": false,
+      "market_close_leak_net_jpy": -1202.1,
+      "market_close_losses": 2,
+      "method": "TREND_CONTINUATION",
+      "month_scale_blocker": null,
+      "pair": "EUR_USD",
+      "risk_reduction_logic": "TP1 must reduce realized downside first; the runner leg is diagnostic only until month-scale replay and close-gate leakage are non-negative.",
+      "runner_tail_case_count": 0,
+      "runner_tail_estimated_jpy": 0.0,
+      "shape_key": "EUR_USD|SHORT|TREND_CONTINUATION",
+      "side": "SHORT",
+      "tp1_evidence": {
+        "proof_gap_trades": 15,
+        "take_profit_avg_win_jpy": 282.7,
+        "take_profit_expectancy_jpy": 282.7,
+        "take_profit_losses": 0,
+        "take_profit_trades": 5
+      }
+    }
+  ],
+  "payoff_shape_recommendations": [
+    {
+      "action": "keep diagnosis read-only; do not send, cancel, close, modify launchd, or relax gates",
+      "code": "NO_LIVE_PERMISSION_FROM_DIAGNOSIS",
+      "evidence": "live_side_effects is []",
+      "live_permission_allowed": false
+    },
+    {
+      "action": "treat proof_queue_count=0 or any firepower estimate as evidence status only, never as a live permission",
+      "code": "PROOF_QUEUE_COUNT_IS_NOT_PERMISSION",
+      "live_permission_allowed": false
+    },
+    {
+      "action": "do not derive lot size from remaining_to_4x; this diagnosis contains no unit sizing output",
+      "code": "NO_4X_DEFICIT_LOT_BACKSOLVE",
+      "live_permission_allowed": false
+    },
+    {
+      "action": "keep fresh entries blocked except exact TP-proven HARVEST shapes that pass every existing current gate",
+      "capture_status": "NEGATIVE_EXPECTANCY",
+      "code": "NEGATIVE_EXPECTANCY_VISIBLE",
+      "dominant_loss_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "live_permission_allowed": false
+    },
+    {
+      "action": "do not promote matching family/pair/session while month-scale replay remains negative",
+      "blocker": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "code": "MONTH_SCALE_REPLAY_BLOCKS_PROMOTION",
+      "current_residual_pl_jpy": -20504.5826,
+      "live_permission_allowed": false
+    },
+    {
+      "action": "preserve positive broker-TP HARVEST shapes, but only as exact-shape, spread-included evidence candidates",
+      "candidate_count": 12,
+      "code": "HARVEST_BASE_KEEP_NARROW",
+      "live_permission_allowed": false,
+      "top_shape": "EUR_USD|LONG|BREAKOUT_FAILURE"
+    },
+    {
+      "action": "simulate TP1 bank plus small runner leg for top HARVEST shapes before changing live behavior",
+      "candidate_count": 9,
+      "code": "PARTIAL_TP_RUNNER_REPLAY_NEXT",
+      "live_permission_allowed": false,
+      "top_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+    },
+    {
+      "action": "do not switch to RUNNER-only; require average win greater than average loss plus MFE-extension evidence",
+      "code": "RUNNER_ONLY_UNPROVED",
+      "live_permission_allowed": false
+    },
+    {
+      "action": "keep spread/slippage-included negative and month-scale-negative shapes as NO_TRADE until replay clears",
+      "code": "NO_TRADE_SHAPES_STAY_BLOCKED",
+      "live_permission_allowed": false,
+      "shape_count": 12,
+      "top_reason": "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE"
+    },
+    {
+      "action": "4x requires a mixed shape with HARVEST as the accounting base and only evidence-scoped runners. RUNNER-only promotion is not supported while market-close leakage and month-scale replay remain negative.",
+      "classification": "MIXED_HARVEST_PRIMARY",
+      "code": "FOUR_X_PAYOFF_SHAPE_VERDICT",
+      "live_permission_allowed": false
+    }
+  ],
+  "runner_candidates": [],
+  "safety_contract": {
+    "negative_expectancy_not_hidden": true,
+    "no_4x_deficit_lot_backsolve": true,
+    "no_cancel": true,
+    "no_close": true,
+    "no_gate_relaxation": true,
+    "no_launchd_change": true,
+    "no_live_order": true,
+    "proof_queue_count_is_not_live_permission": true,
+    "read_only": true
+  },
+  "schema_version": 1,
+  "session_stats": {
+    "LONDON_KILLZONE": {
+      "avg_reward_risk": 1.6477,
+      "avg_risk_jpy": 180.8446,
+      "candidate_count": 80,
+      "examples": [
+        {
+          "lane_id": "range_trader:AUD_CHF:SHORT:RANGE_ROTATION",
+          "live_blocker_codes": [
+            "STALE_QUOTE",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_CHF",
+          "side": "SHORT",
+          "status": "DRY_RUN_BLOCKED",
+          "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+          "tp_target_intent": "HARVEST"
+        },
+        {
+          "lane_id": "range_trader:AUD_CHF:SHORT:RANGE_ROTATION:MARKET",
+          "live_blocker_codes": [
+            "STALE_QUOTE",
+            "RANGE_MARKET_NOT_AT_RAIL",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "EXHAUSTION_RANGE_CHASE",
+            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_CHF",
+          "side": "SHORT",
+          "status": "DRY_RUN_BLOCKED",
+          "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+          "tp_target_intent": "HARVEST"
+        },
+        {
+          "lane_id": "range_trader:CHF_JPY:LONG:RANGE_ROTATION",
+          "live_blocker_codes": [
+            "SPREAD_TOO_WIDE",
+            "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "RANGE_PHASE_NOT_ROTATION",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "EXHAUSTION_RANGE_CHASE"
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "CHF_JPY",
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED",
+          "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+          "tp_target_intent": "HARVEST"
+        },
+        {
+          "lane_id": "range_trader:CHF_JPY:LONG:RANGE_ROTATION:MARKET",
+          "live_blocker_codes": [
+            "SPREAD_TOO_WIDE",
+            "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+            "RANGE_MARKET_NOT_AT_RAIL",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "RANGE_PHASE_NOT_ROTATION",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE"
+          ],
+          "method": "RANGE_ROTATION",
+          "pair": "CHF_JPY",
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED",
+          "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+          "tp_target_intent": "HARVEST"
+        },
+        {
+          "lane_id": "failure_trader:CHF_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+          "live_blocker_codes": [
+            "SPREAD_TOO_WIDE",
+            "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "HARVEST_TP_STRUCTURE_MISSING",
+            "EXHAUSTION_RANGE_CHASE",
+            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+          ],
+          "method": "BREAKOUT_FAILURE",
+          "pair": "CHF_JPY",
+          "side": "LONG",
+          "status": "DRY_RUN_BLOCKED",
+          "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+          "tp_target_intent": "HARVEST"
+        }
+      ],
+      "live_ready_count": 0,
+      "payoff_shape_modes": {
+        "HARVEST": 80
+      },
+      "risk_allowed_count": 0,
+      "status_counts": {
+        "DRY_RUN_BLOCKED": 80
+      },
+      "top_blocker_codes": {
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE": 163,
+        "EXHAUSTION_RANGE_CHASE": 76,
+        "FORECAST_WATCH_ONLY": 63,
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED": 240,
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT": 88,
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION": 140,
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION": 59,
+        "RANGE_ROTATION_BROADER_LOCATION_CHASE": 56,
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH": 156,
+        "SPREAD_TOO_WIDE": 54
+      }
+    }
+  },
+  "source_artifacts": {
+    "capture_economics": "/Users/tossaki/App/QuantRabbit/data/capture_economics.json",
+    "execution_ledger_db": "/Users/tossaki/App/QuantRabbit/data/execution_ledger.db",
+    "execution_timing_audit": "/Users/tossaki/App/QuantRabbit/data/execution_timing_audit.json",
+    "month_scale_tp_replay_residuals": "/Users/tossaki/App/QuantRabbit/data/month_scale_tp_replay_residuals.json",
+    "order_intents": "/Users/tossaki/App/QuantRabbit/data/order_intents.json",
+    "replay_backtest": "/Users/tossaki/App/QuantRabbit/data/replay_backtest.json"
+  },
+  "status": "OK"
+}

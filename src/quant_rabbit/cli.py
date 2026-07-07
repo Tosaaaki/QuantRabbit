@@ -147,8 +147,11 @@ from quant_rabbit.paths import (
     DEFAULT_PROFIT_PARTIAL_CLOSE_STATE,
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_POST_TRADE_LEARNING_REPORT,
+    DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
+    DEFAULT_PAYOFF_SHAPE_DIAGNOSIS_REPORT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
+    DEFAULT_MONTH_SCALE_TP_REPLAY_RESIDUALS,
     DEFAULT_MONTH_SCALE_RESIDUAL_FAMILY_TABLE,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
@@ -1475,6 +1478,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "memory-health",
         "self-improvement-audit",
         "profitability-acceptance",
+        "payoff-shape-diagnosis",
         "qr-trader-run-watchdog",
         "trader-support-bot",
         "as-live-ready-evidence-loop",
@@ -4438,6 +4442,19 @@ def main(argv: list[str] | None = None) -> int:
     p_timing.add_argument("--granularity", default="M1")
     p_timing.add_argument("--max-events", type=int, default=None)
 
+    p_payoff_shape = sub.add_parser(
+        "payoff-shape-diagnosis",
+        help="Build a read-only HARVEST/RUNNER/NO_TRADE payoff-shape diagnosis.",
+    )
+    p_payoff_shape.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_payoff_shape.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
+    p_payoff_shape.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_payoff_shape.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_payoff_shape.add_argument("--replay-backtest", type=Path, default=DEFAULT_REPLAY_BACKTEST)
+    p_payoff_shape.add_argument("--month-scale-residuals", type=Path, default=DEFAULT_MONTH_SCALE_TP_REPLAY_RESIDUALS)
+    p_payoff_shape.add_argument("--output", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_payoff_shape.add_argument("--report", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS_REPORT)
+
     p_precedent = sub.add_parser(
         "operator-precedent-audit",
         help="Audit the 2025 manual success precedent against current live-ready lanes.",
@@ -4582,6 +4599,39 @@ def main(argv: list[str] | None = None) -> int:
                     "status": payload.get("status"),
                     "summary": payload.get("summary"),
                     "fetch_errors": len(payload.get("fetch_errors") or []),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.command == "payoff-shape-diagnosis":
+        from quant_rabbit.payoff_shape_diagnosis import build_payoff_shape_diagnosis
+
+        summary = build_payoff_shape_diagnosis(
+            ledger_path=args.execution_ledger_db,
+            capture_economics_path=args.capture_economics,
+            execution_timing_audit_path=args.execution_timing_audit,
+            order_intents_path=args.order_intents,
+            replay_backtest_path=args.replay_backtest,
+            month_scale_residuals_path=args.month_scale_residuals,
+            output_path=args.output,
+            report_path=args.report,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "status": summary.status,
+                    "overall_payoff_shape_verdict": summary.overall_payoff_shape_verdict,
+                    "harvest_candidates": summary.harvest_candidates,
+                    "runner_candidates": summary.runner_candidates,
+                    "partial_tp_runner_candidates": summary.partial_tp_runner_candidates,
+                    "no_trade_shapes": summary.no_trade_shapes,
+                    "live_side_effects": [],
                 },
                 ensure_ascii=False,
                 indent=2,
