@@ -294,6 +294,12 @@ class TraderRepairOrchestrator:
             "read_only": True,
             "live_side_effects": [],
         }
+        proof_empty_reason = loop_prompt.get("current_state", {}).get("proof_queue_empty_reason")
+        next_evidence_actions = loop_prompt.get("current_state", {}).get("next_evidence_actions")
+        if proof_empty_reason:
+            payload["proof_queue_empty_reason"] = proof_empty_reason
+        if next_evidence_actions:
+            payload["next_evidence_actions"] = next_evidence_actions
         return payload
 
 
@@ -478,6 +484,12 @@ def _loop_engineering_prompt(
         live_order_request=live_order_request,
     )
     current_state.update(current_state["as_proof_state"])
+    proof_queue_empty_reason = _proof_queue_empty_reason(current_state)
+    if proof_queue_empty_reason:
+        current_state["proof_queue_empty_reason"] = proof_queue_empty_reason
+        current_state["next_evidence_actions"] = _next_evidence_actions_for_empty_proof_queue(
+            proof_queue_empty_reason
+        )
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
     current_state["artifact_contradiction_codes"] = [
@@ -1041,6 +1053,10 @@ def _render_loop_prompt_text(
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
         "A/S proof state: "
         f"{_render_as_proof_state_for_prompt(current_state.get('as_proof_state'))}.",
+        "A/S proof empty reason: "
+        f"{_render_proof_queue_empty_reason_for_prompt(current_state.get('proof_queue_empty_reason'))}.",
+        "Next evidence actions: "
+        f"{_render_next_evidence_actions_for_prompt(current_state.get('next_evidence_actions'))}.",
         "Execution frontier: "
         f"{_render_execution_frontier_for_prompt(current_state.get('execution_frontier'))}.",
         "Profitability RCA: "
@@ -1087,6 +1103,48 @@ def _render_as_proof_state_for_prompt(value: Any) -> str:
     if blockers:
         parts.append("global_blockers=" + ",".join(blockers))
     return "; ".join(part for part in parts if part) or "(missing)"
+
+
+def _render_proof_queue_empty_reason_for_prompt(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return "(none)"
+    categories: list[str] = []
+    for item in value.get("categories", []):
+        if not isinstance(item, dict):
+            continue
+        category = item.get("category")
+        reason_code = item.get("reason_code")
+        status = item.get("status")
+        if category:
+            categories.append(
+                "/".join(str(part) for part in [category, status, reason_code] if part)
+            )
+    parts = [
+        f"status={value.get('status')}",
+        f"primary={value.get('primary_category')}",
+        _format_optional_count("queue", value.get("proof_queue_count")),
+        _format_optional_count("live_permission", value.get("can_create_live_permission_count")),
+    ]
+    if categories:
+        parts.append("categories=" + " | ".join(categories))
+    return "; ".join(part for part in parts if part)
+
+
+def _render_next_evidence_actions_for_prompt(value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return "(none)"
+    actions: list[str] = []
+    for item in value[:6]:
+        if not isinstance(item, dict):
+            continue
+        action_id = item.get("action_id")
+        category = item.get("category")
+        if action_id:
+            text = str(action_id)
+            if category:
+                text += f"[{category}]"
+            actions.append(text)
+    return ", ".join(actions) if actions else "(none)"
 
 
 def _render_execution_frontier_for_prompt(value: Any) -> str:
@@ -1258,6 +1316,12 @@ def _as_proof_state(
             else None,
             planner_summary.get("planner_rejected_candidates"),
         ),
+        "rejected_proof_candidate_reasons": _rejected_proof_candidate_reasons(
+            proof_queue.get("rejected_candidates")
+        ),
+        "rejected_proof_candidate_examples": _rejected_proof_candidate_examples(
+            proof_queue.get("rejected_candidates")
+        ),
         "as_live_ready_path_exists": _first_present(
             proof_summary.get("as_live_ready_path_exists"),
             as_board.get("as_live_ready_path_exists"),
@@ -1312,6 +1376,228 @@ def _proof_queue_is_empty(current_state: dict[str, Any]) -> bool:
     proof_queue_count = current_state.get("proof_queue_count")
     live_permission_count = current_state.get("can_create_live_permission_count")
     return proof_queue_count == 0 or live_permission_count == 0
+
+
+def _proof_queue_empty_reason(current_state: dict[str, Any]) -> dict[str, Any]:
+    if not _proof_queue_is_empty(current_state):
+        return {}
+
+    proof_queue_count = _optional_positive_int(current_state.get("proof_queue_count"))
+    live_permission_count = _optional_positive_int(
+        current_state.get("can_create_live_permission_count")
+    )
+    categories: list[dict[str, Any]] = []
+
+    rejected_count = _optional_positive_int(current_state.get("rejected_proof_candidate_count"))
+    if rejected_count:
+        categories.append(
+            {
+                "category": "rejected_proof_candidates",
+                "status": "BLOCKING",
+                "reason_code": "ALL_CURRENT_PROOF_CANDIDATES_REJECTED_BEFORE_QUEUE",
+                "candidate_count": rejected_count,
+                "evidence_ref": "data/as_proof_pack_queue.json:rejected_candidates",
+                "rejection_reasons": _dedupe_strings(
+                    current_state.get("rejected_proof_candidate_reasons")
+                )[:8],
+                "examples": current_state.get("rejected_proof_candidate_examples") or [],
+            }
+        )
+
+    routing_blocked = (
+        current_state.get("proof_normal_routing_status") == "BLOCKED"
+        or current_state.get("proof_routing_allowed") is False
+        or current_state.get("as_live_ready_path_exists") is False
+    )
+    if routing_blocked:
+        categories.append(
+            {
+                "category": "lane_board",
+                "status": "BLOCKING",
+                "reason_code": "LANE_BOARD_NORMAL_ROUTING_BLOCKED",
+                "evidence_ref": "data/as_lane_candidate_board.json",
+                "normal_routing_status": current_state.get("proof_normal_routing_status"),
+                "routing_allowed": current_state.get("proof_routing_allowed"),
+                "primary_blocker": current_state.get("proof_primary_blocker"),
+                "global_blockers": _dedupe_strings(current_state.get("proof_global_blockers"))[:8],
+                "p0_rows": _dedupe_strings(current_state.get("proof_p0_rows"))[:8],
+            }
+        )
+
+    portfolio_blocked = (
+        current_state.get("portfolio_status") is not None
+        and (
+            current_state.get("portfolio_status") != "LIVE_READY_PORTFOLIO"
+            or current_state.get("portfolio_can_reach_4x_now") is False
+            or current_state.get("portfolio_can_create_live_permission") is False
+        )
+    )
+    if portfolio_blocked:
+        categories.append(
+            {
+                "category": "portfolio_planner",
+                "status": "BLOCKING",
+                "reason_code": "PORTFOLIO_PLANNER_HAS_NO_LIVE_PERMISSION_PATH",
+                "evidence_ref": "data/portfolio_4x_path_planner.json",
+                "portfolio_status": current_state.get("portfolio_status"),
+                "can_reach_4x_now": current_state.get("portfolio_can_reach_4x_now"),
+                "can_create_live_permission": current_state.get(
+                    "portfolio_can_create_live_permission"
+                ),
+                "standalone_live_ready_candidates": current_state.get(
+                    "portfolio_standalone_live_ready_candidates"
+                ),
+                "standalone_math_candidates_meeting_required_return": current_state.get(
+                    "portfolio_standalone_math_candidates_meeting_required_return"
+                ),
+            }
+        )
+
+    gateway_status = current_state.get("gateway_status")
+    gateway_blocked = gateway_status not in (None, "ACCEPTED", "STAGED", "SENT", "LIVE_READY")
+    if gateway_blocked or not gateway_status:
+        categories.append(
+            {
+                "category": "gateway_issue",
+                "status": "BLOCKING" if gateway_blocked else "UNKNOWN",
+                "reason_code": (
+                    "GATEWAY_HAS_NO_LIVE_READY_INTENT"
+                    if gateway_status
+                    else "GATEWAY_STATUS_MISSING"
+                ),
+                "evidence_ref": "data/live_order_request.json",
+                "gateway_status": gateway_status,
+                "gateway_issue_codes": _dedupe_strings(current_state.get("gateway_issue_codes"))[:8],
+            }
+        )
+
+    primary_category = (
+        categories[0].get("category")
+        if categories
+        else "unknown"
+    )
+    reason = {
+        "status": "EMPTY",
+        "primary_category": primary_category,
+        "proof_queue_count": proof_queue_count,
+        "can_create_live_permission_count": live_permission_count,
+        "categories": categories,
+        "summary": (
+            "A/S proof queue is empty because no current candidate both entered the proof "
+            "queue and could create live permission; each listed category is a blocking "
+            "or missing evidence surface, not live permission."
+        ),
+    }
+    return {key: value for key, value in reason.items() if value not in (None, [], {})}
+
+
+def _next_evidence_actions_for_empty_proof_queue(reason: dict[str, Any]) -> list[dict[str, Any]]:
+    if not reason:
+        return []
+    categories = {
+        str(item.get("category"))
+        for item in reason.get("categories", [])
+        if isinstance(item, dict) and item.get("category")
+    }
+    actions: list[dict[str, Any]] = []
+
+    if "rejected_proof_candidates" in categories:
+        actions.append(
+            {
+                "action_id": "collect_exact_tp_or_live_grade_harvest_evidence",
+                "category": "rejected_proof_candidates",
+                "commands": [],
+                "success_condition": (
+                    "New local TAKE_PROFIT_ORDER receipts or exact HARVEST live-grade "
+                    "promotion moves a candidate from rejected_candidates into queue/proof_ready."
+                ),
+                "read_only": True,
+                "live_side_effects": [],
+            }
+        )
+    if "lane_board" in categories:
+        actions.append(
+            {
+                "action_id": "refresh_lane_board_after_input_evidence_changes",
+                "category": "lane_board",
+                "commands": [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                ],
+                "success_condition": (
+                    "normal_routing_status is no longer BLOCKED and "
+                    "can_create_live_permission_count becomes positive."
+                ),
+                "read_only": True,
+                "live_side_effects": [],
+            }
+        )
+    if "portfolio_planner" in categories:
+        actions.append(
+            {
+                "action_id": "refresh_portfolio_4x_path_planner",
+                "category": "portfolio_planner",
+                "commands": [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+                ],
+                "success_condition": (
+                    "portfolio_status leaves NO_LIVE_READY_PORTFOLIO or "
+                    "summary.proof_ready_candidates becomes positive."
+                ),
+                "read_only": True,
+                "live_side_effects": [],
+            }
+        )
+    if "gateway_issue" in categories:
+        actions.append(
+            {
+                "action_id": "refresh_gateway_evidence_without_sending",
+                "category": "gateway_issue",
+                "commands": [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+                "success_condition": (
+                    "data/live_order_request.json carries a current accepted/staged/sent "
+                    "gateway status only after the normal verifier/gateway path authorizes it."
+                ),
+                "read_only": True,
+                "live_side_effects": [],
+            }
+        )
+    return actions
+
+
+def _rejected_proof_candidate_reasons(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    reasons: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        reasons.extend(_dedupe_strings(item.get("rejection_reasons")))
+        reasons.extend(_dedupe_strings(item.get("current_blockers")))
+    return _dedupe_strings(reasons)
+
+
+def _rejected_proof_candidate_examples(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    examples: list[dict[str, Any]] = []
+    for item in value[:4]:
+        if not isinstance(item, dict):
+            continue
+        example = {
+            "lane_id": item.get("lane_id"),
+            "pair": item.get("pair"),
+            "side": item.get("side"),
+            "method": item.get("method"),
+            "order_type": item.get("order_type"),
+            "rejection_reasons": _dedupe_strings(item.get("rejection_reasons"))[:4],
+        }
+        examples.append({key: val for key, val in example.items() if val not in (None, [], {})})
+    return examples
 
 
 def _render_profitability_rca_for_prompt(value: Any) -> str:
@@ -1459,6 +1745,8 @@ def _work_order_proof_state(loop_prompt: dict[str, Any] | None) -> dict[str, Any
         "portfolio_can_reach_4x_now",
         "gateway_status",
         "gateway_issue_codes",
+        "proof_queue_empty_reason",
+        "next_evidence_actions",
     ]
     return {
         key: current_state.get(key)
@@ -1860,6 +2148,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- A/S proof primary blocker: `{loop_state.get('proof_primary_blocker')}`",
         f"- Portfolio status: `{loop_state.get('portfolio_status')}`",
         f"- Gateway status: `{loop_state.get('gateway_status')}`",
+        f"- Proof queue empty reason: `{json.dumps(loop_state.get('proof_queue_empty_reason') or {}, ensure_ascii=False, sort_keys=True)}`",
+        f"- Next evidence actions: `{json.dumps(loop_state.get('next_evidence_actions') or [], ensure_ascii=False, sort_keys=True)}`",
         f"- Guardian active: `{loop_state.get('guardian_active')}`",
         f"- Artifact contradictions: `{', '.join(loop_state.get('artifact_contradiction_codes') or [])}`",
         f"- Actionable: `{', '.join(loop_state.get('actionable_request_codes') or [])}`",

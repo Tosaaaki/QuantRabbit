@@ -493,12 +493,52 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertFalse(state["portfolio_can_reach_4x_now"])
             self.assertEqual(state["gateway_status"], "NO_LIVE_READY_INTENT")
             self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", state["proof_global_blockers"])
+            reason = payload["proof_queue_empty_reason"]
+            self.assertEqual(reason["status"], "EMPTY")
+            self.assertEqual(reason["primary_category"], "rejected_proof_candidates")
+            self.assertEqual(reason["proof_queue_count"], 0)
+            self.assertEqual(reason["can_create_live_permission_count"], 0)
+            reason_categories = [item["category"] for item in reason["categories"]]
+            self.assertEqual(
+                reason_categories,
+                [
+                    "rejected_proof_candidates",
+                    "lane_board",
+                    "portfolio_planner",
+                    "gateway_issue",
+                ],
+            )
+            self.assertEqual(
+                reason["categories"][0]["reason_code"],
+                "ALL_CURRENT_PROOF_CANDIDATES_REJECTED_BEFORE_QUEUE",
+            )
+            self.assertIn(
+                "spread_included_bidask_replay_negative_for_exact_lane",
+                reason["categories"][0]["rejection_reasons"],
+            )
+            self.assertEqual(
+                reason["categories"][1]["primary_blocker"],
+                "PROFITABILITY_ACCEPTANCE_BLOCKED",
+            )
+            actions = payload["next_evidence_actions"]
+            self.assertEqual(
+                [item["category"] for item in actions],
+                [
+                    "rejected_proof_candidates",
+                    "lane_board",
+                    "portfolio_planner",
+                    "gateway_issue",
+                ],
+            )
+            self.assertTrue(all(item["read_only"] for item in actions))
+            self.assertTrue(all(item["live_side_effects"] == [] for item in actions))
             loop_prompt = payload["loop_engineering_prompt"]
             self.assertIn("proof_queue=0", loop_prompt["prompt_text"])
             self.assertIn("live_permission_candidates=0", loop_prompt["prompt_text"])
             self.assertIn("rejected_proof_candidates=4", loop_prompt["prompt_text"])
             self.assertIn("gateway=NO_LIVE_READY_INTENT", loop_prompt["prompt_text"])
             self.assertIn("A/S proof state:", loop_prompt["prompt_text"])
+            self.assertIn("A/S proof empty reason:", loop_prompt["prompt_text"])
             self.assertIn("A/S proof queue as empty", loop_prompt["next_loop"][0])
             self.assertIn(
                 "as-live-ready-evidence-loop",
@@ -516,9 +556,23 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 payload["codex_work_order"]["proof_state"]["proof_queue_count"],
                 0,
             )
+            self.assertEqual(
+                payload["codex_work_order"]["proof_state"]["proof_queue_empty_reason"][
+                    "primary_category"
+                ],
+                "rejected_proof_candidates",
+            )
+            self.assertEqual(
+                payload["codex_work_order"]["proof_state"]["next_evidence_actions"][0][
+                    "action_id"
+                ],
+                "collect_exact_tp_or_live_grade_harvest_evidence",
+            )
             report_text = report.read_text()
             self.assertIn("Proof queue count: `0`", report_text)
             self.assertIn("Gateway status: `NO_LIVE_READY_INTENT`", report_text)
+            self.assertIn("Proof queue empty reason", report_text)
+            self.assertIn("Next evidence actions", report_text)
 
     def test_temp_orchestrator_without_as_artifacts_does_not_read_repo_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
