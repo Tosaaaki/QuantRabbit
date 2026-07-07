@@ -15,6 +15,7 @@ from quant_rabbit.trader_repair_orchestrator import (
     STATUS_BLOCKED,
     STATUS_READY,
     TraderRepairOrchestrator,
+    _evaluate_success_condition,
 )
 from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
@@ -495,7 +496,9 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", state["proof_global_blockers"])
             reason = payload["proof_queue_empty_reason"]
             self.assertEqual(reason["status"], "EMPTY")
-            self.assertEqual(reason["primary_category"], "rejected_proof_candidates")
+            self.assertEqual(reason["primary_category"], "lane_board")
+            self.assertEqual(reason["primary_reason_code"], "LANE_BOARD_NORMAL_ROUTING_BLOCKED")
+            self.assertEqual(reason["primary_causal_rank"], 0)
             self.assertEqual(reason["proof_queue_count"], 0)
             self.assertEqual(reason["can_create_live_permission_count"], 0)
             reason_categories = [item["category"] for item in reason["categories"]]
@@ -507,6 +510,21 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                     "portfolio_planner",
                     "gateway_issue",
                 ],
+            )
+            by_category = {item["category"]: item for item in reason["categories"]}
+            for category in by_category.values():
+                self.assertIn("freshness", category)
+                self.assertIn("causal_rank", category)
+                self.assertIn("blocking_depth", category)
+                self.assertIn("causal_basis", category)
+                self.assertIn("status", category["freshness"])
+            self.assertLess(
+                by_category["lane_board"]["causal_rank"],
+                by_category["rejected_proof_candidates"]["causal_rank"],
+            )
+            self.assertGreater(
+                by_category["lane_board"]["blocking_depth"],
+                by_category["gateway_issue"]["blocking_depth"],
             )
             self.assertEqual(
                 reason["categories"][0]["reason_code"],
@@ -532,6 +550,25 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
             self.assertTrue(all(item["read_only"] for item in actions))
             self.assertTrue(all(item["live_side_effects"] == [] for item in actions))
+            for action in actions:
+                self.assertIsInstance(action["success_condition"], dict)
+                self.assertEqual(
+                    action["success_condition"]["schema_version"],
+                    "success_condition_v1",
+                )
+                self.assertIn("checks", action["success_condition"])
+                self.assertEqual(action["success_condition_evaluation"]["status"], "NOT_MET")
+            rejected_action = actions[0]
+            rejected_eval = _evaluate_success_condition(
+                rejected_action["success_condition"],
+                {
+                    **state,
+                    "proof_queue_count": 1,
+                    "proof_ready_count": 0,
+                    "can_create_live_permission_count": 0,
+                },
+            )
+            self.assertEqual(rejected_eval["status"], "MET")
             loop_prompt = payload["loop_engineering_prompt"]
             self.assertIn("proof_queue=0", loop_prompt["prompt_text"])
             self.assertIn("live_permission_candidates=0", loop_prompt["prompt_text"])
@@ -560,7 +597,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 payload["codex_work_order"]["proof_state"]["proof_queue_empty_reason"][
                     "primary_category"
                 ],
-                "rejected_proof_candidates",
+                "lane_board",
             )
             self.assertEqual(
                 payload["codex_work_order"]["proof_state"]["next_evidence_actions"][0][

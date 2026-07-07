@@ -112,6 +112,28 @@ OPERATOR_REVIEW_APPROVAL_BLOCKERS = {
     "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
     "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
 }
+DIRECT_LIVE_PERMISSION_BLOCKERS = {
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+    "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+    "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+    "PROFITABILITY_ACCEPTANCE_BLOCKED",
+    "NEGATIVE_EXPECTANCY_ACTIVE",
+    "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+    "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+    "SELF_IMPROVEMENT_P0_PRESENT",
+    "MEMORY_HEALTH_BLOCKED",
+    "NO_LIVE_READY_LANES",
+    "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+}
+PROOF_CANDIDATE_BLOCKERS = {
+    "spread_included_bidask_replay_negative_for_exact_lane",
+    "packaged_bidask_rule_live_block_negative_expectancy",
+    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+    "S5_DAILY_SAMPLE_CONCENTRATED",
+    "S5_POSITIVE_DAY_RATE_LOW",
+}
+GATEWAY_LIVE_READY_STATUSES = {"ACCEPTED", "STAGED", "SENT", "LIVE_READY"}
 
 
 @dataclass(frozen=True)
@@ -488,7 +510,8 @@ def _loop_engineering_prompt(
     if proof_queue_empty_reason:
         current_state["proof_queue_empty_reason"] = proof_queue_empty_reason
         current_state["next_evidence_actions"] = _next_evidence_actions_for_empty_proof_queue(
-            proof_queue_empty_reason
+            proof_queue_empty_reason,
+            current_state=current_state,
         )
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
@@ -1116,12 +1139,27 @@ def _render_proof_queue_empty_reason_for_prompt(value: Any) -> str:
         reason_code = item.get("reason_code")
         status = item.get("status")
         if category:
+            freshness = item.get("freshness") if isinstance(item.get("freshness"), dict) else {}
+            freshness_status = freshness.get("status")
             categories.append(
-                "/".join(str(part) for part in [category, status, reason_code] if part)
+                "/".join(
+                    str(part)
+                    for part in [
+                        category,
+                        status,
+                        reason_code,
+                        f"rank={item.get('causal_rank')}",
+                        f"depth={item.get('blocking_depth')}",
+                        freshness_status,
+                    ]
+                    if part
+                )
             )
     parts = [
         f"status={value.get('status')}",
         f"primary={value.get('primary_category')}",
+        f"primary_rank={value.get('primary_causal_rank')}",
+        f"primary_depth={value.get('primary_blocking_depth')}",
         _format_optional_count("queue", value.get("proof_queue_count")),
         _format_optional_count("live_permission", value.get("can_create_live_permission_count")),
     ]
@@ -1143,6 +1181,13 @@ def _render_next_evidence_actions_for_prompt(value: Any) -> str:
             text = str(action_id)
             if category:
                 text += f"[{category}]"
+            evaluation = (
+                item.get("success_condition_evaluation")
+                if isinstance(item.get("success_condition_evaluation"), dict)
+                else {}
+            )
+            if evaluation.get("status"):
+                text += f":{evaluation.get('status')}"
             actions.append(text)
     return ", ".join(actions) if actions else "(none)"
 
@@ -1343,6 +1388,7 @@ def _as_proof_state(
         "portfolio_standalone_math_candidates_meeting_required_return": planner_summary.get(
             "standalone_math_candidates_meeting_required_return"
         ),
+        "live_order_request_generated_at_utc": live_order_request.get("generated_at_utc"),
         "gateway_status": live_order_request.get("status"),
         "gateway_issue_codes": _gateway_issue_codes(live_order_request),
     }
@@ -1471,14 +1517,18 @@ def _proof_queue_empty_reason(current_state: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    primary_category = (
-        categories[0].get("category")
-        if categories
-        else "unknown"
-    )
+    categories = [
+        _annotate_empty_reason_category(item, current_state)
+        for item in categories
+    ]
+    primary = _primary_empty_reason_category(categories)
+    primary_category = str(primary.get("category")) if primary else "unknown"
     reason = {
         "status": "EMPTY",
         "primary_category": primary_category,
+        "primary_reason_code": primary.get("reason_code") if primary else None,
+        "primary_causal_rank": primary.get("causal_rank") if primary else None,
+        "primary_blocking_depth": primary.get("blocking_depth") if primary else None,
         "proof_queue_count": proof_queue_count,
         "can_create_live_permission_count": live_permission_count,
         "categories": categories,
@@ -1491,7 +1541,165 @@ def _proof_queue_empty_reason(current_state: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in reason.items() if value not in (None, [], {})}
 
 
-def _next_evidence_actions_for_empty_proof_queue(reason: dict[str, Any]) -> list[dict[str, Any]]:
+def _annotate_empty_reason_category(
+    category: dict[str, Any],
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    annotated = dict(category)
+    metrics = _empty_reason_category_metrics(annotated, current_state)
+    annotated["freshness"] = _category_freshness(annotated, current_state)
+    annotated["causal_rank"] = metrics["causal_rank"]
+    annotated["blocking_depth"] = metrics["blocking_depth"]
+    annotated["causal_blocker_codes"] = metrics["causal_blocker_codes"]
+    annotated["causal_basis"] = metrics["causal_basis"]
+    return {key: value for key, value in annotated.items() if value not in (None, [], {})}
+
+
+def _empty_reason_category_metrics(
+    category: dict[str, Any],
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    name = str(category.get("category") or "")
+    blocker_codes = _category_blocker_codes(category)
+    direct_live_blockers = [
+        code for code in blocker_codes if code in DIRECT_LIVE_PERMISSION_BLOCKERS
+    ]
+    proof_blockers = [code for code in blocker_codes if code in PROOF_CANDIDATE_BLOCKERS]
+
+    if name == "lane_board":
+        if direct_live_blockers or category.get("primary_blocker"):
+            causal_rank = 0
+            basis = "normal_routing_or_primary_live_permission_blocker"
+        else:
+            causal_rank = 2
+            basis = "lane_board_routing_surface"
+        blocking_depth = _count_true(
+            category.get("normal_routing_status") == "BLOCKED",
+            category.get("routing_allowed") is False,
+            current_state.get("as_live_ready_path_exists") is False,
+            current_state.get("can_create_live_permission_count") == 0,
+            bool(direct_live_blockers),
+        )
+    elif name == "rejected_proof_candidates":
+        causal_rank = 1 if proof_blockers or category.get("candidate_count") else 3
+        basis = "candidate_rejected_before_proof_queue"
+        blocking_depth = _count_true(
+            bool(category.get("candidate_count")),
+            current_state.get("proof_queue_count") == 0,
+            current_state.get("proof_ready_count") == 0,
+            current_state.get("can_create_live_permission_count") == 0,
+            bool(proof_blockers),
+        )
+    elif name == "portfolio_planner":
+        causal_rank = 3
+        basis = "portfolio_path_is_downstream_of_live_ready_proof"
+        blocking_depth = _count_true(
+            category.get("portfolio_status") != "LIVE_READY_PORTFOLIO",
+            category.get("can_reach_4x_now") is False,
+            category.get("can_create_live_permission") is False,
+            current_state.get("can_create_live_permission_count") == 0,
+        )
+    elif name == "gateway_issue":
+        gateway_direct = [
+            code for code in _dedupe_strings(category.get("gateway_issue_codes"))
+            if code in DIRECT_LIVE_PERMISSION_BLOCKERS
+        ]
+        causal_rank = 0 if gateway_direct else 4
+        basis = (
+            "gateway_reports_direct_live_permission_blocker"
+            if gateway_direct
+            else "gateway_status_is_downstream_of_proof_and_receipt"
+        )
+        blocking_depth = _count_true(
+            category.get("gateway_status") not in GATEWAY_LIVE_READY_STATUSES,
+            current_state.get("can_create_live_permission_count") == 0,
+            bool(gateway_direct),
+        )
+    else:
+        causal_rank = 9
+        basis = "unknown_empty_proof_queue_surface"
+        blocking_depth = 1 if category.get("status") == "BLOCKING" else 0
+
+    return {
+        "causal_rank": causal_rank,
+        "blocking_depth": blocking_depth,
+        "causal_blocker_codes": direct_live_blockers or proof_blockers or blocker_codes[:4],
+        "causal_basis": basis,
+    }
+
+
+def _category_blocker_codes(category: dict[str, Any]) -> list[str]:
+    codes: list[str] = []
+    for key in (
+        "primary_blocker",
+        "reason_code",
+        "rejection_reasons",
+        "global_blockers",
+        "p0_rows",
+        "gateway_issue_codes",
+    ):
+        value = category.get(key)
+        if isinstance(value, list):
+            codes.extend(str(item) for item in value if item)
+        elif value:
+            codes.append(str(value))
+    return _dedupe_strings(codes)
+
+
+def _category_freshness(category: dict[str, Any], current_state: dict[str, Any]) -> dict[str, Any]:
+    name = str(category.get("category") or "")
+    if name == "rejected_proof_candidates":
+        generated_at = current_state.get("proof_queue_generated_at_utc")
+        source = "data/as_proof_pack_queue.json"
+    elif name == "lane_board":
+        generated_at = current_state.get("as_board_generated_at_utc")
+        source = "data/as_lane_candidate_board.json"
+    elif name == "portfolio_planner":
+        generated_at = current_state.get("portfolio_planner_generated_at_utc")
+        source = "data/portfolio_4x_path_planner.json"
+    elif name == "gateway_issue":
+        generated_at = current_state.get("live_order_request_generated_at_utc")
+        source = "data/live_order_request.json"
+    else:
+        generated_at = None
+        source = category.get("evidence_ref")
+    return {
+        "status": "TIMESTAMP_PRESENT" if generated_at else "TIMESTAMP_MISSING",
+        "generated_at_utc": generated_at,
+        "source": source,
+    }
+
+
+def _primary_empty_reason_category(categories: list[dict[str, Any]]) -> dict[str, Any]:
+    blocking = [item for item in categories if item.get("status") == "BLOCKING"] or categories
+    if not blocking:
+        return {}
+    return sorted(
+        blocking,
+        key=lambda item: (
+            _safe_int(item.get("causal_rank"), default=99),
+            -_safe_int(item.get("blocking_depth"), default=0),
+            str(item.get("category") or ""),
+        ),
+    )[0]
+
+
+def _safe_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _count_true(*values: bool) -> int:
+    return sum(1 for value in values if value)
+
+
+def _next_evidence_actions_for_empty_proof_queue(
+    reason: dict[str, Any],
+    *,
+    current_state: dict[str, Any],
+) -> list[dict[str, Any]]:
     if not reason:
         return []
     categories = {
@@ -1503,70 +1711,286 @@ def _next_evidence_actions_for_empty_proof_queue(reason: dict[str, Any]) -> list
 
     if "rejected_proof_candidates" in categories:
         actions.append(
-            {
-                "action_id": "collect_exact_tp_or_live_grade_harvest_evidence",
-                "category": "rejected_proof_candidates",
-                "commands": [],
-                "success_condition": (
-                    "New local TAKE_PROFIT_ORDER receipts or exact HARVEST live-grade "
-                    "promotion moves a candidate from rejected_candidates into queue/proof_ready."
-                ),
-                "read_only": True,
-                "live_side_effects": [],
-            }
+            _evidence_action(
+                current_state,
+                {
+                    "action_id": "collect_exact_tp_or_live_grade_harvest_evidence",
+                    "category": "rejected_proof_candidates",
+                    "commands": [],
+                    "success_condition_text": (
+                        "New local TAKE_PROFIT_ORDER receipts or exact HARVEST live-grade "
+                        "promotion moves a candidate from rejected_candidates into queue/proof_ready."
+                    ),
+                    "success_condition": _success_condition(
+                        "any",
+                        [
+                            _condition_check("proof_queue_count", "gt", 0),
+                            _condition_check("proof_ready_count", "gt", 0),
+                            _condition_check("can_create_live_permission_count", "gt", 0),
+                            _condition_check(
+                                "rejected_proof_candidate_count",
+                                "lt",
+                                current_state.get("rejected_proof_candidate_count"),
+                            ),
+                        ],
+                        description=(
+                            "A candidate entered the proof queue, became proof-ready/live-permission "
+                            "capable, or the rejected candidate count decreased after evidence refresh."
+                        ),
+                    ),
+                    "read_only": True,
+                    "live_side_effects": [],
+                }
+            )
         )
     if "lane_board" in categories:
         actions.append(
-            {
-                "action_id": "refresh_lane_board_after_input_evidence_changes",
-                "category": "lane_board",
-                "commands": [
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
-                ],
-                "success_condition": (
-                    "normal_routing_status is no longer BLOCKED and "
-                    "can_create_live_permission_count becomes positive."
-                ),
-                "read_only": True,
-                "live_side_effects": [],
-            }
+            _evidence_action(
+                current_state,
+                {
+                    "action_id": "refresh_lane_board_after_input_evidence_changes",
+                    "category": "lane_board",
+                    "commands": [
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                    ],
+                    "success_condition_text": (
+                        "normal_routing_status is no longer BLOCKED and "
+                        "can_create_live_permission_count becomes positive."
+                    ),
+                    "success_condition": _success_condition(
+                        "all",
+                        [
+                            _condition_check("proof_normal_routing_status", "neq", "BLOCKED"),
+                            _condition_check("proof_routing_allowed", "eq", True),
+                            _condition_check("can_create_live_permission_count", "gt", 0),
+                        ],
+                        description=(
+                            "Lane-board normal routing reopened and at least one current row can "
+                            "create live permission after the full evidence refresh."
+                        ),
+                    ),
+                    "read_only": True,
+                    "live_side_effects": [],
+                }
+            )
         )
     if "portfolio_planner" in categories:
         actions.append(
-            {
-                "action_id": "refresh_portfolio_4x_path_planner",
-                "category": "portfolio_planner",
-                "commands": [
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
-                ],
-                "success_condition": (
-                    "portfolio_status leaves NO_LIVE_READY_PORTFOLIO or "
-                    "summary.proof_ready_candidates becomes positive."
-                ),
-                "read_only": True,
-                "live_side_effects": [],
-            }
+            _evidence_action(
+                current_state,
+                {
+                    "action_id": "refresh_portfolio_4x_path_planner",
+                    "category": "portfolio_planner",
+                    "commands": [
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+                    ],
+                    "success_condition_text": (
+                        "portfolio_status leaves NO_LIVE_READY_PORTFOLIO or "
+                        "summary.proof_ready_candidates becomes positive."
+                    ),
+                    "success_condition": _success_condition(
+                        "any",
+                        [
+                            _condition_check(
+                                "portfolio_status",
+                                "neq",
+                                "NO_LIVE_READY_PORTFOLIO",
+                            ),
+                            _condition_check("portfolio_can_create_live_permission", "eq", True),
+                            _condition_check("portfolio_can_reach_4x_now", "eq", True),
+                            _condition_check("proof_ready_count", "gt", 0),
+                        ],
+                        description=(
+                            "The planner finds a live-permission-capable path, reaches the 4x path "
+                            "gate, or sees proof-ready candidates after refresh."
+                        ),
+                    ),
+                    "read_only": True,
+                    "live_side_effects": [],
+                }
+            )
         )
     if "gateway_issue" in categories:
         actions.append(
-            {
-                "action_id": "refresh_gateway_evidence_without_sending",
-                "category": "gateway_issue",
-                "commands": [
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
-                ],
-                "success_condition": (
-                    "data/live_order_request.json carries a current accepted/staged/sent "
-                    "gateway status only after the normal verifier/gateway path authorizes it."
-                ),
-                "read_only": True,
-                "live_side_effects": [],
-            }
+            _evidence_action(
+                current_state,
+                {
+                    "action_id": "refresh_gateway_evidence_without_sending",
+                    "category": "gateway_issue",
+                    "commands": [
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                    ],
+                    "success_condition_text": (
+                        "data/live_order_request.json carries a current accepted/staged/sent "
+                        "gateway status only after the normal verifier/gateway path authorizes it."
+                    ),
+                    "success_condition": _success_condition(
+                        "any",
+                        [
+                            _condition_check(
+                                "gateway_status",
+                                "in",
+                                sorted(GATEWAY_LIVE_READY_STATUSES),
+                            ),
+                            _condition_check("can_create_live_permission_count", "gt", 0),
+                        ],
+                        description=(
+                            "Gateway evidence now reports an authorized live-ready/staged/sent "
+                            "state, or upstream proof can create live permission."
+                        ),
+                    ),
+                    "read_only": True,
+                    "live_side_effects": [],
+                }
+            )
         )
     return actions
+
+
+def _evidence_action(current_state: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    condition = action.get("success_condition")
+    if isinstance(condition, dict):
+        action["success_condition_evaluation"] = _evaluate_success_condition(
+            condition,
+            current_state,
+        )
+    return action
+
+
+def _success_condition(
+    mode: str,
+    checks: list[dict[str, Any]],
+    *,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "description": description,
+        "schema_version": "success_condition_v1",
+        "verification_scope": (
+            "Evaluate these checks against loop_engineering_prompt.current_state from "
+            "the next verifier/orchestrator refresh."
+        ),
+        "mode": mode,
+        "checks": checks,
+    }
+
+
+def _condition_check(field: str, operator: str, value: Any = None) -> dict[str, Any]:
+    check = {
+        "field": field,
+        "operator": operator,
+    }
+    if value is not None:
+        check["value"] = value
+    return check
+
+
+def _evaluate_success_condition(
+    condition: dict[str, Any],
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    checks = condition.get("checks")
+    if not isinstance(checks, list) or not checks:
+        return {
+            "status": "UNKNOWN",
+            "passed": False,
+            "reason": "success_condition has no machine-readable checks",
+            "checks": [],
+        }
+    evaluated = [
+        _evaluate_condition_check(check, current_state)
+        for check in checks
+        if isinstance(check, dict)
+    ]
+    if not evaluated:
+        return {
+            "status": "UNKNOWN",
+            "passed": False,
+            "reason": "success_condition checks were not JSON objects",
+            "checks": [],
+        }
+    mode = str(condition.get("mode") or "all").lower()
+    if mode == "any":
+        passed = any(item.get("passed") for item in evaluated)
+    else:
+        mode = "all"
+        passed = all(item.get("passed") for item in evaluated)
+    return {
+        "status": "MET" if passed else "NOT_MET",
+        "passed": passed,
+        "mode": mode,
+        "checks": evaluated,
+    }
+
+
+def _evaluate_condition_check(
+    check: dict[str, Any],
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    field = str(check.get("field") or "")
+    operator = str(check.get("operator") or "")
+    expected = check.get("value")
+    actual = current_state.get(field)
+    passed = _condition_passes(actual, operator, expected)
+    return {
+        "field": field,
+        "operator": operator,
+        "expected": expected,
+        "actual": actual,
+        "passed": passed,
+    }
+
+
+def _condition_passes(actual: Any, operator: str, expected: Any) -> bool:
+    if operator == "eq":
+        return actual == expected
+    if operator == "neq":
+        return actual is not None and actual != expected
+    actual_number = _as_float(actual)
+    expected_number = _as_float(expected)
+    if operator == "gt":
+        return (
+            actual_number is not None
+            and expected_number is not None
+            and actual_number > expected_number
+        )
+    if operator == "gte":
+        return (
+            actual_number is not None
+            and expected_number is not None
+            and actual_number >= expected_number
+        )
+    if operator == "lt":
+        return (
+            actual_number is not None
+            and expected_number is not None
+            and actual_number < expected_number
+        )
+    if operator == "lte":
+        return (
+            actual_number is not None
+            and expected_number is not None
+            and actual_number <= expected_number
+        )
+    if operator == "in":
+        return isinstance(expected, list) and actual in expected
+    if operator == "not_in":
+        return isinstance(expected, list) and actual not in expected
+    if operator == "is_true":
+        return actual is True
+    if operator == "is_false":
+        return actual is False
+    return False
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _rejected_proof_candidate_reasons(value: Any) -> list[str]:
