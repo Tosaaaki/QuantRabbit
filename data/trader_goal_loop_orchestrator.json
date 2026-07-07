@@ -1,0 +1,621 @@
+{
+  "artifact_health": {
+    "artifact_contradiction_codes": [],
+    "explicit_issues": [],
+    "freshness_issues": [
+      {
+        "category": "rejected_proof_candidates",
+        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "reference_timestamp": "2026-07-07T10:11:57.815791+00:00",
+        "source": "data/as_proof_pack_queue.json",
+        "status": "STALE"
+      },
+      {
+        "category": "lane_board",
+        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "reference_timestamp": "2026-07-07T10:11:57.815791+00:00",
+        "source": "data/as_lane_candidate_board.json",
+        "status": "STALE"
+      },
+      {
+        "category": "portfolio_planner",
+        "generated_at_utc": "2026-07-06T18:30:29Z",
+        "reference_timestamp": "2026-07-07T10:11:57.815791+00:00",
+        "source": "data/portfolio_4x_path_planner.json",
+        "status": "STALE"
+      }
+    ],
+    "has_stale_or_contradicted_artifact": false
+  },
+  "artifact_index": {
+    "artifacts": {
+      "as_lane_candidate_board": {
+        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/as_lane_candidate_board.json",
+        "sha256": "015886a8f2129a05d6bee63acd6279d0dbec6e552773cee0e63b105a6b839fc6",
+        "status": "present"
+      },
+      "as_proof_pack_queue": {
+        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/as_proof_pack_queue.json",
+        "sha256": "f9110391f72a296021167354e050f9e0812dc9bda33cb1f3ad3163d6c5b285b7",
+        "status": "present"
+      },
+      "broker_snapshot": {
+        "generated_at_utc": "2026-07-06T18:29:43.982661+00:00",
+        "path": "/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json",
+        "sha256": "5529b9cd6b8ebbec7307e1f1ba34f698d8940cf6e16e3ac8a1a95257a7d5025f",
+        "status": "present"
+      },
+      "eurusd_short_breakout_failure_scout_plan": {
+        "generated_at_utc": "2026-07-07T12:59:09Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/eurusd_short_breakout_failure_scout_plan.json",
+        "sha256": "397de51f39c359ba0364310669848a8e590bfbe666c545faa5991b99e96ea4e0",
+        "status": "present"
+      },
+      "harvest_live_grade_path": {
+        "generated_at_utc": "2026-07-07T12:05:30.789731Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/harvest_live_grade_path.json",
+        "sha256": "eb37c48622f849e09a9308a3aa579c17b838a82987944f51f01ffc4ec3b2b8bc",
+        "status": "present"
+      },
+      "live_order_request": {
+        "generated_at_utc": "2026-07-07T11:47:42.416220+00:00",
+        "path": "/Users/tossaki/App/QuantRabbit/data/live_order_request.json",
+        "sha256": "258d498cf8807ebc9211fbc92a7c847d7b2ec10878a83924ada56cd3d33f0ac2",
+        "status": "present"
+      },
+      "payoff_shape_diagnosis": {
+        "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
+        "path": "/Users/tossaki/App/QuantRabbit/data/payoff_shape_diagnosis.json",
+        "sha256": "619f58f8e5ed54a85e50255cbc2536f38d44eb419411e2e2efbd8a06d29a92ac",
+        "status": "present"
+      },
+      "portfolio_4x_path_planner": {
+        "generated_at_utc": "2026-07-06T18:30:29Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/portfolio_4x_path_planner.json",
+        "sha256": "17379fb8a3721436087b2ccda43144836a8f0de17731c2fd70cd9fdfbb3cc798",
+        "status": "present"
+      },
+      "trader_repair_orchestrator": {
+        "generated_at_utc": "2026-07-07T10:29:53.584439+00:00",
+        "path": "/Users/tossaki/App/QuantRabbit/data/trader_repair_orchestrator.json",
+        "sha256": "dcb442097b0437a41e6fb69fbce1b05a46cb6189486a94c08d047c52cff11109",
+        "status": "present"
+      }
+    },
+    "combined_sha256": "ea4c744795c63919e7280df88c2f573aa4588d706488b2c7a3bbee4f3d173f2f",
+    "latest_input_generated_at_utc": "2026-07-07T12:59:09Z"
+  },
+  "contract_version": "trader_goal_loop_orchestrator_v1",
+  "current_phase": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+  "edge_improvement_state": {
+    "blockers_to_preserve": [
+      "FORECAST_ADVERSE_PATH_BLOCK",
+      "GUARDIAN_OPERATOR_REVIEW_BLOCK",
+      "MARKET_CLOSE_LEAK_PRESENT",
+      "NOT_IN_PROOF_QUEUE",
+      "SAMPLE_GAP",
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
+      "NO_LIVE_READY_PORTFOLIO",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+      "SELF_IMPROVEMENT_P0_PRESENT",
+      "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+      "CURRENT_LANE_BLOCKERS",
+      "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+      "NO_FRESH_GATEWAY_PERMISSION"
+    ],
+    "candidate_available": true,
+    "candidate_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+    "experiments": [
+      {
+        "experiment_type": "sampling",
+        "hypothesis": "attached-TP HARVEST proof can move from thin positive sample to live-grade evidence after missing TP samples are collected without TP-loss leakage.",
+        "read_only_design": "operator review can decide whether a proof-collection SCOUT is worth approving; this orchestrator only packages the evidence and never sends it.",
+        "success_signal": {
+          "proof_gap_trades": 3,
+          "take_profit_expectancy_jpy": 613.2,
+          "take_profit_losses": 0,
+          "take_profit_trades": 17
+        },
+        "target": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+      },
+      {
+        "experiment_type": "payoff",
+        "hypothesis": "entry/exit filtering should preserve the TP-positive HARVEST bucket while excluding market-close leak and NO_TRADE shapes.",
+        "read_only_design": "compare current blockers, no-trade shapes, replay residuals, and TP proof before proposing code or scout work.",
+        "success_signal": {
+          "month_scale_negative_visible": true,
+          "negative_expectancy_visible": true,
+          "proof_queue_count": 0
+        },
+        "target": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+      }
+    ],
+    "live_promotion_allowed": false,
+    "min_lot_numerically_feasible": true,
+    "proof_gap_trades": 3,
+    "proof_queue_count": 0,
+    "proof_queue_count_is_live_permission": false,
+    "take_profit_expectancy_jpy": 613.2,
+    "take_profit_losses": 0,
+    "take_profit_trades": 17,
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+  },
+  "expected_edge_improvement": "TP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
+  "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。",
+  "generated_at_utc": "2026-07-07T13:44:46.112336+00:00",
+  "harvest_state": {
+    "actual_proof_queue_member": false,
+    "artifact_status": "present",
+    "can_create_live_permission": false,
+    "closest_harvest_candidate_id": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+    "closest_harvest_selected": true,
+    "closest_shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+    "current_intent_best": {
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "live_blocker_codes": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ],
+      "order_type": "LIMIT",
+      "risk_allowed": false,
+      "risk_jpy": 418.0,
+      "status": "DRY_RUN_BLOCKED",
+      "units": 3000
+    },
+    "generated_at_utc": "2026-07-07T12:05:30.789731Z",
+    "live_promotion_allowed": false,
+    "method": "BREAKOUT_FAILURE",
+    "pair": "EUR_USD",
+    "path": "/Users/tossaki/App/QuantRabbit/data/harvest_live_grade_path.json",
+    "planner_can_enter_proof_pack": false,
+    "promotion_blockers": [
+      "FORECAST_ADVERSE_PATH_BLOCK",
+      "GUARDIAN_OPERATOR_REVIEW_BLOCK",
+      "MARKET_CLOSE_LEAK_PRESENT",
+      "NOT_IN_PROOF_QUEUE",
+      "SAMPLE_GAP",
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
+      "NO_LIVE_READY_PORTFOLIO",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+    ],
+    "side": "SHORT",
+    "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION",
+    "tp_proof": {
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 3,
+      "take_profit_expectancy_jpy": 613.2,
+      "take_profit_losses": 0,
+      "take_profit_trades": 17
+    }
+  },
+  "live_permission_allowed": false,
+  "live_permission_ready_check_state": {
+    "all_checks_passed": false,
+    "broker_snapshot_fetched_at_utc": "2026-07-06T18:29:43.982661+00:00",
+    "broker_truth_age_seconds": 69302.13,
+    "broker_truth_fresh_seconds": 600,
+    "checks": {
+      "broker_truth_fresh": false,
+      "can_create_live_permission_count_gt_zero": false,
+      "guardian_clear": false,
+      "live_promotion_allowed": false,
+      "proof_queue_count_gt_zero": false
+    },
+    "live_permission_allowed": false,
+    "reason": "This is readiness-check routing only; it never grants live permission."
+  },
+  "live_side_effects": [],
+  "next_allowed_commands": [
+    "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
+    "PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator -v"
+  ],
+  "operator_review_state": {
+    "blocker_codes": [
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+      "SELF_IMPROVEMENT_P0_PRESENT",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+      "NOT_IN_PROOF_QUEUE",
+      "SAMPLE_GAP",
+      "CURRENT_LANE_BLOCKERS",
+      "MARKET_CLOSE_LEAK_PRESENT",
+      "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+      "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "NO_FRESH_GATEWAY_PERMISSION",
+      "RECORD AN EXPLICIT LOCAL OPERATOR DECISION VIA THE GUARDIAN RECEIPT OPERATOR-REVIEW FLOW, THEN REBUILD GUARDIAN-RECEIPT-CONSUMPTION, GENERATE-INTENTS, TRADER-SUPPORT-BOT, AND TRADER-REPAIR-ORCHESTRATOR.",
+      "THE SELECTED REPAIR REQUEST IS BLOCKED BY AN EXPIRED GUARDIAN RECEIPT THAT REQUIRES A FRESH EXPLICIT OPERATOR REVIEW. CODEX MUST NOT CLEAR THIS BY CHANGING INTENT, RISK, OR GATEWAY CODE.",
+      "SCOUT_BLOCKED_OPERATOR_REVIEW",
+      "GUARDIAN RECEIPT CONSUMPTION HAS NORMAL_ROUTING_ALLOWED=FALSE AND CLASSIFICATIONS=NEEDS_OPERATOR_REVIEW; OPERATOR REVIEW IS STALE/CURRENT-P0 BLOCKED.",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+      "BLOCKING_OPERATOR_REVIEW_REQUIRED",
+      "GUARDIAN RECEIPT CONSUMPTION/OPERATOR REVIEW PREVENTS NORMAL ROUTING. SCOUT CANNOT GO THROUGH ANY GATEWAY WHILE NORMAL_ROUTING_ALLOWED=FALSE.",
+      "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+      "GUARDIAN RECEIPT CONSUMPTION STATUS DOES NOT ALLOW NORMAL NEW-ENTRY ROUTING; STATUS=GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED CLASSIFICATIONS=NEEDS_OPERATOR_REVIEW,NEEDS_OPERATOR_REVIEW",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+      "GUARDIAN RECEIPT OPERATOR REVIEW DOES NOT ALLOW NORMAL NEW-ENTRY ROUTING; STATUS=GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING DECISIONS=OPERATOR_ACKNOWLEDGED_HISTORICAL"
+    ],
+    "guardian_clear": false,
+    "guardian_expired_or_operator_review_stale": true,
+    "guardian_markers": [
+      "RECORD AN EXPLICIT LOCAL OPERATOR DECISION VIA THE GUARDIAN RECEIPT OPERATOR-REVIEW FLOW, THEN REBUILD GUARDIAN-RECEIPT-CONSUMPTION, GENERATE-INTENTS, TRADER-SUPPORT-BOT, AND TRADER-REPAIR-ORCHESTRATOR.",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "THE SELECTED REPAIR REQUEST IS BLOCKED BY AN EXPIRED GUARDIAN RECEIPT THAT REQUIRES A FRESH EXPLICIT OPERATOR REVIEW. CODEX MUST NOT CLEAR THIS BY CHANGING INTENT, RISK, OR GATEWAY CODE.",
+      "LAUNCHD+HEARTBEAT",
+      "NO_POSITION",
+      "SCOUT_BLOCKED_OPERATOR_REVIEW",
+      "GUARDIAN RECEIPT CONSUMPTION HAS NORMAL_ROUTING_ALLOWED=FALSE AND CLASSIFICATIONS=NEEDS_OPERATOR_REVIEW; OPERATOR REVIEW IS STALE/CURRENT-P0 BLOCKED.",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+      "BLOCKING_OPERATOR_REVIEW_REQUIRED",
+      "GUARDIAN RECEIPT CONSUMPTION/OPERATOR REVIEW PREVENTS NORMAL ROUTING. SCOUT CANNOT GO THROUGH ANY GATEWAY WHILE NORMAL_ROUTING_ALLOWED=FALSE.",
+      "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+      "GUARDIAN RECEIPT CONSUMPTION STATUS DOES NOT ALLOW NORMAL NEW-ENTRY ROUTING; STATUS=GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED CLASSIFICATIONS=NEEDS_OPERATOR_REVIEW,NEEDS_OPERATOR_REVIEW",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+      "GUARDIAN RECEIPT OPERATOR REVIEW DOES NOT ALLOW NORMAL NEW-ENTRY ROUTING; STATUS=GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING DECISIONS=OPERATOR_ACKNOWLEDGED_HISTORICAL",
+      "REPLACED",
+      "ACTIVE_BROKER_TRUTH",
+      "OPERATOR REVIEW REQUIRED BEFORE ANY TP MODIFICATION OR PROFIT ACTION",
+      "OPERATOR REVIEW ONLY; RED P/L OR MISSING SL IS NOT AUTHORIZATION TO CLOSE OR ATTACH SL"
+    ],
+    "missing_raw_guardian_receipt_artifact": true,
+    "normal_routing_allowed": false,
+    "normal_routing_status": "BLOCKED",
+    "operator_review_required": true,
+    "source": "input_artifact_summaries_only"
+  },
+  "payoff_state": {
+    "age_seconds": 7244.662,
+    "artifact_status": "present",
+    "capture_economics_status": "NEGATIVE_EXPECTANCY",
+    "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
+    "harvest_candidate_count": 12,
+    "live_promotion_allowed": false,
+    "live_promotion_blockers": [
+      "NEGATIVE_EXPECTANCY",
+      "MONTH_SCALE_REPLAY_NEGATIVE",
+      "REPLAY_BACKTEST_NEGATIVE"
+    ],
+    "missing_source_artifacts": [],
+    "month_scale_negative_visible": true,
+    "negative_expectancy_visible": true,
+    "path": "/Users/tossaki/App/QuantRabbit/data/payoff_shape_diagnosis.json",
+    "runner_candidate_count": 0,
+    "stale": false,
+    "status": "OK",
+    "verdict": "MIXED_HARVEST_PRIMARY"
+  },
+  "proof_state": {
+    "as_board_generated_at_utc": "2026-07-06T18:30:26Z",
+    "as_lane_candidate_board_artifact_status": "present",
+    "as_live_ready_path_exists": false,
+    "as_proof_pack_queue_artifact_status": "present",
+    "can_create_live_permission_count": 0,
+    "global_blockers": [
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+      "SELF_IMPROVEMENT_P0_PRESENT",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"
+    ],
+    "normal_routing_status": "BLOCKED",
+    "p0_rows": [
+      "MEMORY_HEALTH_BLOCKED",
+      "NEGATIVE_EXPECTANCY_ACTIVE",
+      "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "MARKET_CLOSE_LEAK_FAMILY_BLOCKED"
+    ],
+    "portfolio_4x_path_planner_artifact_status": "present",
+    "portfolio_can_create_live_permission": false,
+    "portfolio_can_reach_4x_now": false,
+    "portfolio_planner_generated_at_utc": "2026-07-06T18:30:29Z",
+    "portfolio_status": "NO_LIVE_READY_PORTFOLIO",
+    "primary_blocker": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+    "proof_queue_count": 0,
+    "proof_queue_count_is_live_permission": false,
+    "proof_queue_empty": true,
+    "proof_queue_generated_at_utc": "2026-07-06T18:30:26Z",
+    "proof_ready_count": 0,
+    "rejected_proof_candidate_count": 4,
+    "routing_allowed": false
+  },
+  "read_only": true,
+  "repeat_loop_guard": {
+    "current_fingerprint": {
+      "artifact_hash": "ea4c744795c63919e7280df88c2f573aa4588d706488b2c7a3bbee4f3d173f2f",
+      "key_blocker": "SCOUT_BLOCKED_OPERATOR_REVIEW:NORMAL_ROUTING_FALSE",
+      "latest_input_generated_at_utc": "2026-07-07T12:59:09Z",
+      "work_type": "OPERATOR_REVIEW_REPORT"
+    },
+    "policy": "Do not repeat the same work type for the same artifact hash and key blocker. Repeat only after input generated_at, artifact hash, or key blocker changes.",
+    "previous_fingerprint": {
+      "artifact_hash": "ea4c744795c63919e7280df88c2f573aa4588d706488b2c7a3bbee4f3d173f2f",
+      "key_blocker": "SCOUT_BLOCKED_OPERATOR_REVIEW:NORMAL_ROUTING_FALSE",
+      "latest_input_generated_at_utc": "2026-07-07T12:59:09Z",
+      "work_type": "OPERATOR_REVIEW_REPORT"
+    },
+    "repeat_allowed": false,
+    "repeat_reason": "same_work_type_artifact_hash_and_key_blocker",
+    "same_work_type_artifact_and_blocker": true
+  },
+  "requires_operator_approval": true,
+  "root_improvement_target": "EUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。",
+  "safety_contract": {
+    "forbidden_actions": [
+      "live_order",
+      "cancel_order",
+      "close_position",
+      "launchd_load",
+      "launchd_reload",
+      "gate_relaxation",
+      "secret_or_token_output"
+    ],
+    "live_permission_allowed": false,
+    "live_side_effects_allowed": [],
+    "no_4x_deficit_lot_backsolve": true,
+    "proof_queue_count_zero_is_not_permission": true,
+    "quant_rabbit_code_may_call_model_api": false,
+    "read_only": true
+  },
+  "schema_state": {
+    "code_repair_required": false,
+    "missing_fields": [],
+    "required_field_missing": false,
+    "success_condition_schema_issues": [],
+    "success_condition_schema_ok": true
+  },
+  "scout_state": {
+    "artifact_status": "present",
+    "blocker_codes": [
+      "NOT_IN_PROOF_QUEUE",
+      "SAMPLE_GAP",
+      "CURRENT_LANE_BLOCKERS",
+      "MARKET_CLOSE_LEAK_PRESENT",
+      "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+      "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "NO_FRESH_GATEWAY_PERMISSION"
+    ],
+    "diagnosed": true,
+    "evidence_success_conditions": [
+      {
+        "current": 17,
+        "field": "take_profit_trades",
+        "operator": ">=",
+        "value": 20
+      },
+      {
+        "current": 0,
+        "field": "take_profit_losses",
+        "operator": "==",
+        "value": 0
+      },
+      {
+        "current": 613.2,
+        "field": "take_profit_expectancy_jpy",
+        "operator": ">",
+        "value": 0
+      },
+      {
+        "current": 304.0708,
+        "field": "positive_rotation_pessimistic_expectancy_jpy",
+        "operator": ">",
+        "value": 0
+      },
+      {
+        "current": null,
+        "field": "spread_included_replay_net",
+        "operator": ">=",
+        "value": 0
+      },
+      {
+        "current": true,
+        "field": "market_close_leak_blocker",
+        "operator": "==",
+        "value": false
+      },
+      {
+        "current": false,
+        "field": "direct_month_scale_residual_blocker_for_target",
+        "operator": "==",
+        "value": false
+      },
+      {
+        "current": false,
+        "field": "guardian_normal_routing_allowed",
+        "operator": "==",
+        "value": true
+      },
+      {
+        "current": false,
+        "field": "fresh_broker_truth_and_fresh_gpt_receipt",
+        "operator": "==",
+        "value": true
+      },
+      {
+        "current": false,
+        "field": "proof_queue_member",
+        "operator": "==",
+        "value": true
+      }
+    ],
+    "generated_at_utc": "2026-07-07T12:59:09Z",
+    "max_loss_jpy_cap": 418.0,
+    "min_lot_feasibility": {
+      "estimated_margin_jpy": 22305.367,
+      "feasible_if_all_non_lot_gates_clear": true,
+      "intent_units": 3000,
+      "loss_budget_min_lot_blocker_present": false,
+      "min_production_lot_units": 1000,
+      "no_4x_deficit_lot_backsolve": true,
+      "planner_realistic_units": 3000,
+      "proposed_scout_units": 3000,
+      "status": "MIN_LOT_NUMERICALLY_FEASIBLE_BUT_OTHER_GATES_BLOCK"
+    },
+    "operator_approval_required": true,
+    "path": "/Users/tossaki/App/QuantRabbit/data/eurusd_short_breakout_failure_scout_plan.json",
+    "proof_queue_entry_blockers": [
+      {
+        "code": "NOT_IN_PROOF_QUEUE",
+        "evidence": {
+          "actual_proof_queue_member": false,
+          "can_create_live_permission": false,
+          "live_promotion_allowed": false,
+          "proof_queue_count": 0
+        },
+        "reason": "data/as_proof_pack_queue.json has queue_count=0, and harvest_live_grade_path says actual_proof_queue_member=false / planner_can_enter_proof_pack=false for this shape."
+      },
+      {
+        "code": "SAMPLE_GAP",
+        "evidence": {
+          "proof_floor_trades": 20,
+          "proof_gap_trades": 3,
+          "take_profit_expectancy_jpy": 613.2,
+          "take_profit_losses": 0,
+          "take_profit_trades": 17
+        },
+        "reason": "Exact TAKE_PROFIT_ORDER proof is positive but thin: 17 TP trades, 0 TP losses, proof floor 20, gap 3."
+      },
+      {
+        "code": "CURRENT_LANE_BLOCKERS",
+        "evidence": {
+          "best_vehicle": "LIMIT attached-TP HARVEST",
+          "chart_direction_bias": "LONG",
+          "forecast_direction": "RANGE",
+          "forecast_market_support_ok": false,
+          "live_blocker_codes": [
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+            "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+          ]
+        },
+        "reason": "The current LIMIT/STOP proof-collection intents are DRY_RUN_BLOCKED, not proof-queue eligible."
+      },
+      {
+        "code": "MARKET_CLOSE_LEAK_PRESENT",
+        "evidence": {
+          "market_close_losses": 10,
+          "market_close_net_jpy": -7636.3,
+          "overall_expectancy_jpy_per_trade": 102.9,
+          "overall_net_jpy": 3705.2
+        },
+        "reason": "This exact shape is overall positive only after TP wins, but system MARKET_ORDER_TRADE_CLOSE leakage remains material and must not be hidden."
+      },
+      {
+        "code": "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+        "evidence": {
+          "spread_slippage_status": "NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED"
+        },
+        "reason": "harvest_live_grade_path reports no positive spread/slippage proof attached; absence of a negative row is not live-grade proof."
+      },
+      {
+        "code": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+        "evidence": {
+          "blockers": [
+            "SELF_IMPROVEMENT_P0_PRESENT",
+            "NEGATIVE_EXPECTANCY_ACTIVE",
+            "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+            "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+            "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+          ],
+          "profitability_acceptance_status": "PROFITABILITY_ACCEPTANCE_BLOCKED"
+        },
+        "reason": "Global acceptance is still blocked; SCOUT must not hide negative expectancy or month-scale replay findings."
+      },
+      {
+        "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "evidence": {
+          "guardian_receipt_consumption_status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+          "normal_routing_allowed": false,
+          "operator_review_status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING"
+        },
+        "reason": "guardian receipt consumption has normal_routing_allowed=false and classifications=NEEDS_OPERATOR_REVIEW; operator review is stale/current-P0 blocked."
+      },
+      {
+        "code": "NO_FRESH_GATEWAY_PERMISSION",
+        "evidence": {
+          "broker_snapshot_fetched_at_utc": "2026-07-06T18:29:43.982661+00:00",
+          "last_decision_action": "CANCEL_PENDING",
+          "last_decision_generated_at_utc": "2026-06-26T02:32:16.315457+00:00",
+          "live_order_request_status": "NO_ACTION"
+        },
+        "reason": "live_order_request is NO_ACTION, broker snapshot is not fresh relative to this plan, and the last GPT decision is an old CANCEL_PENDING receipt, not a fresh TRADE/SCOUT proof receipt."
+      }
+    ],
+    "scout_mode_allowed": false,
+    "scout_mode_reason": "SCOUT design is worth keeping as a future proof-collection contract because the exact attached-TP HARVEST sample is 17 wins / 0 TP losses with only 3 samples to the proof floor, min-lot is numerically feasible, and harvest_live_grade_path finds no direct target month-scale blocker. It is not currently allowed because guardian/operator review blocks normal routing, current intent gates are BLOCK, proof_queue_count=0 is not permission, and fresh broker truth plus a fresh GPT proof receipt are missing.",
+    "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+  },
+  "selected_next_prompt": "QuantRabbit の 4x改善ループで `OPERATOR_REVIEW_REPORT` を実施してください。\n\n目的:\n現在の artifact 状態を読み、次の改善アクションを read-only で進める。これは live permission ではありません。発注許可、cancel/close 許可、launchd 操作許可を作らず、改善ループの次アクションだけを扱ってください。\n\n現在フェーズ:\n`SCOUT_BLOCKED_OPERATOR_REVIEW`\n\n選定理由:\nscout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission. repeat_loop_guard also shows the same work type/artifact hash/key blocker as the previous goal-loop artifact; dispatch should wait for changed generated_at, artifact hash, or key blocker, but the artifact-derived classification is preserved.\n\n4xに近づく根本改善は何か:\nEUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。\n\n4x progress hypothesis:\nEUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。\n\nexpected edge improvement:\nTP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。\n\n入力 artifact:\n- data/trader_repair_orchestrator.json\n- data/payoff_shape_diagnosis.json\n- data/harvest_live_grade_path.json\n- data/eurusd_short_breakout_failure_scout_plan.json\n- data/as_proof_pack_queue.json\n- data/as_lane_candidate_board.json\n- data/portfolio_4x_path_planner.json\n- data/live_order_request.json\n- data/broker_snapshot.json\n\n存在しない artifact は `missing` として扱い、推測で補完しないでください。\n\n絶対禁止:\n- live order / cancel / close / launchd load/reload を行わない\n- gate を緩めない\n- negative expectancy / month-scale replay negative を隠さない\n- proof_queue_count=0 を live permission と誤認しない\n- 4x未達額から lot を逆算しない\n- secret / token を出さない\n- QuantRabbit code から model API を呼ばない\n\n出力:\n- read-only の JSON または Markdown report を作る場合は `live_side_effects=[]` と `live_permission_allowed=false` を明記する\n- 既存 artifact の blocker を消したように見せない\n- operator の明示判断が必要な状態では、判断材料だけを整理し、operator decision 自体を捏造しない\n- `OPERATOR_REVIEW_REPORT` の場合は、SCOUTを許可/却下するための判断材料だけを整理し、live permission とは明確に切り分ける\n- `EDGE_IMPROVEMENT_EXPERIMENT` の場合は、HARVEST候補の entry / exit / payoff / sampling 実験設計だけを行い、発注や gate 緩和をしない\n\nsuccess condition:\n```json\n{\n  \"checks\": [\n    {\n      \"field\": \"scout_status\",\n      \"operator\": \"eq\",\n      \"value\": \"SCOUT_BLOCKED_OPERATOR_REVIEW\"\n    },\n    {\n      \"field\": \"operator_review_material_only\",\n      \"operator\": \"eq\",\n      \"value\": true\n    },\n    {\n      \"field\": \"live_permission_allowed\",\n      \"operator\": \"eq\",\n      \"value\": false\n    }\n  ],\n  \"description\": \"operator-review report is limited to SCOUT approval/rejection evidence and never creates live permission.\",\n  \"mode\": \"all\",\n  \"schema_version\": \"success_condition_v1\",\n  \"verification_scope\": \"Evaluate against the next data/trader_goal_loop_orchestrator.json current_state fields after artifact refresh.\"\n}\n```\n\n検証コマンド:\n- `python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null`\n- `PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator -v`\n\n注意:\nこの作業は live permission ready check であっても発注許可ではありません。最終送信は既存 gateway、fresh broker truth、risk/gpt verifier、guardian/operator review clearance、明示 live flag が別途そろうまで禁止です。\n",
+  "selected_next_work_type": "OPERATOR_REVIEW_REPORT",
+  "selection_reason": "scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission. repeat_loop_guard also shows the same work type/artifact hash/key blocker as the previous goal-loop artifact; dispatch should wait for changed generated_at, artifact hash, or key blocker, but the artifact-derived classification is preserved.",
+  "status": "NEXT_WORK_SELECTED",
+  "success_condition": {
+    "checks": [
+      {
+        "field": "scout_status",
+        "operator": "eq",
+        "value": "SCOUT_BLOCKED_OPERATOR_REVIEW"
+      },
+      {
+        "field": "operator_review_material_only",
+        "operator": "eq",
+        "value": true
+      },
+      {
+        "field": "live_permission_allowed",
+        "operator": "eq",
+        "value": false
+      }
+    ],
+    "description": "operator-review report is limited to SCOUT approval/rejection evidence and never creates live permission.",
+    "mode": "all",
+    "schema_version": "success_condition_v1",
+    "verification_scope": "Evaluate against the next data/trader_goal_loop_orchestrator.json current_state fields after artifact refresh."
+  },
+  "success_condition_evaluation": {
+    "checks": [
+      {
+        "actual": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+        "expected": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+        "field": "scout_status",
+        "operator": "eq",
+        "passed": true
+      },
+      {
+        "actual": true,
+        "expected": true,
+        "field": "operator_review_material_only",
+        "operator": "eq",
+        "passed": true
+      },
+      {
+        "actual": false,
+        "expected": false,
+        "field": "live_permission_allowed",
+        "operator": "eq",
+        "passed": true
+      }
+    ],
+    "mode": "all",
+    "passed": true,
+    "schema_version": "success_condition_evaluation_v1",
+    "status": "MET"
+  }
+}

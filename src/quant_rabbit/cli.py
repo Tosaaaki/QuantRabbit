@@ -162,6 +162,8 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_SETTINGS,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_DECISION,
+    DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
+    DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_SUPPORT_BOT,
@@ -2295,6 +2297,10 @@ def _as_4x_proof_path_step() -> dict[str, Any]:
     return {"argv": ["as-4x-proof-path"], "required": True}
 
 
+def _trader_goal_loop_orchestrator_step() -> dict[str, Any]:
+    return {"argv": ["trader-goal-loop-orchestrator"], "required": True}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2399,6 +2405,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         _as_live_ready_evidence_loop_step(),
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
+        _trader_goal_loop_orchestrator_step(),
     ]
 
 
@@ -2458,6 +2465,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         _as_live_ready_evidence_loop_step(),
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
+        _trader_goal_loop_orchestrator_step(),
     ]
 
 
@@ -2494,6 +2502,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         _as_live_ready_evidence_loop_step(),
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
+        _trader_goal_loop_orchestrator_step(),
     ]
 
 
@@ -2530,6 +2539,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         _as_live_ready_evidence_loop_step(),
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
+        _trader_goal_loop_orchestrator_step(),
     ]
 
 
@@ -3378,6 +3388,18 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "live_side_effects": trader_repair.get("live_side_effects") or [],
         }
 
+    goal_loop = _read_json_quiet(DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
+    if isinstance(goal_loop, dict):
+        digest["trader_goal_loop_orchestrator"] = {
+            "generated_at_utc": goal_loop.get("generated_at_utc"),
+            "status": goal_loop.get("status"),
+            "current_phase": goal_loop.get("current_phase"),
+            "selected_next_work_type": goal_loop.get("selected_next_work_type"),
+            "selection_reason": goal_loop.get("selection_reason"),
+            "live_permission_allowed": goal_loop.get("live_permission_allowed"),
+            "live_side_effects": goal_loop.get("live_side_effects") or [],
+        }
+
     return digest
 
 
@@ -3919,6 +3941,42 @@ def main(argv: list[str] | None = None) -> int:
     p_repair_orchestrator.add_argument("--broker-snapshot", type=Path, default=None)
     p_repair_orchestrator.add_argument("--output", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
     p_repair_orchestrator.add_argument("--report", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT)
+
+    p_goal_loop = sub.add_parser(
+        "trader-goal-loop-orchestrator",
+        help="Select the next read-only Codex work type for the 4x improvement loop.",
+    )
+    p_goal_loop.add_argument("--trader-repair-orchestrator", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
+    p_goal_loop.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_goal_loop.add_argument(
+        "--harvest-live-grade-path",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "harvest_live_grade_path.json",
+    )
+    p_goal_loop.add_argument(
+        "--scout-plan",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_scout_plan.json",
+    )
+    p_goal_loop.add_argument(
+        "--as-proof-pack-queue",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "as_proof_pack_queue.json",
+    )
+    p_goal_loop.add_argument(
+        "--as-lane-candidate-board",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "as_lane_candidate_board.json",
+    )
+    p_goal_loop.add_argument(
+        "--portfolio-4x-path-planner",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "portfolio_4x_path_planner.json",
+    )
+    p_goal_loop.add_argument("--live-order-request", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_goal_loop.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_goal_loop.add_argument("--output", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
+    p_goal_loop.add_argument("--report", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -6622,6 +6680,42 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == STATUS_READY else 2
+    if args.command == "trader-goal-loop-orchestrator":
+        try:
+            from quant_rabbit.trader_goal_loop_orchestrator import TraderGoalLoopOrchestrator
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=args.trader_repair_orchestrator,
+                payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
+                harvest_live_grade_path=args.harvest_live_grade_path,
+                scout_plan_path=args.scout_plan,
+                as_proof_pack_queue_path=args.as_proof_pack_queue,
+                as_lane_candidate_board_path=args.as_lane_candidate_board,
+                portfolio_4x_path_planner_path=args.portfolio_4x_path_planner,
+                live_order_request_path=args.live_order_request,
+                broker_snapshot_path=args.broker_snapshot,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "current_phase": summary.current_phase,
+                    "selected_next_work_type": summary.selected_next_work_type,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "as-live-ready-evidence-loop":
         return _run_repository_tool("tools/build_as_live_ready_evidence_loop.py")
     if args.command == "as-4x-proof-path":

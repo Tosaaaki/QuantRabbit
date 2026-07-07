@@ -329,7 +329,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
-# trader-repair-orchestrator) in one
+# trader-repair-orchestrator → trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -557,7 +557,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
-# `trader-repair-orchestrator`. It preserves the original
+# `trader-repair-orchestrator` and `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -583,7 +583,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → as-live-ready-evidence-loop → as-4x-proof-path
-#   → trader-repair-orchestrator
+#   → trader-repair-orchestrator → trader-goal-loop-orchestrator
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -676,6 +676,19 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   acceptance/guardian/frontier evidence instead of returning
 #   `NO_REPAIR_REQUESTS`. It grants no live permission and does not call model
 #   APIs from QuantRabbit code.
+# - trader-goal-loop-orchestrator is read-only and runs after
+#   trader-repair-orchestrator. It reads the current repair/payoff/HARVEST/SCOUT/
+#   proof queue/lane board/portfolio/live-order/broker artifacts, then writes
+#   `data/trader_goal_loop_orchestrator.json` and
+#   `docs/trader_goal_loop_orchestrator_report.md` with the next Codex work type
+#   and a complete Japanese prompt. It prioritizes evidence growth and
+#   expectancy improvement toward rolling 30d funding-adjusted equity 4x:
+#   operator-review SCOUT judgement material first when
+#   `SCOUT_BLOCKED_OPERATOR_REVIEW` is active, otherwise live-grade HARVEST proof
+#   path, SCOUT evidence, NO_TRADE exclusion, or read-only
+#   `EDGE_IMPROVEMENT_EXPERIMENT` design. It never grants live permission,
+#   treats `proof_queue_count=0` as a blocker, and does not call model APIs from
+#   QuantRabbit code.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
