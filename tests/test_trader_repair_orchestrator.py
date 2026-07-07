@@ -454,6 +454,101 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("4x funding-adjusted multiplier", report_text)
             self.assertIn("Remaining to 4x funding-adjusted: `515223.801`", report_text)
 
+    def test_loop_prompt_embeds_as_proof_queue_and_gateway_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+            )
+            _write_as_proof_artifacts(root)
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            state = payload["loop_engineering_prompt"]["current_state"]
+            self.assertEqual(state["proof_queue_count"], 0)
+            self.assertEqual(state["proof_ready_count"], 0)
+            self.assertEqual(state["can_create_live_permission_count"], 0)
+            self.assertEqual(state["rejected_proof_candidate_count"], 4)
+            self.assertFalse(state["as_live_ready_path_exists"])
+            self.assertEqual(state["proof_primary_blocker"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
+            self.assertEqual(state["proof_normal_routing_status"], "BLOCKED")
+            self.assertFalse(state["proof_routing_allowed"])
+            self.assertEqual(state["portfolio_status"], "NO_LIVE_READY_PORTFOLIO")
+            self.assertFalse(state["portfolio_can_reach_4x_now"])
+            self.assertEqual(state["gateway_status"], "NO_LIVE_READY_INTENT")
+            self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", state["proof_global_blockers"])
+            loop_prompt = payload["loop_engineering_prompt"]
+            self.assertIn("proof_queue=0", loop_prompt["prompt_text"])
+            self.assertIn("live_permission_candidates=0", loop_prompt["prompt_text"])
+            self.assertIn("rejected_proof_candidates=4", loop_prompt["prompt_text"])
+            self.assertIn("gateway=NO_LIVE_READY_INTENT", loop_prompt["prompt_text"])
+            self.assertIn("A/S proof state:", loop_prompt["prompt_text"])
+            self.assertIn("A/S proof queue as empty", loop_prompt["next_loop"][0])
+            self.assertIn(
+                "as-live-ready-evidence-loop",
+                " ".join(loop_prompt["verification_commands"]),
+            )
+            self.assertIn(
+                "as-4x-proof-path",
+                " ".join(loop_prompt["verification_commands"]),
+            )
+            self.assertEqual(
+                payload["codex_work_order"]["proof_state"]["gateway_status"],
+                "NO_LIVE_READY_INTENT",
+            )
+            self.assertEqual(
+                payload["codex_work_order"]["proof_state"]["proof_queue_count"],
+                0,
+            )
+            report_text = report.read_text()
+            self.assertIn("Proof queue count: `0`", report_text)
+            self.assertIn("Gateway status: `NO_LIVE_READY_INTENT`", report_text)
+
+    def test_temp_orchestrator_without_as_artifacts_does_not_read_repo_runtime_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
+                    )
+                ],
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            state = payload["loop_engineering_prompt"]["current_state"]
+            self.assertNotIn("proof_queue_count", state)
+            self.assertNotIn("rejected_proof_candidate_count", state)
+            self.assertEqual(payload["codex_work_order"]["proof_state"], {})
+
     def test_loop_prompt_marks_order_intents_older_than_broker_snapshot_as_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1783,6 +1878,110 @@ def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
             {
                 "status": "SUPPORT_BLOCKED",
                 "repair_requests": requests,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_as_proof_artifacts(root: Path) -> None:
+    (root / "as_proof_pack_queue.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-07-06T18:30:26Z",
+                "summary": {
+                    "as_live_ready_path_exists": False,
+                    "can_create_live_permission_count": 0,
+                    "proof_ready_count": 0,
+                    "queue_count": 0,
+                    "rejected_candidate_count": 4,
+                    "remaining_p0_rows": 4,
+                },
+                "queue": [],
+                "rejected_candidates": [
+                    {
+                        "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                        "rejection_reasons": [
+                            "spread_included_bidask_replay_negative_for_exact_lane"
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "as_lane_candidate_board.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-07-06T18:30:26Z",
+                "as_live_ready_path_exists": False,
+                "live_ready_lanes": 0,
+                "normal_routing_status": "BLOCKED",
+                "routing_allowed": False,
+                "exact_blocker_preventing_live_ready": {
+                    "as_live_ready_stays_zero": True,
+                    "global_blockers": [
+                        "NEGATIVE_EXPECTANCY_ACTIVE",
+                        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                    ],
+                    "normal_routing_must_remain_blocked": True,
+                    "p0_rows": [
+                        "NEGATIVE_EXPECTANCY_ACTIVE",
+                        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                    ],
+                    "primary": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                },
+                "firepower_board_summary": {
+                    "can_create_live_permission_rows": 0,
+                    "can_enter_proof_pack_rows": 2,
+                    "candidate_rows_after_hard_exclusions": 51,
+                    "rejected_candidate_count": 4,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "portfolio_4x_path_planner.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-07-06T18:30:29Z",
+                "can_reach_4x_now": False,
+                "live_ready_lanes": 0,
+                "normal_routing_status": "BLOCKED",
+                "portfolio_status": "NO_LIVE_READY_PORTFOLIO",
+                "summary": {
+                    "can_create_live_permission": False,
+                    "planner_rejected_candidates": 46,
+                    "proof_ready_candidates": 0,
+                    "standalone_live_ready_candidates": 0,
+                    "standalone_math_candidates_meeting_required_return": 0,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "live_order_request.json").write_text(
+        json.dumps(
+            {
+                "status": "NO_LIVE_READY_INTENT",
+                "risk_issues": [{"code": "NO_LIVE_READY_LANES"}],
             },
             ensure_ascii=False,
             indent=2,

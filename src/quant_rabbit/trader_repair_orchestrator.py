@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_SUPPORT_BOT,
@@ -141,12 +142,28 @@ class TraderRepairOrchestrator:
         support_bot_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         output_path: Path = DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
         report_path: Path = DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
+        proof_queue_path: Path | None = None,
+        as_lane_board_path: Path | None = None,
+        portfolio_4x_path_planner_path: Path | None = None,
+        live_order_request_path: Path | None = None,
         trader_request: str | None = None,
         now_utc: datetime | None = None,
     ) -> None:
         self.support_bot_path = support_bot_path
         self.output_path = output_path
         self.report_path = report_path
+        artifact_root = output_path.parent
+        self.proof_queue_path = proof_queue_path or artifact_root / "as_proof_pack_queue.json"
+        self.as_lane_board_path = as_lane_board_path or artifact_root / "as_lane_candidate_board.json"
+        self.portfolio_4x_path_planner_path = (
+            portfolio_4x_path_planner_path or artifact_root / "portfolio_4x_path_planner.json"
+        )
+        if live_order_request_path:
+            self.live_order_request_path = live_order_request_path
+        elif output_path == DEFAULT_TRADER_REPAIR_ORCHESTRATOR:
+            self.live_order_request_path = DEFAULT_LIVE_ORDER_REQUEST
+        else:
+            self.live_order_request_path = artifact_root / "live_order_request.json"
         self.trader_request = trader_request or ""
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
@@ -171,6 +188,10 @@ class TraderRepairOrchestrator:
 
     def build_payload(self) -> dict[str, Any]:
         support = _read_json(self.support_bot_path)
+        proof_queue = _read_optional_json(self.proof_queue_path)
+        as_board = _read_optional_json(self.as_lane_board_path)
+        portfolio_planner = _read_optional_json(self.portfolio_4x_path_planner_path)
+        live_order_request = _read_optional_json(self.live_order_request_path)
         raw_requests = support.get("repair_requests") if isinstance(support.get("repair_requests"), list) else []
         requests = [item for item in raw_requests if isinstance(item, dict)]
         request_source = "top_level_repair_requests"
@@ -211,6 +232,10 @@ class TraderRepairOrchestrator:
             status=status,
             trader_request=self.trader_request,
             approval_boundary=approval_boundary,
+            proof_queue=proof_queue,
+            as_board=as_board,
+            portfolio_planner=portfolio_planner,
+            live_order_request=live_order_request,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -224,6 +249,10 @@ class TraderRepairOrchestrator:
             "waiting_request_count": len(waiting),
             "artifact_paths": {
                 "trader_support_bot": str(self.support_bot_path),
+                "as_proof_pack_queue": str(self.proof_queue_path),
+                "as_lane_candidate_board": str(self.as_lane_board_path),
+                "portfolio_4x_path_planner": str(self.portfolio_4x_path_planner_path),
+                "live_order_request": str(self.live_order_request_path),
                 "output": str(self.output_path),
                 "report": str(self.report_path),
             },
@@ -260,6 +289,7 @@ class TraderRepairOrchestrator:
                 approval_boundary=approval_boundary,
                 output_path=self.output_path,
                 report_path=self.report_path,
+                loop_prompt=loop_prompt,
             ),
             "read_only": True,
             "live_side_effects": [],
@@ -270,6 +300,15 @@ class TraderRepairOrchestrator:
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"_missing": True, "_path": str(path), "repair_requests": []}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def _read_optional_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"_missing": True, "_path": str(path)}
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
@@ -333,6 +372,10 @@ def _loop_engineering_prompt(
     status: str,
     trader_request: str,
     approval_boundary: dict[str, Any],
+    proof_queue: dict[str, Any],
+    as_board: dict[str, Any],
+    portfolio_planner: dict[str, Any],
+    live_order_request: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the continuously updated prompt for the 5% campaign repair loop."""
 
@@ -428,6 +471,13 @@ def _loop_engineering_prompt(
         acceptance=acceptance,
         target_firepower=target_firepower,
     )
+    current_state["as_proof_state"] = _as_proof_state(
+        proof_queue=proof_queue,
+        as_board=as_board,
+        portfolio_planner=portfolio_planner,
+        live_order_request=live_order_request,
+    )
+    current_state.update(current_state["as_proof_state"])
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
     current_state["artifact_contradiction_codes"] = [
@@ -452,11 +502,26 @@ def _loop_engineering_prompt(
             "Resolve artifact contradictions before using blocker counts: "
             + "; ".join(str(item.get("message")) for item in artifact_contradictions if item.get("message")),
         )
+    if _proof_queue_is_empty(current_state):
+        next_loop.insert(
+            0,
+            "Treat the A/S proof queue as empty: no live permission can be created until "
+            "as-live-ready-evidence-loop and as-4x-proof-path rebuild a non-negative, "
+            "proof-ready candidate without guardian/profitability/gateway blockers.",
+        )
     verification_commands = _loop_verification_commands(
         selected=selected,
         approval_required=approval_required,
         waiting=waiting,
     )
+    if _proof_queue_is_empty(current_state):
+        verification_commands = _dedupe_strings(
+            [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+                *verification_commands,
+            ]
+        )
     if artifact_contradictions:
         refresh_commands: list[str] = []
         for item in artifact_contradictions:
@@ -464,6 +529,7 @@ def _loop_engineering_prompt(
         verification_commands = _dedupe_strings([*refresh_commands, *verification_commands])
     anti_loop_rules = [
         "Do not treat audit-only 4x or +5% firepower as operational reachability unless operational_minimum_5pct_reachable is true and current LIVE_READY/proof/gateway gates agree.",
+        "A proof_queue_count of 0, can_create_live_permission_count of 0, or gateway NO_LIVE_READY_INTENT is a no-send state, not a prompt to synthesize a receipt.",
         "If the selected actionable request is lower priority than a waiting P0 blocker, treat it as auxiliary evidence work, not as clearing the P0 or proving operational 5%.",
         "If fresher support state contradicts intent blocker counts, classify that blocker as artifact-stale and refresh the evidence packet before selecting repair work from it.",
         "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
@@ -479,6 +545,7 @@ def _loop_engineering_prompt(
         "What single blocker currently prevents rolling 30d 4x pace or the +5% pace marker, and is it causal rather than merely frequent?",
         "Does the next action change broker state, launchd state, order state, or position state? If yes, which approved gateway or explicit operator approval covers it?",
         "Is any blocker contradicted by fresher support state, and did I refresh the stale artifact before treating it as causal?",
+        "Do proof_queue_count, can_create_live_permission_count, and gateway_status all allow a future gateway path, or am I trying to route from zero proof?",
         "Am I trying to recover profit by increasing churn while capture economics is negative, or by preserving a TP-proven HARVEST shape?",
         "What evidence would prove this loop iteration worked, and which command will refresh that evidence?",
         "Is a TP-proven lane blocked only by margin or broker exposure, and would clearing it require broker-state change outside Codex?",
@@ -950,6 +1017,10 @@ def _render_loop_prompt_text(
         f"Trader request: {trader_request or '(none)'}",
         f"State: orchestrator={current_state.get('orchestrator_status')}, "
         f"target={current_state.get('target_status')}, live_ready={current_state.get('live_ready_lanes')}, "
+        f"proof_queue={current_state.get('proof_queue_count')}, "
+        f"live_permission_candidates={current_state.get('can_create_live_permission_count')}, "
+        f"rejected_proof_candidates={current_state.get('rejected_proof_candidate_count')}, "
+        f"gateway={current_state.get('gateway_status')}, "
         f"guardian_active={current_state.get('guardian_active')}, "
         f"guardian_lock={current_state.get('guardian_live_runtime_lock_active')}, "
         f"operational_5pct={current_state.get('operational_minimum_5pct_reachable')}, "
@@ -968,6 +1039,8 @@ def _render_loop_prompt_text(
         f"Queue: selected={current_state.get('selected_request_code')}, "
         f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
+        "A/S proof state: "
+        f"{_render_as_proof_state_for_prompt(current_state.get('as_proof_state'))}.",
         "Execution frontier: "
         f"{_render_execution_frontier_for_prompt(current_state.get('execution_frontier'))}.",
         "Profitability RCA: "
@@ -988,6 +1061,32 @@ def _render_loop_prompt_text(
     lines.extend(["", "Verification commands:"])
     lines.extend(f"- {item}" for item in verification_commands)
     return "\n".join(lines)
+
+
+def _render_as_proof_state_for_prompt(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return "(missing)"
+    parts = [
+        _format_optional_count("queue", value.get("proof_queue_count")),
+        _format_optional_count("proof_ready", value.get("proof_ready_count")),
+        _format_optional_count("live_permission", value.get("can_create_live_permission_count")),
+        _format_optional_count("rejected", value.get("rejected_proof_candidate_count")),
+    ]
+    for key, label in [
+        ("as_live_ready_path_exists", "as_path"),
+        ("proof_normal_routing_status", "routing"),
+        ("proof_routing_allowed", "routing_allowed"),
+        ("portfolio_status", "portfolio"),
+        ("portfolio_can_reach_4x_now", "can_reach_4x_now"),
+        ("gateway_status", "gateway"),
+        ("proof_primary_blocker", "primary_blocker"),
+    ]:
+        if value.get(key) is not None:
+            parts.append(f"{label}={value.get(key)}")
+    blockers = _dedupe_strings(value.get("proof_global_blockers"))[:4]
+    if blockers:
+        parts.append("global_blockers=" + ",".join(blockers))
+    return "; ".join(part for part in parts if part) or "(missing)"
 
 
 def _render_execution_frontier_for_prompt(value: Any) -> str:
@@ -1111,6 +1210,110 @@ def _profitability_rca_summary(
     return {key: value for key, value in summary.items() if value not in (None, [], {})}
 
 
+def _as_proof_state(
+    *,
+    proof_queue: dict[str, Any],
+    as_board: dict[str, Any],
+    portfolio_planner: dict[str, Any],
+    live_order_request: dict[str, Any],
+) -> dict[str, Any]:
+    proof_summary = (
+        proof_queue.get("summary") if isinstance(proof_queue.get("summary"), dict) else {}
+    )
+    board_firepower = (
+        as_board.get("firepower_board_summary")
+        if isinstance(as_board.get("firepower_board_summary"), dict)
+        else {}
+    )
+    board_blocker = (
+        as_board.get("exact_blocker_preventing_live_ready")
+        if isinstance(as_board.get("exact_blocker_preventing_live_ready"), dict)
+        else {}
+    )
+    planner_summary = (
+        portfolio_planner.get("summary")
+        if isinstance(portfolio_planner.get("summary"), dict)
+        else {}
+    )
+    state = {
+        "proof_queue_generated_at_utc": proof_queue.get("generated_at_utc"),
+        "as_board_generated_at_utc": as_board.get("generated_at_utc"),
+        "portfolio_planner_generated_at_utc": portfolio_planner.get("generated_at_utc"),
+        "proof_queue_count": _first_present(
+            proof_summary.get("queue_count"),
+            len(proof_queue.get("queue")) if isinstance(proof_queue.get("queue"), list) else None,
+        ),
+        "proof_ready_count": _first_present(
+            proof_summary.get("proof_ready_count"),
+            planner_summary.get("proof_ready_candidates"),
+        ),
+        "can_create_live_permission_count": _first_present(
+            proof_summary.get("can_create_live_permission_count"),
+            board_firepower.get("can_create_live_permission_rows"),
+        ),
+        "rejected_proof_candidate_count": _first_present(
+            proof_summary.get("rejected_candidate_count"),
+            len(proof_queue.get("rejected_candidates"))
+            if isinstance(proof_queue.get("rejected_candidates"), list)
+            else None,
+            planner_summary.get("planner_rejected_candidates"),
+        ),
+        "as_live_ready_path_exists": _first_present(
+            proof_summary.get("as_live_ready_path_exists"),
+            as_board.get("as_live_ready_path_exists"),
+        ),
+        "proof_normal_routing_status": _first_present(
+            as_board.get("normal_routing_status"),
+            portfolio_planner.get("normal_routing_status"),
+        ),
+        "proof_routing_allowed": as_board.get("routing_allowed"),
+        "proof_primary_blocker": board_blocker.get("primary"),
+        "proof_global_blockers": _dedupe_strings(board_blocker.get("global_blockers"))[:8],
+        "proof_p0_rows": _dedupe_strings(board_blocker.get("p0_rows"))[:8],
+        "portfolio_status": portfolio_planner.get("portfolio_status"),
+        "portfolio_can_reach_4x_now": portfolio_planner.get("can_reach_4x_now"),
+        "portfolio_can_create_live_permission": planner_summary.get("can_create_live_permission"),
+        "portfolio_standalone_live_ready_candidates": planner_summary.get(
+            "standalone_live_ready_candidates"
+        ),
+        "portfolio_standalone_math_candidates_meeting_required_return": planner_summary.get(
+            "standalone_math_candidates_meeting_required_return"
+        ),
+        "gateway_status": live_order_request.get("status"),
+        "gateway_issue_codes": _gateway_issue_codes(live_order_request),
+    }
+    return {key: value for key, value in state.items() if value not in (None, [], {})}
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _gateway_issue_codes(payload: dict[str, Any]) -> list[str]:
+    codes: list[str] = []
+    for key in ("risk_issues", "strategy_issues", "issues"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if isinstance(item, dict):
+                code = item.get("code") or item.get("issue_code")
+            else:
+                code = item
+            if code:
+                codes.append(str(code))
+    return _dedupe_strings(codes)
+
+
+def _proof_queue_is_empty(current_state: dict[str, Any]) -> bool:
+    proof_queue_count = current_state.get("proof_queue_count")
+    live_permission_count = current_state.get("can_create_live_permission_count")
+    return proof_queue_count == 0 or live_permission_count == 0
+
+
 def _render_profitability_rca_for_prompt(value: Any) -> str:
     if not isinstance(value, dict) or not value:
         return "(none)"
@@ -1175,13 +1378,16 @@ def _codex_work_order(
     approval_boundary: dict[str, Any],
     output_path: Path,
     report_path: Path,
+    loop_prompt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    proof_state = _work_order_proof_state(loop_prompt)
     if not selected:
         return {
             "status": "NO_ACTIONABLE_CODEX_WORK",
             "orchestrator_status": status,
             "trader_request": trader_request,
             "reason": "No selected READY_FOR_CODEX_IMPLEMENTATION request is available.",
+            "proof_state": proof_state,
             "approval_boundary": approval_boundary,
         }
     return {
@@ -1219,7 +1425,10 @@ def _codex_work_order(
             "orchestrator_json": str(output_path),
             "orchestrator_report": str(report_path),
         },
-        "commit_and_live_sync_required": bool(execution_contract.get("commit_and_live_sync_required", True)),
+        "proof_state": proof_state,
+        "commit_and_live_sync_required": bool(
+            execution_contract.get("commit_and_live_sync_required", True)
+        ),
         "quant_rabbit_code_may_call_model_api": False,
         "approval_boundary": approval_boundary,
         "automation_prompt": (
@@ -1227,6 +1436,34 @@ def _codex_work_order(
             "Do not send orders, cancel orders, close positions, mutate launchd, or add model API calls "
             "inside QuantRabbit code; those actions require the existing gateway path or explicit operator approval."
         ),
+    }
+
+
+def _work_order_proof_state(loop_prompt: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(loop_prompt, dict):
+        return {}
+    current_state = loop_prompt.get("current_state")
+    if not isinstance(current_state, dict):
+        return {}
+    keys = [
+        "proof_queue_count",
+        "proof_ready_count",
+        "can_create_live_permission_count",
+        "rejected_proof_candidate_count",
+        "as_live_ready_path_exists",
+        "proof_normal_routing_status",
+        "proof_routing_allowed",
+        "proof_primary_blocker",
+        "proof_global_blockers",
+        "portfolio_status",
+        "portfolio_can_reach_4x_now",
+        "gateway_status",
+        "gateway_issue_codes",
+    ]
+    return {
+        key: current_state.get(key)
+        for key in keys
+        if current_state.get(key) not in (None, [], {})
     }
 
 
@@ -1616,6 +1853,13 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Operational 5pct reachable: `{loop_state.get('operational_minimum_5pct_reachable')}`",
         f"- Audit 5pct estimated reachable: `{loop_state.get('audit_minimum_5pct_estimated_reachable')}`",
         f"- Live-ready lanes: `{loop_state.get('live_ready_lanes')}`",
+        f"- Proof queue count: `{loop_state.get('proof_queue_count')}`",
+        f"- Proof-ready count: `{loop_state.get('proof_ready_count')}`",
+        f"- Live permission candidates: `{loop_state.get('can_create_live_permission_count')}`",
+        f"- Rejected proof candidates: `{loop_state.get('rejected_proof_candidate_count')}`",
+        f"- A/S proof primary blocker: `{loop_state.get('proof_primary_blocker')}`",
+        f"- Portfolio status: `{loop_state.get('portfolio_status')}`",
+        f"- Gateway status: `{loop_state.get('gateway_status')}`",
         f"- Guardian active: `{loop_state.get('guardian_active')}`",
         f"- Artifact contradictions: `{', '.join(loop_state.get('artifact_contradiction_codes') or [])}`",
         f"- Actionable: `{', '.join(loop_state.get('actionable_request_codes') or [])}`",
