@@ -334,7 +334,19 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 json.dumps(
                     {
                         "status": "SUPPORT_BLOCKED",
-                        "target": {"status": "PURSUE_TARGET"},
+                        "target": {
+                            "status": "PURSUE_TARGET",
+                            "current_equity_raw": 270516.42,
+                            "capital_flows_30d": 100000.0,
+                            "funding_adjusted_equity": 170516.42,
+                            "rolling_30d_multiplier_funding_adjusted": 0.994641,
+                            "remaining_to_4x_funding_adjusted": 515223.801,
+                            "required_calendar_daily_return_funding_adjusted": 5.633087,
+                            "required_active_day_return_funding_adjusted": 7.759236,
+                            "performance_basis": "funding_adjusted",
+                            "sizing_basis": "raw_nav",
+                            "pace_state": "BEHIND_4X_PACE",
+                        },
                         "entry_readiness": {"live_ready_lanes": 0},
                         "profitability_acceptance": {
                             "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
@@ -400,6 +412,17 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
 
             payload = json.loads(output.read_text())
             loop_prompt = payload["loop_engineering_prompt"]
+            state = loop_prompt["current_state"]
+            self.assertEqual(state["funding_adjusted_equity"], 170516.42)
+            self.assertEqual(state["current_equity_raw"], 270516.42)
+            self.assertEqual(state["capital_flows_30d"], 100000.0)
+            self.assertEqual(state["rolling_30d_multiplier_funding_adjusted"], 0.994641)
+            self.assertEqual(state["remaining_to_4x_funding_adjusted"], 515223.801)
+            self.assertEqual(state["required_calendar_daily_return_funding_adjusted"], 5.633087)
+            self.assertEqual(state["required_active_day_return_funding_adjusted"], 7.759236)
+            self.assertEqual(state["performance_basis"], "funding_adjusted")
+            self.assertEqual(state["sizing_basis"], "raw_nav")
+            self.assertEqual(state["pace_state"], "BEHIND_4X_PACE")
             rca = loop_prompt["current_state"]["profitability_rca_summary"]
             self.assertEqual(rca["capture_economics_status"], "NEGATIVE_EXPECTANCY")
             self.assertEqual(rca["overall_expectancy_jpy_per_trade"], -162.0)
@@ -419,6 +442,17 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("tp_exp_jpy=508.4", loop_prompt["prompt_text"])
             self.assertIn("market_close_exp_jpy=-815.9", loop_prompt["prompt_text"])
             self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", loop_prompt["prompt_text"])
+            self.assertIn("rolling 30d/monthly 4x funding-adjusted equity", loop_prompt["prompt_text"])
+            self.assertIn("funding_adjusted_equity=170516.42", loop_prompt["prompt_text"])
+            self.assertIn("remaining_to_4x_funding_adjusted=515223.801", loop_prompt["prompt_text"])
+            self.assertIn("sizing_basis=raw_nav", loop_prompt["prompt_text"])
+            self.assertIn(
+                "Do not derive lot size from remaining_to_4x_funding_adjusted",
+                " ".join(loop_prompt["anti_loop_rules"]),
+            )
+            report_text = report.read_text()
+            self.assertIn("4x funding-adjusted multiplier", report_text)
+            self.assertIn("Remaining to 4x funding-adjusted: `515223.801`", report_text)
 
     def test_loop_prompt_marks_order_intents_older_than_broker_snapshot_as_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

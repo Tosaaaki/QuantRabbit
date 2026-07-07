@@ -86,9 +86,9 @@ REPAIR_SELECTION_REASONS = {
         "TP-progress capture path when both are actionable."
     ),
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST: (
-        "A broker-truth opposite-side counterfactual would clear the 5% minimum target, so "
-        "Codex must audit forecast inversion and opposite-lane suppression before adding "
-        "unrelated entry frequency."
+        "A broker-truth opposite-side counterfactual would clear the +5% pace marker inside "
+        "the rolling 30d 4x campaign, so Codex must audit forecast inversion and opposite-lane "
+        "suppression before adding unrelated entry frequency."
     ),
     "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": (
         "Residual entry-quality repair is scaling work after TP-progress capture and close "
@@ -360,6 +360,24 @@ def _loop_engineering_prompt(
         "support_blocker_codes": _support_blocker_codes(support.get("blockers")),
         "campaign_day_jst": target.get("campaign_day_jst"),
         "target_status": target.get("status"),
+        "current_equity_raw": target.get("current_equity_raw") or target.get("current_equity_jpy"),
+        "capital_flows_30d": target.get("capital_flows_30d"),
+        "funding_adjusted_equity": target.get("funding_adjusted_equity"),
+        "rolling_30d_multiplier_raw": target.get("rolling_30d_multiplier_raw"),
+        "rolling_30d_multiplier_funding_adjusted": target.get(
+            "rolling_30d_multiplier_funding_adjusted"
+        ),
+        "remaining_to_4x_raw": target.get("remaining_to_4x_raw"),
+        "remaining_to_4x_funding_adjusted": target.get("remaining_to_4x_funding_adjusted"),
+        "required_calendar_daily_return_funding_adjusted": target.get(
+            "required_calendar_daily_return_funding_adjusted"
+        ),
+        "required_active_day_return_funding_adjusted": target.get(
+            "required_active_day_return_funding_adjusted"
+        ),
+        "performance_basis": target.get("performance_basis"),
+        "sizing_basis": target.get("sizing_basis"),
+        "pace_state": target.get("pace_state"),
         "minimum_progress_pct": target.get("minimum_progress_pct"),
         "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
         "progress_pct": target.get("progress_pct"),
@@ -445,11 +463,12 @@ def _loop_engineering_prompt(
             refresh_commands.extend(_dedupe_strings(item.get("refresh_commands")))
         verification_commands = _dedupe_strings([*refresh_commands, *verification_commands])
     anti_loop_rules = [
-        "Do not treat audit-only 5% firepower as operational reachability unless operational_minimum_5pct_reachable is true.",
+        "Do not treat audit-only 4x or +5% firepower as operational reachability unless operational_minimum_5pct_reachable is true and current LIVE_READY/proof/gateway gates agree.",
         "If the selected actionable request is lower priority than a waiting P0 blocker, treat it as auxiliary evidence work, not as clearing the P0 or proving operational 5%.",
         "If fresher support state contradicts intent blocker counts, classify that blocker as artifact-stale and refresh the evidence packet before selecting repair work from it.",
         "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
         "If OANDA audit-only S5/M5 history is complete and replay cannot clear local TP proof, do not rerun validate/mine/package; wait for new local TP receipts, new forecast/candle evidence, or exact HARVEST live-grade promotion.",
+        "Do not derive lot size from remaining_to_4x_funding_adjusted or remaining_minimum_jpy; sizing remains raw-NAV/risk/ATR/margin/gateway based.",
         "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT "
         "or LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, "
         "or loosen protective market-structure guards without a failing regression and a positive-path test.",
@@ -457,7 +476,7 @@ def _loop_engineering_prompt(
         "If the top item is waiting for live evidence, collect or wait for the named evidence; do not reimplement the same already-blocking guard.",
     ]
     self_review_questions = [
-        "What single blocker currently prevents operational 5% reachability, and is it causal rather than merely frequent?",
+        "What single blocker currently prevents rolling 30d 4x pace or the +5% pace marker, and is it causal rather than merely frequent?",
         "Does the next action change broker state, launchd state, order state, or position state? If yes, which approved gateway or explicit operator approval covers it?",
         "Is any blocker contradicted by fresher support state, and did I refresh the stale artifact before treating it as causal?",
         "Am I trying to recover profit by increasing churn while capture economics is negative, or by preserving a TP-proven HARVEST shape?",
@@ -477,9 +496,10 @@ def _loop_engineering_prompt(
     return {
         "version": LOOP_ENGINEERING_PROMPT_VERSION,
         "objective": (
-            "Drive QuantRabbit toward the daily 5% minimum from starting equity by repeatedly "
-            "selecting the highest-causal blocker, taking only approved code/evidence actions, "
-            "and verifying that operational reachability improves without bypassing broker truth."
+            "Drive QuantRabbit toward rolling 30-calendar-day 4x funding-adjusted equity by "
+            "repeatedly selecting the highest-causal blocker, taking only approved code/evidence "
+            "actions, and verifying that operational reachability improves without bypassing broker truth. "
+            "+5% remains a pace marker, review trigger, and protection milestone rather than a forced-churn target."
         ),
         "trader_request": trader_request,
         "current_state": current_state,
@@ -926,7 +946,7 @@ def _render_loop_prompt_text(
     lines = [
         "QuantRabbit loop engineering prompt:",
         "",
-        "Goal: pursue the 5% daily minimum as an audit/repair obligation, not as a promise of market returns.",
+        "Goal: pursue rolling 30d/monthly 4x funding-adjusted equity; use +5% daily as a pace/review/protection marker, not as a promise of market returns or a lot-sizing shortcut.",
         f"Trader request: {trader_request or '(none)'}",
         f"State: orchestrator={current_state.get('orchestrator_status')}, "
         f"target={current_state.get('target_status')}, live_ready={current_state.get('live_ready_lanes')}, "
@@ -934,6 +954,17 @@ def _render_loop_prompt_text(
         f"guardian_lock={current_state.get('guardian_live_runtime_lock_active')}, "
         f"operational_5pct={current_state.get('operational_minimum_5pct_reachable')}, "
         f"audit_5pct={current_state.get('audit_minimum_5pct_estimated_reachable')}.",
+        "4x target math: "
+        f"funding_adjusted_equity={current_state.get('funding_adjusted_equity')}, "
+        f"current_equity_raw={current_state.get('current_equity_raw')}, "
+        f"capital_flows_30d={current_state.get('capital_flows_30d')}, "
+        f"rolling_30d_multiplier_funding_adjusted={current_state.get('rolling_30d_multiplier_funding_adjusted')}, "
+        f"remaining_to_4x_funding_adjusted={current_state.get('remaining_to_4x_funding_adjusted')}, "
+        f"required_calendar_daily_return_funding_adjusted={current_state.get('required_calendar_daily_return_funding_adjusted')}, "
+        f"required_active_day_return_funding_adjusted={current_state.get('required_active_day_return_funding_adjusted')}, "
+        f"pace_state={current_state.get('pace_state')}, "
+        f"performance_basis={current_state.get('performance_basis')}, "
+        f"sizing_basis={current_state.get('sizing_basis')}.",
         f"Queue: selected={current_state.get('selected_request_code')}, "
         f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
@@ -1575,6 +1606,13 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Version: `{loop_prompt.get('version')}`",
         f"- Objective: {loop_prompt.get('objective')}",
         f"- Hypothesis: {loop_prompt.get('current_hypothesis')}",
+        f"- 4x funding-adjusted multiplier: `{loop_state.get('rolling_30d_multiplier_funding_adjusted')}`",
+        f"- Remaining to 4x funding-adjusted: `{loop_state.get('remaining_to_4x_funding_adjusted')}`",
+        f"- Required calendar daily return funding-adjusted: `{loop_state.get('required_calendar_daily_return_funding_adjusted')}`",
+        f"- Required active-day return funding-adjusted: `{loop_state.get('required_active_day_return_funding_adjusted')}`",
+        f"- Performance basis: `{loop_state.get('performance_basis')}`",
+        f"- Sizing basis: `{loop_state.get('sizing_basis')}`",
+        f"- Pace state: `{loop_state.get('pace_state')}`",
         f"- Operational 5pct reachable: `{loop_state.get('operational_minimum_5pct_reachable')}`",
         f"- Audit 5pct estimated reachable: `{loop_state.get('audit_minimum_5pct_estimated_reachable')}`",
         f"- Live-ready lanes: `{loop_state.get('live_ready_lanes')}`",
