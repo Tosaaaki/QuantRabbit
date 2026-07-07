@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.cli import main
@@ -518,6 +518,9 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 self.assertIn("blocking_depth", category)
                 self.assertIn("causal_basis", category)
                 self.assertIn("status", category["freshness"])
+                self.assertIn("freshness_age_seconds", category["freshness"])
+                self.assertIn("freshness_reference_timestamp", category["freshness"])
+                self.assertIn("freshness_max_age_seconds", category["freshness"])
             self.assertLess(
                 by_category["lane_board"]["causal_rank"],
                 by_category["rejected_proof_candidates"]["causal_rank"],
@@ -610,6 +613,108 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("Gateway status: `NO_LIVE_READY_INTENT`", report_text)
             self.assertIn("Proof queue empty reason", report_text)
             self.assertIn("Next evidence actions", report_text)
+
+    def test_proof_queue_empty_reason_marks_stale_artifact_and_lowers_primary_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            broker = root / "broker_snapshot.json"
+            base = datetime(2026, 7, 7, 0, 0, tzinfo=timezone.utc)
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+                generated_at_utc=(base + timedelta(seconds=10)).isoformat(),
+            )
+            broker.write_text(
+                json.dumps({"fetched_at_utc": base.isoformat()}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _write_as_proof_artifacts(
+                root,
+                proof_generated_at_utc=(base + timedelta(seconds=20)).isoformat(),
+                board_generated_at_utc=(base + timedelta(seconds=20)).isoformat(),
+                planner_generated_at_utc=(base + timedelta(seconds=25)).isoformat(),
+                live_order_generated_at_utc=(base + timedelta(seconds=700)).isoformat(),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                broker_snapshot_path=broker,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            reason = payload["proof_queue_empty_reason"]
+            by_category = {item["category"]: item for item in reason["categories"]}
+            self.assertEqual(by_category["lane_board"]["freshness"]["status"], "STALE")
+            self.assertEqual(by_category["gateway_issue"]["freshness"]["status"], "FRESH")
+            self.assertEqual(reason["primary_category"], "gateway_issue")
+            self.assertGreater(
+                by_category["lane_board"]["freshness"]["freshness_age_seconds"],
+                by_category["lane_board"]["freshness"]["freshness_max_age_seconds"],
+            )
+            self.assertEqual(
+                by_category["gateway_issue"]["freshness"]["freshness_reference_timestamp"],
+                (base + timedelta(seconds=700)).isoformat(),
+            )
+
+    def test_proof_queue_empty_reason_excludes_contradicted_artifact_from_primary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            broker = root / "broker_snapshot.json"
+            base = datetime(2026, 7, 7, 1, 0, tzinfo=timezone.utc)
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+                generated_at_utc=(base + timedelta(seconds=60)).isoformat(),
+            )
+            broker.write_text(
+                json.dumps({"fetched_at_utc": base.isoformat()}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _write_as_proof_artifacts(
+                root,
+                proof_generated_at_utc=(base + timedelta(seconds=70)).isoformat(),
+                board_generated_at_utc=(base + timedelta(seconds=10)).isoformat(),
+                planner_generated_at_utc=(base + timedelta(seconds=75)).isoformat(),
+                live_order_generated_at_utc=(base + timedelta(seconds=80)).isoformat(),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                broker_snapshot_path=broker,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            reason = payload["proof_queue_empty_reason"]
+            by_category = {item["category"]: item for item in reason["categories"]}
+            self.assertEqual(by_category["lane_board"]["freshness"]["status"], "CONTRADICTED")
+            self.assertNotEqual(reason["primary_category"], "lane_board")
+            self.assertEqual(reason["primary_category"], "gateway_issue")
+            self.assertIn(
+                "predates required upstream evidence",
+                by_category["lane_board"]["freshness"]["freshness_reason"],
+            )
 
     def test_temp_orchestrator_without_as_artifacts_does_not_read_repo_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1963,13 +2068,21 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
 
 
-def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
+def _write_support(
+    path: Path,
+    requests: list[dict[str, object]],
+    *,
+    generated_at_utc: str | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "status": "SUPPORT_BLOCKED",
+        "repair_requests": requests,
+    }
+    if generated_at_utc:
+        payload["generated_at_utc"] = generated_at_utc
     path.write_text(
         json.dumps(
-            {
-                "status": "SUPPORT_BLOCKED",
-                "repair_requests": requests,
-            },
+            payload,
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
@@ -1979,11 +2092,18 @@ def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
     )
 
 
-def _write_as_proof_artifacts(root: Path) -> None:
+def _write_as_proof_artifacts(
+    root: Path,
+    *,
+    proof_generated_at_utc: str = "2026-07-06T18:30:26Z",
+    board_generated_at_utc: str = "2026-07-06T18:30:26Z",
+    planner_generated_at_utc: str = "2026-07-06T18:30:29Z",
+    live_order_generated_at_utc: str | None = None,
+) -> None:
     (root / "as_proof_pack_queue.json").write_text(
         json.dumps(
             {
-                "generated_at_utc": "2026-07-06T18:30:26Z",
+                "generated_at_utc": proof_generated_at_utc,
                 "summary": {
                     "as_live_ready_path_exists": False,
                     "can_create_live_permission_count": 0,
@@ -2012,7 +2132,7 @@ def _write_as_proof_artifacts(root: Path) -> None:
     (root / "as_lane_candidate_board.json").write_text(
         json.dumps(
             {
-                "generated_at_utc": "2026-07-06T18:30:26Z",
+                "generated_at_utc": board_generated_at_utc,
                 "as_live_ready_path_exists": False,
                 "live_ready_lanes": 0,
                 "normal_routing_status": "BLOCKED",
@@ -2048,7 +2168,7 @@ def _write_as_proof_artifacts(root: Path) -> None:
     (root / "portfolio_4x_path_planner.json").write_text(
         json.dumps(
             {
-                "generated_at_utc": "2026-07-06T18:30:29Z",
+                "generated_at_utc": planner_generated_at_utc,
                 "can_reach_4x_now": False,
                 "live_ready_lanes": 0,
                 "normal_routing_status": "BLOCKED",
@@ -2071,6 +2191,7 @@ def _write_as_proof_artifacts(root: Path) -> None:
     (root / "live_order_request.json").write_text(
         json.dumps(
             {
+                **({"generated_at_utc": live_order_generated_at_utc} if live_order_generated_at_utc else {}),
                 "status": "NO_LIVE_READY_INTENT",
                 "risk_issues": [{"code": "NO_LIVE_READY_LANES"}],
             },

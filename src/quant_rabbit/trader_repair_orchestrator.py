@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
@@ -134,6 +135,17 @@ PROOF_CANDIDATE_BLOCKERS = {
     "S5_POSITIVE_DAY_RATE_LOW",
 }
 GATEWAY_LIVE_READY_STATUSES = {"ACCEPTED", "STAGED", "SENT", "LIVE_READY"}
+# The proof/support artifacts are rebuilt sequentially in one cycle. Five
+# minutes is the operational drift window used here to distinguish same-packet
+# evidence from an older cycle without tying the rule to market risk.
+PROOF_EMPTY_REASON_FRESHNESS_MAX_AGE_SECONDS = 5 * 60
+PROOF_EMPTY_REASON_FUTURE_TOLERANCE_SECONDS = 1.0
+FRESHNESS_PRIMARY_PRIORITY = {
+    "FRESH": 0,
+    "MISSING": 1,
+    "STALE": 2,
+    "CONTRADICTED": 99,
+}
 
 
 @dataclass(frozen=True)
@@ -168,6 +180,7 @@ class TraderRepairOrchestrator:
         as_lane_board_path: Path | None = None,
         portfolio_4x_path_planner_path: Path | None = None,
         live_order_request_path: Path | None = None,
+        broker_snapshot_path: Path | None = None,
         trader_request: str | None = None,
         now_utc: datetime | None = None,
     ) -> None:
@@ -186,6 +199,12 @@ class TraderRepairOrchestrator:
             self.live_order_request_path = DEFAULT_LIVE_ORDER_REQUEST
         else:
             self.live_order_request_path = artifact_root / "live_order_request.json"
+        if broker_snapshot_path:
+            self.broker_snapshot_path = broker_snapshot_path
+        elif output_path == DEFAULT_TRADER_REPAIR_ORCHESTRATOR:
+            self.broker_snapshot_path = DEFAULT_BROKER_SNAPSHOT
+        else:
+            self.broker_snapshot_path = artifact_root / "broker_snapshot.json"
         self.trader_request = trader_request or ""
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
@@ -214,6 +233,7 @@ class TraderRepairOrchestrator:
         as_board = _read_optional_json(self.as_lane_board_path)
         portfolio_planner = _read_optional_json(self.portfolio_4x_path_planner_path)
         live_order_request = _read_optional_json(self.live_order_request_path)
+        broker_snapshot = _read_optional_json(self.broker_snapshot_path)
         raw_requests = support.get("repair_requests") if isinstance(support.get("repair_requests"), list) else []
         requests = [item for item in raw_requests if isinstance(item, dict)]
         request_source = "top_level_repair_requests"
@@ -258,6 +278,7 @@ class TraderRepairOrchestrator:
             as_board=as_board,
             portfolio_planner=portfolio_planner,
             live_order_request=live_order_request,
+            broker_snapshot=broker_snapshot,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -275,6 +296,7 @@ class TraderRepairOrchestrator:
                 "as_lane_candidate_board": str(self.as_lane_board_path),
                 "portfolio_4x_path_planner": str(self.portfolio_4x_path_planner_path),
                 "live_order_request": str(self.live_order_request_path),
+                "broker_snapshot": str(self.broker_snapshot_path),
                 "output": str(self.output_path),
                 "report": str(self.report_path),
             },
@@ -404,6 +426,7 @@ def _loop_engineering_prompt(
     as_board: dict[str, Any],
     portfolio_planner: dict[str, Any],
     live_order_request: dict[str, Any],
+    broker_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the continuously updated prompt for the 5% campaign repair loop."""
 
@@ -428,6 +451,7 @@ def _loop_engineering_prompt(
         "orchestrator_status": status,
         "support_status": support.get("status"),
         "support_generated_at_utc": support.get("generated_at_utc"),
+        "broker_snapshot_generated_at_utc": _broker_snapshot_timestamp(broker_snapshot),
         "support_blocker_codes": _support_blocker_codes(support.get("blockers")),
         "campaign_day_jst": target.get("campaign_day_jst"),
         "target_status": target.get("status"),
@@ -1402,6 +1426,16 @@ def _first_present(*values: Any) -> Any:
     return None
 
 
+def _broker_snapshot_timestamp(payload: dict[str, Any]) -> Any:
+    account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
+    return _first_present(
+        payload.get("generated_at_utc"),
+        payload.get("fetched_at_utc"),
+        account.get("generated_at_utc"),
+        account.get("fetched_at_utc"),
+    )
+
+
 def _gateway_issue_codes(payload: dict[str, Any]) -> list[str]:
     codes: list[str] = []
     for key in ("risk_issues", "strategy_issues", "issues"):
@@ -1651,37 +1685,205 @@ def _category_freshness(category: dict[str, Any], current_state: dict[str, Any])
     if name == "rejected_proof_candidates":
         generated_at = current_state.get("proof_queue_generated_at_utc")
         source = "data/as_proof_pack_queue.json"
+        required_reference_keys = ("broker_snapshot", "trader_support_bot")
     elif name == "lane_board":
         generated_at = current_state.get("as_board_generated_at_utc")
         source = "data/as_lane_candidate_board.json"
+        required_reference_keys = ("broker_snapshot", "trader_support_bot")
     elif name == "portfolio_planner":
         generated_at = current_state.get("portfolio_planner_generated_at_utc")
         source = "data/portfolio_4x_path_planner.json"
+        required_reference_keys = (
+            "broker_snapshot",
+            "trader_support_bot",
+            "as_proof_pack_queue",
+            "as_lane_candidate_board",
+        )
     elif name == "gateway_issue":
         generated_at = current_state.get("live_order_request_generated_at_utc")
         source = "data/live_order_request.json"
+        required_reference_keys = (
+            "broker_snapshot",
+            "trader_support_bot",
+            "as_proof_pack_queue",
+            "as_lane_candidate_board",
+            "portfolio_4x_path_planner",
+        )
     else:
         generated_at = None
         source = category.get("evidence_ref")
-    return {
-        "status": "TIMESTAMP_PRESENT" if generated_at else "TIMESTAMP_MISSING",
-        "generated_at_utc": generated_at,
-        "source": source,
-    }
+        required_reference_keys = ("broker_snapshot", "trader_support_bot")
+    return _freshness_for_generated_at(
+        generated_at,
+        current_state=current_state,
+        source=str(source or ""),
+        required_reference_keys=required_reference_keys,
+    )
 
 
 def _primary_empty_reason_category(categories: list[dict[str, Any]]) -> dict[str, Any]:
     blocking = [item for item in categories if item.get("status") == "BLOCKING"] or categories
     if not blocking:
         return {}
+    eligible = [
+        item
+        for item in blocking
+        if not (
+            isinstance(item.get("freshness"), dict)
+            and item["freshness"].get("status") == "CONTRADICTED"
+        )
+    ]
+    blocking = eligible or [
+        item
+        for item in categories
+        if not (
+            isinstance(item.get("freshness"), dict)
+            and item["freshness"].get("status") == "CONTRADICTED"
+        )
+    ]
+    if not blocking:
+        return {}
     return sorted(
         blocking,
         key=lambda item: (
+            _freshness_primary_priority(item.get("freshness")),
             _safe_int(item.get("causal_rank"), default=99),
             -_safe_int(item.get("blocking_depth"), default=0),
             str(item.get("category") or ""),
         ),
     )[0]
+
+
+def _freshness_for_generated_at(
+    generated_at: Any,
+    *,
+    current_state: dict[str, Any],
+    source: str,
+    required_reference_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    generated_dt = _parse_utc_timestamp(generated_at)
+    references = _artifact_timestamp_references(current_state)
+    available_refs = [item for item in references.values() if item[1] is not None]
+    reference_label, reference_dt = _latest_timestamp_reference(available_refs)
+    required_refs = [
+        references[key]
+        for key in required_reference_keys
+        if key in references and references[key][1] is not None
+    ]
+    newest_required_label, newest_required_dt = _latest_timestamp_reference(required_refs)
+    max_age = PROOF_EMPTY_REASON_FRESHNESS_MAX_AGE_SECONDS
+
+    if generated_dt is None:
+        status = "MISSING"
+        age_seconds = None
+        reason = "artifact timestamp is missing or unreadable"
+    elif reference_dt is None:
+        status = "MISSING"
+        age_seconds = None
+        reason = "freshness reference timestamp is missing"
+    else:
+        age_seconds = (reference_dt - generated_dt).total_seconds()
+        future_skew_seconds = (generated_dt - datetime.now(timezone.utc)).total_seconds()
+        dependency_lag_seconds = (
+            (newest_required_dt - generated_dt).total_seconds()
+            if newest_required_dt is not None
+            else None
+        )
+        if future_skew_seconds > PROOF_EMPTY_REASON_FUTURE_TOLERANCE_SECONDS:
+            status = "CONTRADICTED"
+            reason = "artifact timestamp is in the future relative to orchestrator runtime"
+        elif (
+            dependency_lag_seconds is not None
+            and dependency_lag_seconds > PROOF_EMPTY_REASON_FUTURE_TOLERANCE_SECONDS
+        ):
+            status = "CONTRADICTED"
+            reason = f"artifact predates required upstream evidence: {newest_required_label}"
+        elif age_seconds > max_age:
+            status = "STALE"
+            reason = "artifact timestamp lags the newest compared evidence packet"
+        else:
+            status = "FRESH"
+            reason = "artifact timestamp is aligned with the compared evidence packet"
+
+    result = {
+        "status": status,
+        "generated_at_utc": generated_at,
+        "source": source,
+        "freshness_age_seconds": _round_seconds(age_seconds),
+        "freshness_reference_timestamp": reference_dt.isoformat() if reference_dt else None,
+        "freshness_reference_source": reference_label,
+        "freshness_max_age_seconds": max_age,
+        "freshness_reason": reason,
+    }
+    return result
+
+
+def _artifact_timestamp_references(current_state: dict[str, Any]) -> dict[str, tuple[str, datetime | None]]:
+    return {
+        "broker_snapshot": (
+            "data/broker_snapshot.json",
+            _parse_utc_timestamp(current_state.get("broker_snapshot_generated_at_utc")),
+        ),
+        "trader_support_bot": (
+            "data/trader_support_bot.json",
+            _parse_utc_timestamp(current_state.get("support_generated_at_utc")),
+        ),
+        "as_proof_pack_queue": (
+            "data/as_proof_pack_queue.json",
+            _parse_utc_timestamp(current_state.get("proof_queue_generated_at_utc")),
+        ),
+        "as_lane_candidate_board": (
+            "data/as_lane_candidate_board.json",
+            _parse_utc_timestamp(current_state.get("as_board_generated_at_utc")),
+        ),
+        "portfolio_4x_path_planner": (
+            "data/portfolio_4x_path_planner.json",
+            _parse_utc_timestamp(current_state.get("portfolio_planner_generated_at_utc")),
+        ),
+        "live_order_request": (
+            "data/live_order_request.json",
+            _parse_utc_timestamp(current_state.get("live_order_request_generated_at_utc")),
+        ),
+    }
+
+
+def _latest_timestamp_reference(
+    references: list[tuple[str, datetime | None]]
+) -> tuple[str | None, datetime | None]:
+    available = [(label, value) for label, value in references if value is not None]
+    if not available:
+        return None, None
+    return max(available, key=lambda item: item[1])
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _round_seconds(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value, 3)
+
+
+def _freshness_primary_priority(value: Any) -> int:
+    if not isinstance(value, dict):
+        return FRESHNESS_PRIMARY_PRIORITY["MISSING"]
+    return FRESHNESS_PRIMARY_PRIORITY.get(
+        str(value.get("status") or "MISSING"),
+        FRESHNESS_PRIMARY_PRIORITY["MISSING"],
+    )
 
 
 def _safe_int(value: Any, *, default: int) -> int:

@@ -3912,6 +3912,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional trader request text used to prioritize the repair queue.",
     )
+    p_repair_orchestrator.add_argument("--broker-snapshot", type=Path, default=None)
     p_repair_orchestrator.add_argument("--output", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
     p_repair_orchestrator.add_argument("--report", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT)
 
@@ -6586,6 +6587,7 @@ def main(argv: list[str] | None = None) -> int:
                 support_bot_path=args.trader_support_bot,
                 output_path=args.output,
                 report_path=args.report,
+                broker_snapshot_path=args.broker_snapshot,
                 trader_request=args.request,
             ).run()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
