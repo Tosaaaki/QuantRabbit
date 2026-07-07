@@ -222,7 +222,10 @@ class TraderGoalLoopOrchestrator:
             "success_condition": success_condition,
             "success_condition_evaluation": success_condition_evaluation,
             "next_allowed_commands": next_allowed_commands,
-            "requires_operator_approval": False,
+            "requires_operator_approval_for_this_report": False,
+            "requires_operator_review_before_scout_or_routing": bool(
+                operator_review_state.get("operator_review_required")
+            ),
             "live_permission_allowed": False,
             "live_permission_ready_check_state": live_ready_state,
             "artifact_health": artifact_health,
@@ -894,6 +897,8 @@ def _success_condition(work_type: str) -> dict[str, Any]:
             "all",
             "operator-review report is limited to SCOUT approval/rejection evidence and never creates live permission.",
             [
+                {"field": "requires_operator_approval_for_this_report", "operator": "eq", "value": False},
+                {"field": "requires_operator_review_before_scout_or_routing", "operator": "eq", "value": True},
                 {"field": "scout_status", "operator": "eq", "value": "SCOUT_BLOCKED_OPERATOR_REVIEW"},
                 {"field": "operator_review_material_only", "operator": "eq", "value": True},
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
@@ -980,6 +985,10 @@ def _current_state_for_evaluation(
         "normal_routing_allowed": operator_review_state.get("normal_routing_allowed"),
         "operator_review_material_only": True,
         "guardian_clear": operator_review_state.get("guardian_clear"),
+        "requires_operator_approval_for_this_report": False,
+        "requires_operator_review_before_scout_or_routing": bool(
+            operator_review_state.get("operator_review_required")
+        ),
         "edge_experiment_candidate": edge_improvement_state.get("candidate_available"),
         "has_stale_or_contradicted_artifact": artifact_health.get("has_stale_or_contradicted_artifact"),
         "required_field_missing": schema_state.get("required_field_missing"),
@@ -1171,6 +1180,12 @@ def _render_report(payload: dict[str, Any]) -> str:
     harvest = payload.get("harvest_state", {})
     scout = payload.get("scout_state", {})
     operator = payload.get("operator_review_state", {})
+    review_required = bool(payload.get("requires_operator_review_before_scout_or_routing"))
+    approval_boundary_note = (
+        "- このreport生成自体は承認不要。ただしSCOUT/normal routing前にはoperator review必須。"
+        if review_required
+        else "- このreport生成自体は承認不要。現在のartifact状態ではSCOUT/normal routing前のoperator review必須状態ではありません。"
+    )
     lines = [
         "# Trader Goal Loop Orchestrator",
         "",
@@ -1179,6 +1194,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Read only: `{payload.get('read_only')}`",
         f"- Live side effects: `{payload.get('live_side_effects')}`",
         f"- Live permission allowed: `{payload.get('live_permission_allowed')}`",
+        f"- requires_operator_approval_for_this_report: `{payload.get('requires_operator_approval_for_this_report')}`",
+        f"- requires_operator_review_before_scout_or_routing: `{payload.get('requires_operator_review_before_scout_or_routing')}`",
         f"- Current phase: `{payload.get('current_phase')}`",
         f"- Selected next work type: `{payload.get('selected_next_work_type')}`",
         f"- Selection reason: {payload.get('selection_reason')}",
@@ -1195,6 +1212,12 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Can create live permission count: `{proof.get('can_create_live_permission_count')}`",
         f"- Normal routing allowed: `{operator.get('normal_routing_allowed')}`",
         f"- Guardian clear: `{operator.get('guardian_clear')}`",
+        "",
+        "## Approval Boundary",
+        "",
+        approval_boundary_note,
+        "- `requires_operator_approval_for_this_report` is report-generation approval only.",
+        "- `requires_operator_review_before_scout_or_routing` is the separate SCOUT/normal-routing gate.",
         "",
         "## Repeat Guard",
         "",

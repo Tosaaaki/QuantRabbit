@@ -40,7 +40,9 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(summary.selected_next_work_type, "OPERATOR_REVIEW_REPORT")
         self.assertEqual(payload["selected_next_work_type"], "OPERATOR_REVIEW_REPORT")
-        self.assertFalse(payload["requires_operator_approval"])
+        self.assertNotIn("requires_operator_approval", payload)
+        self.assertFalse(payload["requires_operator_approval_for_this_report"])
+        self.assertTrue(payload["requires_operator_review_before_scout_or_routing"])
         self.assertTrue(payload["operator_review_state"]["operator_review_required"])
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["live_side_effects"], [])
@@ -57,6 +59,12 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("TP proof 17勝 / 0 TP負け", payload["expected_edge_improvement"])
         self.assertIn("Selected next work type: `OPERATOR_REVIEW_REPORT`", report_text)
         self.assertIn("Live permission allowed: `False`", report_text)
+        self.assertIn("requires_operator_approval_for_this_report: `False`", report_text)
+        self.assertIn("requires_operator_review_before_scout_or_routing: `True`", report_text)
+        self.assertIn(
+            "このreport生成自体は承認不要。ただしSCOUT/normal routing前にはoperator review必須",
+            report_text,
+        )
 
     def test_operator_review_clear_with_zero_proof_queue_routes_to_edge_experiment_not_live_permission(self) -> None:
         now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
@@ -71,6 +79,23 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                     "routing_allowed": True,
                     "as_live_ready_path_exists": False,
                     "exact_blocker_preventing_live_ready": {"primary": "PROOF_QUEUE_EMPTY"},
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["scout"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "SCOUT_DIAGNOSIS_COMPLETE",
+                    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                    "scout_mode_allowed": True,
+                    "operator_approval_required": False,
+                    "max_loss_jpy_cap": 418.0,
+                    "min_lot_feasibility": {
+                        "status": "MIN_LOT_NUMERICALLY_FEASIBLE_BUT_OTHER_GATES_BLOCK",
+                        "feasible_if_all_non_lot_gates_clear": True,
+                    },
+                    "proof_queue_entry_blockers": [],
                     "live_side_effects": [],
                 },
             )
@@ -92,7 +117,9 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(summary.selected_next_work_type, "EDGE_IMPROVEMENT_EXPERIMENT")
         self.assertEqual(payload["selected_next_work_type"], "EDGE_IMPROVEMENT_EXPERIMENT")
-        self.assertFalse(payload["requires_operator_approval"])
+        self.assertNotIn("requires_operator_approval", payload)
+        self.assertFalse(payload["requires_operator_approval_for_this_report"])
+        self.assertFalse(payload["requires_operator_review_before_scout_or_routing"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["proof_state"]["proof_queue_count"], 0)
         self.assertIn("entry / exit / payoff / sampling", payload["selected_next_prompt"])
@@ -154,6 +181,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(summary.selected_next_work_type, "OPERATOR_REVIEW_REPORT")
         self.assertEqual(payload["selected_next_work_type"], "OPERATOR_REVIEW_REPORT")
+        self.assertFalse(payload["requires_operator_approval_for_this_report"])
+        self.assertTrue(payload["requires_operator_review_before_scout_or_routing"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertIn("SCOUT_BLOCKED_OPERATOR_REVIEW", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
 

@@ -1,10 +1,12 @@
 # Trader Goal Loop Orchestrator
 
 - Status: `NEXT_WORK_SELECTED`
-- Generated at UTC: `2026-07-07T13:50:51.408764+00:00`
+- Generated at UTC: `2026-07-07T15:42:47.638991+00:00`
 - Read only: `True`
 - Live side effects: `[]`
 - Live permission allowed: `False`
+- requires_operator_approval_for_this_report: `False`
+- requires_operator_review_before_scout_or_routing: `True`
 - Current phase: `SCOUT_BLOCKED_OPERATOR_REVIEW`
 - Selected next work type: `OPERATOR_REVIEW_REPORT`
 - Selection reason: scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission.
@@ -21,6 +23,12 @@
 - Can create live permission count: `0`
 - Normal routing allowed: `False`
 - Guardian clear: `False`
+
+## Approval Boundary
+
+- このreport生成自体は承認不要。ただしSCOUT/normal routing前にはoperator review必須。
+- `requires_operator_approval_for_this_report` is report-generation approval only.
+- `requires_operator_review_before_scout_or_routing` is the separate SCOUT/normal-routing gate.
 
 ## Repeat Guard
 
