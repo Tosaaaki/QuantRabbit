@@ -40,7 +40,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
 
         self.assertEqual(summary.selected_next_work_type, "OPERATOR_REVIEW_REPORT")
         self.assertEqual(payload["selected_next_work_type"], "OPERATOR_REVIEW_REPORT")
-        self.assertTrue(payload["requires_operator_approval"])
+        self.assertFalse(payload["requires_operator_approval"])
+        self.assertTrue(payload["operator_review_state"]["operator_review_required"])
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["live_side_effects"], [])
         self.assertFalse(payload["live_permission_allowed"])

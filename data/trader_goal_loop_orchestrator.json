@@ -60,9 +60,9 @@
         "status": "present"
       },
       "live_order_request": {
-        "generated_at_utc": "2026-07-07T11:47:42.416220+00:00",
+        "generated_at_utc": "2026-07-07T13:47:57.592453+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/live_order_request.json",
-        "sha256": "258d498cf8807ebc9211fbc92a7c847d7b2ec10878a83924ada56cd3d33f0ac2",
+        "sha256": "3669f7a940b17fd52f980723457ceaf35b8b51b0e473b45a5a5a14d950e285ed",
         "status": "present"
       },
       "payoff_shape_diagnosis": {
@@ -84,8 +84,8 @@
         "status": "present"
       }
     },
-    "combined_sha256": "ea4c744795c63919e7280df88c2f573aa4588d706488b2c7a3bbee4f3d173f2f",
-    "latest_input_generated_at_utc": "2026-07-07T12:59:09Z"
+    "combined_sha256": "cca40e9c931d83940050af16445213bbed44f56776619d10e7b5c9346947b943",
+    "latest_input_generated_at_utc": "2026-07-07T13:47:57.592453+00:00"
   },
   "contract_version": "trader_goal_loop_orchestrator_v1",
   "current_phase": "SCOUT_BLOCKED_OPERATOR_REVIEW",
@@ -149,7 +149,7 @@
   },
   "expected_edge_improvement": "TP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
   "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。",
-  "generated_at_utc": "2026-07-07T13:44:46.112336+00:00",
+  "generated_at_utc": "2026-07-07T13:50:51.408764+00:00",
   "harvest_state": {
     "actual_proof_queue_member": false,
     "artifact_status": "present",
@@ -205,7 +205,7 @@
   "live_permission_ready_check_state": {
     "all_checks_passed": false,
     "broker_snapshot_fetched_at_utc": "2026-07-06T18:29:43.982661+00:00",
-    "broker_truth_age_seconds": 69302.13,
+    "broker_truth_age_seconds": 69667.426,
     "broker_truth_fresh_seconds": 600,
     "checks": {
       "broker_truth_fresh": false,
@@ -278,7 +278,7 @@
     "source": "input_artifact_summaries_only"
   },
   "payoff_state": {
-    "age_seconds": 7244.662,
+    "age_seconds": 7609.959,
     "artifact_status": "present",
     "capture_economics_status": "NEGATIVE_EXPECTANCY",
     "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
@@ -336,9 +336,9 @@
   "read_only": true,
   "repeat_loop_guard": {
     "current_fingerprint": {
-      "artifact_hash": "ea4c744795c63919e7280df88c2f573aa4588d706488b2c7a3bbee4f3d173f2f",
+      "artifact_hash": "cca40e9c931d83940050af16445213bbed44f56776619d10e7b5c9346947b943",
       "key_blocker": "SCOUT_BLOCKED_OPERATOR_REVIEW:NORMAL_ROUTING_FALSE",
-      "latest_input_generated_at_utc": "2026-07-07T12:59:09Z",
+      "latest_input_generated_at_utc": "2026-07-07T13:47:57.592453+00:00",
       "work_type": "OPERATOR_REVIEW_REPORT"
     },
     "policy": "Do not repeat the same work type for the same artifact hash and key blocker. Repeat only after input generated_at, artifact hash, or key blocker changes.",
@@ -348,11 +348,11 @@
       "latest_input_generated_at_utc": "2026-07-07T12:59:09Z",
       "work_type": "OPERATOR_REVIEW_REPORT"
     },
-    "repeat_allowed": false,
-    "repeat_reason": "same_work_type_artifact_hash_and_key_blocker",
-    "same_work_type_artifact_and_blocker": true
+    "repeat_allowed": true,
+    "repeat_reason": "new_or_changed_input_artifact",
+    "same_work_type_artifact_and_blocker": false
   },
-  "requires_operator_approval": true,
+  "requires_operator_approval": false,
   "root_improvement_target": "EUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。",
   "safety_contract": {
     "forbidden_actions": [
@@ -562,9 +562,9 @@
     "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
     "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
   },
-  "selected_next_prompt": "QuantRabbit の 4x改善ループで `OPERATOR_REVIEW_REPORT` を実施してください。\n\n目的:\n現在の artifact 状態を読み、次の改善アクションを read-only で進める。これは live permission ではありません。発注許可、cancel/close 許可、launchd 操作許可を作らず、改善ループの次アクションだけを扱ってください。\n\n現在フェーズ:\n`SCOUT_BLOCKED_OPERATOR_REVIEW`\n\n選定理由:\nscout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission. repeat_loop_guard also shows the same work type/artifact hash/key blocker as the previous goal-loop artifact; dispatch should wait for changed generated_at, artifact hash, or key blocker, but the artifact-derived classification is preserved.\n\n4xに近づく根本改善は何か:\nEUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。\n\n4x progress hypothesis:\nEUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。\n\nexpected edge improvement:\nTP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。\n\n入力 artifact:\n- data/trader_repair_orchestrator.json\n- data/payoff_shape_diagnosis.json\n- data/harvest_live_grade_path.json\n- data/eurusd_short_breakout_failure_scout_plan.json\n- data/as_proof_pack_queue.json\n- data/as_lane_candidate_board.json\n- data/portfolio_4x_path_planner.json\n- data/live_order_request.json\n- data/broker_snapshot.json\n\n存在しない artifact は `missing` として扱い、推測で補完しないでください。\n\n絶対禁止:\n- live order / cancel / close / launchd load/reload を行わない\n- gate を緩めない\n- negative expectancy / month-scale replay negative を隠さない\n- proof_queue_count=0 を live permission と誤認しない\n- 4x未達額から lot を逆算しない\n- secret / token を出さない\n- QuantRabbit code から model API を呼ばない\n\n出力:\n- read-only の JSON または Markdown report を作る場合は `live_side_effects=[]` と `live_permission_allowed=false` を明記する\n- 既存 artifact の blocker を消したように見せない\n- operator の明示判断が必要な状態では、判断材料だけを整理し、operator decision 自体を捏造しない\n- `OPERATOR_REVIEW_REPORT` の場合は、SCOUTを許可/却下するための判断材料だけを整理し、live permission とは明確に切り分ける\n- `EDGE_IMPROVEMENT_EXPERIMENT` の場合は、HARVEST候補の entry / exit / payoff / sampling 実験設計だけを行い、発注や gate 緩和をしない\n\nsuccess condition:\n```json\n{\n  \"checks\": [\n    {\n      \"field\": \"scout_status\",\n      \"operator\": \"eq\",\n      \"value\": \"SCOUT_BLOCKED_OPERATOR_REVIEW\"\n    },\n    {\n      \"field\": \"operator_review_material_only\",\n      \"operator\": \"eq\",\n      \"value\": true\n    },\n    {\n      \"field\": \"live_permission_allowed\",\n      \"operator\": \"eq\",\n      \"value\": false\n    }\n  ],\n  \"description\": \"operator-review report is limited to SCOUT approval/rejection evidence and never creates live permission.\",\n  \"mode\": \"all\",\n  \"schema_version\": \"success_condition_v1\",\n  \"verification_scope\": \"Evaluate against the next data/trader_goal_loop_orchestrator.json current_state fields after artifact refresh.\"\n}\n```\n\n検証コマンド:\n- `python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null`\n- `PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator -v`\n\n注意:\nこの作業は live permission ready check であっても発注許可ではありません。最終送信は既存 gateway、fresh broker truth、risk/gpt verifier、guardian/operator review clearance、明示 live flag が別途そろうまで禁止です。\n",
+  "selected_next_prompt": "QuantRabbit の 4x改善ループで `OPERATOR_REVIEW_REPORT` を実施してください。\n\n目的:\n現在の artifact 状態を読み、次の改善アクションを read-only で進める。これは live permission ではありません。発注許可、cancel/close 許可、launchd 操作許可を作らず、改善ループの次アクションだけを扱ってください。\n\n現在フェーズ:\n`SCOUT_BLOCKED_OPERATOR_REVIEW`\n\n選定理由:\nscout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission.\n\n4xに近づく根本改善は何か:\nEUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。\n\n4x progress hypothesis:\nEUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。\n\nexpected edge improvement:\nTP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。\n\n入力 artifact:\n- data/trader_repair_orchestrator.json\n- data/payoff_shape_diagnosis.json\n- data/harvest_live_grade_path.json\n- data/eurusd_short_breakout_failure_scout_plan.json\n- data/as_proof_pack_queue.json\n- data/as_lane_candidate_board.json\n- data/portfolio_4x_path_planner.json\n- data/live_order_request.json\n- data/broker_snapshot.json\n\n存在しない artifact は `missing` として扱い、推測で補完しないでください。\n\n絶対禁止:\n- live order / cancel / close / launchd load/reload を行わない\n- gate を緩めない\n- negative expectancy / month-scale replay negative を隠さない\n- proof_queue_count=0 を live permission と誤認しない\n- 4x未達額から lot を逆算しない\n- secret / token を出さない\n- QuantRabbit code から model API を呼ばない\n\n出力:\n- read-only の JSON または Markdown report を作る場合は `live_side_effects=[]` と `live_permission_allowed=false` を明記する\n- 既存 artifact の blocker を消したように見せない\n- operator の明示判断が必要な状態では、判断材料だけを整理し、operator decision 自体を捏造しない\n- `OPERATOR_REVIEW_REPORT` の場合は、SCOUTを許可/却下するための判断材料だけを整理し、live permission とは明確に切り分ける\n- `EDGE_IMPROVEMENT_EXPERIMENT` の場合は、HARVEST候補の entry / exit / payoff / sampling 実験設計だけを行い、発注や gate 緩和をしない\n\nsuccess condition:\n```json\n{\n  \"checks\": [\n    {\n      \"field\": \"scout_status\",\n      \"operator\": \"eq\",\n      \"value\": \"SCOUT_BLOCKED_OPERATOR_REVIEW\"\n    },\n    {\n      \"field\": \"operator_review_material_only\",\n      \"operator\": \"eq\",\n      \"value\": true\n    },\n    {\n      \"field\": \"live_permission_allowed\",\n      \"operator\": \"eq\",\n      \"value\": false\n    }\n  ],\n  \"description\": \"operator-review report is limited to SCOUT approval/rejection evidence and never creates live permission.\",\n  \"mode\": \"all\",\n  \"schema_version\": \"success_condition_v1\",\n  \"verification_scope\": \"Evaluate against the next data/trader_goal_loop_orchestrator.json current_state fields after artifact refresh.\"\n}\n```\n\n検証コマンド:\n- `python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null`\n- `PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator -v`\n\n注意:\nこの作業は live permission ready check であっても発注許可ではありません。最終送信は既存 gateway、fresh broker truth、risk/gpt verifier、guardian/operator review clearance、明示 live flag が別途そろうまで禁止です。\n",
   "selected_next_work_type": "OPERATOR_REVIEW_REPORT",
-  "selection_reason": "scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission. repeat_loop_guard also shows the same work type/artifact hash/key blocker as the previous goal-loop artifact; dispatch should wait for changed generated_at, artifact hash, or key blocker, but the artifact-derived classification is preserved.",
+  "selection_reason": "scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission.",
   "status": "NEXT_WORK_SELECTED",
   "success_condition": {
     "checks": [

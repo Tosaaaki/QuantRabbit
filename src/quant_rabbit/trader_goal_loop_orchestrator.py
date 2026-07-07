@@ -222,7 +222,7 @@ class TraderGoalLoopOrchestrator:
             "success_condition": success_condition,
             "success_condition_evaluation": success_condition_evaluation,
             "next_allowed_commands": next_allowed_commands,
-            "requires_operator_approval": selected_next_work_type == "OPERATOR_REVIEW_REPORT",
+            "requires_operator_approval": False,
             "live_permission_allowed": False,
             "live_permission_ready_check_state": live_ready_state,
             "artifact_health": artifact_health,
