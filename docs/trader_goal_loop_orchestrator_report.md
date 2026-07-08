@@ -1,7 +1,7 @@
 # Trader Goal Loop Orchestrator
 
 - Status: `NEXT_WORK_SELECTED`
-- Generated at UTC: `2026-07-08T06:47:07.603933+00:00`
+- Generated at UTC: `2026-07-08T07:07:18.989612+00:00`
 - Read only: `True`
 - Live side effects: `[]`
 - Live permission allowed: `False`
@@ -12,7 +12,7 @@
 - Selection reason: scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission.
 - Four x progress hypothesis: EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 0。
 - Root improvement target: EUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。
-- Expected edge improvement: TP proof 20勝 / 0 TP負け、期待値 613.2 JPY、proof gap 0 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。
+- Expected edge improvement: TP proof 20勝 / 0 TP負け、期待値 643.2912 JPY、proof gap 0 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。
 
 ## Key State
 

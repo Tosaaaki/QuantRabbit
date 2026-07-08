@@ -32,7 +32,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS_REPORT,
-    DEFAULT_REPLAY_BACKTEST,
+DEFAULT_REPLAY_BACKTEST,
 )
 
 
@@ -45,6 +45,9 @@ TAKE_PROFIT_EXIT_REASON = "TAKE_PROFIT_ORDER"
 MARKET_CLOSE_EXIT_REASON = "MARKET_ORDER_TRADE_CLOSE"
 STOP_LOSS_EXIT_REASON = "STOP_LOSS_ORDER"
 MARGIN_CLOSEOUT_EXIT_REASON = "MARKET_ORDER_MARGIN_CLOSEOUT"
+DEFAULT_EURUSD_SHORT_BREAKOUT_FAILURE_PROOF_FLOOR_UPDATE = (
+    DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_proof_floor_update.json"
+)
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,7 @@ def build_payoff_shape_diagnosis(
     order_intents_path: Path = DEFAULT_ORDER_INTENTS,
     replay_backtest_path: Path = DEFAULT_REPLAY_BACKTEST,
     month_scale_residuals_path: Path = DEFAULT_MONTH_SCALE_TP_REPLAY_RESIDUALS,
+    proof_floor_update_path: Path = DEFAULT_EURUSD_SHORT_BREAKOUT_FAILURE_PROOF_FLOOR_UPDATE,
     output_path: Path = DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     report_path: Path = DEFAULT_PAYOFF_SHAPE_DIAGNOSIS_REPORT,
 ) -> PayoffShapeDiagnosisSummary:
@@ -79,6 +83,7 @@ def build_payoff_shape_diagnosis(
     intents = _load_json(order_intents_path)
     replay = _load_json(replay_backtest_path)
     month_scale = _load_json(month_scale_residuals_path)
+    proof_floor_update = _load_json(proof_floor_update_path)
 
     shape_rows = _group_realized(realized, lambda row: _shape_key(row.pair, row.side, row.method))
     family_stats = _family_stats(realized, month_scale)
@@ -88,7 +93,11 @@ def build_payoff_shape_diagnosis(
 
     timing_runner_cases = _missed_runner_cases(timing)
     overheld_harvest_cases = _overheld_harvest_cases(timing)
-    harvest_candidates = _harvest_candidates(shape_rows, month_scale_blocks, timing)
+    proof_reconciliation = _canonical_proof_reconciliation(proof_floor_update)
+    harvest_candidates = _apply_canonical_proof_reconciliation(
+        _harvest_candidates(shape_rows, month_scale_blocks, timing),
+        proof_reconciliation,
+    )
     runner_candidates = _runner_candidates(shape_rows, timing_runner_cases, month_scale_blocks)
     partial_candidates = _partial_tp_runner_candidates(
         harvest_candidates=harvest_candidates,
@@ -158,6 +167,7 @@ def build_payoff_shape_diagnosis(
             "order_intents": str(order_intents_path),
             "replay_backtest": str(replay_backtest_path),
             "month_scale_tp_replay_residuals": str(month_scale_residuals_path),
+            "proof_floor_update": str(proof_floor_update_path),
         },
         "missing_source_artifacts": missing_sources,
         "safety_contract": {
@@ -172,6 +182,7 @@ def build_payoff_shape_diagnosis(
             "negative_expectancy_not_hidden": True,
         },
         "overall_payoff_shape_verdict": verdict,
+        "canonical_proof_reconciliation": proof_reconciliation,
         "harvest_candidates": harvest_candidates,
         "runner_candidates": runner_candidates,
         "partial_tp_runner_candidates": partial_candidates,
@@ -556,6 +567,120 @@ def _harvest_candidates(
         )
     return sorted(
         candidates,
+        key=lambda item: (
+            int(item.get("proof_gap_trades") or 0),
+            -_num(item.get("take_profit_net_jpy")),
+            str(item.get("shape_key")),
+        ),
+    )[:ITEM_LIMIT]
+
+
+def _canonical_proof_reconciliation(proof_floor_update: dict[str, Any]) -> dict[str, Any]:
+    if not proof_floor_update:
+        return {
+            "status": "MISSING",
+            "applied": False,
+            "live_permission_allowed": False,
+            "live_side_effects": [],
+        }
+    target_shape = str(proof_floor_update.get("target_shape") or "")
+    post = proof_floor_update.get("post_update_tp_proof") if isinstance(proof_floor_update.get("post_update_tp_proof"), dict) else {}
+    pre = proof_floor_update.get("pre_update_tp_proof") if isinstance(proof_floor_update.get("pre_update_tp_proof"), dict) else {}
+    accepted = _as_list(proof_floor_update.get("accepted_sample_checks"))
+    accepted_ids = [str(row.get("trade_id")) for row in accepted if isinstance(row, dict) and row.get("trade_id")]
+    accepted_net = _round(sum(_num(row.get("realized_pl_jpy")) for row in accepted if isinstance(row, dict)))
+    post_wins = _maybe_int(post.get("wins"))
+    post_losses = _maybe_int(post.get("losses"))
+    post_gap = _maybe_int(post.get("remaining_samples"))
+    proof_floor = _maybe_int(post.get("proof_floor")) or _maybe_int(pre.get("proof_floor")) or MIN_SAMPLE_FOR_VERDICT
+    checks = proof_floor_update.get("required_checks") if isinstance(proof_floor_update.get("required_checks"), dict) else {}
+    required_checks_passed = bool(checks) and all(
+        isinstance(row, dict) and row.get("passed") is True
+        for row in checks.values()
+    )
+    applied = (
+        proof_floor_update.get("read_only") is True
+        and proof_floor_update.get("live_permission_allowed") is False
+        and target_shape == "EUR_USD|SHORT|BREAKOUT_FAILURE"
+        and bool(post.get("proof_floor_reached"))
+        and (post_wins or 0) >= proof_floor
+        and (post_losses or 0) == 0
+        and required_checks_passed
+    )
+    return {
+        "status": "APPLIED_TO_PAYOFF_SHAPE_DIAGNOSIS" if applied else "NOT_APPLIED",
+        "applied": applied,
+        "source_artifact": "data/eurusd_short_breakout_failure_proof_floor_update.json",
+        "target_shape": target_shape or None,
+        "canonical_integration_status": proof_floor_update.get("canonical_integration_status"),
+        "accepted_legacy_sample_trade_ids": accepted_ids,
+        "accepted_legacy_sample_net_jpy": accepted_net,
+        "pre_update_tp_proof": pre,
+        "post_update_tp_proof": post,
+        "required_checks_passed": required_checks_passed,
+        "read_only": True,
+        "live_permission_allowed": False,
+        "live_side_effects": [],
+        "safety_note": (
+            "This reconciles broad broker TAKE_PROFIT_ORDER proof only. It does not make the exact "
+            "LIMIT/HARVEST vehicle live-grade, does not mix MARKET/STOP rows into LIMIT proof, and does "
+            "not clear risk, verifier, gateway, guardian, operator, or negative-expectancy blockers."
+        ),
+    }
+
+
+def _apply_canonical_proof_reconciliation(
+    candidates: list[dict[str, Any]],
+    reconciliation: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not reconciliation.get("applied"):
+        return candidates
+    target = reconciliation.get("target_shape")
+    accepted_count = len(_as_list(reconciliation.get("accepted_legacy_sample_trade_ids")))
+    accepted_net = _num(reconciliation.get("accepted_legacy_sample_net_jpy"))
+    post = reconciliation.get("post_update_tp_proof") if isinstance(reconciliation.get("post_update_tp_proof"), dict) else {}
+    updated: list[dict[str, Any]] = []
+    for row in candidates:
+        if row.get("shape_key") != target:
+            updated.append(row)
+            continue
+        wins = _maybe_int(post.get("wins")) or int(row.get("take_profit_wins") or row.get("take_profit_trades") or 0)
+        losses = _maybe_int(post.get("losses")) or 0
+        proof_floor = _maybe_int(post.get("proof_floor")) or MIN_SAMPLE_FOR_VERDICT
+        proof_gap = _maybe_int(post.get("remaining_samples"))
+        if proof_gap is None:
+            proof_gap = max(0, proof_floor - wins)
+        original_net = _num(row.get("take_profit_net_jpy"))
+        reconciled_net = _round(original_net + accepted_net)
+        expectancy = _round((reconciled_net or 0.0) / wins) if wins > 0 and reconciled_net is not None else row.get("take_profit_expectancy_jpy")
+        new_row = dict(row)
+        new_row.update(
+            {
+                "classification": "HARVEST_PROOF_FLOOR_REACHED_EVIDENCE_ONLY" if proof_gap == 0 else row.get("classification"),
+                "take_profit_trades": wins,
+                "take_profit_wins": wins,
+                "take_profit_losses": losses,
+                "take_profit_net_jpy": reconciled_net,
+                "take_profit_expectancy_jpy": expectancy,
+                "take_profit_avg_win_jpy": expectancy if losses == 0 else row.get("take_profit_avg_win_jpy"),
+                "proof_floor_trades": proof_floor,
+                "proof_gap_trades": proof_gap,
+                "canonical_proof_reconciliation": {
+                    "source_artifact": reconciliation.get("source_artifact"),
+                    "accepted_legacy_sample_trade_ids": reconciliation.get("accepted_legacy_sample_trade_ids"),
+                    "accepted_legacy_sample_count": accepted_count,
+                    "accepted_legacy_sample_net_jpy": reconciliation.get("accepted_legacy_sample_net_jpy"),
+                    "canonical_integration_status": reconciliation.get("canonical_integration_status"),
+                    "scope": "broad_take_profit_order_proof_only_not_exact_limit_sample_floor",
+                },
+            }
+        )
+        refs = list(new_row.get("evidence_refs") or [])
+        refs.append(str(reconciliation.get("source_artifact")))
+        new_row["evidence_refs"] = sorted(set(ref for ref in refs if ref))
+        updated.append(new_row)
+    return sorted(
+        updated,
         key=lambda item: (
             int(item.get("proof_gap_trades") or 0),
             -_num(item.get("take_profit_net_jpy")),

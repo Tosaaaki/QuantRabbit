@@ -1082,7 +1082,7 @@
     "required_daily_return_pct": 5.633087,
     "sum_expected_daily_return_pct": 0.0
   },
-  "generated_at_utc": "2026-07-08T06:46:51Z",
+  "generated_at_utc": "2026-07-08T07:07:05Z",
   "global_blockers": {
     "memory_status": "MEMORY_HEALTH_PASS",
     "profitability_acceptance_blockers": [

@@ -1,154 +1,421 @@
 {
-  "status": "EVIDENCE_PLAN_READY",
-  "generated_at_utc": "2026-07-08T00:20:25Z",
-  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
-  "read_only": true,
-  "live_side_effects": [],
-  "live_permission_allowed": false,
-  "current_tp_proof": {
-    "wins": 17,
-    "losses": 0,
-    "proof_floor": 20,
-    "remaining_samples": 3
-  },
-  "source_artifacts": [
-    {
-      "path": "data/operator_review_report.json",
-      "status": "OPERATOR_REVIEW_STILL_BLOCKED",
-      "generated_at_utc": "2026-07-07T23:53:35Z"
-    },
-    {
-      "path": "data/eurusd_short_breakout_failure_scout_plan.json",
-      "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
-      "generated_at_utc": "2026-07-07T12:59:09Z"
-    },
-    {
-      "path": "data/harvest_live_grade_path.json",
-      "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION",
-      "generated_at_utc": "2026-07-07T12:05:30.789731Z"
-    },
-    {
-      "path": "data/payoff_shape_diagnosis.json",
-      "status": "OK",
-      "generated_at_utc": "2026-07-07T11:44:01.450053+00:00"
-    },
-    {
-      "path": "data/as_proof_pack_queue.json",
-      "status": "present_but_queue_empty",
-      "generated_at_utc": "2026-07-06T18:30:26Z"
-    },
-    {
-      "path": "data/as_lane_candidate_board.json",
-      "status": "present_but_stale_against_later_live_order_request",
-      "generated_at_utc": "2026-07-06T18:30:26Z"
-    },
-    {
-      "path": "data/portfolio_4x_path_planner.json",
-      "status": "NO_LIVE_READY_PORTFOLIO",
-      "generated_at_utc": "2026-07-06T18:30:29Z"
-    },
-    {
-      "path": "data/live_order_request.json",
-      "status": "NO_ACTION",
-      "generated_at_utc": "2026-07-07T15:44:54.153092+00:00"
-    },
-    {
-      "path": "data/broker_snapshot.json",
-      "status": "present_but_not_fresh_for_live_permission",
-      "generated_at_utc": "2026-07-06T18:29:43.982661+00:00"
-    }
-  ],
-  "notion_reference": {
-    "read_only": true,
-    "updates_made": false,
-    "source": "operator_review_report.notion_reference plus read-only workspace search",
-    "task_specific_result": "Notion corroborates QuantRabbit profitability evidence context, EUR_USD 472987 as OPERATOR_MANUAL / KEEP, and no broker-side action authorization. Local artifacts remain authoritative."
-  },
   "artifact_freshness_note": {
-    "plan_can_be_written": true,
+    "interpretation": "Staleness blocks permission, not the read-only acquisition plan. The first acquisition step is to refresh evidence without live side effects.",
     "permission_can_be_granted": false,
+    "plan_can_be_written": true,
     "stale_or_non_live_ready_inputs": [
       "as_proof_pack_queue and lane board are older than live_order_request",
       "broker_snapshot is stale for any live permission check",
       "proof_queue_count is 0",
       "live_order_request status is NO_ACTION"
-    ],
-    "interpretation": "Staleness blocks permission, not the read-only acquisition plan. The first acquisition step is to refresh evidence without live side effects."
+    ]
   },
-  "missing_evidence": [
-    {
-      "code": "SAMPLE_GAP",
-      "status": "MISSING",
-      "current_evidence": "Exact TAKE_PROFIT_ORDER proof is 17 wins / 0 losses with proof_floor 20, leaving 3 samples.",
-      "existing_history_currently_proves_gap_closed": false,
-      "can_create_new_true_samples_without_live_scout": false,
-      "read_only_acquisition_route": "Only unreconciled existing broker/legacy history can increase the count without live SCOUT. Replay and paper evidence may support spread/month-scale analysis, but they do not count as broker TAKE_PROFIT_ORDER proof-floor samples."
-    },
-    {
-      "code": "SPREAD_SLIPPAGE_PROOF_MISSING",
-      "status": "MISSING",
-      "current_evidence": "harvest_live_grade_path reports NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED for the exact EUR_USD SHORT BREAKOUT_FAILURE vehicle.",
-      "existing_history_currently_proves_gap_closed": false,
-      "read_only_acquisition_route": "Run EUR_USD S5 bid/ask replay against local/OANDA-read candle history and attach only a positive, daily-stable, spread-included proof for the exact LIMIT attached-TP HARVEST geometry."
-    },
-    {
-      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
-      "status": "GLOBAL_BLOCKING",
-      "current_evidence": "Global month-scale TP-progress replay residual is -20504.5826 JPY. harvest_live_grade_path currently shows no direct target-shape month-scale blocker.",
-      "target_shape_direct_blocker_present": false,
-      "room_to_resolve": "Possible only if the 744h replay refresh becomes non-negative or proves the target exact HARVEST exception is not blocked while global acceptance no longer blocks fresh entries. If a direct EUR_USD SHORT BREAKOUT_FAILURE residual appears, SCOUT remains invalid."
-    },
-    {
-      "code": "MARKET_CLOSE_LEAK_PRESENT",
-      "status": "BLOCKING",
-      "current_evidence": "The target shape has 10 MARKET_ORDER_TRADE_CLOSE losses for -7636.3 JPY.",
-      "read_only_acquisition_route": "Separate attached broker TP/HARVEST outcomes from MARKET_ORDER_TRADE_CLOSE outcomes. SCOUT proof must count attached TP only and keep market-close leakage as excluded/no-trade evidence, not as proof."
-    },
-    {
-      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
-      "status": "VISIBLE_BLOCKER",
-      "current_evidence": "Global capture_economics remains NEGATIVE_EXPECTANCY: 229 trades, win_rate 0.5983, avg_win 418.0 JPY, avg_loss 1063.9 JPY, expectancy -177.4 JPY/trade, net -40616.9 JPY.",
-      "read_only_acquisition_route": "Do not hide this. The only possible path is a narrow exact attached-TP HARVEST exception with proof-floor, spread, month-scale, market-close containment, and current-gate evidence."
-    },
-    {
-      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-      "status": "OPERATOR_ONLY_BLOCKER",
-      "current_evidence": "normal_routing_allowed=false; guardian receipt 832d2908eeb84b2f is expired/stale review material.",
-      "read_only_acquisition_route": "This plan can present evidence only. It cannot invent operator clearance."
-    },
-    {
-      "code": "CURRENT_GATEWAY_PACKET_NOT_USABLE_FOR_PERMISSION",
-      "status": "BLOCKING",
-      "current_evidence": "Current lane is DRY_RUN_BLOCKED; blockers include RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, and GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED.",
-      "read_only_acquisition_route": "After evidence refresh, regenerate current frontier artifacts read-only. Any future route still needs fresh broker truth, forecast/telemetry, strategy, risk, verifier, and gateway checks on one packet."
-    }
-  ],
-  "spread_proof_plan": {
-    "current_status": "NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED",
-    "why_existing_artifacts_do_not_clear_it": [
-      "harvest_live_grade_path has bidask_seed_name=null and bidask_negative_name=null for the current best target intent.",
-      "The committed runtime bidask replay rules currently have no live-grade edge_rules for EUR_USD SHORT.",
-      "Absence of a negative row is not proof; the exact current LIMIT attached-TP HARVEST vehicle needs positive spread-included proof."
+  "canonical_proof_reconciliation": {
+    "accepted_legacy_sample_net_jpy": 2441.3232,
+    "does_not_clear_live_permission": true,
+    "does_not_mix_market_or_stop_into_limit_proof": true,
+    "legacy_limit_trade_ids": [
+      "469278",
+      "469427",
+      "469898"
     ],
+    "live_permission_allowed": false,
+    "live_side_effects": [],
+    "read_only": true,
+    "scope": "broad_take_profit_order_proof_only_not_exact_limit_sample_floor",
+    "status": "APPLIED_TO_PAYOFF_SHAPE_DIAGNOSIS"
+  },
+  "current_tp_proof": {
+    "expectancy_jpy_per_trade": 643.2912,
+    "losses": 0,
+    "net_jpy": 12865.8232,
+    "proof_floor": 20,
+    "proof_floor_reached": true,
+    "remaining_samples": 0,
+    "source": "data/payoff_shape_diagnosis.json canonical_proof_reconciliation + data/eurusd_short_breakout_failure_proof_floor_update.json",
+    "wins": 20
+  },
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage a live order from this plan.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify TP or SL.",
+    "Do not load, reload, start, stop, or edit launchd agents.",
+    "Do not loosen gates.",
+    "Do not lower the proof floor below 20.",
+    "Do not hide negative expectancy.",
+    "Do not hide month-scale replay negatives.",
+    "Do not hide market-close leakage.",
+    "Do not derive lot size from remaining_to_4x or any 4x deficit.",
+    "Do not invent an operator decision.",
+    "Do not print, copy, or persist secrets or tokens.",
+    "Do not overwrite runtime bidask rules from a candidate replay artifact without a separate reviewed code change.",
+    "Do not treat proof_queue_count=0, mathematical 4x firepower, or replay support as live permission."
+  ],
+  "exact_limit_harvest_proof": {
+    "blockers": [
+      "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION"
+    ],
+    "live_grade_candidate": false,
+    "losses": 0,
+    "market_close_excluded": true,
+    "market_stop_samples_excluded": true,
+    "net_expectancy_after_bidask": 813.7734,
+    "remaining_limit_samples": 16,
+    "sample_floor": 20,
+    "samples": 4,
+    "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+    "wins": 4
+  },
+  "generated_at_utc": "2026-07-08T07:07:23Z",
+  "live_permission_allowed": false,
+  "live_side_effects": [],
+  "market_close_leak_plan": {
+    "current_evidence": {
+      "market_close_losses": 10,
+      "market_close_net_jpy": -7636.3,
+      "overall_net_jpy": 3705.2,
+      "partial_tp_runner_is_diagnostic_only": true,
+      "runner_candidates": 0,
+      "take_profit_net_jpy": 10424.5
+    },
+    "current_status": "MARKET_CLOSE_LEAK_PRESENT",
+    "failure_condition": [
+      "Any proof path counts MARKET_ORDER_TRADE_CLOSE as a positive sample.",
+      "Market-close leakage remains active and uncontained.",
+      "Partial TP plus runner is treated as permission instead of diagnostic replay."
+    ],
+    "question_4_cut": "Cut the shape into attached broker TP/HARVEST proof versus MARKET_ORDER_TRADE_CLOSE leakage. The proof path may keep the 17/0 TP bucket; it must exclude the 10 market-close losses and must not plan any cancel/close/market-exit action.",
     "read_only_steps": [
       {
-        "step": "Fetch or update EUR_USD S5 bid/ask candles read-only if local coverage is missing.",
-        "command": "PYTHONPATH=src python3 scripts/oanda_history_fetch.py --pairs EUR_USD --granularities S5 --price BA --days 45 --output-dir logs/replay/oanda_history",
-        "live_side_effects": []
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
+        "live_side_effects": [],
+        "step": "Refresh execution timing audit and identify whether any loss-side market closes are contained-risk or premature."
       },
       {
-        "step": "Replay forecast history against S5 bid/ask candles with spread included.",
-        "command": "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --pairs EUR_USD --granularity S5 --history-dir logs/replay/oanda_history --output-dir logs/reports/forecast_improvement/eurusd_short_breakout_failure_spread_probe",
-        "live_side_effects": []
-      },
-      {
-        "step": "If the replay is positive, package to a candidate data artifact only; do not overwrite runtime rules or relax gates.",
-        "command": "PYTHONPATH=src python3 scripts/package_bidask_replay_precision_rules.py --source-report logs/reports/forecast_improvement/eurusd_short_breakout_failure_spread_probe/oanda_history_replay_validate_latest.json --output data/eurusd_short_breakout_failure_bidask_replay_rules_candidate.json",
-        "live_side_effects": []
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
+        "live_side_effects": [],
+        "step": "Rebuild payoff diagnosis and verify the target TP bucket stays positive after market closes are excluded."
       }
     ],
     "success_condition": {
-      "mode": "all",
+      "checks": [
+        {
+          "field": "target.take_profit_trades",
+          "operator": ">=",
+          "value": 20
+        },
+        {
+          "field": "target.take_profit_losses",
+          "operator": "eq",
+          "value": 0
+        },
+        {
+          "field": "target.market_close_leak_used_as_proof",
+          "operator": "eq",
+          "value": false
+        },
+        {
+          "field": "target.market_close_leak_blocker",
+          "operator": "eq",
+          "value": false
+        },
+        {
+          "field": "target.runner_permission",
+          "operator": "eq",
+          "value": false
+        }
+      ],
+      "mode": "all"
+    }
+  },
+  "missing_evidence": [
+    {
+      "can_create_new_true_samples_without_live_scout": false,
+      "code": "BROAD_TP_SAMPLE_GAP_CLEARED",
+      "current_evidence": "Broad TAKE_PROFIT_ORDER proof is now 20 wins / 0 losses after read-only reconciliation of legacy LIMIT rows 469278, 469427, and 469898.",
+      "existing_history_currently_proves_gap_closed": true,
+      "read_only_acquisition_route": "No new live samples were created. Existing duplicate-free legacy broker rows were reconciled into payoff_shape_diagnosis as broad TP proof only.",
+      "status": "CLEARED_BY_CANONICAL_RECONCILIATION"
+    },
+    {
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "current_evidence": "Exact LIMIT/ATTACHED_TECHNICAL_TP/HARVEST S5 bid/ask replay is positive at 4 wins / 0 losses, net expectancy 813.7734 JPY/trade, but the LIMIT-only floor remains 4/20.",
+      "existing_history_currently_proves_gap_closed": false,
+      "read_only_acquisition_route": "Mine additional exact LIMIT + ATTACHED_TECHNICAL_TP + HARVEST rows only. Do not count MARKET, STOP, or market-close outcomes toward this LIMIT-only floor.",
+      "status": "BLOCKING_LIVE_GRADE"
+    },
+    {
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "current_evidence": "Global month-scale TP-progress replay residual is -20504.5826 JPY. harvest_live_grade_path currently shows no direct target-shape month-scale blocker.",
+      "room_to_resolve": "Possible only if the 744h replay refresh becomes non-negative or proves the target exact HARVEST exception is not blocked while global acceptance no longer blocks fresh entries. If a direct EUR_USD SHORT BREAKOUT_FAILURE residual appears, SCOUT remains invalid.",
+      "status": "GLOBAL_BLOCKING",
+      "target_shape_direct_blocker_present": false
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
+      "current_evidence": "The target shape has 10 MARKET_ORDER_TRADE_CLOSE losses for -7636.3 JPY.",
+      "read_only_acquisition_route": "Separate attached broker TP/HARVEST outcomes from MARKET_ORDER_TRADE_CLOSE outcomes. SCOUT proof must count attached TP only and keep market-close leakage as excluded/no-trade evidence, not as proof.",
+      "status": "BLOCKING"
+    },
+    {
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "current_evidence": "Global capture_economics remains NEGATIVE_EXPECTANCY: 229 trades, win_rate 0.5983, avg_win 418.0 JPY, avg_loss 1063.9 JPY, expectancy -177.4 JPY/trade, net -40616.9 JPY.",
+      "read_only_acquisition_route": "Do not hide this. The only possible path is a narrow exact attached-TP HARVEST exception with proof-floor, spread, month-scale, market-close containment, and current-gate evidence.",
+      "status": "VISIBLE_BLOCKER"
+    },
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "current_evidence": "normal_routing_allowed=false; guardian receipt 832d2908eeb84b2f is expired/stale review material.",
+      "read_only_acquisition_route": "This plan can present evidence only. It cannot invent operator clearance.",
+      "status": "OPERATOR_ONLY_BLOCKER"
+    },
+    {
+      "code": "CURRENT_GATEWAY_PACKET_NOT_USABLE_FOR_PERMISSION",
+      "current_evidence": "Current lane is DRY_RUN_BLOCKED; blockers include RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, and GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED.",
+      "read_only_acquisition_route": "After evidence refresh, regenerate current frontier artifacts read-only. Any future route still needs fresh broker truth, forecast/telemetry, strategy, risk, verifier, and gateway checks on one packet.",
+      "status": "BLOCKING"
+    }
+  ],
+  "month_scale_replay_plan": {
+    "current_evidence": {
+      "current_residual_pl_jpy": -20504.5826,
+      "direct_target_shape_blocker": false,
+      "global_status": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+    },
+    "current_status": "GLOBAL_NEGATIVE_TARGET_DIRECT_BLOCKER_FALSE",
+    "failure_condition": [
+      "Global month-scale replay remains blocking with no exact target exception path.",
+      "A direct EUR_USD SHORT BREAKOUT_FAILURE residual blocker appears.",
+      "The replay improvement depends on market-close exits rather than attached TP/HARVEST proof."
+    ],
+    "question_5_room_to_resolve": "There is limited room because the target shape currently has no direct month-scale blocker. That is not clearance: global replay remains negative and must become non-blocking, or a refreshed acceptance artifact must prove the exact target HARVEST exception is not blocked without hiding global loss evidence.",
+    "read_only_steps": [
+      {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
+        "live_side_effects": [],
+        "step": "Refresh the 744h timing replay window without shortening it."
+      },
+      {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics && PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+        "live_side_effects": [],
+        "step": "Recompute capture economics and acceptance against the refreshed replay."
+      },
+      {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
+        "live_side_effects": [],
+        "step": "Regenerate payoff diagnosis to confirm whether the target has a direct blocker."
+      }
+    ],
+    "success_condition": {
+      "checks": [
+        {
+          "field": "month_scale_tp_replay_residuals.fresh_entries_must_remain_blocked",
+          "operator": "eq",
+          "value": false
+        },
+        {
+          "field": "month_scale_tp_replay_residuals.pl_summary.current_residual_pl_jpy",
+          "operator": ">=",
+          "value": 0
+        },
+        {
+          "field": "direct_target_shape_blocker",
+          "operator": "eq",
+          "value": false
+        }
+      ],
+      "mode": "all"
+    }
+  },
+  "next_read_only_commands": [
+    {
+      "command": "python3 -m json.tool data/eurusd_short_breakout_failure_evidence_acquisition_plan.json >/dev/null",
+      "live_side_effects": [],
+      "purpose": "Validate this plan JSON."
+    },
+    {
+      "command": "PYTHONPATH=src python3 -m unittest tests.test_eurusd_short_breakout_failure_evidence_acquisition_plan -v",
+      "live_side_effects": [],
+      "purpose": "Run the related regression/contract tests."
+    },
+    {
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync && PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics && PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
+      "live_side_effects": [],
+      "purpose": "Check whether uncounted existing broker history closes the 3-sample gap."
+    },
+    {
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80 && PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+      "live_side_effects": [],
+      "purpose": "Refresh month-scale and market-close leak evidence."
+    },
+    {
+      "command": "PYTHONPATH=src python3 scripts/oanda_history_fetch.py --pairs EUR_USD --granularities S5 --price BA --days 45 --output-dir logs/replay/oanda_history && PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --pairs EUR_USD --granularity S5 --history-dir logs/replay/oanda_history --output-dir logs/reports/forecast_improvement/eurusd_short_breakout_failure_spread_probe",
+      "live_side_effects": [],
+      "purpose": "Acquire spread-included EUR_USD S5 bid/ask proof candidate without changing runtime gates."
+    },
+    {
+      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop && PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path && PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator && PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator",
+      "live_side_effects": [],
+      "purpose": "Rebuild read-only A/S proof and goal-loop state after evidence refresh."
+    }
+  ],
+  "notion_reference": {
+    "read_only": true,
+    "source": "operator_review_report.notion_reference plus read-only workspace search",
+    "task_specific_result": "Notion corroborates QuantRabbit profitability evidence context, EUR_USD 472987 as OPERATOR_MANUAL / KEEP, and no broker-side action authorization. Local artifacts remain authoritative.",
+    "updates_made": false
+  },
+  "operator_review_blockers": [
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "current_status": "normal_routing_allowed=false",
+      "operator_only": true,
+      "plan_action": "Report as blocker only; do not invent operator decision."
+    },
+    {
+      "code": "NOT_IN_PROOF_QUEUE",
+      "current_status": "queue_count=0, proof_ready_count=0, can_create_live_permission_count=0",
+      "operator_only": false,
+      "plan_action": "Refresh evidence after sample/spread/month-scale checks; proof_queue_count=0 is not permission."
+    },
+    {
+      "code": "SAMPLE_GAP",
+      "current_status": "17/0 TP proof, gap 3",
+      "operator_only": false,
+      "plan_action": "Look for uncounted existing history only."
+    },
+    {
+      "code": "SPREAD_SLIPPAGE_PROOF_MISSING",
+      "current_status": "No positive spread-included exact proof attached",
+      "operator_only": false,
+      "plan_action": "Run S5 bid/ask replay for the exact vehicle."
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
+      "current_status": "10 market-close losses, -7636.3 JPY",
+      "operator_only": false,
+      "plan_action": "Exclude market-close path from proof and verify leak containment."
+    },
+    {
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "current_status": "global residual -20504.5826 JPY",
+      "operator_only": false,
+      "plan_action": "Refresh 744h replay; require non-blocking residual."
+    },
+    {
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "current_status": "global expectancy -177.4 JPY/trade",
+      "operator_only": false,
+      "plan_action": "Keep visible; no broad promotion while active."
+    }
+  ],
+  "read_only": true,
+  "sample_acquisition_plan": {
+    "current_checked_sources": [
+      "data/eurusd_short_breakout_failure_proof_floor_update.json",
+      "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+      "data/payoff_shape_diagnosis.json canonical_proof_reconciliation",
+      "data/harvest_live_grade_path.json closest_harvest_candidate.tp_proof",
+      "data/as_proof_pack_queue.json EUR_USD SHORT BREAKOUT_FAILURE LIMIT row"
+    ],
+    "do_not_count_as_samples": [
+      "DRY_RUN_BLOCKED current intents",
+      "paper/replay-only fills",
+      "MARKET_ORDER_TRADE_CLOSE outcomes",
+      "MARKET order entries",
+      "STOP order entries",
+      "operator_manual EUR_USD 472987 outcomes",
+      "different pair/side/method shapes",
+      "same shape with RUNNER_NO_BROKER_TP vehicle"
+    ],
+    "question_1_existing_history_available": "Yes for broad TP proof: legacy rows 469278 / 469427 / 469898 are duplicate-free TAKE_PROFIT_ORDER samples and payoff_shape_diagnosis now reports 20 wins / 0 losses. No for exact LIMIT-only live-grade proof: only 4 exact LIMIT/HARVEST samples are replayed.",
+    "question_2_if_existing_history_is_insufficient": "No live-SCOUTless method can create new true broker LIMIT/HARVEST samples. Replay/paper evidence can support diagnosis, but it cannot count as new broker proof-floor samples.",
+    "read_only_existing_history_check": {
+      "goal": "Find additional already-existing exact LIMIT/ATTACHED_TECHNICAL_TP/HARVEST broker or legacy rows. Do not create live samples.",
+      "success_condition": {
+        "exact_limit_harvest_losses": 0,
+        "exact_limit_harvest_samples": ">= 20",
+        "net_expectancy_after_bidask": "> 0",
+        "s5_touch_lag_reconciled": "preserved_or_explained_without_claiming_same_candle_fill"
+      }
+    }
+  },
+  "source_artifacts": [
+    {
+      "generated_at_utc": "2026-07-07T23:53:35Z",
+      "path": "data/operator_review_report.json",
+      "status": "OPERATOR_REVIEW_STILL_BLOCKED"
+    },
+    {
+      "generated_at_utc": "2026-07-07T12:59:09Z",
+      "path": "data/eurusd_short_breakout_failure_scout_plan.json",
+      "status": "SCOUT_BLOCKED_OPERATOR_REVIEW"
+    },
+    {
+      "generated_at_utc": "2026-07-07T12:05:30.789731Z",
+      "path": "data/harvest_live_grade_path.json",
+      "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION"
+    },
+    {
+      "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
+      "path": "data/payoff_shape_diagnosis.json",
+      "status": "OK"
+    },
+    {
+      "generated_at_utc": "2026-07-06T18:30:26Z",
+      "path": "data/as_proof_pack_queue.json",
+      "status": "present_but_queue_empty"
+    },
+    {
+      "generated_at_utc": "2026-07-06T18:30:26Z",
+      "path": "data/as_lane_candidate_board.json",
+      "status": "present_but_stale_against_later_live_order_request"
+    },
+    {
+      "generated_at_utc": "2026-07-06T18:30:29Z",
+      "path": "data/portfolio_4x_path_planner.json",
+      "status": "NO_LIVE_READY_PORTFOLIO"
+    },
+    {
+      "generated_at_utc": "2026-07-07T15:44:54.153092+00:00",
+      "path": "data/live_order_request.json",
+      "status": "NO_ACTION"
+    },
+    {
+      "generated_at_utc": "2026-07-06T18:29:43.982661+00:00",
+      "path": "data/broker_snapshot.json",
+      "status": "present_but_not_fresh_for_live_permission"
+    }
+  ],
+  "spread_proof_plan": {
+    "current_status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
+    "failure_condition": [
+      "Replay stays missing, partial, rank-only, daily-unstable, or negative.",
+      "The positive replay applies to a different side, method, order type, TP/SL geometry, or non-HARVEST vehicle.",
+      "A command would overwrite runtime rules or relax live gates."
+    ],
+    "read_only_steps": [
+      {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy && PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis",
+        "live_side_effects": [],
+        "step": "Mine additional exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT/ATTACHED_TECHNICAL_TP/HARVEST rows from existing broker/legacy history."
+      },
+      {
+        "command": "python3 -m json.tool data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json >/dev/null",
+        "live_side_effects": [],
+        "step": "Re-run or extend exact LIMIT S5 bid/ask replay while preserving touch-lag reconciliation."
+      },
+      {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis && PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop && PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path && PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator && PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        "live_side_effects": [],
+        "step": "Refresh proof/portfolio/goal/active artifacts read-only after any new exact rows are found."
+      }
+    ],
+    "success_condition": {
       "checks": [
         {
           "field": "price_truth_coverage.status",
@@ -185,242 +452,17 @@
           "operator": "eq",
           "value": null
         }
-      ]
-    },
-    "failure_condition": [
-      "Replay stays missing, partial, rank-only, daily-unstable, or negative.",
-      "The positive replay applies to a different side, method, order type, TP/SL geometry, or non-HARVEST vehicle.",
-      "A command would overwrite runtime rules or relax live gates."
-    ]
-  },
-  "sample_acquisition_plan": {
-    "question_1_existing_history_available": "Current artifacts do not prove that the remaining 3 samples already exist. The authoritative current count is 17 TAKE_PROFIT_ORDER wins and 0 TP losses.",
-    "current_checked_sources": [
-      "operator_review_report.proof_summary.take_profit_proof",
-      "eurusd_short_breakout_failure_scout_plan.evidence_success_conditions",
-      "harvest_live_grade_path.closest_harvest_candidate.tp_proof",
-      "payoff_shape_diagnosis.harvest_candidates for EUR_USD|SHORT|BREAKOUT_FAILURE"
-    ],
-    "read_only_existing_history_check": {
-      "goal": "Find only already-existing exact broker/legacy history that was not counted; do not create live samples.",
-      "commands": [
-        "PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync",
-        "PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy",
-        "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics",
-        "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md"
       ],
-      "success_condition": {
-        "take_profit_trades": ">= 20",
-        "take_profit_losses": 0,
-        "take_profit_expectancy_jpy": "> 0",
-        "positive_rotation_pessimistic_expectancy_jpy": "> 0"
-      }
+      "mode": "all"
     },
-    "question_2_if_existing_history_is_insufficient": "No live-SCOUTless method can create new true broker TAKE_PROFIT_ORDER samples. Without uncounted existing history, the sample gap remains. Replay/paper evidence can support spread proof and month-scale diagnosis, but it cannot be counted as the remaining 3 broker TP samples.",
-    "do_not_count_as_samples": [
-      "DRY_RUN_BLOCKED current intents",
-      "paper/replay-only fills",
-      "MARKET_ORDER_TRADE_CLOSE outcomes",
-      "operator_manual EUR_USD 472987 outcomes",
-      "different pair/side/method shapes",
-      "same shape with MARKET, failed-side STOP chase, or RUNNER_NO_BROKER_TP vehicle"
+    "why_existing_artifacts_do_not_clear_it": [
+      "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json is positive for 4 exact LIMIT/HARVEST samples after bid/ask costs.",
+      "The exact LIMIT-only sample floor is still not met: 4/20 samples.",
+      "S5 replay passes by touch order but strict same-candle fill/TP timestamp touch count is 0, so canonical import must preserve the touch lag rather than claiming exact same-candle reconstruction."
     ]
   },
-  "month_scale_replay_plan": {
-    "current_status": "GLOBAL_NEGATIVE_TARGET_DIRECT_BLOCKER_FALSE",
-    "current_evidence": {
-      "global_status": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
-      "current_residual_pl_jpy": -20504.5826,
-      "direct_target_shape_blocker": false
-    },
-    "question_5_room_to_resolve": "There is limited room because the target shape currently has no direct month-scale blocker. That is not clearance: global replay remains negative and must become non-blocking, or a refreshed acceptance artifact must prove the exact target HARVEST exception is not blocked without hiding global loss evidence.",
-    "read_only_steps": [
-      {
-        "step": "Refresh the 744h timing replay window without shortening it.",
-        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
-        "live_side_effects": []
-      },
-      {
-        "step": "Recompute capture economics and acceptance against the refreshed replay.",
-        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics && PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
-        "live_side_effects": []
-      },
-      {
-        "step": "Regenerate payoff diagnosis to confirm whether the target has a direct blocker.",
-        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
-        "live_side_effects": []
-      }
-    ],
-    "success_condition": {
-      "mode": "all",
-      "checks": [
-        {
-          "field": "month_scale_tp_replay_residuals.fresh_entries_must_remain_blocked",
-          "operator": "eq",
-          "value": false
-        },
-        {
-          "field": "month_scale_tp_replay_residuals.pl_summary.current_residual_pl_jpy",
-          "operator": ">=",
-          "value": 0
-        },
-        {
-          "field": "direct_target_shape_blocker",
-          "operator": "eq",
-          "value": false
-        }
-      ]
-    },
-    "failure_condition": [
-      "Global month-scale replay remains blocking with no exact target exception path.",
-      "A direct EUR_USD SHORT BREAKOUT_FAILURE residual blocker appears.",
-      "The replay improvement depends on market-close exits rather than attached TP/HARVEST proof."
-    ]
-  },
-  "market_close_leak_plan": {
-    "current_status": "MARKET_CLOSE_LEAK_PRESENT",
-    "question_4_cut": "Cut the shape into attached broker TP/HARVEST proof versus MARKET_ORDER_TRADE_CLOSE leakage. The proof path may keep the 17/0 TP bucket; it must exclude the 10 market-close losses and must not plan any cancel/close/market-exit action.",
-    "current_evidence": {
-      "market_close_losses": 10,
-      "market_close_net_jpy": -7636.3,
-      "overall_net_jpy": 3705.2,
-      "take_profit_net_jpy": 10424.5,
-      "partial_tp_runner_is_diagnostic_only": true,
-      "runner_candidates": 0
-    },
-    "read_only_steps": [
-      {
-        "step": "Refresh execution timing audit and identify whether any loss-side market closes are contained-risk or premature.",
-        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
-        "live_side_effects": []
-      },
-      {
-        "step": "Rebuild payoff diagnosis and verify the target TP bucket stays positive after market closes are excluded.",
-        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
-        "live_side_effects": []
-      }
-    ],
-    "success_condition": {
-      "mode": "all",
-      "checks": [
-        {
-          "field": "target.take_profit_trades",
-          "operator": ">=",
-          "value": 20
-        },
-        {
-          "field": "target.take_profit_losses",
-          "operator": "eq",
-          "value": 0
-        },
-        {
-          "field": "target.market_close_leak_used_as_proof",
-          "operator": "eq",
-          "value": false
-        },
-        {
-          "field": "target.market_close_leak_blocker",
-          "operator": "eq",
-          "value": false
-        },
-        {
-          "field": "target.runner_permission",
-          "operator": "eq",
-          "value": false
-        }
-      ]
-    },
-    "failure_condition": [
-      "Any proof path counts MARKET_ORDER_TRADE_CLOSE as a positive sample.",
-      "Market-close leakage remains active and uncontained.",
-      "Partial TP plus runner is treated as permission instead of diagnostic replay."
-    ]
-  },
-  "operator_review_blockers": [
-    {
-      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-      "operator_only": true,
-      "current_status": "normal_routing_allowed=false",
-      "plan_action": "Report as blocker only; do not invent operator decision."
-    },
-    {
-      "code": "NOT_IN_PROOF_QUEUE",
-      "operator_only": false,
-      "current_status": "queue_count=0, proof_ready_count=0, can_create_live_permission_count=0",
-      "plan_action": "Refresh evidence after sample/spread/month-scale checks; proof_queue_count=0 is not permission."
-    },
-    {
-      "code": "SAMPLE_GAP",
-      "operator_only": false,
-      "current_status": "17/0 TP proof, gap 3",
-      "plan_action": "Look for uncounted existing history only."
-    },
-    {
-      "code": "SPREAD_SLIPPAGE_PROOF_MISSING",
-      "operator_only": false,
-      "current_status": "No positive spread-included exact proof attached",
-      "plan_action": "Run S5 bid/ask replay for the exact vehicle."
-    },
-    {
-      "code": "MARKET_CLOSE_LEAK_PRESENT",
-      "operator_only": false,
-      "current_status": "10 market-close losses, -7636.3 JPY",
-      "plan_action": "Exclude market-close path from proof and verify leak containment."
-    },
-    {
-      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
-      "operator_only": false,
-      "current_status": "global residual -20504.5826 JPY",
-      "plan_action": "Refresh 744h replay; require non-blocking residual."
-    },
-    {
-      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
-      "operator_only": false,
-      "current_status": "global expectancy -177.4 JPY/trade",
-      "plan_action": "Keep visible; no broad promotion while active."
-    }
-  ],
-  "next_read_only_commands": [
-    {
-      "purpose": "Validate this plan JSON.",
-      "command": "python3 -m json.tool data/eurusd_short_breakout_failure_evidence_acquisition_plan.json >/dev/null",
-      "live_side_effects": []
-    },
-    {
-      "purpose": "Run the related regression/contract tests.",
-      "command": "PYTHONPATH=src python3 -m unittest tests.test_eurusd_short_breakout_failure_evidence_acquisition_plan -v",
-      "live_side_effects": []
-    },
-    {
-      "purpose": "Check whether uncounted existing broker history closes the 3-sample gap.",
-      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync && PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics && PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis --output data/payoff_shape_diagnosis.json --report docs/payoff_shape_diagnosis_report.md",
-      "live_side_effects": []
-    },
-    {
-      "purpose": "Refresh month-scale and market-close leak evidence.",
-      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80 && PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
-      "live_side_effects": []
-    },
-    {
-      "purpose": "Acquire spread-included EUR_USD S5 bid/ask proof candidate without changing runtime gates.",
-      "command": "PYTHONPATH=src python3 scripts/oanda_history_fetch.py --pairs EUR_USD --granularities S5 --price BA --days 45 --output-dir logs/replay/oanda_history && PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --pairs EUR_USD --granularity S5 --history-dir logs/replay/oanda_history --output-dir logs/reports/forecast_improvement/eurusd_short_breakout_failure_spread_probe",
-      "live_side_effects": []
-    },
-    {
-      "purpose": "Rebuild read-only A/S proof and goal-loop state after evidence refresh.",
-      "command": "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop && PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path && PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator && PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator",
-      "live_side_effects": []
-    }
-  ],
+  "status": "EVIDENCE_PLAN_READY",
   "success_condition": {
-    "question_6_transition": {
-      "from": "SCOUT_REQUIRES_MORE_EVIDENCE",
-      "evidence_only_next_state": "SCOUT_EVIDENCE_COMPLETE_OPERATOR_REVIEW_REQUIRED",
-      "operator_review_vocabulary_if_explicit_clearance_also_present": "SCOUT_APPROVE_RECOMMENDED",
-      "live_permission_after_transition": false,
-      "reason": "Evidence completion can remove the more-evidence classification, but it cannot synthesize operator clearance, GPT receipt, fresh broker truth, RiskEngine pass, or LiveOrderGateway permission."
-    },
-    "mode": "all",
     "checks": [
       {
         "field": "take_profit_trades",
@@ -433,8 +475,8 @@
         "value": 0
       },
       {
-        "field": "spread_included_replay_net_or_avg_realized_pips",
-        "operator": ">=",
+        "field": "exact_limit_net_expectancy_after_bidask",
+        "operator": ">",
         "value": 0
       },
       {
@@ -471,25 +513,26 @@
         "field": "live_permission_allowed",
         "operator": "eq",
         "value": false
+      },
+      {
+        "field": "exact_limit_sample_floor_met",
+        "operator": "eq",
+        "value": false
+      },
+      {
+        "field": "live_permission_allowed",
+        "operator": "eq",
+        "value": false
       }
-    ]
+    ],
+    "mode": "all",
+    "question_6_transition": {
+      "evidence_only_next_state": "EVIDENCE_ACQUISITION_LIMIT_SAMPLE_MINING_AND_TOUCH_LAG_RECONCILIATION",
+      "from": "BROAD_TP_PROOF_RECONCILED_EXACT_LIMIT_UNDERSAMPLED",
+      "live_permission_after_transition": false,
+      "operator_review_vocabulary_if_explicit_clearance_also_present": "SCOUT_APPROVE_RECOMMENDED_ONLY_AFTER_NON_EVIDENCE_GATES_CLEAR",
+      "reason": "Broad proof completion removes the old 17/0 sample gap, but exact LIMIT/HARVEST sample floor, S5 touch-lag reconciliation, operator review, risk, verifier, gateway, and negative-expectancy blockers still prevent live permission."
+    }
   },
-  "do_not_do": [
-    "Do not send live orders.",
-    "Do not stage a live order from this plan.",
-    "Do not cancel orders.",
-    "Do not close positions.",
-    "Do not modify TP or SL.",
-    "Do not load, reload, start, stop, or edit launchd agents.",
-    "Do not loosen gates.",
-    "Do not lower the proof floor below 20.",
-    "Do not hide negative expectancy.",
-    "Do not hide month-scale replay negatives.",
-    "Do not hide market-close leakage.",
-    "Do not derive lot size from remaining_to_4x or any 4x deficit.",
-    "Do not invent an operator decision.",
-    "Do not print, copy, or persist secrets or tokens.",
-    "Do not overwrite runtime bidask rules from a candidate replay artifact without a separate reviewed code change.",
-    "Do not treat proof_queue_count=0, mathematical 4x firepower, or replay support as live permission."
-  ]
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
 }

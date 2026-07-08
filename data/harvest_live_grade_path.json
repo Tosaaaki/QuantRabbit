@@ -29,6 +29,7 @@
     "evidence_refs": [
       "capture:shape:EUR_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
       "data/capture_economics.json",
+      "data/eurusd_short_breakout_failure_proof_floor_update.json",
       "data/execution_timing_audit.json"
     ],
     "limit_s5_bidask_replay": {
@@ -168,7 +169,7 @@
     ],
     "rank": 1,
     "rank_reason": "TP proof 20/20 gap 0; proof_queue_member=True; planner_can_enter_proof_pack=True; LIMIT S5 bid/ask replay 4/4 net=813.7734; overall_net_jpy=3705.2",
-    "rank_score": 147.132,
+    "rank_score": 147.4329,
     "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
     "shape_pnl": {
       "market_close_losses": 10,
@@ -189,15 +190,15 @@
       "proof_floor_trades": 20,
       "proof_gap_trades": 0,
       "proof_source": "data/eurusd_short_breakout_failure_proof_floor_update.json",
-      "take_profit_avg_win_jpy": 613.2,
-      "take_profit_expectancy_jpy": 613.2,
+      "take_profit_avg_win_jpy": 643.2912,
+      "take_profit_expectancy_jpy": 643.2912,
       "take_profit_losses": 0,
-      "take_profit_net_jpy": 10424.5,
+      "take_profit_net_jpy": 12865.8232,
       "take_profit_trades": 20,
       "take_profit_wins": 20
     }
   },
-  "generated_at_utc": "2026-07-08T06:46:51Z",
+  "generated_at_utc": "2026-07-08T07:07:05Z",
   "harvest_candidate_count": 12,
   "live_permission_allowed": false,
   "live_promotion_allowed": false,
@@ -360,6 +361,7 @@
       "evidence_refs": [
         "capture:shape:EUR_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
         "data/capture_economics.json",
+        "data/eurusd_short_breakout_failure_proof_floor_update.json",
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": {
@@ -499,7 +501,7 @@
       ],
       "rank": 1,
       "rank_reason": "TP proof 20/20 gap 0; proof_queue_member=True; planner_can_enter_proof_pack=True; LIMIT S5 bid/ask replay 4/4 net=813.7734; overall_net_jpy=3705.2",
-      "rank_score": 147.132,
+      "rank_score": 147.4329,
       "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
       "shape_pnl": {
         "market_close_losses": 10,
@@ -520,10 +522,10 @@
         "proof_floor_trades": 20,
         "proof_gap_trades": 0,
         "proof_source": "data/eurusd_short_breakout_failure_proof_floor_update.json",
-        "take_profit_avg_win_jpy": 613.2,
-        "take_profit_expectancy_jpy": 613.2,
+        "take_profit_avg_win_jpy": 643.2912,
+        "take_profit_expectancy_jpy": 643.2912,
         "take_profit_losses": 0,
-        "take_profit_net_jpy": 10424.5,
+        "take_profit_net_jpy": 12865.8232,
         "take_profit_trades": 20,
         "take_profit_wins": 20
       }

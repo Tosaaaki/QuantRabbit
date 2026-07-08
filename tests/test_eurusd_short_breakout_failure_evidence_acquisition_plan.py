@@ -29,9 +29,26 @@ class EurUsdShortBreakoutFailureEvidenceAcquisitionPlanTest(unittest.TestCase):
         self.assertFalse(self.plan["live_permission_allowed"])
         self.assertEqual(
             self.plan["current_tp_proof"],
-            {"wins": 17, "losses": 0, "proof_floor": 20, "remaining_samples": 3},
+            {
+                "wins": 20,
+                "losses": 0,
+                "proof_floor": 20,
+                "remaining_samples": 0,
+                "proof_floor_reached": True,
+                "net_jpy": 12865.8232,
+                "expectancy_jpy_per_trade": 643.2912,
+                "source": "data/payoff_shape_diagnosis.json canonical_proof_reconciliation + data/eurusd_short_breakout_failure_proof_floor_update.json",
+            },
         )
         self.assertGreaterEqual(self.plan["current_tp_proof"]["proof_floor"], 20)
+        self.assertEqual(
+            self.plan["canonical_proof_reconciliation"]["legacy_limit_trade_ids"],
+            ["469278", "469427", "469898"],
+        )
+        self.assertEqual(self.plan["canonical_proof_reconciliation"]["scope"], "broad_take_profit_order_proof_only_not_exact_limit_sample_floor")
+        self.assertEqual(self.plan["exact_limit_harvest_proof"]["samples"], 4)
+        self.assertEqual(self.plan["exact_limit_harvest_proof"]["remaining_limit_samples"], 16)
+        self.assertFalse(self.plan["exact_limit_harvest_proof"]["live_grade_candidate"])
 
         forbidden_phrases = (
             "--send",
@@ -65,8 +82,8 @@ class EurUsdShortBreakoutFailureEvidenceAcquisitionPlanTest(unittest.TestCase):
     def test_missing_evidence_answers_are_explicit(self) -> None:
         missing_by_code = {item["code"]: item for item in self.plan["missing_evidence"]}
         for code in (
-            "SAMPLE_GAP",
-            "SPREAD_SLIPPAGE_PROOF_MISSING",
+            "BROAD_TP_SAMPLE_GAP_CLEARED",
+            "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
             "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
             "MARKET_CLOSE_LEAK_PRESENT",
             "NEGATIVE_EXPECTANCY_ACTIVE",
@@ -75,15 +92,15 @@ class EurUsdShortBreakoutFailureEvidenceAcquisitionPlanTest(unittest.TestCase):
             self.assertIn(code, missing_by_code)
 
         sample_plan = self.plan["sample_acquisition_plan"]
-        self.assertIn("do not prove", sample_plan["question_1_existing_history_available"])
+        self.assertIn("legacy rows 469278 / 469427 / 469898", sample_plan["question_1_existing_history_available"])
         self.assertIn("No live-SCOUTless method", sample_plan["question_2_if_existing_history_is_insufficient"])
-        self.assertFalse(missing_by_code["SAMPLE_GAP"]["existing_history_currently_proves_gap_closed"])
-        self.assertFalse(missing_by_code["SAMPLE_GAP"]["can_create_new_true_samples_without_live_scout"])
+        self.assertTrue(missing_by_code["BROAD_TP_SAMPLE_GAP_CLEARED"]["existing_history_currently_proves_gap_closed"])
+        self.assertFalse(missing_by_code["BROAD_TP_SAMPLE_GAP_CLEARED"]["can_create_new_true_samples_without_live_scout"])
 
         spread_plan = self.plan["spread_proof_plan"]
-        self.assertEqual(spread_plan["current_status"], "NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED")
+        self.assertEqual(spread_plan["current_status"], "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED")
         self.assertTrue(
-            any("overwrite runtime rules" in item.lower() for item in spread_plan["failure_condition"])
+            any("overwrite runtime rules" in item.lower() or "relax live gates" in item.lower() for item in spread_plan["failure_condition"])
         )
 
     def test_month_scale_market_close_and_transition_do_not_grant_permission(self) -> None:
@@ -98,22 +115,22 @@ class EurUsdShortBreakoutFailureEvidenceAcquisitionPlanTest(unittest.TestCase):
         self.assertTrue(leak["current_evidence"]["partial_tp_runner_is_diagnostic_only"])
 
         transition = self.plan["success_condition"]["question_6_transition"]
-        self.assertEqual(transition["from"], "SCOUT_REQUIRES_MORE_EVIDENCE")
-        self.assertEqual(transition["evidence_only_next_state"], "SCOUT_EVIDENCE_COMPLETE_OPERATOR_REVIEW_REQUIRED")
+        self.assertEqual(transition["from"], "BROAD_TP_PROOF_RECONCILED_EXACT_LIMIT_UNDERSAMPLED")
+        self.assertEqual(transition["evidence_only_next_state"], "EVIDENCE_ACQUISITION_LIMIT_SAMPLE_MINING_AND_TOUCH_LAG_RECONCILIATION")
         self.assertEqual(
             transition["operator_review_vocabulary_if_explicit_clearance_also_present"],
-            "SCOUT_APPROVE_RECOMMENDED",
+            "SCOUT_APPROVE_RECOMMENDED_ONLY_AFTER_NON_EVIDENCE_GATES_CLEAR",
         )
         self.assertFalse(transition["live_permission_after_transition"])
 
     def test_markdown_covers_required_questions(self) -> None:
         for phrase in (
-            "Existing read-only history for the remaining 3 samples",
-            "If existing history is insufficient",
-            "Spread proof missing",
+            "Existing read-only history for the old broad TP sample gap",
+            "If exact LIMIT history is insufficient",
+            "Exact LIMIT S5 bid/ask replay",
             "Market-close leak split",
             "Month-scale negative",
-            "Transition after evidence completes",
+            "Transition after broad proof reconciliation",
             "not live permission",
         ):
             self.assertIn(phrase, self.doc)

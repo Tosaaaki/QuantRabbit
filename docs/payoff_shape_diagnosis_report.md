@@ -1,6 +1,6 @@
 # Payoff Shape Diagnosis Report
 
-- Generated at UTC: `2026-07-08T06:46:07.970055+00:00`
+- Generated at UTC: `2026-07-08T07:06:55.452302+00:00`
 - Status: `OK`
 - Verdict: `MIXED_HARVEST_PRIMARY`
 - Live promotion allowed: `False`
@@ -14,8 +14,8 @@
 
 | shape | class | TP n | TP exp | proof gap | market close net | live permission |
 |---|---|---:|---:|---:|---:|---|
+| `EUR_USD|SHORT|BREAKOUT_FAILURE` | `HARVEST_PROOF_FLOOR_REACHED_EVIDENCE_ONLY` | 20 | 643.2912 | 0 | -7636.3 | `False` |
 | `EUR_USD|LONG|BREAKOUT_FAILURE` | `HARVEST_POSITIVE_TP_PROVEN` | 20 | 591.5 | 0 | -15091.7 | `False` |
-| `EUR_USD|SHORT|BREAKOUT_FAILURE` | `HARVEST_POSITIVE_THIN_SAMPLE` | 17 | 613.2 | 3 | -7636.3 | `False` |
 | `GBP_USD|LONG|BREAKOUT_FAILURE` | `HARVEST_POSITIVE_THIN_SAMPLE` | 10 | 523.3 | 10 | -22478.7 | `False` |
 | `EUR_USD|SHORT|RANGE_ROTATION` | `HARVEST_POSITIVE_THIN_SAMPLE` | 10 | 399.6 | 10 | -2151.0 | `False` |
 | `AUD_JPY|SHORT|BREAKOUT_FAILURE` | `HARVEST_POSITIVE_THIN_SAMPLE` | 6 | 992.7 | 14 | -3016.3 | `False` |
@@ -36,7 +36,7 @@
 
 | shape | TP exp | runner cases | runner tail JPY | market close leak |
 |---|---:|---:|---:|---:|
-| `EUR_USD|SHORT|BREAKOUT_FAILURE` | 613.2 | 1 | 2099.4487 | -7636.3 |
+| `EUR_USD|SHORT|BREAKOUT_FAILURE` | 643.2912 | 1 | 2099.4487 | -7636.3 |
 | `GBP_USD|LONG|BREAKOUT_FAILURE` | 523.3 | 0 | 0.0 | -22478.7 |
 | `EUR_USD|LONG|BREAKOUT_FAILURE` | 591.5 | 0 | 0.0 | -15091.7 |
 | `EUR_USD|LONG|TREND_CONTINUATION` | 155.9 | 0 | 0.0 | -3307.4 |

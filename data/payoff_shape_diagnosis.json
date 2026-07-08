@@ -1,4 +1,35 @@
 {
+  "canonical_proof_reconciliation": {
+    "accepted_legacy_sample_net_jpy": 2441.3232,
+    "accepted_legacy_sample_trade_ids": [
+      "469278",
+      "469427",
+      "469898"
+    ],
+    "applied": true,
+    "canonical_integration_status": "CANONICAL_PROOF_UPDATE_READY_AS_EVIDENCE_ONLY",
+    "live_permission_allowed": false,
+    "live_side_effects": [],
+    "post_update_tp_proof": {
+      "losses": 0,
+      "proof_floor": 20,
+      "proof_floor_reached": true,
+      "remaining_samples": 0,
+      "wins": 20
+    },
+    "pre_update_tp_proof": {
+      "losses": 0,
+      "proof_floor": 20,
+      "remaining_samples": 3,
+      "wins": 17
+    },
+    "read_only": true,
+    "required_checks_passed": true,
+    "safety_note": "This reconciles broad broker TAKE_PROFIT_ORDER proof only. It does not make the exact LIMIT/HARVEST vehicle live-grade, does not mix MARKET/STOP rows into LIMIT proof, and does not clear risk, verifier, gateway, guardian, operator, or negative-expectancy blockers.",
+    "source_artifact": "data/eurusd_short_breakout_failure_proof_floor_update.json",
+    "status": "APPLIED_TO_PAYOFF_SHAPE_DIAGNOSIS",
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
+  },
   "family_stats": {
     "BREAKOUT_FAILURE": {
       "closed_trade_stats": {
@@ -209,8 +240,49 @@
       }
     }
   },
-  "generated_at_utc": "2026-07-08T06:46:07.970055+00:00",
+  "generated_at_utc": "2026-07-08T07:06:55.452302+00:00",
   "harvest_candidates": [
+    {
+      "canonical_proof_reconciliation": {
+        "accepted_legacy_sample_count": 3,
+        "accepted_legacy_sample_net_jpy": 2441.3232,
+        "accepted_legacy_sample_trade_ids": [
+          "469278",
+          "469427",
+          "469898"
+        ],
+        "canonical_integration_status": "CANONICAL_PROOF_UPDATE_READY_AS_EVIDENCE_ONLY",
+        "scope": "broad_take_profit_order_proof_only_not_exact_limit_sample_floor",
+        "source_artifact": "data/eurusd_short_breakout_failure_proof_floor_update.json"
+      },
+      "classification": "HARVEST_PROOF_FLOOR_REACHED_EVIDENCE_ONLY",
+      "evidence_refs": [
+        "capture:shape:EUR_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
+        "data/capture_economics.json",
+        "data/eurusd_short_breakout_failure_proof_floor_update.json",
+        "data/execution_timing_audit.json"
+      ],
+      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
+      "live_promotion_allowed": false,
+      "market_close_losses": 10,
+      "market_close_net_jpy": -7636.3,
+      "method": "BREAKOUT_FAILURE",
+      "month_scale_blocker": null,
+      "overall_expectancy_jpy_per_trade": 102.9,
+      "overall_net_jpy": 3705.2,
+      "pair": "EUR_USD",
+      "proof_floor_trades": 20,
+      "proof_gap_trades": 0,
+      "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+      "side": "SHORT",
+      "take_profit_avg_win_jpy": 643.2912,
+      "take_profit_expectancy_jpy": 643.2912,
+      "take_profit_losses": 0,
+      "take_profit_net_jpy": 12865.8232,
+      "take_profit_trades": 20,
+      "take_profit_wins": 20,
+      "timing_regret": null
+    },
     {
       "classification": "HARVEST_POSITIVE_TP_PROVEN",
       "evidence_refs": [
@@ -246,34 +318,6 @@
         "priority_class": "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED",
         "tp_touched_after_cancel_rate": 0.0
       }
-    },
-    {
-      "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
-      "evidence_refs": [
-        "capture:shape:EUR_USD:SHORT:BREAKOUT_FAILURE:TAKE_PROFIT_ORDER",
-        "data/capture_economics.json",
-        "data/execution_timing_audit.json"
-      ],
-      "live_permission_reason": "diagnostic_only_requires_current_forecast_spread_strategy_margin_gateway",
-      "live_promotion_allowed": false,
-      "market_close_losses": 10,
-      "market_close_net_jpy": -7636.3,
-      "method": "BREAKOUT_FAILURE",
-      "month_scale_blocker": null,
-      "overall_expectancy_jpy_per_trade": 102.9,
-      "overall_net_jpy": 3705.2,
-      "pair": "EUR_USD",
-      "proof_floor_trades": 20,
-      "proof_gap_trades": 3,
-      "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
-      "side": "SHORT",
-      "take_profit_avg_win_jpy": 613.2,
-      "take_profit_expectancy_jpy": 613.2,
-      "take_profit_losses": 0,
-      "take_profit_net_jpy": 10424.5,
-      "take_profit_trades": 17,
-      "take_profit_wins": 17,
-      "timing_regret": null
     },
     {
       "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
@@ -1625,11 +1669,6 @@
       },
       "target_shapes": [
         {
-          "proof_gap_trades": 3,
-          "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
-          "take_profit_losses": 0
-        },
-        {
           "proof_gap_trades": 10,
           "shape_key": "GBP_USD|LONG|BREAKOUT_FAILURE",
           "take_profit_losses": 0
@@ -1647,6 +1686,11 @@
         {
           "proof_gap_trades": 15,
           "shape_key": "EUR_USD|SHORT|TREND_CONTINUATION",
+          "take_profit_losses": 0
+        },
+        {
+          "proof_gap_trades": 17,
+          "shape_key": "GBP_USD|LONG|RANGE_ROTATION",
           "take_profit_losses": 0
         }
       ]
@@ -2449,7 +2493,7 @@
   "overall_payoff_shape_verdict": {
     "capture_economics_status": "NEGATIVE_EXPECTANCY",
     "classification": "MIXED_HARVEST_PRIMARY",
-    "harvest_candidate_net_jpy": 41960.9,
+    "harvest_candidate_net_jpy": 44402.2232,
     "interpretation_for_4x": "4x requires a mixed shape with HARVEST as the accounting base and only evidence-scoped runners. RUNNER-only promotion is not supported while market-close leakage and month-scale replay remain negative.",
     "live_promotion_allowed": false,
     "live_promotion_blockers": [
@@ -3664,11 +3708,11 @@
       "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
       "side": "SHORT",
       "tp1_evidence": {
-        "proof_gap_trades": 3,
-        "take_profit_avg_win_jpy": 613.2,
-        "take_profit_expectancy_jpy": 613.2,
+        "proof_gap_trades": 0,
+        "take_profit_avg_win_jpy": 643.2912,
+        "take_profit_expectancy_jpy": 643.2912,
         "take_profit_losses": 0,
-        "take_profit_trades": 17
+        "take_profit_trades": 20
       }
     },
     {
@@ -3944,7 +3988,7 @@
       "candidate_count": 12,
       "code": "HARVEST_BASE_KEEP_NARROW",
       "live_permission_allowed": false,
-      "top_shape": "EUR_USD|LONG|BREAKOUT_FAILURE"
+      "top_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
     },
     {
       "action": "simulate TP1 bank plus small runner leg for top HARVEST shapes before changing live behavior",
@@ -4105,6 +4149,7 @@
     "execution_timing_audit": "/Users/tossaki/App/QuantRabbit/data/execution_timing_audit.json",
     "month_scale_tp_replay_residuals": "/Users/tossaki/App/QuantRabbit/data/month_scale_tp_replay_residuals.json",
     "order_intents": "/Users/tossaki/App/QuantRabbit/data/order_intents.json",
+    "proof_floor_update": "/Users/tossaki/App/QuantRabbit/data/eurusd_short_breakout_failure_proof_floor_update.json",
     "replay_backtest": "/Users/tossaki/App/QuantRabbit/data/replay_backtest.json"
   },
   "status": "OK"
