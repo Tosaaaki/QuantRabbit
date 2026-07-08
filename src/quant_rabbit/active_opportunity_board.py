@@ -106,6 +106,7 @@ FAILED_EXACT_REPLAY_MARKERS = (
 )
 BIDASK_REPLAY_NEGATIVE_BLOCKER = "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"
 BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
+TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
 BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS = 3
 
@@ -365,6 +366,7 @@ def _add_order_intent_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str
         lane["order_intent_blockers"].extend(strategy_issue_codes)
         lane["strategy_issue_codes"].extend(strategy_issue_codes)
         lane["risk_issue_codes"].extend(risk_issue_codes)
+        _attach_local_tp_proof_context(lane, intent)
         _attach_bidask_negative_evidence(lane, intent, intent_blockers)
 
 
@@ -869,6 +871,31 @@ def _suppress_live_ready_stale_diagnostic_blockers(lane: dict[str, Any]) -> None
     lane["stale_source_blockers"] = _unique(_string_list(lane.get("stale_source_blockers")) + stale_codes)
 
 
+def _attach_local_tp_proof_context(lane: dict[str, Any], intent: dict[str, Any]) -> None:
+    metadata = _metadata(intent)
+    if not metadata:
+        return
+    proof = dict(lane.get("local_tp_proof") or {})
+    for key in (
+        "attach_take_profit_on_fill",
+        "capture_take_profit_avg_loss_jpy",
+        "capture_take_profit_avg_win_jpy",
+        "capture_take_profit_expectancy_jpy",
+        "capture_take_profit_losses",
+        "capture_take_profit_scope",
+        "capture_take_profit_scope_key",
+        "capture_take_profit_trades",
+        "capture_take_profit_wins",
+        "tp_execution_mode",
+        "tp_target_intent",
+        "tp_target_source",
+    ):
+        if key in metadata:
+            proof[key] = metadata.get(key)
+    if proof:
+        lane["local_tp_proof"] = proof
+
+
 def _attach_bidask_negative_evidence(
     lane: dict[str, Any],
     intent: dict[str, Any],
@@ -1007,6 +1034,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "OPERATOR_REVIEW_REQUIRED"
     if has_negative and _bidask_negative_evidence_refresh_required(lane):
         return "EVIDENCE_ACQUISITION"
+    if has_negative and _local_tp_proof_acquisition_required(lane):
+        return "EVIDENCE_ACQUISITION"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
     if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
@@ -1036,6 +1065,33 @@ def _has_evidence_path(lane: dict[str, Any]) -> bool:
     if proof_gap is not None and proof_gap <= 3:
         return True
     return False
+
+
+def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
+    blockers = _string_list(lane.get("blockers"))
+    if blockers != [TP_PROVEN_ROTATION_BLOCKER]:
+        return False
+    if str(lane.get("vehicle") or "").upper() == "MARKET":
+        return False
+    proof = lane.get("local_tp_proof")
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(proof.get("tp_execution_mode") or "") != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(proof.get("tp_target_intent") or "") != "HARVEST":
+        return False
+    scope = str(proof.get("capture_take_profit_scope") or "")
+    if scope.startswith("MISSING") or scope in {"", "None", "UNKNOWN"}:
+        return True
+    required_numeric = (
+        "capture_take_profit_expectancy_jpy",
+        "capture_take_profit_losses",
+        "capture_take_profit_trades",
+        "capture_take_profit_wins",
+    )
+    return any(proof.get(key) is None for key in required_numeric)
 
 
 def _is_scout_ready_candidate(lane: dict[str, Any]) -> bool:
@@ -1172,6 +1228,13 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
                 f"Refresh exact S5 bid/ask replay evidence for {lane_key}{suffix}; "
                 "keep the negative blocker visible, rebuild/package bidask replay precision rules, and do not send."
             )
+        if _local_tp_proof_acquisition_required(lane):
+            proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+            scope_key = proof.get("capture_take_profit_scope_key") or lane_key
+            return (
+                f"Collect exact local TAKE_PROFIT_ORDER proof for {scope_key}; require positive expectancy, "
+                "zero TP losses, and positive Wilson-stressed expectancy before reranking. Do not send."
+            )
         return f"Acquire or canonicalize proof/replay evidence for {lane_key}; do not send or mix vehicles."
     if status == "SCOUT_READY":
         return f"Prepare read-only SCOUT judgement material for {lane_key}; gateway permission remains false."
@@ -1211,6 +1274,8 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
         public["evidence_refresh_reasons"] = _unique(_string_list(lane.get("evidence_refresh_reasons")))
     if isinstance(lane.get("bidask_negative_evidence"), dict):
         public["bidask_negative_evidence"] = lane["bidask_negative_evidence"]
+    if isinstance(lane.get("local_tp_proof"), dict):
+        public["local_tp_proof"] = lane["local_tp_proof"]
     if public["status"] not in LANE_STATUSES:
         raise ValueError(f"unknown lane status: {public['status']}")
     return public
