@@ -28,6 +28,8 @@ The exact LIMIT-only replay passed on the 4 observed LIMIT samples, with a times
 
 The broad 20/0 TAKE_PROFIT_ORDER proof packet is not used as LIMIT proof because it includes MARKET and STOP vehicles. The 4/0 LIMIT result is positive, but it remains under-sampled and blocked from live-grade promotion.
 
+Broad TP proof reconciliation is now applied in `data/payoff_shape_diagnosis.json` as 20/0 evidence. The exact LIMIT replay still remains a separate 4/20 sample-floor problem, and the legacy LIMIT rows `469278`, `469427`, and `469898` still need exact execution-ledger/fill reconciliation before live-grade proof import.
+
 ## Sample Replay
 
 | Trade | Source | Entry order | TP order | S5 entry touch | S5 TP touch | Net JPY |
@@ -50,7 +52,7 @@ The exact recorded entry/exit timestamp candle does not touch the order price in
 
 - `LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY`: only 4 exact LIMIT samples.
 - `S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION`: touch-order replay passes, but strict same-candle timestamp reconstruction does not.
-- `NOT_IN_PROOF_QUEUE`: A/S proof queue remains empty.
+- `PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY`: A/S proof queue includes the target LIMIT lane, but proof_ready_count=0 and can_create_live_permission_count=0.
 - `NEGATIVE_EXPECTANCY_ACTIVE`: global capture economics remains negative.
 - `MARKET_CLOSE_LEAK_PRESENT_EXCLUDED`: loss-side market-close leakage is excluded, not repaired.
 - `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`: global month-scale residual remains visible.
@@ -59,9 +61,9 @@ The exact recorded entry/exit timestamp candle does not touch the order price in
 
 ## Next Read-Only Actions
 
-1. Canonically reconcile/import legacy LIMIT rows `469278`, `469427`, and `469898` without broker mutation.
+1. Finish exact execution-ledger/fill reconciliation for legacy LIMIT rows `469278`, `469427`, and `469898`; broad payoff proof reconciliation is already applied.
 2. Mine more exact LIMIT / ATTACHED_TP / HARVEST samples without MARKET or STOP rows.
-3. Regenerate payoff, harvest, A/S proof queue, portfolio planner, and goal-loop artifacts read-only.
+3. Regenerate payoff, harvest, A/S proof queue, portfolio planner, goal-loop, and active contract artifacts read-only.
 4. Rerun timing/profitability acceptance so negative expectancy and month-scale residuals stay visible.
 5. If a refreshed exact LIMIT replay turns non-positive, classify the vehicle as `NO_SCOUT` / `NO_TRADE`.
 

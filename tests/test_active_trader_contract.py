@@ -113,8 +113,10 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload = json.loads(paths["output"].read_text())
 
         blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        replay_blockers = set(payload["current_state"]["limit_s5_bidask_replay"]["blocker_codes"])
         self.assertEqual(payload["current_state"]["proof"]["proof_queue_count"], 2)
         self.assertIn("PROOF_QUEUE_HAS_CANDIDATES", payload["active_deployment_gap"]["active_path_triggers"])
+        self.assertNotIn("NOT_IN_PROOF_QUEUE", replay_blockers)
         self.assertNotIn("NOT_IN_PROOF_QUEUE", blocker_codes)
         self.assertNotIn("PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION", blocker_codes)
         self.assertNotIn("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION", blocker_codes)
@@ -141,6 +143,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                         "promotion_blockers": [
                             "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
                             "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+                            "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
                         ],
                         "tp_proof": {
                             "take_profit_trades": 20,
@@ -194,6 +197,27 @@ class ActiveTraderContractTest(unittest.TestCase):
                     "live_side_effects": [],
                 },
             )
+            _write_json(
+                paths["proof_floor"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "PROOF_FLOOR_REACHED_STILL_BLOCKED",
+                    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                    "post_update_tp_proof": {
+                        "wins": 20,
+                        "losses": 0,
+                        "proof_floor": 20,
+                        "remaining_samples": 0,
+                        "proof_floor_reached": True,
+                    },
+                    "remaining_blockers": [
+                        {"code": "SPREAD_SLIPPAGE_PROOF_MISSING"},
+                        {"code": "NEGATIVE_EXPECTANCY_ACTIVE"},
+                    ],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
 
             ActiveTraderContract(
                 trader_goal_loop_path=paths["goal_loop"],
@@ -215,10 +239,17 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload = json.loads(paths["output"].read_text())
 
         blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        scout_blockers = set(payload["current_state"]["scout"]["blocker_codes"])
+        proof_floor_blockers = set(payload["current_state"]["proof_floor"]["blocker_codes"])
         self.assertEqual(payload["current_state"]["harvest"]["tp_proof"]["proof_gap_trades"], 0)
         self.assertTrue(payload["current_state"]["limit_s5_bidask_replay"]["passed"])
         self.assertNotIn("SAMPLE_GAP", blocker_codes)
         self.assertNotIn("POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING", blocker_codes)
+        self.assertNotIn("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING", blocker_codes)
+        self.assertNotIn("SPREAD_SLIPPAGE_PROOF_MISSING", blocker_codes)
+        self.assertNotIn("SAMPLE_GAP", scout_blockers)
+        self.assertNotIn("POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING", scout_blockers)
+        self.assertNotIn("SPREAD_SLIPPAGE_PROOF_MISSING", proof_floor_blockers)
         self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", blocker_codes)
         self.assertIn("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY", blocker_codes)
 

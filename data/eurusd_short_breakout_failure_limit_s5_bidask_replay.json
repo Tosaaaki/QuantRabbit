@@ -1,7 +1,7 @@
 {
   "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
   "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
-  "generated_at_utc": "2026-07-08T05:33:07Z",
+  "generated_at_utc": "2026-07-08T07:20:14Z",
   "read_only": true,
   "live_side_effects": [],
   "live_permission_allowed": false,
@@ -191,7 +191,7 @@
     {
       "code": "LEGACY_LIMIT_ROWS_NOT_CANONICAL_EXECUTION_LEDGER_PROOF",
       "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
-      "evidence": "Legacy rows 469278, 469427, and 469898 are accepted as duplicate-free evidence but still need canonical reconciliation/import before generated proof artifacts can consume them as first-class rows."
+      "evidence": "Broad TP proof reconciliation has been applied in payoff_shape_diagnosis, but the exact LIMIT replay still includes legacy rows 469278/469427/469898 that need exact execution-ledger/fill reconciliation before live-grade proof import."
     },
     {
       "code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
@@ -199,14 +199,14 @@
       "evidence": "The S5 replay passes by touch order, but strict same-candle fill/TP timestamp touch count is 0. Proof import must preserve this lag and cross-check transaction fullPrice where available."
     },
     {
-      "code": "NOT_IN_PROOF_QUEUE",
-      "status": "BLOCKING_LIVE_PERMISSION",
-      "evidence": "data/as_proof_pack_queue.json has queue_count=0, proof_ready_count=0, and can_create_live_permission_count=0."
-    },
-    {
       "code": "CURRENT_LANE_BLOCKERS_STILL_ACTIVE",
       "status": "BLOCKING_LIVE_PERMISSION",
       "evidence": "harvest/operator artifacts still report current blockers including RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, and GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED."
+    },
+    {
+      "code": "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "data/as_proof_pack_queue.json now has queue_count=2 and includes the target LIMIT lane as EVIDENCE_GAP / can_enter_proof_pack=true, but proof_ready_count=0 and can_create_live_permission_count=0."
     }
   ],
   "negative_replay_no_scout_conditions": [
@@ -227,9 +227,9 @@
       "evidence": "Replay passed by entry-touch then TP-touch sequence, but exact fill/TP timestamp candles did not themselves touch the levels; generated proof must not claim same-candle S5 fill reconstruction."
     },
     {
-      "code": "NOT_IN_PROOF_QUEUE",
+      "code": "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
       "status": "BLOCKING_LIVE_PERMISSION",
-      "evidence": "A/S proof queue remains empty and cannot create live permission."
+      "evidence": "A/S proof queue includes the target LIMIT lane, but proof_ready_count=0 and can_create_live_permission_count=0."
     },
     {
       "code": "NEGATIVE_EXPECTANCY_ACTIVE",
@@ -254,7 +254,7 @@
     {
       "code": "NO_LIVE_READY_PORTFOLIO",
       "status": "BLOCKING_LIVE_PERMISSION",
-      "evidence": "portfolio_4x_path_planner remains NO_LIVE_READY_PORTFOLIO with live_ready_lanes=0 in prior artifacts."
+      "evidence": "portfolio_4x_path_planner remains NO_LIVE_READY_PORTFOLIO with live_ready_lanes=0 on refreshed artifacts."
     },
     {
       "code": "NO_FRESH_GATEWAY_PERMISSION",
@@ -263,9 +263,9 @@
     }
   ],
   "next_read_only_actions": [
-    "Reconcile/import accepted legacy LIMIT rows 469278, 469427, and 469898 into the canonical proof/capture source path without broker mutation.",
+    "Finish exact execution-ledger/fill reconciliation for legacy LIMIT rows 469278, 469427, and 469898; broad payoff proof reconciliation is already applied.",
     "Mine additional exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT/ATTACHED_TECHNICAL_TP/HARVEST samples; do not use MARKET_ORDER or STOP_ORDER rows to reach the LIMIT-only floor.",
-    "Regenerate payoff_shape_diagnosis, harvest_live_grade_path, A/S proof queue, portfolio planner, and trader_goal_loop_orchestrator read-only after the canonical replay artifact is consumed.",
+    "Regenerate payoff_shape_diagnosis, harvest_live_grade_path, A/S proof queue, portfolio planner, trader_goal_loop_orchestrator, and active_trader_contract read-only after exact replay/proof import changes.",
     "Rerun execution-timing-audit and profitability-acceptance read-only to keep market-close leakage, global negative expectancy, and month-scale residual blockers visible.",
     "If the next exact replay turns negative, classify the LIMIT vehicle as NO_SCOUT / NO_TRADE until a new exact positive bid/ask proof exists.",
     "Keep live permission false until current forecast, spread, strategy, risk, guardian/operator review, verifier, and gateway checks pass on fresh broker truth."
@@ -295,7 +295,9 @@
     "data/payoff_shape_diagnosis.json",
     "data/operator_review_report.json",
     "data/trader_goal_loop_orchestrator.json",
-    "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260703T120929Z/EUR_USD/EUR_USD_S5_BA_20260305T120929Z_20260703T120929Z.jsonl.gz"
+    "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260703T120929Z/EUR_USD/EUR_USD_S5_BA_20260305T120929Z_20260703T120929Z.jsonl.gz",
+    "data/as_proof_pack_queue.json",
+    "data/active_trader_contract.json"
   ],
   "notion_context": {
     "searched": true,
@@ -306,5 +308,39 @@
       "Do not treat EUR_USD operator/manual context or audit-only firepower as live permission.",
       "No broker-side action occurred."
     ]
+  },
+  "canonical_reconciliation_status": {
+    "broad_take_profit_proof_reconciled_in_payoff_shape_diagnosis": true,
+    "broad_take_profit_proof": {
+      "wins": 20,
+      "losses": 0,
+      "proof_floor": 20,
+      "remaining_samples": 0
+    },
+    "exact_limit_sample_floor_scope": "LIMIT_ORDER + ATTACHED_TECHNICAL_TP + HARVEST only",
+    "exact_limit_sample_floor_met": false,
+    "exact_limit_samples": {
+      "observed": 4,
+      "sample_floor": 20,
+      "remaining_samples": 16
+    },
+    "legacy_limit_rows": [
+      "469278",
+      "469427",
+      "469898"
+    ],
+    "exact_execution_ledger_import_still_required": true,
+    "live_permission_allowed": false
+  },
+  "proof_queue_state": {
+    "source": "data/as_proof_pack_queue.json",
+    "queue_count": 2,
+    "proof_ready_count": 0,
+    "can_create_live_permission_count": 0,
+    "target_limit_lane_in_queue": true,
+    "target_limit_lane_classification": "EVIDENCE_GAP",
+    "target_limit_lane_can_enter_proof_pack": true,
+    "target_limit_lane_can_create_live_permission": false,
+    "proof_queue_count_is_live_permission": false
   }
 }

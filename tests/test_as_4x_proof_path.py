@@ -825,6 +825,8 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertIn("469278", closest["tp_proof"]["legacy_samples_accepted"])
         self.assertNotIn("NOT_IN_PROOF_QUEUE", candidate_blockers)
         self.assertNotIn("PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION", blocker_codes)
+        self.assertNotIn("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING", candidate_blockers)
+        self.assertNotIn("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING", blocker_codes)
         self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", candidate_blockers)
         self.assertIn("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY", candidate_blockers)
         self.assertFalse(payload["live_permission_allowed"])

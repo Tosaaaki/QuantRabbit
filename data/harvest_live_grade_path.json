@@ -52,6 +52,7 @@
       "replay_sample_count": 4,
       "replay_wins": 4,
       "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+      "spread_proof_positive": true,
       "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
       "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
     },
@@ -95,7 +96,6 @@
       "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
       "MARKET_CLOSE_LEAK_PRESENT",
       "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
-      "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
       "ACTIVE_DAY_FLOOR_NOT_MET",
       "RISK_ENGINE_PASS_MISSING",
       "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
@@ -198,7 +198,7 @@
       "take_profit_wins": 20
     }
   },
-  "generated_at_utc": "2026-07-08T07:07:05Z",
+  "generated_at_utc": "2026-07-08T07:19:30Z",
   "harvest_candidate_count": 12,
   "live_permission_allowed": false,
   "live_promotion_allowed": false,
@@ -233,10 +233,6 @@
     },
     {
       "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
-      "status": "BLOCKING_LIVE_GRADE"
-    },
-    {
-      "code": "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
       "status": "BLOCKING_LIVE_GRADE"
     },
     {
@@ -384,6 +380,7 @@
         "replay_sample_count": 4,
         "replay_wins": 4,
         "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+        "spread_proof_positive": true,
         "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
         "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
       },
@@ -427,7 +424,6 @@
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
         "MARKET_CLOSE_LEAK_PRESENT",
         "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
-        "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
         "ACTIVE_DAY_FLOOR_NOT_MET",
         "RISK_ENGINE_PASS_MISSING",
         "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",

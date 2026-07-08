@@ -121,7 +121,15 @@ class ActiveTraderContract:
             artifacts["eurusd_short_breakout_failure_proof_floor_update"]
         )
         replay = _limit_replay_contract_state(
-            artifacts["eurusd_short_breakout_failure_limit_s5_bidask_replay"]
+            artifacts["eurusd_short_breakout_failure_limit_s5_bidask_replay"],
+            proof=proof,
+        )
+        scout = _normalize_stale_blocker_codes(scout, proof=proof, proof_floor=proof_floor, replay=replay)
+        proof_floor = _normalize_stale_blocker_codes(
+            proof_floor,
+            proof=proof,
+            proof_floor=proof_floor,
+            replay=replay,
         )
         active_deployment_gap = _active_deployment_gap(
             harvest=harvest,
@@ -423,7 +431,7 @@ def _proof_floor_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _limit_replay_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+def _limit_replay_contract_state(artifact: dict[str, Any], *, proof: dict[str, Any] | None = None) -> dict[str, Any]:
     if artifact.get("_artifact_status") == "missing":
         return {
             "artifact_status": "missing",
@@ -435,6 +443,12 @@ def _limit_replay_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
     blockers = _codes_from_blockers(artifact.get("remaining_blockers")) + _codes_from_blockers(
         artifact.get("proof_queue_blockers_if_positive")
     )
+    if proof and proof.get("proof_queue_count", 0) > 0:
+        blockers = [
+            code
+            for code in blockers
+            if code not in {"NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION"}
+        ]
     return {
         "artifact_status": "present",
         "status": artifact.get("status"),
@@ -606,7 +620,12 @@ def _remaining_blockers(
         codes = [code for code in codes if code != "SAMPLE_GAP"]
     replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
     if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
-        codes = [code for code in codes if code != "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING"]
+        stale_spread_codes = {
+            "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+            "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
+            "SPREAD_SLIPPAGE_PROOF_MISSING",
+        }
+        codes = [code for code in codes if code not in stale_spread_codes]
     if not proof_floor.get("proof_floor_reached"):
         codes.append("PROOF_FLOOR_NOT_CANONICALLY_REACHED")
     if not replay.get("live_grade_candidate"):
@@ -627,6 +646,37 @@ def _remaining_blockers(
             }
         )
     return rows
+
+
+def _normalize_stale_blocker_codes(
+    state: dict[str, Any],
+    *,
+    proof: dict[str, Any],
+    proof_floor: dict[str, Any],
+    replay: dict[str, Any],
+) -> dict[str, Any]:
+    codes = _string_list(state.get("blocker_codes"))
+    if not codes:
+        return state
+    if proof.get("proof_queue_count", 0) > 0:
+        codes = [
+            code
+            for code in codes
+            if code not in {"NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION"}
+        ]
+    if proof_floor.get("proof_floor_reached"):
+        codes = [code for code in codes if code != "SAMPLE_GAP"]
+    replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
+    if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
+        stale_spread_codes = {
+            "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+            "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
+            "SPREAD_SLIPPAGE_PROOF_MISSING",
+        }
+        codes = [code for code in codes if code not in stale_spread_codes]
+    normalized = dict(state)
+    normalized["blocker_codes"] = _unique(codes)
+    return normalized
 
 
 def _blocker_status(code: str) -> str:

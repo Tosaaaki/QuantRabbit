@@ -1185,6 +1185,7 @@ def _target_limit_replay(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, 
         "replay_wins": _int(replay.get("replay_wins")),
         "replay_losses": _int(replay.get("replay_losses")),
         "net_expectancy_after_bidask": replay.get("net_expectancy_after_bidask"),
+        "spread_proof_positive": _limit_replay_spread_proof_positive(replay),
         "live_grade_candidate": bool(replay.get("live_grade_candidate")),
         "market_stop_samples_excluded": bool(replay.get("market_stop_samples_excluded")),
         "market_close_excluded": bool(replay.get("market_close_excluded")),
@@ -1240,7 +1241,10 @@ def _candidate_promotion_blockers(
         missing = proof_best.get("missing_proof") if isinstance(proof_best.get("missing_proof"), dict) else {}
         if missing.get("sample_count_floor") is False:
             blockers.append("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY")
-        if missing.get("s5_bidask_spread_included_replay") is False:
+        if (
+            missing.get("s5_bidask_spread_included_replay") is False
+            and not _limit_replay_spread_proof_positive(limit_replay)
+        ):
             blockers.append("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING")
         if missing.get("active_day_floor") is False:
             blockers.append("ACTIVE_DAY_FLOOR_NOT_MET")
@@ -1262,6 +1266,17 @@ def _candidate_promotion_blockers(
     if ctx["acceptance"].get("status"):
         blockers.append(str(ctx["acceptance"].get("status")))
     return _unique_strings(blockers)
+
+
+def _limit_replay_spread_proof_positive(replay: dict[str, Any] | None) -> bool:
+    if not replay:
+        return False
+    if not replay.get("s5_bidask_replay_status"):
+        return False
+    if (_int(replay.get("replay_losses")) or 0) > 0:
+        return False
+    expectancy = _float(replay.get("net_expectancy_after_bidask"))
+    return expectancy is None or expectancy >= 0.0
 
 
 def _harvest_rank_reason(
