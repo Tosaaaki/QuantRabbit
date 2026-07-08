@@ -29,6 +29,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                 as_proof_pack_queue_path=paths["proof"],
                 as_lane_candidate_board_path=paths["board"],
                 portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 output_path=paths["output"],
@@ -107,6 +109,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                 as_proof_pack_queue_path=paths["proof"],
                 as_lane_candidate_board_path=paths["board"],
                 portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 output_path=paths["output"],
@@ -171,6 +175,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                 as_proof_pack_queue_path=paths["proof"],
                 as_lane_candidate_board_path=paths["board"],
                 portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 output_path=paths["output"],
@@ -186,6 +192,60 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertIn("SCOUT_BLOCKED_OPERATOR_REVIEW", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
 
+    def test_raw_guardian_clear_overrides_stale_scout_operator_review_summary(self) -> None:
+        now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_BLOCKED_OPERATOR_REVIEW")
+            _write_json(
+                paths["guardian_consumption"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+                    "normal_routing_allowed": True,
+                    "unresolved_issue_count": 0,
+                    "classifications": [],
+                },
+            )
+            _write_json(
+                paths["guardian_review"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED",
+                    "normal_routing_allowed": True,
+                    "unresolved_review_count": 0,
+                    "classifications": [],
+                },
+            )
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "EDGE_IMPROVEMENT_EXPERIMENT")
+        self.assertEqual(payload["selected_next_work_type"], "EDGE_IMPROVEMENT_EXPERIMENT")
+        self.assertFalse(payload["requires_operator_review_before_scout_or_routing"])
+        self.assertTrue(payload["operator_review_state"]["normal_routing_allowed"])
+        self.assertTrue(payload["operator_review_state"]["guardian_clear"])
+        self.assertEqual(payload["operator_review_state"]["source"], "raw_guardian_receipt_artifacts")
+        self.assertIn(
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            payload["operator_review_state"]["stale_guardian_blocker_codes_suppressed"],
+        )
+
     def test_repeat_guard_does_not_override_scout_blocked_classification(self) -> None:
         now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,6 +259,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                 "as_proof_pack_queue_path": paths["proof"],
                 "as_lane_candidate_board_path": paths["board"],
                 "portfolio_4x_path_planner_path": paths["portfolio"],
+                "guardian_receipt_consumption_path": paths["guardian_consumption"],
+                "guardian_receipt_operator_review_path": paths["guardian_review"],
                 "live_order_request_path": paths["live_order"],
                 "broker_snapshot_path": paths["broker"],
                 "output_path": paths["output"],
@@ -223,6 +285,8 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_status: str) -> di
         "proof": root / "data" / "as_proof_pack_queue.json",
         "board": root / "data" / "as_lane_candidate_board.json",
         "portfolio": root / "data" / "portfolio_4x_path_planner.json",
+        "guardian_consumption": root / "data" / "guardian_receipt_consumption.json",
+        "guardian_review": root / "data" / "guardian_receipt_operator_review.json",
         "live_order": root / "data" / "live_order_request.json",
         "broker": root / "data" / "broker_snapshot.json",
         "output": root / "data" / "trader_goal_loop_orchestrator.json",

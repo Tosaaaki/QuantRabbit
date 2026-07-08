@@ -9,6 +9,8 @@ from typing import Any
 
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
@@ -37,6 +39,8 @@ INPUT_ARTIFACT_NAMES = (
     "as_proof_pack_queue",
     "as_lane_candidate_board",
     "portfolio_4x_path_planner",
+    "guardian_receipt_consumption",
+    "guardian_receipt_operator_review",
     "live_order_request",
     "broker_snapshot",
 )
@@ -75,6 +79,8 @@ class TraderGoalLoopOrchestrator:
         as_proof_pack_queue_path: Path = DEFAULT_AS_PROOF_PACK_QUEUE,
         as_lane_candidate_board_path: Path = DEFAULT_AS_LANE_CANDIDATE_BOARD,
         portfolio_4x_path_planner_path: Path = DEFAULT_PORTFOLIO_4X_PATH_PLANNER,
+        guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         live_order_request_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         broker_snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         output_path: Path = DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
@@ -89,6 +95,8 @@ class TraderGoalLoopOrchestrator:
             "as_proof_pack_queue": as_proof_pack_queue_path,
             "as_lane_candidate_board": as_lane_candidate_board_path,
             "portfolio_4x_path_planner": portfolio_4x_path_planner_path,
+            "guardian_receipt_consumption": guardian_receipt_consumption_path,
+            "guardian_receipt_operator_review": guardian_receipt_operator_review_path,
             "live_order_request": live_order_request_path,
             "broker_snapshot": broker_snapshot_path,
         }
@@ -498,35 +506,117 @@ def _operator_review_state(
     scout_state: dict[str, Any],
 ) -> dict[str, Any]:
     markers = _guardian_markers(artifacts)
-    normal_routing_allowed = _first_bool(
+    raw_guardian = _raw_guardian_receipt_state(artifacts)
+    inferred_normal_routing_allowed = _first_bool(
         _normal_routing_from_scout(scout_state),
         proof_state.get("routing_allowed"),
     )
-    blocker_codes = _unique(
+    normal_routing_allowed = _first_bool(
+        raw_guardian.get("normal_routing_allowed"),
+        inferred_normal_routing_allowed,
+    )
+    raw_guardian_clear = raw_guardian.get("normal_routing_allowed") is True
+    raw_blocked = raw_guardian.get("normal_routing_allowed") is False
+    raw_blocker_codes = _string_list(raw_guardian.get("blocker_codes"))
+    inferred_blocker_codes = _unique(
         proof_state.get("global_blockers", [])
         + scout_state.get("blocker_codes", [])
         + [marker for marker in markers if "GUARDIAN" in marker or "OPERATOR_REVIEW" in marker]
     )
+    if raw_guardian_clear:
+        stale_guardian_blocker_codes = [
+            code for code in inferred_blocker_codes if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in code
+        ]
+        blocker_codes = _unique(
+            raw_blocker_codes
+            + [
+                code
+                for code in inferred_blocker_codes
+                if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" not in code
+            ]
+        )
+    else:
+        stale_guardian_blocker_codes = []
+        blocker_codes = _unique(raw_blocker_codes + inferred_blocker_codes)
+    has_operator_review_blocker = any(
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in code for code in blocker_codes
+    )
     operator_review_required = (
-        normal_routing_allowed is False
-        and any("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in code for code in blocker_codes)
-    ) or scout_state.get("status") == "SCOUT_BLOCKED_OPERATOR_REVIEW"
+        raw_blocked
+        or (normal_routing_allowed is False and has_operator_review_blocker)
+        or (scout_state.get("status") == "SCOUT_BLOCKED_OPERATOR_REVIEW" and not raw_guardian_clear)
+    )
     stale_or_expired = any("EXPIRED" in marker or "OPERATOR_REVIEW_STALE" in marker for marker in markers)
     guardian_clear = (
-        normal_routing_allowed is True
-        and not operator_review_required
-        and not any("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in code for code in blocker_codes)
+        raw_guardian_clear
+        or (
+            normal_routing_allowed is True
+            and not operator_review_required
+            and not has_operator_review_blocker
+        )
     )
     return {
         "normal_routing_allowed": normal_routing_allowed,
+        "inferred_normal_routing_allowed": inferred_normal_routing_allowed,
         "normal_routing_status": proof_state.get("normal_routing_status"),
         "operator_review_required": bool(operator_review_required),
         "guardian_clear": bool(guardian_clear),
         "guardian_markers": markers,
         "guardian_expired_or_operator_review_stale": bool(stale_or_expired),
         "blocker_codes": blocker_codes,
-        "source": "input_artifact_summaries_only",
-        "missing_raw_guardian_receipt_artifact": True,
+        "stale_guardian_blocker_codes_suppressed": stale_guardian_blocker_codes,
+        "raw_guardian_receipt_state": raw_guardian,
+        "source": (
+            "raw_guardian_receipt_artifacts"
+            if raw_guardian.get("artifact_present")
+            else "input_artifact_summaries_only"
+        ),
+        "missing_raw_guardian_receipt_artifact": not raw_guardian.get("artifact_present"),
+    }
+
+
+def _raw_guardian_receipt_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    consumption = artifacts.get("guardian_receipt_consumption", {})
+    review = artifacts.get("guardian_receipt_operator_review", {})
+    consumption_present = consumption.get("_artifact_status") == "present"
+    review_present = review.get("_artifact_status") == "present"
+    values = [
+        value
+        for value in (
+            consumption.get("normal_routing_allowed") if consumption_present else None,
+            review.get("normal_routing_allowed") if review_present else None,
+        )
+        if isinstance(value, bool)
+    ]
+    if any(value is False for value in values):
+        normal_routing_allowed: bool | None = False
+    elif values and all(value is True for value in values):
+        normal_routing_allowed = True
+    else:
+        normal_routing_allowed = None
+    blocker_codes: list[str] = []
+    if consumption_present and consumption.get("normal_routing_allowed") is False:
+        blocker_codes.append(str(consumption.get("status") or "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKED"))
+    if review_present and review.get("normal_routing_allowed") is False:
+        blocker_codes.append(str(review.get("status") or "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKED"))
+    return {
+        "artifact_present": consumption_present or review_present,
+        "normal_routing_allowed": normal_routing_allowed,
+        "consumption_status": consumption.get("status") if consumption_present else None,
+        "consumption_normal_routing_allowed": (
+            consumption.get("normal_routing_allowed") if consumption_present else None
+        ),
+        "consumption_unresolved_issue_count": (
+            consumption.get("unresolved_issue_count") if consumption_present else None
+        ),
+        "operator_review_status": review.get("status") if review_present else None,
+        "operator_review_normal_routing_allowed": (
+            review.get("normal_routing_allowed") if review_present else None
+        ),
+        "operator_review_unresolved_review_count": (
+            review.get("unresolved_review_count") if review_present else None
+        ),
+        "blocker_codes": _unique(blocker_codes),
     }
 
 
@@ -711,7 +801,10 @@ def _select_work_type(
             "SCOUT_PLAN",
             "closest harvest candidate exists but the exact scout plan has not been diagnosed.",
         )
-    if scout_state.get("status") == "SCOUT_BLOCKED_OPERATOR_REVIEW":
+    if (
+        scout_state.get("status") == "SCOUT_BLOCKED_OPERATOR_REVIEW"
+        and operator_review_state.get("operator_review_required")
+    ):
         return (
             "OPERATOR_REVIEW_REPORT",
             "scout status is SCOUT_BLOCKED_OPERATOR_REVIEW; the next artifact must package SCOUT approval/rejection evidence only, not live permission.",
@@ -1428,6 +1521,8 @@ def _artifact_filename(name: str) -> str:
         "as_proof_pack_queue": "as_proof_pack_queue.json",
         "as_lane_candidate_board": "as_lane_candidate_board.json",
         "portfolio_4x_path_planner": "portfolio_4x_path_planner.json",
+        "guardian_receipt_consumption": "guardian_receipt_consumption.json",
+        "guardian_receipt_operator_review": "guardian_receipt_operator_review.json",
         "live_order_request": "live_order_request.json",
         "broker_snapshot": "broker_snapshot.json",
     }[name]
