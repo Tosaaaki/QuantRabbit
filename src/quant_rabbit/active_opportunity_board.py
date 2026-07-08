@@ -188,8 +188,16 @@ class ActiveOpportunityBoard:
             artifacts["guardian_receipt_consumption"],
             artifacts["guardian_receipt_operator_review"],
         )
+        guardian_intent_blockers_stale = _guardian_intent_blockers_stale(
+            artifacts["guardian_receipt_consumption"],
+            artifacts["order_intents"],
+        )
         for lane in lanes.values():
-            _finalize_lane(lane, guardian_routing_clear=guardian_routing_clear)
+            _finalize_lane(
+                lane,
+                guardian_routing_clear=guardian_routing_clear,
+                guardian_intent_blockers_stale=guardian_intent_blockers_stale,
+            )
 
         ranked_lanes = sorted(
             lanes.values(),
@@ -710,13 +718,22 @@ def _matching_lane_ids(
     ]
 
 
-def _finalize_lane(lane: dict[str, Any], *, guardian_routing_clear: bool) -> None:
+def _finalize_lane(
+    lane: dict[str, Any],
+    *,
+    guardian_routing_clear: bool,
+    guardian_intent_blockers_stale: bool,
+) -> None:
     lane["blockers"] = _unique(_string_list(lane.get("blockers")))
     lane["source_refs"] = _unique(_string_list(lane.get("source_refs")))
     lane["risk_issue_codes"] = _unique(_string_list(lane.get("risk_issue_codes")))
     lane["strategy_issue_codes"] = _unique(_string_list(lane.get("strategy_issue_codes")))
     lane["order_intent_blockers"] = _unique(_string_list(lane.get("order_intent_blockers")))
-    _suppress_stale_guardian_receipt_blockers(lane, guardian_routing_clear=guardian_routing_clear)
+    _suppress_stale_guardian_receipt_blockers(
+        lane,
+        guardian_routing_clear=guardian_routing_clear,
+        guardian_intent_blockers_stale=guardian_intent_blockers_stale,
+    )
     _suppress_stale_current_intent_owned_blockers(lane)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
@@ -737,11 +754,26 @@ def _guardian_routing_clear(consumption: dict[str, Any], operator_review: dict[s
     return consumption.get("normal_routing_allowed") is True and operator_review.get("normal_routing_allowed") is True
 
 
-def _suppress_stale_guardian_receipt_blockers(lane: dict[str, Any], *, guardian_routing_clear: bool) -> None:
+def _guardian_intent_blockers_stale(consumption: dict[str, Any], order_intents: dict[str, Any]) -> bool:
+    if consumption.get("normal_routing_allowed") is not True:
+        return False
+    consumption_generated = _parse_utc(consumption.get("generated_at_utc"))
+    intent_generated = _parse_utc(order_intents.get("generated_at_utc"))
+    if consumption_generated is None or intent_generated is None:
+        return False
+    return intent_generated < consumption_generated
+
+
+def _suppress_stale_guardian_receipt_blockers(
+    lane: dict[str, Any],
+    *,
+    guardian_routing_clear: bool,
+    guardian_intent_blockers_stale: bool,
+) -> None:
     if not guardian_routing_clear:
         return
     current_intent_blockers = _string_list(lane.get("order_intent_blockers"))
-    if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in current_intent_blockers:
+    if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in current_intent_blockers and not guardian_intent_blockers_stale:
         return
     blockers = _string_list(lane.get("blockers"))
     if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" not in blockers:
@@ -1296,6 +1328,18 @@ def _list(value: Any) -> list[Any]:
     if value is None:
         return []
     return [value]
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _string_list(value: Any) -> list[str]:

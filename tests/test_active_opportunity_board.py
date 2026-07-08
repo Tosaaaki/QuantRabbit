@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +98,44 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["operator_review_status"], "REQUIRED")
         self.assertGreaterEqual(payload["coverage_summary"]["operator_review_required_count"], 4)
         self.assertIn("OPERATOR_REVIEW_REQUIRED", payload["next_active_path"])
+
+    def test_stale_order_intent_guardian_blocker_is_suppressed_after_consumption_refresh(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            order_intents = json.loads(paths["order_intents"].read_text())
+            order_intents["generated_at_utc"] = (now - timedelta(minutes=15)).isoformat()
+            for row in order_intents["results"]:
+                row["live_blocker_codes"].append("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+            _write_json(paths["order_intents"], order_intents)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["top_lane"]["operator_review_status"], "NOT_REQUIRED")
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["blockers"])
+        self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["stale_source_blockers"])
 
     def test_cleared_guardian_receipt_suppresses_stale_planner_guardian_blocker(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
