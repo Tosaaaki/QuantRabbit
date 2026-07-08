@@ -51,6 +51,7 @@ FAILED_EXACT_REPLAY_MARKERS = (
     "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
 )
 BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
+TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 NEGATIVE_BLOCKER_MARKERS = (
     "NEGATIVE_EXPECTANCY",
     "REPLAY_NEGATIVE",
@@ -683,6 +684,11 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
         "operator_review_status": lane.get("operator_review_status"),
         "expected_edge_jpy": lane.get("expected_edge_jpy"),
         "next_action": lane.get("next_action"),
+        "local_tp_proof": (
+            lane.get("local_tp_proof")
+            if isinstance(lane.get("local_tp_proof"), dict)
+            else {}
+        ),
         "blockers": blockers[:24],
         "stale_source_blockers": stale_source_blockers[:12],
     }
@@ -695,6 +701,8 @@ def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
     if any(any(marker in blocker for marker in GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS) for blocker in blockers):
         return "OPERATOR_REVIEW_REQUIRED"
     if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER in blockers:
+        return raw
+    if raw == "EVIDENCE_ACQUISITION" and blockers == [TP_PROVEN_ROTATION_BLOCKER]:
         return raw
     if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"

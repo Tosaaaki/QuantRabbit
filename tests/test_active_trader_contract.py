@@ -762,6 +762,102 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload["current_state"]["active_opportunity_board"]["top_lane"]["stale_source_blockers"],
         )
 
+    def test_local_tp_proof_gap_preserves_evidence_acquisition_status(self) -> None:
+        now = datetime(2026, 7, 8, 16, 55, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 121,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "pairs_scanned": ["USD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": {
+                        "lane_id": "range_trader:USD_CAD:LONG:RANGE_ROTATION",
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": (
+                            "Collect exact local TAKE_PROFIT_ORDER proof for "
+                            "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER; require positive "
+                            "expectancy, zero TP losses, and positive Wilson-stressed expectancy "
+                            "before reranking. Do not send."
+                        ),
+                        "local_tp_proof": {
+                            "attach_take_profit_on_fill": True,
+                            "capture_take_profit_expectancy_jpy": None,
+                            "capture_take_profit_losses": None,
+                            "capture_take_profit_scope": "MISSING_METHOD_SCOPE",
+                            "capture_take_profit_scope_key": (
+                                "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                            ),
+                            "capture_take_profit_trades": None,
+                            "capture_take_profit_wins": None,
+                            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                            "tp_target_intent": "HARVEST",
+                        },
+                        "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: range_trader:USD_CAD:LONG:RANGE_ROTATION "
+                        "needs local TP proof."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top_lane = payload["current_state"]["active_opportunity_board"]["top_lane"]
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(top_lane["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(
+            top_lane["local_tp_proof"]["capture_take_profit_scope_key"],
+            "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+        )
+        self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
+        self.assertIn("(LIMIT, EVIDENCE_ACQUISITION)", payload["next_trade_enabling_action"])
+        self.assertIn(
+            "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+            payload["next_trade_enabling_action"],
+        )
+        self.assertNotIn("NO_TRADE_WITH_CAUSE", payload["next_trade_enabling_action"])
+
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
     paths = {
