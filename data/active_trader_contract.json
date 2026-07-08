@@ -55,6 +55,12 @@
         "sha256": "3ad6ee8feb3db5c79016a13c4ea8f13812b01d0fd9c8616a1dcba1822b15fed6",
         "status": "present"
       },
+      "eurusd_short_breakout_failure_limit_sample_mining": {
+        "generated_at_utc": "2026-07-08T07:50:36Z",
+        "path": "/Users/tossaki/App/QuantRabbit/data/eurusd_short_breakout_failure_limit_sample_mining.json",
+        "sha256": "38d2e9504e1c148c9f65e1f604a3e4751fbbd300b82dfce63ea970e909a86984",
+        "status": "present"
+      },
       "eurusd_short_breakout_failure_proof_floor_update": {
         "generated_at_utc": "2026-07-08T01:07:29Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/eurusd_short_breakout_failure_proof_floor_update.json",
@@ -68,15 +74,15 @@
         "status": "present"
       },
       "harvest_live_grade_path": {
-        "generated_at_utc": "2026-07-08T07:19:30Z",
+        "generated_at_utc": "2026-07-08T07:50:36Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/harvest_live_grade_path.json",
-        "sha256": "1260bea9123cd6b3734f4b0ef9e04f30eeb291a8b832d9f4a52a846364bf4f50",
+        "sha256": "0d2d8466dcb82492aa59f402333e1c8eaa688971c7b11f7901cb56631f70492d",
         "status": "present"
       },
       "live_order_request": {
-        "generated_at_utc": "2026-07-08T07:22:19.413141+00:00",
+        "generated_at_utc": "2026-07-08T07:48:16.502380+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/live_order_request.json",
-        "sha256": "420f11b35011321b92882d061453533891ad1d2287a05633929c8d2feeaaecb1",
+        "sha256": "fe045a9099ce77d567af228bed7fadddfde8abc9018ac1f837c5cc5ea90230db",
         "status": "present"
       },
       "payoff_shape_diagnosis": {
@@ -86,19 +92,19 @@
         "status": "present"
       },
       "portfolio_4x_path_planner": {
-        "generated_at_utc": "2026-07-08T07:19:30Z",
+        "generated_at_utc": "2026-07-08T07:50:36Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/portfolio_4x_path_planner.json",
-        "sha256": "981738ac267d6b32603d05030d2911bd777f544a7376fab6b74d762eb7d7ba2c",
+        "sha256": "0566a23af336298e6bcf28d2edfa4d625b01de5b17d64615df2655a80d47a202",
         "status": "present"
       },
       "trader_goal_loop_orchestrator": {
-        "generated_at_utc": "2026-07-08T07:19:31.177952+00:00",
+        "generated_at_utc": "2026-07-08T07:50:41.970268+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/trader_goal_loop_orchestrator.json",
-        "sha256": "8ae80ded942e0bb2cf74466a20aeb20c50f67bfe5f1e7b82add0cf3345952a6b",
+        "sha256": "b746e94b9a4ba41b59c903deaacc1cc7acd57d5f228a9c5698fb22d31ff63711",
         "status": "present"
       }
     },
-    "combined_sha256": "983fc26c8f37e94b147e03a9a50df0b824aadab30736505aa46b4c40cf95526e"
+    "combined_sha256": "53d02f8dbf9272dfdc8bbb946be35259f7e23b27cdc7339fdcbdd972d9878abf"
   },
   "contract_goal": "monthly_funding_adjusted_equity_4x",
   "contract_version": "active_trader_contract_v1",
@@ -125,7 +131,7 @@
       "artifact_status": "present",
       "expected_edge_improvement": "TP proof 20勝 / 0 TP負け、期待値 643.2912 JPY、proof gap 0 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
       "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 0。",
-      "generated_at_utc": "2026-07-08T07:19:31.177952+00:00",
+      "generated_at_utc": "2026-07-08T07:50:41.970268+00:00",
       "live_permission_allowed": false,
       "root_improvement_target": "EUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。",
       "selected_next_work_type": "OPERATOR_REVIEW_REPORT",
@@ -153,7 +159,7 @@
         "tp_target_intent": "HARVEST",
         "units": 3000
       },
-      "generated_at_utc": "2026-07-08T07:19:30Z",
+      "generated_at_utc": "2026-07-08T07:50:36Z",
       "live_promotion_allowed": false,
       "planner_can_enter_proof_pack": true,
       "promotion_blockers": [
@@ -174,6 +180,7 @@
         "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
         "NO_LIVE_READY_PORTFOLIO",
         "NO_FRESH_GATEWAY_PERMISSION",
+        "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
         "SELF_IMPROVEMENT_P0_PRESENT",
         "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
         "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -231,9 +238,55 @@
       "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
       "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
     },
+    "limit_sample_mining": {
+      "additional_acceptable_local_samples_found": 0,
+      "artifact_status": "present",
+      "blocker_codes": [
+        "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+        "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED"
+      ],
+      "current_replayed_exact_limit_samples": 4,
+      "execution_ledger_summary": {
+        "acceptable_new_exact_limit_samples": 0,
+        "accepted_current_replay": 1,
+        "by_vehicle": {
+          "LIMIT_ORDER": 9,
+          "MARKET_ORDER": 4,
+          "STOP_ORDER": 7
+        },
+        "by_verdict": {
+          "ACCEPTED_CURRENT_REPLAY": 1,
+          "REJECTED_NON_TARGET_METHOD": 8,
+          "REJECTED_NON_TARGET_OR_NOT_LIMIT": 4,
+          "REJECTED_NOT_LIMIT_ORDER": 7
+        },
+        "rows": 20
+      },
+      "floor_met": false,
+      "generated_at_utc": "2026-07-08T07:50:36Z",
+      "legacy_history_summary": {
+        "acceptable_new_exact_limit_samples": 0,
+        "accepted_current_replay": 3,
+        "by_vehicle": {
+          "LIMIT_ORDER": 4,
+          "STOP_ORDER": 2,
+          "UNKNOWN": 5
+        },
+        "by_verdict": {
+          "ACCEPTED_CURRENT_REPLAY": 3,
+          "REJECTED_CURATED_STRATEGY_NOT_EXACT": 1,
+          "REJECTED_NOT_LIMIT_ORDER": 7
+        },
+        "rows": 11
+      },
+      "remaining_exact_limit_samples": 16,
+      "required_exact_limit_samples": 20,
+      "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED",
+      "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
+    },
     "live_order": {
       "artifact_status": "present",
-      "generated_at_utc": "2026-07-08T07:22:19.413141+00:00",
+      "generated_at_utc": "2026-07-08T07:48:16.502380+00:00",
       "send_requested": false,
       "sent": false,
       "status": "NO_ACTION"
@@ -242,7 +295,7 @@
       "artifact_status": "present",
       "can_create_live_permission": false,
       "can_reach_4x_now": false,
-      "generated_at_utc": "2026-07-08T07:19:30Z",
+      "generated_at_utc": "2026-07-08T07:50:36Z",
       "live_ready_lanes": 0,
       "portfolio_status": "NO_LIVE_READY_PORTFOLIO"
     },
@@ -362,11 +415,11 @@
   },
   "expected_edge_improvement": "Expected improvement is evidence quality, not live permission: exact LIMIT replay and proof-floor reconciliation can separate TP-positive HARVEST (20/0 material; harvest artifact currently 20/0) from market-close leakage.",
   "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only as read-only HARVEST evidence: broad TP proof material shows 20/0, exact LIMIT S5 replay shows 4/0 with expectancy 813.7734 JPY/trade, while proof queue, guardian, negative expectancy, and live gateway blockers remain visible.",
-  "generated_at_utc": "2026-07-08T07:24:10.999138+00:00",
+  "generated_at_utc": "2026-07-08T07:50:46.354326+00:00",
   "live_permission_allowed": false,
   "live_side_effects": [],
   "next_prompt": "Implement EVIDENCE_ACQUISITION for EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST as read-only work. Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. Keep blockers visible: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, MARKET_CLOSE_LEAK_PRESENT, LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY, ACTIVE_DAY_FLOOR_NOT_MET, RISK_ENGINE_PASS_MISSING, LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING, FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING.",
-  "next_trade_enabling_action": "Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples.",
+  "next_trade_enabling_action": "Canonicalize the exact LIMIT S5 bid/ask replay and import or locate additional exact LIMIT/HARVEST rows; current local execution/legacy coverage found 0 new acceptable samples.",
   "no_action_allowed": false,
   "no_action_contract": {
     "blocked_by": [
@@ -470,6 +523,11 @@
       "blocks_live_permission": true,
       "code": "NO_FRESH_GATEWAY_PERMISSION",
       "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
     },
     {
       "blocks_live_permission": true,

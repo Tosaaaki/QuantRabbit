@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools import build_as_4x_proof_path as proof_path
@@ -60,6 +64,80 @@ class As4xProofPathTests(unittest.TestCase):
 
         self.assertFalse(missing["fresh_744h_replay"])
         self.assertFalse(missing["s5_bidask_spread_included_replay"])
+
+    def test_eurusd_limit_sample_mining_does_not_mix_stop_range_or_ambiguous_legacy_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "data"
+            data.mkdir()
+            _write_limit_mining_execution_ledger(data / "execution_ledger.db")
+            _write_limit_mining_legacy_history(data / "legacy_history.db")
+            (data / "eurusd_short_breakout_failure_legacy_sample_search.json").write_text(
+                json.dumps(
+                    {
+                        "accepted_tp_harvest_samples": [{"trade_id": "469278"}],
+                        "rejected_samples": [
+                            {
+                                "trade_id": "469530",
+                                "reason_codes": ["STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"],
+                                "evidence": "direct-USD continuation, not failed-break retest",
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            ctx = {
+                "limit_s5_bidask_replay": {
+                    "replay_sample_count": 2,
+                    "sample_replay_details": [
+                        {"trade_id": "472732"},
+                        {"trade_id": "469278"},
+                    ],
+                }
+            }
+
+            with patch.object(proof_path, "ROOT", root):
+                payload = proof_path.build_eurusd_limit_sample_mining("2026-07-08T00:00:00Z", ctx)
+                doc = proof_path.eurusd_limit_sample_mining_md(payload)
+
+        self.assertEqual(payload["status"], "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED")
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+        self.assertEqual(payload["sample_floor"]["current_replayed_exact_limit_samples"], 2)
+        self.assertEqual(payload["sample_floor"]["additional_acceptable_local_samples_found"], 0)
+        self.assertEqual(payload["sample_floor"]["remaining_exact_limit_samples"], 18)
+        self.assertEqual(payload["execution_ledger_coverage"]["summary"]["accepted_current_replay"], 1)
+        self.assertEqual(payload["execution_ledger_coverage"]["summary"]["acceptable_new_exact_limit_samples"], 0)
+        execution_verdicts = payload["execution_ledger_coverage"]["summary"]["by_verdict"]
+        self.assertEqual(execution_verdicts["REJECTED_NOT_LIMIT_ORDER"], 1)
+        self.assertEqual(execution_verdicts["REJECTED_NON_TARGET_METHOD"], 1)
+        legacy_verdicts = payload["legacy_history_coverage"]["summary"]["by_verdict"]
+        self.assertEqual(legacy_verdicts["ACCEPTED_CURRENT_REPLAY"], 1)
+        self.assertEqual(legacy_verdicts["REJECTED_CURATED_STRATEGY_NOT_EXACT"], 1)
+        self.assertEqual(legacy_verdicts["REJECTED_NOT_LIMIT_ORDER"], 1)
+        self.assertIn("MARKET_ORDER and STOP_ORDER wins remain outside LIMIT proof", doc)
+        self.assertTrue(any("Do not mix MARKET_ORDER" in item for item in payload["do_not_do"]))
+
+    def test_eurusd_limit_sample_mining_floor_met_clears_undersampled_blockers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            ctx = {
+                "limit_s5_bidask_replay": {
+                    "replay_sample_count": 20,
+                    "sample_replay_details": [{"trade_id": str(470000 + index)} for index in range(20)],
+                }
+            }
+
+            with patch.object(proof_path, "ROOT", root):
+                payload = proof_path.build_eurusd_limit_sample_mining("2026-07-08T00:00:00Z", ctx)
+
+        self.assertEqual(payload["status"], "LOCAL_LIMIT_SAMPLE_FLOOR_MET")
+        self.assertTrue(payload["sample_floor"]["floor_met"])
+        self.assertEqual(payload["sample_floor"]["remaining_exact_limit_samples"], 0)
+        self.assertEqual(payload["remaining_blockers"], [])
 
     def test_negative_bidask_replay_is_removed_from_proof_queue_frontier(self) -> None:
         negative_bidask = {
@@ -830,6 +908,209 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", candidate_blockers)
         self.assertIn("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY", candidate_blockers)
         self.assertFalse(payload["live_permission_allowed"])
+
+
+def _write_limit_mining_execution_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                trade_id TEXT,
+                order_id TEXT,
+                event_type TEXT,
+                ts_utc TEXT,
+                lane_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                price REAL,
+                tp REAL,
+                sl REAL,
+                realized_pl_jpy REAL,
+                exit_reason TEXT,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        _insert_execution_triplet(
+            conn,
+            trade_id="472732",
+            order_id="472730",
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+            order_type="LIMIT_ORDER",
+            entry_price=1.14486,
+            tp=1.14406,
+            pl=813.7706,
+        )
+        _insert_execution_triplet(
+            conn,
+            trade_id="471492",
+            order_id="471491",
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            order_type="STOP_ORDER",
+            entry_price=1.16013,
+            tp=1.15932,
+            pl=348.3951,
+        )
+        _insert_execution_triplet(
+            conn,
+            trade_id="471576",
+            order_id="471575",
+            lane_id="range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+            order_type="LIMIT_ORDER",
+            entry_price=1.16379,
+            tp=1.16347,
+            pl=305.0603,
+        )
+
+
+def _insert_execution_triplet(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str,
+    order_id: str,
+    lane_id: str,
+    order_type: str,
+    entry_price: float,
+    tp: float,
+    pl: float,
+) -> None:
+    accepted_raw = json.dumps({"type": order_type})
+    fill_raw = json.dumps(
+        {
+            "type": "ORDER_FILL",
+            "reason": order_type,
+            "fullPrice": {"bids": [{"price": f"{entry_price:.5f}"}], "asks": [{"price": f"{entry_price + 0.00008:.5f}"}]},
+        }
+    )
+    close_raw = json.dumps(
+        {
+            "type": "ORDER_FILL",
+            "reason": "TAKE_PROFIT_ORDER",
+            "fullPrice": {"bids": [{"price": f"{tp - 0.00008:.5f}"}], "asks": [{"price": f"{tp:.5f}"}]},
+        }
+    )
+    conn.execute(
+        "INSERT INTO execution_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (None, order_id, "ORDER_ACCEPTED", "2026-06-01T00:00:00Z", lane_id, "EUR_USD", "SHORT", 1000, entry_price, tp, None, None, "CLIENT_ORDER", accepted_raw),
+    )
+    conn.execute(
+        "INSERT INTO execution_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (trade_id, order_id, "ORDER_FILLED", "2026-06-01T00:01:00Z", lane_id, "EUR_USD", "SHORT", -1000, entry_price, None, None, 0.0, order_type, fill_raw),
+    )
+    conn.execute(
+        "INSERT INTO execution_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (trade_id, f"{order_id}x", "TRADE_CLOSED", "2026-06-01T00:10:00Z", None, "EUR_USD", "SHORT", 1000, tp, None, None, pl, "TAKE_PROFIT_ORDER", close_raw),
+    )
+
+
+def _write_limit_mining_legacy_history(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE live_trade_events (
+                line_no INTEGER PRIMARY KEY,
+                timestamp_text TEXT,
+                action TEXT,
+                pair TEXT,
+                direction TEXT,
+                units INTEGER,
+                price TEXT,
+                pl_jpy REAL,
+                spread_pips REAL,
+                trade_id TEXT,
+                reason TEXT,
+                raw_line TEXT NOT NULL
+            )
+            """
+        )
+        rows = [
+            (
+                1,
+                "2026-04-21 08:32:39 UTC",
+                "ENTRY",
+                "EUR_USD",
+                "SHORT",
+                3000,
+                "1.17656",
+                None,
+                0.8,
+                "469278",
+                None,
+                "[2026-04-21 08:32:39 UTC] ENTRY EUR_USD SHORT 3000u @1.17656 id=469278 via LIMIT fill | TP=1.17590 | thesis=direct_usd_shelf_retest_short",
+            ),
+            (
+                2,
+                "2026-04-21 09:08:35 UTC",
+                "CLOSE",
+                "EUR_USD",
+                "SHORT",
+                3000,
+                "1.17590",
+                314.6844,
+                0.8,
+                "469278",
+                "TAKE_PROFIT_ORDER",
+                "[2026-04-21 09:08:35 UTC] CLOSE EUR_USD SHORT 3000u @1.17590 P/L=+314.6844JPY reason=TAKE_PROFIT_ORDER id=469278",
+            ),
+            (
+                3,
+                "2026-04-23 19:53:00 UTC",
+                "ENTRY",
+                "EUR_USD",
+                "SHORT",
+                4000,
+                "1.16868",
+                None,
+                0.8,
+                "469530",
+                None,
+                "[2026-04-23 19:53:00 UTC] ENTRY EUR_USD SHORT 4000u @1.16868 id=469530 via LIMIT fill | TP=1.16825 | thesis=direct_usd_support_continuation",
+            ),
+            (
+                4,
+                "2026-04-23 20:13:22 UTC",
+                "CLOSE",
+                "EUR_USD",
+                "SHORT",
+                4000,
+                "1.16824",
+                280.5836,
+                0.8,
+                "469530",
+                "TAKE_PROFIT_ORDER",
+                "[2026-04-23 20:13:22 UTC] CLOSE EUR_USD SHORT 4000u @1.16824 P/L=+280.5836JPY reason=TAKE_PROFIT_ORDER id=469530",
+            ),
+            (
+                5,
+                "2026-04-28 11:42 UTC",
+                "STOP_FILL",
+                "EUR_USD",
+                "SHORT",
+                4000,
+                "1.16880",
+                None,
+                0.8,
+                "469741",
+                None,
+                "[2026-04-28 11:42 UTC] STOP_FILL EUR_USD SHORT 4000u @1.16880 trade id=469741 thesis=eurusd_breakdown_stop_reentry",
+            ),
+            (
+                6,
+                "2026-04-28 12:00:39 UTC",
+                "CLOSE",
+                "EUR_USD",
+                "SHORT",
+                4000,
+                "1.16815",
+                414.5686,
+                0.8,
+                "469741",
+                "TAKE_PROFIT_ORDER",
+                "[2026-04-28 12:00:39 UTC] CLOSE EUR_USD SHORT 4000u @1.16815 P/L=+414.5686JPY reason=TAKE_PROFIT_ORDER id=469741",
+            ),
+        ]
+        conn.executemany("INSERT INTO live_trade_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
 if __name__ == "__main__":

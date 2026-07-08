@@ -1,0 +1,950 @@
+{
+  "additional_acceptable_samples": [],
+  "classification_rules": {
+    "accepted": [
+      "pair=EUR_USD",
+      "side=SHORT",
+      "entry vehicle LIMIT_ORDER",
+      "lane or legacy strategy maps to BREAKOUT_FAILURE",
+      "exit reason TAKE_PROFIT_ORDER",
+      "not already present in exact replay"
+    ],
+    "rejected": [
+      "MARKET_ORDER and STOP_ORDER are never counted in LIMIT proof",
+      "RANGE_ROTATION/TREND_CONTINUATION lanes are not BREAKOUT_FAILURE proof",
+      "ambiguous direct-USD or continuation legacy wins remain rejected unless a stronger strategy source maps them to failed-break/retest",
+      "partial-close or duplicate close rows are not used as fresh exact attached-TP samples"
+    ]
+  },
+  "current_replay_trade_ids": [
+    "469278",
+    "469427",
+    "469898",
+    "472732"
+  ],
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage live orders from mining coverage.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify broker TP or SL.",
+    "Do not loosen gates or lower the exact LIMIT sample floor.",
+    "Do not mix MARKET_ORDER, STOP_ORDER, RANGE_ROTATION, TREND_CONTINUATION, or market-close outcomes into LIMIT/HARVEST proof.",
+    "Do not invent operator approval."
+  ],
+  "execution_ledger_coverage": {
+    "rows": [
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16252",
+        "entry_bid": "1.16244",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.16244,
+        "entry_timestamp_utc": "2026-05-20T23:22:03.834877942Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16230",
+        "exit_bid": "1.16222",
+        "exit_price": 1.1623,
+        "exit_timestamp_utc": "2026-05-21T02:19:26.467117092Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471344",
+        "order_price": 1.16244,
+        "realized_pl_jpy": 44.4033,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.16169,
+        "trade_id": "471345",
+        "units": -2000,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16234",
+        "entry_bid": "1.16226",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.16226,
+        "entry_timestamp_utc": "2026-05-21T06:02:04.836429817Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16168",
+        "exit_bid": "1.16160",
+        "exit_price": 1.16168,
+        "exit_timestamp_utc": "2026-05-21T07:04:48.782116661Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471361",
+        "order_price": 1.16226,
+        "realized_pl_jpy": 184.1637,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15961,
+        "trade_id": "471362",
+        "units": -2000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "MARKET_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16250",
+        "entry_bid": "1.16242",
+        "entry_order_type": "MARKET_ORDER",
+        "entry_price": 1.16242,
+        "entry_timestamp_utc": "2026-05-21T06:05:31.185971079Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16168",
+        "exit_bid": "1.16160",
+        "exit_price": 1.16168,
+        "exit_timestamp_utc": "2026-05-21T07:04:48.782116661Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471366",
+        "order_price": null,
+        "realized_pl_jpy": 234.9675,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.16153,
+        "trade_id": "471367",
+        "units": -2000,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "MARKET_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16254",
+        "entry_bid": "1.16246",
+        "entry_order_type": "MARKET_ORDER",
+        "entry_price": 1.16246,
+        "entry_timestamp_utc": "2026-05-21T06:29:45.779611236Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16168",
+        "exit_bid": "1.16160",
+        "exit_price": 1.16168,
+        "exit_timestamp_utc": "2026-05-21T07:04:48.782116661Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471369",
+        "order_price": null,
+        "realized_pl_jpy": 123.8342,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.1614,
+        "trade_id": "471370",
+        "units": -1000,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16015",
+        "entry_bid": "1.16007",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.16007,
+        "entry_timestamp_utc": "2026-05-21T12:56:34.058814784Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.15970",
+        "exit_bid": "1.15962",
+        "exit_price": 1.1597,
+        "exit_timestamp_utc": "2026-05-21T13:08:04.101809246Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471402",
+        "order_price": 1.16007,
+        "realized_pl_jpy": 117.5561,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.15814,
+        "trade_id": "471403",
+        "units": -2000,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.15968",
+        "entry_bid": "1.15960",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.1596,
+        "entry_timestamp_utc": "2026-05-21T17:10:17.793181107Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.15931",
+        "exit_bid": "1.15923",
+        "exit_price": 1.15931,
+        "exit_timestamp_utc": "2026-05-22T14:01:02.963978947Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471418",
+        "order_price": 1.1596,
+        "realized_pl_jpy": 92.1253,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15834,
+        "trade_id": "471419",
+        "units": -2000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16128",
+        "entry_bid": "1.16120",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.1612,
+        "entry_timestamp_utc": "2026-05-22T00:35:16.651612343Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16068",
+        "exit_bid": "1.16060",
+        "exit_price": 1.16068,
+        "exit_timestamp_utc": "2026-05-22T06:54:26.232174896Z",
+        "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+        "order_id": "471443",
+        "order_price": 1.1612,
+        "realized_pl_jpy": 82.58,
+        "reason_codes": [
+          "NOT_EXACT_LIMIT_BREAKOUT_FAILURE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15971,
+        "trade_id": "471444",
+        "units": -1000,
+        "verdict": "REJECTED_NON_TARGET_OR_NOT_LIMIT"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16152",
+        "entry_bid": "1.16144",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.16144,
+        "entry_timestamp_utc": "2026-05-22T05:20:20.654408689Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16086",
+        "exit_bid": "1.16078",
+        "exit_price": 1.16086,
+        "exit_timestamp_utc": "2026-05-22T05:58:19.048214117Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471459",
+        "order_price": 1.16144,
+        "realized_pl_jpy": 92.1091,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.16086,
+        "trade_id": "471460",
+        "units": -1000,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16021",
+        "entry_bid": "1.16013",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.16013,
+        "entry_timestamp_utc": "2026-05-22T15:30:43.566015322Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.15932",
+        "exit_bid": "1.15924",
+        "exit_price": 1.15932,
+        "exit_timestamp_utc": "2026-05-28T03:42:59.092300026Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471491",
+        "order_price": 1.16013,
+        "realized_pl_jpy": 348.3951,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.1583,
+        "trade_id": "471492",
+        "units": -2700,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16021",
+        "entry_bid": "1.16013",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.16013,
+        "entry_timestamp_utc": "2026-05-22T15:49:55.655156327Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.15932",
+        "exit_bid": "1.15924",
+        "exit_price": 1.15932,
+        "exit_timestamp_utc": "2026-05-28T03:42:59.092300026Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        "order_id": "471494",
+        "order_price": 1.16013,
+        "realized_pl_jpy": 348.3951,
+        "reason_codes": [
+          "MARKET_OR_STOP_NOT_LIMIT_PROOF",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": true,
+        "tp_order_price": 1.1583,
+        "trade_id": "471495",
+        "units": -2700,
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16387",
+        "entry_bid": "1.16379",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.16379,
+        "entry_timestamp_utc": "2026-05-26T07:51:39.200452307Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16347",
+        "exit_bid": "1.16339",
+        "exit_price": 1.16347,
+        "exit_timestamp_utc": "2026-05-26T09:02:22.367638744Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471575",
+        "order_price": 1.16379,
+        "realized_pl_jpy": 305.0603,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.16244,
+        "trade_id": "471576",
+        "units": -6000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16390",
+        "entry_bid": "1.16382",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.16382,
+        "entry_timestamp_utc": "2026-05-26T08:11:20.284382592Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16347",
+        "exit_bid": "1.16339",
+        "exit_price": 1.16347,
+        "exit_timestamp_utc": "2026-05-26T09:02:22.367638744Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471578",
+        "order_price": 1.16379,
+        "realized_pl_jpy": 333.6597,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.16244,
+        "trade_id": "471579",
+        "units": -6000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16612",
+        "entry_bid": "1.16604",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.16604,
+        "entry_timestamp_utc": "2026-05-27T12:36:01.185037585Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16420",
+        "exit_bid": "1.16412",
+        "exit_price": 1.1642,
+        "exit_timestamp_utc": "2026-05-27T13:22:13.098972181Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471663",
+        "order_price": 1.16597,
+        "realized_pl_jpy": 878.2549,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.16354,
+        "trade_id": "471664",
+        "units": -3000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16098",
+        "entry_bid": "1.16090",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.1609,
+        "entry_timestamp_utc": "2026-05-28T06:37:33.500494043Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16010",
+        "exit_bid": "1.16002",
+        "exit_price": 1.1601,
+        "exit_timestamp_utc": "2026-06-03T12:35:16.256267464Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471716",
+        "order_price": 1.16089,
+        "realized_pl_jpy": 893.6827,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15895,
+        "trade_id": "471717",
+        "units": -7000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16098",
+        "entry_bid": "1.16090",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.1609,
+        "entry_timestamp_utc": "2026-05-28T06:55:31.164316691Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16010",
+        "exit_bid": "1.16002",
+        "exit_price": 1.1601,
+        "exit_timestamp_utc": "2026-06-03T12:35:16.256267464Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471719",
+        "order_price": 1.16089,
+        "realized_pl_jpy": 893.6827,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15895,
+        "trade_id": "471720",
+        "units": -7000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16166",
+        "entry_bid": "1.16158",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.16158,
+        "entry_timestamp_utc": "2026-05-28T08:59:09.865816940Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16106",
+        "exit_bid": "1.16098",
+        "exit_price": 1.16106,
+        "exit_timestamp_utc": "2026-05-28T10:06:08.424384217Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471724",
+        "order_price": 1.16157,
+        "realized_pl_jpy": 82.7264,
+        "reason_codes": [
+          "LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.15884,
+        "trade_id": "471725",
+        "units": -1000,
+        "verdict": "REJECTED_NON_TARGET_METHOD"
+      },
+      {
+        "accepted_order_type": "MARKET_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.16364",
+        "entry_bid": "1.16356",
+        "entry_order_type": "MARKET_ORDER",
+        "entry_price": 1.16356,
+        "entry_timestamp_utc": "2026-05-28T12:54:35.902929296Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.16308",
+        "exit_bid": "1.16300",
+        "exit_price": 1.16308,
+        "exit_timestamp_utc": "2026-05-28T13:55:51.059701606Z",
+        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "order_id": "471738",
+        "order_price": null,
+        "realized_pl_jpy": 76.3791,
+        "reason_codes": [
+          "NOT_EXACT_LIMIT_BREAKOUT_FAILURE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.16056,
+        "trade_id": "471739",
+        "units": -1000,
+        "verdict": "REJECTED_NON_TARGET_OR_NOT_LIMIT"
+      },
+      {
+        "accepted_order_type": "STOP_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.15379",
+        "entry_bid": "1.15371",
+        "entry_order_type": "STOP_ORDER",
+        "entry_price": 1.15371,
+        "entry_timestamp_utc": "2026-06-08T17:31:48.929389237Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.15290",
+        "exit_bid": "1.15282",
+        "exit_price": 1.1529,
+        "exit_timestamp_utc": "2026-06-10T22:12:05.584184941Z",
+        "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+        "order_id": "472132",
+        "order_price": 1.15372,
+        "realized_pl_jpy": 648.8017,
+        "reason_codes": [
+          "NOT_EXACT_LIMIT_BREAKOUT_FAILURE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": 1.14594,
+        "trade_id": "472133",
+        "units": -5000,
+        "verdict": "REJECTED_NON_TARGET_OR_NOT_LIMIT"
+      },
+      {
+        "accepted_order_type": "LIMIT_ORDER",
+        "already_in_replay": true,
+        "entry_ask": "1.14494",
+        "entry_bid": "1.14486",
+        "entry_order_type": "LIMIT_ORDER",
+        "entry_price": 1.14486,
+        "entry_timestamp_utc": "2026-06-19T08:01:32.903433014Z",
+        "exact_limit_lane": true,
+        "exit_ask": "1.14406",
+        "exit_bid": "1.14398",
+        "exit_price": 1.14406,
+        "exit_timestamp_utc": "2026-06-22T13:01:28.498118489Z",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+        "order_id": "472730",
+        "order_price": 1.14486,
+        "realized_pl_jpy": 813.7706,
+        "reason_codes": [],
+        "target_method_lane": true,
+        "tp_order_price": 1.14414,
+        "trade_id": "472732",
+        "units": -6300,
+        "verdict": "ACCEPTED_CURRENT_REPLAY"
+      },
+      {
+        "accepted_order_type": "MARKET_ORDER",
+        "already_in_replay": false,
+        "entry_ask": "1.14246",
+        "entry_bid": "1.14238",
+        "entry_order_type": "MARKET_ORDER",
+        "entry_price": 1.14238,
+        "entry_timestamp_utc": "2026-06-29T22:27:27.907283119Z",
+        "exact_limit_lane": false,
+        "exit_ask": "1.14182",
+        "exit_bid": "1.14174",
+        "exit_price": 1.14182,
+        "exit_timestamp_utc": "2026-06-30T00:00:20.428140280Z",
+        "lane_id": "",
+        "order_id": "472918",
+        "order_price": null,
+        "realized_pl_jpy": 361.9933,
+        "reason_codes": [
+          "NOT_EXACT_LIMIT_BREAKOUT_FAILURE",
+          "LANE_NOT_TARGET_BREAKOUT_FAILURE",
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "target_method_lane": false,
+        "tp_order_price": null,
+        "trade_id": "472919",
+        "units": -4000,
+        "verdict": "REJECTED_NON_TARGET_OR_NOT_LIMIT"
+      }
+    ],
+    "source": "data/execution_ledger.db",
+    "status": "COVERAGE_COMPLETE_READ_ONLY",
+    "summary": {
+      "acceptable_new_exact_limit_samples": 0,
+      "accepted_current_replay": 1,
+      "by_vehicle": {
+        "LIMIT_ORDER": 9,
+        "MARKET_ORDER": 4,
+        "STOP_ORDER": 7
+      },
+      "by_verdict": {
+        "ACCEPTED_CURRENT_REPLAY": 1,
+        "REJECTED_NON_TARGET_METHOD": 8,
+        "REJECTED_NON_TARGET_OR_NOT_LIMIT": 4,
+        "REJECTED_NOT_LIMIT_ORDER": 7
+      },
+      "rows": 20
+    }
+  },
+  "generated_at_utc": "2026-07-08T07:50:36Z",
+  "legacy_history_coverage": {
+    "rows": [
+      {
+        "already_in_replay": true,
+        "curated_acceptance": true,
+        "curated_rejection": {},
+        "entry_rows": 1,
+        "entry_vehicle": "LIMIT_ORDER",
+        "evidence_excerpts": [
+          "ENTRY:10433::[2026-04-21 08:32:39 UTC] ENTRY EUR_USD SHORT 3000u @1.17656 id=469278 via LIMIT fill | TP=1.17590 SL=1.17690 | pretrade=B(5/10) allocation=B | thesis=direct_usd_shelf_retest_short | Sp=0.8pip",
+          "CLOSE:10434:TAKE_PROFIT_ORDER:[2026-04-21 09:08:35 UTC] CLOSE EUR_USD SHORT 3000u @1.17590 P/L=+314.6844JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469278 txn=469281"
+        ],
+        "first_timestamp_utc": "2026-04-21T08:32:39Z",
+        "last_timestamp_utc": "2026-04-21T09:08:35Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 314.6844,
+        "reason_codes": [],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469278",
+        "verdict": "ACCEPTED_CURRENT_REPLAY"
+      },
+      {
+        "already_in_replay": true,
+        "curated_acceptance": true,
+        "curated_rejection": {},
+        "entry_rows": 1,
+        "entry_vehicle": "LIMIT_ORDER",
+        "evidence_excerpts": [
+          "FILL:222:manual_oanda_fill_backfill:[2026-04-22 14:33 UTC] FILL EUR_USD SHORT 2000u @1.17325 | trade id=469427 | TP=1.17240 | SL=1.17442 | reason=manual_oanda_fill_backfill",
+          "ENTRY:10519::[2026-04-22 14:33:24 UTC] ENTRY EUR_USD SHORT 2000u @1.17325 id=469427 via LIMIT fill (LIMIT id=469426 filled) | TP=1.17240 SL=1.17442 | pretrade=B(4/10)->B0 allocation=B | thesis=EUR offered / USD bid; failed shelf retest; lower-half churn | Sp=0.8pip",
+          "CLOSE:10520:TAKE_PROFIT_ORDER:[2026-04-22 14:53:12 UTC] CLOSE EUR_USD SHORT 2000u @1.17240 P/L=+270.2989JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469427 txn=469430"
+        ],
+        "first_timestamp_utc": "2026-04-22T14:33Z",
+        "last_timestamp_utc": "2026-04-22T14:53:12Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 270.2989,
+        "reason_codes": [],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469427",
+        "verdict": "ACCEPTED_CURRENT_REPLAY"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "Entry row has TP and TAKE_PROFIT_ORDER close, but inspected thesis is eur-usd-short-state-focus-best-direct-usd-seat... not a clear failed-retest or breakout-failure tag.",
+          "reason_codes": [
+            "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+          ]
+        },
+        "entry_rows": 1,
+        "entry_vehicle": "UNKNOWN",
+        "evidence_excerpts": [
+          "ENTRY:10574::[2026-04-23 18:23:21 UTC] ENTRY EUR_USD SHORT 8000u @1.16941 id=469523 TP=1.16828 SL=1.17026 Sp=0.8pip | thesis=eur-usd-short-state-focus-best-direct-usd-seat-eur-usd-short-enter-now-audit | pretrade=S(8/10) allocation=A tag=trader",
+          "CLOSE:10575:TAKE_PROFIT_ORDER:[2026-04-23 19:35:00 UTC] CLOSE EUR_USD SHORT 8000u @1.16828 P/L=1441.0983JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469523 txn=469526"
+        ],
+        "first_timestamp_utc": "2026-04-23T18:23:21Z",
+        "last_timestamp_utc": "2026-04-23T19:35:00Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 1441.0983,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469523",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "Entry row has LIMIT fill and TAKE_PROFIT_ORDER close, but inspected thesis is direct_usd_support/lower-shelf continuation, not clearly BREAKOUT_FAILURE.",
+          "reason_codes": [
+            "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+          ]
+        },
+        "entry_rows": 1,
+        "entry_vehicle": "LIMIT_ORDER",
+        "evidence_excerpts": [
+          "ENTRY:10578::[2026-04-23 19:53:00 UTC] ENTRY EUR_USD SHORT 4000u @1.16868 id=469530 via LIMIT fill (LIMIT id=469529 filled) | TP=1.16825 SL=1.16928 | pretrade=A(7/10) allocation=A | thesis=eur-usd-short-audit-eur-usd-short-audit-narrative-edge-b-b-1-16868-1-16825-direct-usd-support | Sp=0.8pip",
+          "LIMIT_FILL:10584::[2026-04-23 19:53:00 UTC] LIMIT_FILL EUR_USD SHORT 4000u @1.16868 trade id=469530 from order id=469529 TP=1.16825 SL=1.16928 tag=trader",
+          "CLOSE:10589:TAKE_PROFIT_ORDER:[2026-04-23 20:13:22 UTC] CLOSE EUR_USD SHORT 4000u @1.16824 P/L=+280.5836JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469530 txn=469542",
+          "CLOSE:10590:TAKE_PROFIT_ORDER:[2026-04-23 20:13:22 UTC] CLOSE EUR_USD SHORT 4000u @1.16824 P/L=+280.5836JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469530 txn=469542"
+        ],
+        "first_timestamp_utc": "2026-04-23T19:53:00Z",
+        "last_timestamp_utc": "2026-04-23T20:13:22Z",
+        "limit_fill_rows": 1,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 561.1672,
+        "reason_codes": [
+          "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE",
+          "TP_CLOSE_COUNT_NOT_ONE"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 2,
+        "trade_id": "469530",
+        "verdict": "REJECTED_CURATED_STRATEGY_NOT_EXACT"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "Entry row has TP and TAKE_PROFIT_ORDER close, but inspected supporting state describes live direct-USD/inventory lead rather than failed-breakout proof.",
+          "reason_codes": [
+            "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+          ]
+        },
+        "entry_rows": 1,
+        "entry_vehicle": "UNKNOWN",
+        "evidence_excerpts": [
+          "ENTRY:10592::[2026-04-23 22:05:12 UTC] ENTRY EUR_USD SHORT 8000u @1.16855 id=469548 TP=1.16758 SL=1.16923 Sp=0.8pip | thesis=eur-usd-short-audit-eur-usd-short-audit-inventory-lead-b-na-na | pretrade=S(9/10) allocation=A tag=trader",
+          "PARTIAL_CLOSE:10609:aged_recovered_tactical_short_half_tp:[2026-04-24 02:24:48 UTC] PARTIAL_CLOSE EUR_USD SHORT 4000u @1.16816 P/L=248.7770JPY Sp=0.8pip reason=aged_recovered_tactical_short_half_tp id=469548",
+          "CLOSE:10618:TAKE_PROFIT_ORDER:[2026-04-24 03:29:44 UTC] CLOSE EUR_USD SHORT 4000u @1.16758 P/L=+618.8691JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469548 txn=469584"
+        ],
+        "first_timestamp_utc": "2026-04-23T22:05:12Z",
+        "last_timestamp_utc": "2026-04-24T03:29:44Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 1,
+        "realized_close_pl_jpy": 618.8691,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469548",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape.",
+          "reason_codes": [
+            "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+          ]
+        },
+        "entry_rows": 0,
+        "entry_vehicle": "UNKNOWN",
+        "evidence_excerpts": [
+          "CLOSE:10661:TAKE_PROFIT_ORDER:[2026-04-26 21:04:55 UTC] CLOSE EUR_USD SHORT 1000u @1.17029 P/L=+271.9401JPY Sp=6.0pip reason=TAKE_PROFIT_ORDER id=469641 txn=469648"
+        ],
+        "first_timestamp_utc": "2026-04-26T21:04:55Z",
+        "last_timestamp_utc": "2026-04-26T21:04:55Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 271.9401,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469641",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape.",
+          "reason_codes": [
+            "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+          ]
+        },
+        "entry_rows": 0,
+        "entry_vehicle": "UNKNOWN",
+        "evidence_excerpts": [
+          "MODIFY:10697:protection_check_SL_too_tight_ATR0.6_widen_to_M5_swing_high tag=trader:[2026-04-28 08:26:32 UTC] MODIFY EUR_USD SHORT trade id=469715 SL 1.17092->1.17164 txn=469719 reason=protection_check_SL_too_tight_ATR0.6_widen_to_M5_swing_high tag=trader",
+          "CLOSE:10705:TAKE_PROFIT_ORDER:[2026-04-28 09:36:13 UTC] CLOSE EUR_USD SHORT 1000u @1.16880 P/L=+245.2571JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469715 txn=469726"
+        ],
+        "first_timestamp_utc": "2026-04-28T08:26:32Z",
+        "last_timestamp_utc": "2026-04-28T09:36:13Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 245.2571,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469715",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape.",
+          "reason_codes": [
+            "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+          ]
+        },
+        "entry_rows": 0,
+        "entry_vehicle": "STOP_ORDER",
+        "evidence_excerpts": [
+          "STOP_FILL:10708::[2026-04-28 11:42 UTC] STOP_FILL EUR_USD SHORT 4000u @1.16880 trade id=469741 from order id=469730 TP=1.16815 SL=1.16955 Sp=0.8pip pretrade=A(6/10) allocation=A tag=trader thesis=eurusd_breakdown_stop_reentry [MANUAL LOG REPAIR - broker fill detected by session_data]",
+          "CLOSE:10720:TAKE_PROFIT_ORDER:[2026-04-28 12:00:39 UTC] CLOSE EUR_USD SHORT 4000u @1.16815 P/L=+414.5686JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469741 txn=469744"
+        ],
+        "first_timestamp_utc": "2026-04-28T11:42Z",
+        "last_timestamp_utc": "2026-04-28T12:00:39Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 414.5686,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 1,
+        "tp_close_rows": 1,
+        "trade_id": "469741",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape.",
+          "reason_codes": [
+            "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+          ]
+        },
+        "entry_rows": 0,
+        "entry_vehicle": "UNKNOWN",
+        "evidence_excerpts": [
+          "CLOSE:10854:TAKE_PROFIT_ORDER:[2026-04-29 12:51:31 UTC] CLOSE EUR_USD SHORT 8000u @1.16958 P/L=+1213.2191JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469855 txn=469858"
+        ],
+        "first_timestamp_utc": "2026-04-29T12:51:31Z",
+        "last_timestamp_utc": "2026-04-29T12:51:31Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 1213.2191,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469855",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": false,
+        "curated_acceptance": false,
+        "curated_rejection": {
+          "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape.",
+          "reason_codes": [
+            "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+          ]
+        },
+        "entry_rows": 0,
+        "entry_vehicle": "STOP_ORDER",
+        "evidence_excerpts": [
+          "STOP_FILL:10870::[2026-04-29 16:49:00 UTC] STOP_FILL EUR_USD SHORT 4000u @1.16844 trade id=469880 from order id=469861 TP=1.16724 SL=1.16918 Sp=0.8pip pretrade=A(6/10) thesis=eurusd_break_floor_continuation allocation=A tag=trader",
+          "CLOSE:10871:TAKE_PROFIT_ORDER:[2026-04-29 18:11:23 UTC] CLOSE EUR_USD SHORT 4000u @1.16724 P/L=+768.3227JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469880 txn=469883"
+        ],
+        "first_timestamp_utc": "2026-04-29T16:49:00Z",
+        "last_timestamp_utc": "2026-04-29T18:11:23Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 768.3227,
+        "reason_codes": [
+          "ENTRY_VEHICLE_NOT_LIMIT_ORDER"
+        ],
+        "stop_fill_rows": 1,
+        "tp_close_rows": 1,
+        "trade_id": "469880",
+        "verdict": "REJECTED_NOT_LIMIT_ORDER"
+      },
+      {
+        "already_in_replay": true,
+        "curated_acceptance": true,
+        "curated_rejection": {},
+        "entry_rows": 1,
+        "entry_vehicle": "LIMIT_ORDER",
+        "evidence_excerpts": [
+          "ENTRY:10889::[2026-04-29 23:16:58 UTC] ENTRY EUR_USD SHORT 8000u @1.16790 id=469898 via LIMIT fill (LIMIT id=469893 filled) | TP=1.16645 SL=1.16835 | pretrade=S(10/10)->A allocation=A | thesis=eurusd_failed_shelf_retest | Sp=0.8pip",
+          "PROTECTION_UPDATE:10890:protection_check_structural_widen_h1_bb_mid:[2026-04-29 23:18:38 UTC] PROTECTION_UPDATE EUR_USD SHORT id=469898 SL 1.16835 -> 1.16929 reason=protection_check_structural_widen_h1_bb_mid",
+          "CLOSE:10893:TAKE_PROFIT_ORDER:[2026-04-30 02:45:12 UTC] CLOSE EUR_USD SHORT 8000u @1.16645 P/L=+1856.3399JPY Sp=0.8pip reason=TAKE_PROFIT_ORDER id=469898 txn=469912"
+        ],
+        "first_timestamp_utc": "2026-04-29T23:16:58Z",
+        "last_timestamp_utc": "2026-04-30T02:45:12Z",
+        "limit_fill_rows": 0,
+        "partial_close_rows": 0,
+        "realized_close_pl_jpy": 1856.3399,
+        "reason_codes": [],
+        "stop_fill_rows": 0,
+        "tp_close_rows": 1,
+        "trade_id": "469898",
+        "verdict": "ACCEPTED_CURRENT_REPLAY"
+      }
+    ],
+    "source": "data/legacy_history.db live_trade_events",
+    "status": "COVERAGE_COMPLETE_READ_ONLY",
+    "summary": {
+      "acceptable_new_exact_limit_samples": 0,
+      "accepted_current_replay": 3,
+      "by_vehicle": {
+        "LIMIT_ORDER": 4,
+        "STOP_ORDER": 2,
+        "UNKNOWN": 5
+      },
+      "by_verdict": {
+        "ACCEPTED_CURRENT_REPLAY": 3,
+        "REJECTED_CURATED_STRATEGY_NOT_EXACT": 1,
+        "REJECTED_NOT_LIMIT_ORDER": 7
+      },
+      "rows": 11
+    }
+  },
+  "live_permission_allowed": false,
+  "live_side_effects": [],
+  "mode": "read_only_eurusd_short_breakout_failure_limit_sample_mining",
+  "next_read_only_actions": [
+    "Do not reclassify MARKET/STOP or range/trend wins into the LIMIT proof floor.",
+    "If more samples are needed, import or locate additional broker/legacy rows with exact LIMIT_ORDER entry, attached TAKE_PROFIT_ORDER exit, and BREAKOUT_FAILURE-equivalent strategy evidence.",
+    "If exact LIMIT history remains exhausted, split MARKET and STOP vehicles into separate read-only proof contracts instead of mixing them into LIMIT.",
+    "Keep live_permission_allowed=false until risk, guardian/operator review, verifier, gateway, and fresh broker truth all pass."
+  ],
+  "read_only": true,
+  "remaining_blockers": [
+    {
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "evidence": "4/20 exact LIMIT samples after read-only local mining.",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
+    },
+    {
+      "code": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+      "evidence": "No additional acceptable exact LIMIT/HARVEST rows were found in execution_ledger.db or legacy_history.db under the current classification rules.",
+      "status": "EVIDENCE_ACQUISITION_BLOCKER"
+    }
+  ],
+  "sample_floor": {
+    "additional_acceptable_local_samples_found": 0,
+    "current_replayed_exact_limit_samples": 4,
+    "floor_met": false,
+    "remaining_exact_limit_samples": 16,
+    "required_exact_limit_samples": 20,
+    "total_exact_limit_samples_after_local_mining": 4
+  },
+  "source_artifacts": [
+    "data/execution_ledger.db",
+    "data/legacy_history.db",
+    "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+    "data/eurusd_short_breakout_failure_legacy_sample_search.json"
+  ],
+  "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED",
+  "target_lane": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
+}

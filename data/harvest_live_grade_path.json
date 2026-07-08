@@ -40,13 +40,13 @@
       "remaining_blocker_codes": [
         "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
         "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+        "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
         "NEGATIVE_EXPECTANCY_ACTIVE",
         "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
         "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
         "NO_LIVE_READY_PORTFOLIO",
-        "NO_FRESH_GATEWAY_PERMISSION",
-        "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY"
+        "NO_FRESH_GATEWAY_PERMISSION"
       ],
       "replay_losses": 0,
       "replay_sample_count": 4,
@@ -55,6 +55,53 @@
       "spread_proof_positive": true,
       "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
       "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
+    },
+    "limit_sample_mining": {
+      "additional_acceptable_samples": [],
+      "execution_ledger_summary": {
+        "acceptable_new_exact_limit_samples": 0,
+        "accepted_current_replay": 1,
+        "by_vehicle": {
+          "LIMIT_ORDER": 9,
+          "MARKET_ORDER": 4,
+          "STOP_ORDER": 7
+        },
+        "by_verdict": {
+          "ACCEPTED_CURRENT_REPLAY": 1,
+          "REJECTED_NON_TARGET_METHOD": 8,
+          "REJECTED_NON_TARGET_OR_NOT_LIMIT": 4,
+          "REJECTED_NOT_LIMIT_ORDER": 7
+        },
+        "rows": 20
+      },
+      "legacy_history_summary": {
+        "acceptable_new_exact_limit_samples": 0,
+        "accepted_current_replay": 3,
+        "by_vehicle": {
+          "LIMIT_ORDER": 4,
+          "STOP_ORDER": 2,
+          "UNKNOWN": 5
+        },
+        "by_verdict": {
+          "ACCEPTED_CURRENT_REPLAY": 3,
+          "REJECTED_CURATED_STRATEGY_NOT_EXACT": 1,
+          "REJECTED_NOT_LIMIT_ORDER": 7
+        },
+        "rows": 11
+      },
+      "remaining_blocker_codes": [
+        "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+        "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED"
+      ],
+      "sample_floor": {
+        "additional_acceptable_local_samples_found": 0,
+        "current_replayed_exact_limit_samples": 4,
+        "floor_met": false,
+        "remaining_exact_limit_samples": 16,
+        "required_exact_limit_samples": 20,
+        "total_exact_limit_samples_after_local_mining": 4
+      },
+      "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED"
     },
     "live_promotion_allowed": false,
     "method": "BREAKOUT_FAILURE",
@@ -107,6 +154,7 @@
       "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
       "NO_LIVE_READY_PORTFOLIO",
       "NO_FRESH_GATEWAY_PERMISSION",
+      "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
       "SELF_IMPROVEMENT_P0_PRESENT",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -198,7 +246,7 @@
       "take_profit_wins": 20
     }
   },
-  "generated_at_utc": "2026-07-08T07:19:30Z",
+  "generated_at_utc": "2026-07-08T07:50:36Z",
   "harvest_candidate_count": 12,
   "live_permission_allowed": false,
   "live_promotion_allowed": false,
@@ -277,6 +325,10 @@
     },
     {
       "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "status": "BLOCKING_LIVE_GRADE"
+    },
+    {
+      "code": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
       "status": "BLOCKING_LIVE_GRADE"
     },
     {
@@ -368,13 +420,13 @@
         "remaining_blocker_codes": [
           "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
           "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+          "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
           "NEGATIVE_EXPECTANCY_ACTIVE",
           "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
           "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
           "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
           "NO_LIVE_READY_PORTFOLIO",
-          "NO_FRESH_GATEWAY_PERMISSION",
-          "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY"
+          "NO_FRESH_GATEWAY_PERMISSION"
         ],
         "replay_losses": 0,
         "replay_sample_count": 4,
@@ -383,6 +435,53 @@
         "spread_proof_positive": true,
         "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
         "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
+      },
+      "limit_sample_mining": {
+        "additional_acceptable_samples": [],
+        "execution_ledger_summary": {
+          "acceptable_new_exact_limit_samples": 0,
+          "accepted_current_replay": 1,
+          "by_vehicle": {
+            "LIMIT_ORDER": 9,
+            "MARKET_ORDER": 4,
+            "STOP_ORDER": 7
+          },
+          "by_verdict": {
+            "ACCEPTED_CURRENT_REPLAY": 1,
+            "REJECTED_NON_TARGET_METHOD": 8,
+            "REJECTED_NON_TARGET_OR_NOT_LIMIT": 4,
+            "REJECTED_NOT_LIMIT_ORDER": 7
+          },
+          "rows": 20
+        },
+        "legacy_history_summary": {
+          "acceptable_new_exact_limit_samples": 0,
+          "accepted_current_replay": 3,
+          "by_vehicle": {
+            "LIMIT_ORDER": 4,
+            "STOP_ORDER": 2,
+            "UNKNOWN": 5
+          },
+          "by_verdict": {
+            "ACCEPTED_CURRENT_REPLAY": 3,
+            "REJECTED_CURATED_STRATEGY_NOT_EXACT": 1,
+            "REJECTED_NOT_LIMIT_ORDER": 7
+          },
+          "rows": 11
+        },
+        "remaining_blocker_codes": [
+          "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+          "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED"
+        ],
+        "sample_floor": {
+          "additional_acceptable_local_samples_found": 0,
+          "current_replayed_exact_limit_samples": 4,
+          "floor_met": false,
+          "remaining_exact_limit_samples": 16,
+          "required_exact_limit_samples": 20,
+          "total_exact_limit_samples_after_local_mining": 4
+        },
+        "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED"
       },
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
@@ -435,6 +534,7 @@
         "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
         "NO_LIVE_READY_PORTFOLIO",
         "NO_FRESH_GATEWAY_PERMISSION",
+        "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
         "SELF_IMPROVEMENT_P0_PRESENT",
         "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
         "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -561,6 +661,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "TREND_CONTINUATION",
       "month_scale_blocker": null,
@@ -670,6 +771,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": null,
@@ -743,6 +845,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": null,
@@ -816,6 +919,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": null,
@@ -889,6 +993,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "RANGE_ROTATION",
       "month_scale_blocker": {
@@ -980,6 +1085,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": null,
@@ -1099,6 +1205,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "RANGE_ROTATION",
       "month_scale_blocker": null,
@@ -1230,6 +1337,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "TREND_CONTINUATION",
       "month_scale_blocker": null,
@@ -1352,6 +1460,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": null,
@@ -1426,6 +1535,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "BREAKOUT_FAILURE",
       "month_scale_blocker": {
@@ -1512,6 +1622,7 @@
         "data/execution_timing_audit.json"
       ],
       "limit_s5_bidask_replay": null,
+      "limit_sample_mining": null,
       "live_promotion_allowed": false,
       "method": "RANGE_ROTATION",
       "month_scale_blocker": {
@@ -1590,9 +1701,12 @@
     },
     {
       "action_id": "mine_additional_exact_limit_harvest_samples",
+      "current_exact_limit_sample_gap": 16,
+      "current_local_additional_acceptable_samples": 0,
+      "current_local_coverage_status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED",
       "live_side_effects": [],
       "read_only": true,
-      "success_condition": "Additional accepted rows are LIMIT + ATTACHED_TECHNICAL_TP + HARVEST only; MARKET/STOP rows remain excluded.",
+      "success_condition": "Additional accepted rows are LIMIT + ATTACHED_TECHNICAL_TP + HARVEST only; MARKET/STOP/range/trend rows remain excluded.",
       "target": "EUR_USD|SHORT|BREAKOUT_FAILURE"
     },
     {
@@ -1634,6 +1748,7 @@
     "data/portfolio_4x_path_planner.json",
     "data/eurusd_short_breakout_failure_proof_floor_update.json",
     "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+    "data/eurusd_short_breakout_failure_limit_sample_mining.json",
     "data/profitability_acceptance.json",
     "data/trader_support_bot.json",
     "data/live_order_request.json",

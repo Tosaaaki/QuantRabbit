@@ -32,12 +32,18 @@ AUDJPY_REPAIR_LANES = (
     "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
     "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
 )
+EURUSD_LIMIT_TARGET_LANE = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+EURUSD_LIMIT_TARGET_BASE_LANE = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+EURUSD_LIMIT_TARGET_SHAPE = "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST"
+EURUSD_LIMIT_SAMPLE_FLOOR = 20
 
 
 def main() -> int:
     generated_at = _now()
     as_loop = _load_as_loop()
     context = _context(as_loop)
+    limit_sample_mining = build_eurusd_limit_sample_mining(generated_at, context)
+    context["limit_sample_mining"] = limit_sample_mining
     payloads = {
         "data/post_gate_expectancy_gap_trace.json": build_post_gate_gap_trace(generated_at, context),
         "data/historical_only_to_fresh_proof_replay.json": build_historical_only_replay(generated_at, context),
@@ -45,6 +51,7 @@ def main() -> int:
         "data/audjpy_short_breakout_failure_limit_proof_pack.json": build_audjpy_limit_proof_pack(generated_at, context),
         "data/manual_eurusd_tp_replacement_provenance.json": build_manual_eurusd_tp_replacement_provenance(generated_at, context),
         "data/profitability_acceptance_blocker_reconciliation.json": build_profitability_acceptance_blocker_reconciliation(generated_at, context),
+        "data/eurusd_short_breakout_failure_limit_sample_mining.json": limit_sample_mining,
     }
     portfolio_planner = build_portfolio_planner(generated_at, context)
     payloads["data/portfolio_4x_path_planner.json"] = portfolio_planner
@@ -60,6 +67,9 @@ def main() -> int:
         "docs/audjpy_short_breakout_failure_limit_proof_pack.md": audjpy_limit_proof_pack_md(payloads["data/audjpy_short_breakout_failure_limit_proof_pack.json"]),
         "docs/manual_eurusd_tp_replacement_provenance.md": manual_eurusd_tp_replacement_provenance_md(payloads["data/manual_eurusd_tp_replacement_provenance.json"]),
         "docs/profitability_acceptance_blocker_reconciliation.md": profitability_acceptance_blocker_reconciliation_md(payloads["data/profitability_acceptance_blocker_reconciliation.json"]),
+        "docs/eurusd_short_breakout_failure_limit_sample_mining.md": eurusd_limit_sample_mining_md(
+            payloads["data/eurusd_short_breakout_failure_limit_sample_mining.json"]
+        ),
         "docs/portfolio_4x_path_planner.md": portfolio_planner_md(payloads["data/portfolio_4x_path_planner.json"]),
         "docs/harvest_live_grade_path_report.md": harvest_live_grade_path_md(payloads["data/harvest_live_grade_path.json"]),
     }
@@ -831,6 +841,7 @@ def build_harvest_live_grade_path(
             "data/portfolio_4x_path_planner.json",
             "data/eurusd_short_breakout_failure_proof_floor_update.json",
             "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+            "data/eurusd_short_breakout_failure_limit_sample_mining.json",
             "data/profitability_acceptance.json",
             "data/trader_support_bot.json",
             "data/live_order_request.json",
@@ -867,6 +878,124 @@ def build_harvest_live_grade_path(
             "negative_expectancy_must_remain_visible": True,
             "month_scale_negative_must_remain_visible": True,
         },
+    }
+
+
+def build_eurusd_limit_sample_mining(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    replay = ctx["limit_s5_bidask_replay"]
+    replay_trade_ids = _replayed_limit_trade_ids(replay)
+    legacy_search = _load_json("data/eurusd_short_breakout_failure_legacy_sample_search.json")
+    accepted_legacy_ids = {
+        str(row.get("trade_id"))
+        for row in legacy_search.get("accepted_tp_harvest_samples") or []
+        if isinstance(row, dict) and row.get("trade_id")
+    }
+    rejected_legacy = _legacy_rejection_map(legacy_search)
+    execution = _mine_execution_ledger_eurusd_limit_samples(replay_trade_ids)
+    legacy = _mine_legacy_eurusd_limit_samples(
+        replay_trade_ids=replay_trade_ids,
+        accepted_legacy_ids=accepted_legacy_ids,
+        rejected_legacy=rejected_legacy,
+    )
+    additional = [
+        row
+        for row in execution.get("rows", []) + legacy.get("rows", [])
+        if row.get("verdict") == "ACCEPTABLE_NEW_EXACT_LIMIT_SAMPLE"
+    ]
+    observed_count = _int(replay.get("replay_sample_count")) or len(replay_trade_ids)
+    total_after_local_mining = observed_count + len(additional)
+    remaining = max(0, EURUSD_LIMIT_SAMPLE_FLOOR - total_after_local_mining)
+    floor_met = remaining == 0
+    local_coverage_exhausted = len(additional) == 0 and not floor_met
+    if floor_met:
+        status = "LOCAL_LIMIT_SAMPLE_FLOOR_MET"
+    elif additional:
+        status = "LOCAL_LIMIT_SAMPLE_COVERAGE_FOUND_NEW_CANDIDATES"
+    else:
+        status = "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED"
+    remaining_blockers = []
+    if not floor_met:
+        remaining_blockers.append(
+            {
+                "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
+                "evidence": (
+                    f"{total_after_local_mining}/{EURUSD_LIMIT_SAMPLE_FLOOR} exact LIMIT samples "
+                    "after read-only local mining."
+                ),
+            }
+        )
+    if local_coverage_exhausted:
+        remaining_blockers.append(
+            {
+                "code": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+                "status": "EVIDENCE_ACQUISITION_BLOCKER",
+                "evidence": (
+                    "No additional acceptable exact LIMIT/HARVEST rows were found in execution_ledger.db or "
+                    "legacy_history.db under the current classification rules."
+                ),
+            }
+        )
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_eurusd_short_breakout_failure_limit_sample_mining",
+        "status": status,
+        "target_shape": EURUSD_LIMIT_TARGET_SHAPE,
+        "target_lane": EURUSD_LIMIT_TARGET_LANE,
+        "read_only": True,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+        "source_artifacts": [
+            "data/execution_ledger.db",
+            "data/legacy_history.db",
+            "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+            "data/eurusd_short_breakout_failure_legacy_sample_search.json",
+        ],
+        "sample_floor": {
+            "required_exact_limit_samples": EURUSD_LIMIT_SAMPLE_FLOOR,
+            "current_replayed_exact_limit_samples": observed_count,
+            "additional_acceptable_local_samples_found": len(additional),
+            "total_exact_limit_samples_after_local_mining": total_after_local_mining,
+            "remaining_exact_limit_samples": remaining,
+            "floor_met": floor_met,
+        },
+        "current_replay_trade_ids": sorted(replay_trade_ids),
+        "additional_acceptable_samples": additional,
+        "execution_ledger_coverage": execution,
+        "legacy_history_coverage": legacy,
+        "classification_rules": {
+            "accepted": [
+                "pair=EUR_USD",
+                "side=SHORT",
+                "entry vehicle LIMIT_ORDER",
+                "lane or legacy strategy maps to BREAKOUT_FAILURE",
+                "exit reason TAKE_PROFIT_ORDER",
+                "not already present in exact replay",
+            ],
+            "rejected": [
+                "MARKET_ORDER and STOP_ORDER are never counted in LIMIT proof",
+                "RANGE_ROTATION/TREND_CONTINUATION lanes are not BREAKOUT_FAILURE proof",
+                "ambiguous direct-USD or continuation legacy wins remain rejected unless a stronger strategy source maps them to failed-break/retest",
+                "partial-close or duplicate close rows are not used as fresh exact attached-TP samples",
+            ],
+        },
+        "remaining_blockers": remaining_blockers,
+        "next_read_only_actions": [
+            "Do not reclassify MARKET/STOP or range/trend wins into the LIMIT proof floor.",
+            "If more samples are needed, import or locate additional broker/legacy rows with exact LIMIT_ORDER entry, attached TAKE_PROFIT_ORDER exit, and BREAKOUT_FAILURE-equivalent strategy evidence.",
+            "If exact LIMIT history remains exhausted, split MARKET and STOP vehicles into separate read-only proof contracts instead of mixing them into LIMIT.",
+            "Keep live_permission_allowed=false until risk, guardian/operator review, verifier, gateway, and fresh broker truth all pass.",
+        ],
+        "do_not_do": [
+            "Do not send live orders.",
+            "Do not stage live orders from mining coverage.",
+            "Do not cancel orders.",
+            "Do not close positions.",
+            "Do not modify broker TP or SL.",
+            "Do not loosen gates or lower the exact LIMIT sample floor.",
+            "Do not mix MARKET_ORDER, STOP_ORDER, RANGE_ROTATION, TREND_CONTINUATION, or market-close outcomes into LIMIT/HARVEST proof.",
+            "Do not invent operator approval.",
+        ],
     }
 
 
@@ -977,6 +1106,7 @@ def harvest_rank_row(
         },
         "month_scale_blocker": row.get("month_scale_blocker"),
         "limit_s5_bidask_replay": limit_replay,
+        "limit_sample_mining": _target_limit_sample_mining(row, ctx),
     }
 
 
@@ -1013,6 +1143,8 @@ def harvest_blockers(
 
 def harvest_required_next_actions(closest: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
     target = closest.get("candidate_id") or closest.get("shape_key")
+    mining = ctx.get("limit_sample_mining") if isinstance(ctx.get("limit_sample_mining"), dict) else {}
+    mining_floor = mining.get("sample_floor") if isinstance(mining.get("sample_floor"), dict) else {}
     return [
         {
             "action_id": "canonicalize_limit_s5_bidask_replay",
@@ -1030,7 +1162,10 @@ def harvest_required_next_actions(closest: dict[str, Any], ctx: dict[str, Any]) 
             "target": target,
             "read_only": True,
             "live_side_effects": [],
-            "success_condition": "Additional accepted rows are LIMIT + ATTACHED_TECHNICAL_TP + HARVEST only; MARKET/STOP rows remain excluded.",
+            "current_local_coverage_status": mining.get("status"),
+            "current_local_additional_acceptable_samples": mining_floor.get("additional_acceptable_local_samples_found"),
+            "current_exact_limit_sample_gap": mining_floor.get("remaining_exact_limit_samples"),
+            "success_condition": "Additional accepted rows are LIMIT + ATTACHED_TECHNICAL_TP + HARVEST only; MARKET/STOP/range/trend rows remain excluded.",
         },
         {
             "action_id": "refresh_profitability_and_goal_chain",
@@ -1193,6 +1328,24 @@ def _target_limit_replay(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, 
     }
 
 
+def _target_limit_sample_mining(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] | None:
+    if row.get("shape_key") != "EUR_USD|SHORT|BREAKOUT_FAILURE":
+        return None
+    mining = ctx.get("limit_sample_mining")
+    if not isinstance(mining, dict) or not mining:
+        return None
+    execution_summary = _nested(mining, "execution_ledger_coverage", "summary") or {}
+    legacy_summary = _nested(mining, "legacy_history_coverage", "summary") or {}
+    return {
+        "status": mining.get("status"),
+        "sample_floor": mining.get("sample_floor"),
+        "additional_acceptable_samples": mining.get("additional_acceptable_samples") or [],
+        "execution_ledger_summary": execution_summary,
+        "legacy_history_summary": legacy_summary,
+        "remaining_blocker_codes": _codes_from_values(mining.get("remaining_blockers") or []),
+    }
+
+
 def _current_intent_summary(lane_id: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     intent_row = ctx["intent_by_lane"].get(str(lane_id)) if lane_id else {}
     intent_row = intent_row if isinstance(intent_row, dict) else {}
@@ -1262,6 +1415,9 @@ def _candidate_promotion_blockers(
         blockers.append("NOT_IN_PROOF_QUEUE")
     if limit_replay:
         blockers.extend(limit_replay.get("remaining_blocker_codes") or [])
+    limit_sample_mining = _target_limit_sample_mining(row, ctx)
+    if limit_sample_mining:
+        blockers.extend(limit_sample_mining.get("remaining_blocker_codes") or [])
     blockers.extend(_codes_from_values(ctx["acceptance"].get("blockers") or []))
     if ctx["acceptance"].get("status"):
         blockers.append(str(ctx["acceptance"].get("status")))
@@ -1336,6 +1492,310 @@ def _unique_strings(values: list[Any]) -> list[str]:
         seen.add(text)
         out.append(text)
     return out
+
+
+def _replayed_limit_trade_ids(replay: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for row in replay.get("sample_replay_details") or []:
+        if isinstance(row, dict) and row.get("trade_id"):
+            ids.add(str(row["trade_id"]))
+    return ids
+
+
+def _legacy_rejection_map(legacy_search: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rejected: dict[str, dict[str, Any]] = {}
+    for row in legacy_search.get("rejected_samples") or []:
+        if not isinstance(row, dict):
+            continue
+        raw_trade_id = str(row.get("trade_id") or "")
+        if not raw_trade_id:
+            continue
+        for trade_id in [part.strip() for part in raw_trade_id.split(",") if part.strip()]:
+            rejected[trade_id] = {
+                "reason_codes": _unique_strings(row.get("reason_codes") or []),
+                "evidence": row.get("evidence"),
+            }
+    return rejected
+
+
+def _mine_execution_ledger_eurusd_limit_samples(replay_trade_ids: set[str]) -> dict[str, Any]:
+    db_path = ROOT / "data" / "execution_ledger.db"
+    if not db_path.exists():
+        return {
+            "source": "data/execution_ledger.db",
+            "status": "SOURCE_MISSING",
+            "rows": [],
+            "summary": {},
+        }
+    sql = """
+        WITH fills AS (
+            SELECT trade_id, order_id, ts_utc AS entry_ts, lane_id, pair, side, units,
+                   price AS entry_price, exit_reason AS entry_order_type, raw_json AS fill_raw
+            FROM execution_events
+            WHERE event_type = 'ORDER_FILLED'
+              AND pair = 'EUR_USD'
+              AND side = 'SHORT'
+        ),
+        accepts AS (
+            SELECT order_id, ts_utc AS accepted_ts, lane_id AS accepted_lane_id,
+                   price AS order_price, tp AS tp_order_price, sl AS sl_order_price,
+                   raw_json AS accept_raw
+            FROM execution_events
+            WHERE event_type = 'ORDER_ACCEPTED'
+              AND pair = 'EUR_USD'
+              AND side = 'SHORT'
+        ),
+        closes AS (
+            SELECT trade_id, ts_utc AS exit_ts, order_id AS close_order_id,
+                   units AS close_units, price AS exit_price, realized_pl_jpy,
+                   exit_reason, raw_json AS close_raw
+            FROM execution_events
+            WHERE event_type = 'TRADE_CLOSED'
+              AND pair = 'EUR_USD'
+              AND side = 'SHORT'
+              AND exit_reason = 'TAKE_PROFIT_ORDER'
+        )
+        SELECT fills.trade_id, fills.order_id, fills.entry_ts, fills.lane_id,
+               accepts.accepted_lane_id, accepts.accepted_ts, fills.units,
+               accepts.order_price, fills.entry_price, accepts.tp_order_price,
+               accepts.sl_order_price, closes.exit_ts, closes.close_order_id,
+               closes.exit_price, closes.realized_pl_jpy, fills.entry_order_type,
+               accepts.accept_raw, fills.fill_raw, closes.close_raw
+        FROM fills
+        JOIN accepts ON accepts.order_id = fills.order_id
+        JOIN closes ON closes.trade_id = fills.trade_id
+        ORDER BY fills.entry_ts, fills.trade_id
+    """
+    rows: list[dict[str, Any]] = []
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        for record in conn.execute(sql):
+            accept_raw = _loads_json(record["accept_raw"])
+            fill_raw = _loads_json(record["fill_raw"])
+            close_raw = _loads_json(record["close_raw"])
+            accepted_type = str(accept_raw.get("type") or "")
+            vehicle = accepted_type or str(record["entry_order_type"] or "")
+            lane_id = str(record["lane_id"] or record["accepted_lane_id"] or "")
+            target_method = lane_id in {EURUSD_LIMIT_TARGET_LANE, EURUSD_LIMIT_TARGET_BASE_LANE}
+            exact_limit_lane = lane_id == EURUSD_LIMIT_TARGET_LANE
+            is_limit = vehicle == "LIMIT_ORDER"
+            trade_id = str(record["trade_id"] or "")
+            reason_codes: list[str] = []
+            if trade_id in replay_trade_ids:
+                verdict = "ACCEPTED_CURRENT_REPLAY"
+            elif is_limit and target_method:
+                verdict = "ACCEPTABLE_NEW_EXACT_LIMIT_SAMPLE"
+            elif target_method and not is_limit:
+                verdict = "REJECTED_NOT_LIMIT_ORDER"
+                reason_codes.append("MARKET_OR_STOP_NOT_LIMIT_PROOF")
+            elif is_limit and not target_method:
+                verdict = "REJECTED_NON_TARGET_METHOD"
+                reason_codes.append("LIMIT_BUT_NOT_BREAKOUT_FAILURE_TARGET_LANE")
+            else:
+                verdict = "REJECTED_NON_TARGET_OR_NOT_LIMIT"
+                reason_codes.append("NOT_EXACT_LIMIT_BREAKOUT_FAILURE")
+            if not target_method:
+                reason_codes.append("LANE_NOT_TARGET_BREAKOUT_FAILURE")
+            if not is_limit:
+                reason_codes.append("ENTRY_VEHICLE_NOT_LIMIT_ORDER")
+            rows.append(
+                {
+                    "trade_id": trade_id,
+                    "order_id": str(record["order_id"] or ""),
+                    "lane_id": lane_id,
+                    "accepted_order_type": accepted_type,
+                    "entry_order_type": record["entry_order_type"],
+                    "target_method_lane": target_method,
+                    "exact_limit_lane": exact_limit_lane,
+                    "entry_timestamp_utc": record["entry_ts"],
+                    "exit_timestamp_utc": record["exit_ts"],
+                    "units": record["units"],
+                    "order_price": _round(record["order_price"], 5),
+                    "entry_price": _round(record["entry_price"], 5),
+                    "tp_order_price": _round(record["tp_order_price"], 5),
+                    "exit_price": _round(record["exit_price"], 5),
+                    "realized_pl_jpy": _round(record["realized_pl_jpy"], 4),
+                    "entry_bid": _nested(fill_raw, "fullPrice", "bids", 0, "price"),
+                    "entry_ask": _nested(fill_raw, "fullPrice", "asks", 0, "price"),
+                    "exit_bid": _nested(close_raw, "fullPrice", "bids", 0, "price"),
+                    "exit_ask": _nested(close_raw, "fullPrice", "asks", 0, "price"),
+                    "verdict": verdict,
+                    "reason_codes": _unique_strings(reason_codes),
+                    "already_in_replay": trade_id in replay_trade_ids,
+                }
+            )
+    return {
+        "source": "data/execution_ledger.db",
+        "status": "COVERAGE_COMPLETE_READ_ONLY",
+        "rows": rows,
+        "summary": _sample_mining_summary(rows),
+    }
+
+
+def _mine_legacy_eurusd_limit_samples(
+    *,
+    replay_trade_ids: set[str],
+    accepted_legacy_ids: set[str],
+    rejected_legacy: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    db_path = ROOT / "data" / "legacy_history.db"
+    if not db_path.exists():
+        return {
+            "source": "data/legacy_history.db live_trade_events",
+            "status": "SOURCE_MISSING",
+            "rows": [],
+            "summary": {},
+        }
+    sql = """
+        SELECT trade_id,
+               MIN(timestamp_text) AS first_ts,
+               MAX(timestamp_text) AS last_ts,
+               SUM(CASE WHEN action = 'ENTRY' THEN 1 ELSE 0 END) AS entry_rows,
+               SUM(CASE WHEN action = 'LIMIT_FILL' THEN 1 ELSE 0 END) AS limit_fill_rows,
+               SUM(CASE WHEN action = 'STOP_FILL' THEN 1 ELSE 0 END) AS stop_fill_rows,
+               SUM(CASE WHEN action = 'PARTIAL_CLOSE' THEN 1 ELSE 0 END) AS partial_close_rows,
+               SUM(CASE WHEN action = 'CLOSE' AND reason = 'TAKE_PROFIT_ORDER' THEN 1 ELSE 0 END) AS tp_close_rows,
+               ROUND(SUM(CASE WHEN action = 'CLOSE' THEN COALESCE(pl_jpy, 0) ELSE 0 END), 4) AS close_pl_jpy,
+               GROUP_CONCAT(action || ':' || line_no || ':' || COALESCE(reason, '') || ':' || raw_line, X'1E') AS evidence
+        FROM live_trade_events
+        WHERE trade_id IN (
+            SELECT trade_id
+            FROM live_trade_events
+            WHERE pair = 'EUR_USD'
+              AND direction = 'SHORT'
+              AND action = 'CLOSE'
+              AND reason = 'TAKE_PROFIT_ORDER'
+        )
+        GROUP BY trade_id
+        ORDER BY CAST(trade_id AS INTEGER)
+    """
+    rows: list[dict[str, Any]] = []
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        for record in conn.execute(sql):
+            trade_id = str(record["trade_id"] or "")
+            excerpts = _legacy_evidence_excerpts(str(record["evidence"] or ""))
+            vehicle = _legacy_entry_vehicle(record, excerpts)
+            reason_codes: list[str] = []
+            curated_rejection = rejected_legacy.get(trade_id)
+            partial_close_count = _int(record["partial_close_rows"]) or 0
+            tp_close_count = _int(record["tp_close_rows"]) or 0
+            if trade_id in replay_trade_ids:
+                verdict = "ACCEPTED_CURRENT_REPLAY"
+            elif trade_id in accepted_legacy_ids and vehicle == "LIMIT_ORDER" and partial_close_count == 0:
+                verdict = "ACCEPTABLE_NEW_EXACT_LIMIT_SAMPLE"
+            elif vehicle != "LIMIT_ORDER":
+                verdict = "REJECTED_NOT_LIMIT_ORDER"
+                reason_codes.append("ENTRY_VEHICLE_NOT_LIMIT_ORDER")
+            elif partial_close_count:
+                verdict = "REJECTED_PARTIAL_CLOSE_MIXED_IN"
+                reason_codes.append("PARTIAL_CLOSE_MIXED_WITH_TP")
+            elif curated_rejection:
+                verdict = "REJECTED_CURATED_STRATEGY_NOT_EXACT"
+                reason_codes.extend(curated_rejection.get("reason_codes") or [])
+            elif _legacy_has_breakout_failure_language(excerpts):
+                verdict = "POTENTIAL_REQUIRES_STRATEGY_REVIEW"
+                reason_codes.append("NOT_IN_CURATED_ACCEPTED_SAMPLE_SET")
+            else:
+                verdict = "REJECTED_STRATEGY_NOT_UNAMBIGUOUS"
+                reason_codes.append("STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE")
+            if tp_close_count != 1:
+                reason_codes.append("TP_CLOSE_COUNT_NOT_ONE")
+            rows.append(
+                {
+                    "trade_id": trade_id,
+                    "first_timestamp_utc": _legacy_timestamp_to_iso(record["first_ts"]),
+                    "last_timestamp_utc": _legacy_timestamp_to_iso(record["last_ts"]),
+                    "entry_rows": _int(record["entry_rows"]) or 0,
+                    "limit_fill_rows": _int(record["limit_fill_rows"]) or 0,
+                    "stop_fill_rows": _int(record["stop_fill_rows"]) or 0,
+                    "partial_close_rows": partial_close_count,
+                    "tp_close_rows": tp_close_count,
+                    "entry_vehicle": vehicle,
+                    "realized_close_pl_jpy": _round(record["close_pl_jpy"], 4),
+                    "verdict": verdict,
+                    "reason_codes": _unique_strings(reason_codes),
+                    "already_in_replay": trade_id in replay_trade_ids,
+                    "curated_acceptance": trade_id in accepted_legacy_ids,
+                    "curated_rejection": curated_rejection or {},
+                    "evidence_excerpts": excerpts[:4],
+                }
+            )
+    return {
+        "source": "data/legacy_history.db live_trade_events",
+        "status": "COVERAGE_COMPLETE_READ_ONLY",
+        "rows": rows,
+        "summary": _sample_mining_summary(rows),
+    }
+
+
+def _sample_mining_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_verdict: dict[str, int] = defaultdict(int)
+    by_vehicle: dict[str, int] = defaultdict(int)
+    for row in rows:
+        by_verdict[str(row.get("verdict") or "UNKNOWN")] += 1
+        by_vehicle[str(row.get("accepted_order_type") or row.get("entry_vehicle") or row.get("entry_order_type") or "UNKNOWN")] += 1
+    return {
+        "rows": len(rows),
+        "accepted_current_replay": by_verdict.get("ACCEPTED_CURRENT_REPLAY", 0),
+        "acceptable_new_exact_limit_samples": by_verdict.get("ACCEPTABLE_NEW_EXACT_LIMIT_SAMPLE", 0),
+        "by_verdict": dict(sorted(by_verdict.items())),
+        "by_vehicle": dict(sorted(by_vehicle.items())),
+    }
+
+
+def _legacy_entry_vehicle(record: sqlite3.Row, excerpts: list[str]) -> str:
+    text = "\n".join(excerpts).lower()
+    if (_int(record["limit_fill_rows"]) or 0) > 0 or "via limit fill" in text:
+        return "LIMIT_ORDER"
+    if (_int(record["stop_fill_rows"]) or 0) > 0 or "stop_fill" in text or " via stop" in text:
+        return "STOP_ORDER"
+    if "market" in text and "order" in text:
+        return "MARKET_ORDER"
+    return "UNKNOWN"
+
+
+def _legacy_evidence_excerpts(raw: str) -> list[str]:
+    excerpts = []
+    for part in raw.split("\x1e"):
+        part = " ".join(part.split())
+        if not part:
+            continue
+        excerpts.append(part[:500])
+    return excerpts
+
+
+def _legacy_has_breakout_failure_language(excerpts: list[str]) -> bool:
+    text = "\n".join(excerpts).lower()
+    positive_tokens = (
+        "breakout_failure",
+        "failed_shelf",
+        "failed shelf",
+        "failed-retest",
+        "failed retest",
+        "broken-shelf",
+        "shelf retest",
+    )
+    return any(token in text for token in positive_tokens)
+
+
+def _legacy_timestamp_to_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text.replace(" UTC", "Z").replace(" ", "T", 1)
+
+
+def _loads_json(raw: Any) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _context(as_loop: Any) -> dict[str, Any]:
@@ -2436,6 +2896,20 @@ def harvest_live_grade_path_md(payload: dict[str, Any]) -> str:
                 "",
             ]
         )
+    mining = closest.get("limit_sample_mining") if isinstance(closest.get("limit_sample_mining"), dict) else {}
+    if mining:
+        floor = mining.get("sample_floor") if isinstance(mining.get("sample_floor"), dict) else {}
+        lines.extend(
+            [
+                "## Exact LIMIT Sample Mining",
+                "",
+                f"- Status: `{mining.get('status')}`",
+                f"- Current exact LIMIT samples: `{floor.get('current_replayed_exact_limit_samples')}`",
+                f"- Additional acceptable local samples: `{floor.get('additional_acceptable_local_samples_found')}`",
+                f"- Remaining exact LIMIT gap: `{floor.get('remaining_exact_limit_samples')}`",
+                "",
+            ]
+        )
     lines.extend(["## Promotion Blockers", ""])
     for row in payload.get("promotion_blockers") or []:
         lines.append(f"- `{row.get('code')}`: {row.get('status')}")
@@ -2462,6 +2936,60 @@ def harvest_live_grade_path_md(payload: dict[str, Any]) -> str:
         lines.append(
             f"- `{action.get('action_id')}`: target `{action.get('target')}`; live_side_effects={action.get('live_side_effects')}"
         )
+    return "\n".join(lines) + "\n"
+
+
+def eurusd_limit_sample_mining_md(payload: dict[str, Any]) -> str:
+    floor = payload.get("sample_floor") if isinstance(payload.get("sample_floor"), dict) else {}
+    execution = payload.get("execution_ledger_coverage") if isinstance(payload.get("execution_ledger_coverage"), dict) else {}
+    legacy = payload.get("legacy_history_coverage") if isinstance(payload.get("legacy_history_coverage"), dict) else {}
+    lines = [
+        "# EUR_USD SHORT BREAKOUT_FAILURE LIMIT Sample Mining",
+        "",
+        f"Generated: `{payload.get('generated_at_utc')}`",
+        "",
+        "## Verdict",
+        "",
+        f"- Status: `{payload.get('status')}`",
+        f"- Target shape: `{payload.get('target_shape')}`",
+        f"- Read-only: `{payload.get('read_only')}`",
+        f"- Live permission allowed: `{payload.get('live_permission_allowed')}`",
+        f"- Current replayed exact LIMIT samples: `{floor.get('current_replayed_exact_limit_samples')}`",
+        f"- Additional acceptable local samples found: `{floor.get('additional_acceptable_local_samples_found')}`",
+        f"- Remaining exact LIMIT samples: `{floor.get('remaining_exact_limit_samples')}`",
+        "",
+        "This artifact is evidence coverage only. It did not send, stage, cancel, close, mutate broker state, change launchd, or relax gates.",
+        "",
+        "## Coverage Summary",
+        "",
+        f"- Execution ledger: `{(execution.get('summary') or {}).get('by_verdict')}`",
+        f"- Legacy history: `{(legacy.get('summary') or {}).get('by_verdict')}`",
+        "",
+        "## Additional Acceptable Samples",
+        "",
+    ]
+    additional = payload.get("additional_acceptable_samples") or []
+    if additional:
+        for row in additional:
+            lines.append(f"- `{row.get('trade_id')}` from `{row.get('lane_id') or row.get('source')}`")
+    else:
+        lines.append("- None.")
+    lines.extend(
+        [
+            "",
+            "## Rejection Boundary",
+            "",
+            "- MARKET_ORDER and STOP_ORDER wins remain outside LIMIT proof.",
+            "- RANGE_ROTATION and TREND_CONTINUATION wins remain outside BREAKOUT_FAILURE proof.",
+            "- Ambiguous direct-USD or continuation legacy rows remain rejected unless a stronger source maps them to failed-break/retest.",
+            "- Partial-close or duplicate close rows are not counted as fresh exact attached-TP samples.",
+            "",
+            "## Next Read-Only Actions",
+            "",
+        ]
+    )
+    for action in payload.get("next_read_only_actions") or []:
+        lines.append(f"- {action}")
     return "\n".join(lines) + "\n"
 
 

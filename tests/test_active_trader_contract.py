@@ -34,6 +34,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 daily_target_state_path=paths["daily"],
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -58,9 +59,16 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertTrue(payload["current_state"]["proof_floor"]["proof_floor_reached"])
         self.assertEqual(payload["current_state"]["limit_s5_bidask_replay"]["replay_wins"], 4)
         self.assertTrue(payload["current_state"]["limit_s5_bidask_replay"]["passed"])
+        self.assertEqual(
+            payload["current_state"]["limit_sample_mining"]["additional_acceptable_local_samples_found"],
+            0,
+        )
+        self.assertEqual(payload["current_state"]["limit_sample_mining"]["remaining_exact_limit_samples"], 16)
         self.assertIn("Canonicalize", payload["next_trade_enabling_action"])
+        self.assertIn("0 new acceptable samples", payload["next_trade_enabling_action"])
         blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
         self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", blocker_codes)
+        self.assertIn("LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED", blocker_codes)
         self.assertIn("S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", blocker_codes)
         self.assertIn("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION", blocker_codes)
         self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", blocker_codes)
@@ -106,6 +114,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 daily_target_state_path=paths["daily"],
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -232,6 +241,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 daily_target_state_path=paths["daily"],
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -272,6 +282,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 daily_target_state_path=paths["daily"],
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -303,6 +314,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "daily": root / "data" / "daily_target_state.json",
         "proof_floor": root / "data" / "eurusd_short_breakout_failure_proof_floor_update.json",
         "replay": root / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+        "mining": root / "data" / "eurusd_short_breakout_failure_limit_sample_mining.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }
@@ -332,7 +344,11 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
                 "planner_can_enter_proof_pack": False,
                 "can_create_live_permission": False,
                 "live_promotion_allowed": False,
-                "promotion_blockers": ["SAMPLE_GAP", "GUARDIAN_OPERATOR_REVIEW_BLOCK"],
+                "promotion_blockers": [
+                    "SAMPLE_GAP",
+                    "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+                    "GUARDIAN_OPERATOR_REVIEW_BLOCK",
+                ],
                 "tp_proof": {
                     "take_profit_trades": 17,
                     "take_profit_losses": 0,
@@ -462,6 +478,41 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
             "next_read_only_actions": [
                 "Reconcile/import accepted legacy LIMIT rows.",
                 "Mine additional exact LIMIT samples.",
+            ],
+        },
+    )
+    _write_json(
+        paths["mining"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED",
+            "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+            "read_only": True,
+            "live_permission_allowed": False,
+            "live_side_effects": [],
+            "sample_floor": {
+                "required_exact_limit_samples": 20,
+                "current_replayed_exact_limit_samples": 4,
+                "additional_acceptable_local_samples_found": 0,
+                "total_exact_limit_samples_after_local_mining": 4,
+                "remaining_exact_limit_samples": 16,
+                "floor_met": False,
+            },
+            "execution_ledger_coverage": {
+                "summary": {
+                    "accepted_current_replay": 1,
+                    "acceptable_new_exact_limit_samples": 0,
+                }
+            },
+            "legacy_history_coverage": {
+                "summary": {
+                    "accepted_current_replay": 3,
+                    "acceptable_new_exact_limit_samples": 0,
+                }
+            },
+            "remaining_blockers": [
+                {"code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"},
+                {"code": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED"},
             ],
         },
     )

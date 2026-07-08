@@ -40,15 +40,15 @@
         "status": "present"
       },
       "harvest_live_grade_path": {
-        "generated_at_utc": "2026-07-08T07:19:30Z",
+        "generated_at_utc": "2026-07-08T07:50:36Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/harvest_live_grade_path.json",
-        "sha256": "1260bea9123cd6b3734f4b0ef9e04f30eeb291a8b832d9f4a52a846364bf4f50",
+        "sha256": "0d2d8466dcb82492aa59f402333e1c8eaa688971c7b11f7901cb56631f70492d",
         "status": "present"
       },
       "live_order_request": {
-        "generated_at_utc": "2026-07-08T07:12:34.705462+00:00",
+        "generated_at_utc": "2026-07-08T07:48:16.502380+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/live_order_request.json",
-        "sha256": "2a033d59fd37b4fa45224807c812fd94072dc2bd7a8f0307f9f4bc79005f6149",
+        "sha256": "fe045a9099ce77d567af228bed7fadddfde8abc9018ac1f837c5cc5ea90230db",
         "status": "present"
       },
       "payoff_shape_diagnosis": {
@@ -58,9 +58,9 @@
         "status": "present"
       },
       "portfolio_4x_path_planner": {
-        "generated_at_utc": "2026-07-08T07:19:30Z",
+        "generated_at_utc": "2026-07-08T07:50:36Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/portfolio_4x_path_planner.json",
-        "sha256": "981738ac267d6b32603d05030d2911bd777f544a7376fab6b74d762eb7d7ba2c",
+        "sha256": "0566a23af336298e6bcf28d2edfa4d625b01de5b17d64615df2655a80d47a202",
         "status": "present"
       },
       "trader_repair_orchestrator": {
@@ -70,8 +70,8 @@
         "status": "present"
       }
     },
-    "combined_sha256": "a99b10c8f714062ebf6579f2e3f85b3fbab8bd22a095c194b8047fdb56210c54",
-    "latest_input_generated_at_utc": "2026-07-08T07:19:30Z"
+    "combined_sha256": "60a496dc17c8f2da8d2bd694581b8bd0f726e0dd80de5de142ff8492fc333932",
+    "latest_input_generated_at_utc": "2026-07-08T07:50:36Z"
   },
   "contract_version": "trader_goal_loop_orchestrator_v1",
   "current_phase": "SCOUT_BLOCKED_OPERATOR_REVIEW",
@@ -94,6 +94,7 @@
       "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
       "NO_LIVE_READY_PORTFOLIO",
       "NO_FRESH_GATEWAY_PERMISSION",
+      "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
       "SELF_IMPROVEMENT_P0_PRESENT",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -149,7 +150,7 @@
   },
   "expected_edge_improvement": "TP proof 20勝 / 0 TP負け、期待値 643.2912 JPY、proof gap 0 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
   "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 0。",
-  "generated_at_utc": "2026-07-08T07:19:31.177952+00:00",
+  "generated_at_utc": "2026-07-08T07:50:41.970268+00:00",
   "harvest_state": {
     "actual_proof_queue_member": true,
     "artifact_status": "present",
@@ -171,7 +172,7 @@
       "status": "DRY_RUN_BLOCKED",
       "units": 3000
     },
-    "generated_at_utc": "2026-07-08T07:19:30Z",
+    "generated_at_utc": "2026-07-08T07:50:36Z",
     "live_promotion_allowed": false,
     "method": "BREAKOUT_FAILURE",
     "pair": "EUR_USD",
@@ -195,6 +196,7 @@
       "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
       "NO_LIVE_READY_PORTFOLIO",
       "NO_FRESH_GATEWAY_PERMISSION",
+      "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
       "SELF_IMPROVEMENT_P0_PRESENT",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -216,6 +218,7 @@
       "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
       "NO_LIVE_READY_PORTFOLIO",
       "NO_FRESH_GATEWAY_PERMISSION",
+      "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
       "SELF_IMPROVEMENT_P0_PRESENT",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
@@ -241,7 +244,7 @@
   "live_permission_ready_check_state": {
     "all_checks_passed": false,
     "broker_snapshot_fetched_at_utc": "2026-07-06T18:29:43.982661+00:00",
-    "broker_truth_age_seconds": 132587.195,
+    "broker_truth_age_seconds": 134457.988,
     "broker_truth_fresh_seconds": 600,
     "checks": {
       "broker_truth_fresh": false,
@@ -314,7 +317,7 @@
     "source": "input_artifact_summaries_only"
   },
   "payoff_state": {
-    "age_seconds": 755.726,
+    "age_seconds": 2626.518,
     "artifact_status": "present",
     "capture_economics_status": "NEGATIVE_EXPECTANCY",
     "generated_at_utc": "2026-07-08T07:06:55.452302+00:00",
@@ -358,7 +361,7 @@
     "portfolio_4x_path_planner_artifact_status": "present",
     "portfolio_can_create_live_permission": false,
     "portfolio_can_reach_4x_now": false,
-    "portfolio_planner_generated_at_utc": "2026-07-08T07:19:30Z",
+    "portfolio_planner_generated_at_utc": "2026-07-08T07:50:36Z",
     "portfolio_status": "NO_LIVE_READY_PORTFOLIO",
     "primary_blocker": "PROFITABILITY_ACCEPTANCE_BLOCKED",
     "proof_queue_count": 2,
@@ -372,16 +375,16 @@
   "read_only": true,
   "repeat_loop_guard": {
     "current_fingerprint": {
-      "artifact_hash": "a99b10c8f714062ebf6579f2e3f85b3fbab8bd22a095c194b8047fdb56210c54",
+      "artifact_hash": "60a496dc17c8f2da8d2bd694581b8bd0f726e0dd80de5de142ff8492fc333932",
       "key_blocker": "SCOUT_BLOCKED_OPERATOR_REVIEW:NORMAL_ROUTING_FALSE",
-      "latest_input_generated_at_utc": "2026-07-08T07:19:30Z",
+      "latest_input_generated_at_utc": "2026-07-08T07:50:36Z",
       "work_type": "OPERATOR_REVIEW_REPORT"
     },
     "policy": "Do not repeat the same work type for the same artifact hash and key blocker. Repeat only after input generated_at, artifact hash, or key blocker changes.",
     "previous_fingerprint": {
-      "artifact_hash": "1e6d96ebdfe93f1c04c677e2a1d4cf12c4cdac78ece17fb4536495dcedab4a5a",
+      "artifact_hash": "6c47f8a2a05aa8a92c995d4f3df7e95a0fbca8316f0a2ea0f2768c6d36f64935",
       "key_blocker": "SCOUT_BLOCKED_OPERATOR_REVIEW:NORMAL_ROUTING_FALSE",
-      "latest_input_generated_at_utc": "2026-07-08T07:07:11.608506+00:00",
+      "latest_input_generated_at_utc": "2026-07-08T07:47:42Z",
       "work_type": "OPERATOR_REVIEW_REPORT"
     },
     "repeat_allowed": true,

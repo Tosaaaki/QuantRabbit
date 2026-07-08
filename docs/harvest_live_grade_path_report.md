@@ -1,6 +1,6 @@
 # HARVEST Live-Grade Path
 
-Generated: `2026-07-08T07:19:30Z`
+Generated: `2026-07-08T07:50:36Z`
 
 ## Verdict
 
@@ -41,6 +41,13 @@ This is a read-only diagnosis. It did not send orders, cancel orders, close posi
 - Net expectancy after bid/ask: `813.7734`
 - Live-grade candidate: `False`
 
+## Exact LIMIT Sample Mining
+
+- Status: `LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED`
+- Current exact LIMIT samples: `4`
+- Additional acceptable local samples: `0`
+- Remaining exact LIMIT gap: `16`
+
 ## Promotion Blockers
 
 - `RANGE_FORECAST_REQUIRES_RANGE_ROTATION`: BLOCKING_LIVE_GRADE
@@ -60,6 +67,7 @@ This is a read-only diagnosis. It did not send orders, cancel orders, close posi
 - `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`: BLOCKING_LIVE_GRADE
 - `NO_LIVE_READY_PORTFOLIO`: BLOCKING_LIVE_GRADE
 - `NO_FRESH_GATEWAY_PERMISSION`: BLOCKING_LIVE_GRADE
+- `LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED`: BLOCKING_LIVE_GRADE
 - `SELF_IMPROVEMENT_P0_PRESENT`: BLOCKING_LIVE_GRADE
 - `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE`: BLOCKING_LIVE_GRADE
 - `MARKET_CLOSE_LEAK_FAMILY_BLOCKED`: BLOCKING_LIVE_GRADE

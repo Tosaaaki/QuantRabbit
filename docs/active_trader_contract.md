@@ -13,7 +13,7 @@ EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only a
 
 - Root improvement target: Make the EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST vehicle live-grade evidence by canonical replay/proof import, not by mixing MARKET/STOP samples or relaxing gates.
 - Expected edge improvement: Expected improvement is evidence quality, not live permission: exact LIMIT replay and proof-floor reconciliation can separate TP-positive HARVEST (20/0 material; harvest artifact currently 20/0) from market-close leakage.
-- Next trade-enabling action: Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples.
+- Next trade-enabling action: Canonicalize the exact LIMIT S5 bid/ask replay and import or locate additional exact LIMIT/HARVEST rows; current local execution/legacy coverage found 0 new acceptable samples.
 
 ## No Action Contract
 
@@ -31,6 +31,13 @@ EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only a
 - Wins/losses: `4` / `0`
 - Net expectancy after bid/ask: `813.7734`
 - Live-grade candidate: `False`
+
+## Exact LIMIT Sample Mining
+
+- Mining status: `LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED`
+- Current samples: `4`
+- Additional acceptable local samples: `0`
+- Remaining exact LIMIT gap: `16`
 
 ## Remaining Blockers
 
@@ -51,6 +58,7 @@ EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only a
 - `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`: VISIBLE_PROFITABILITY_BLOCKER
 - `NO_LIVE_READY_PORTFOLIO`: BLOCKING_LIVE_PERMISSION
 - `NO_FRESH_GATEWAY_PERMISSION`: BLOCKING_LIVE_PERMISSION
+- `LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED`: BLOCKING_PROOF_QUEUE_PROMOTION
 - `SELF_IMPROVEMENT_P0_PRESENT`: BLOCKING_LIVE_PERMISSION
 - `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE`: BLOCKING_LIVE_PERMISSION
 - `MARKET_CLOSE_LEAK_FAMILY_BLOCKED`: BLOCKING_LIVE_PERMISSION

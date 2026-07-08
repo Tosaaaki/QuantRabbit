@@ -42,6 +42,9 @@ DEFAULT_EURUSD_PROOF_FLOOR_UPDATE = (
 DEFAULT_EURUSD_LIMIT_S5_BIDASK_REPLAY = (
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json"
 )
+DEFAULT_EURUSD_LIMIT_SAMPLE_MINING = (
+    DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_sample_mining.json"
+)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class ActiveTraderContract:
         daily_target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         proof_floor_update_path: Path = DEFAULT_EURUSD_PROOF_FLOOR_UPDATE,
         limit_s5_bidask_replay_path: Path = DEFAULT_EURUSD_LIMIT_S5_BIDASK_REPLAY,
+        limit_sample_mining_path: Path = DEFAULT_EURUSD_LIMIT_SAMPLE_MINING,
         output_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         report_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
         now_utc: datetime | None = None,
@@ -88,6 +92,7 @@ class ActiveTraderContract:
             "daily_target_state": daily_target_state_path,
             "eurusd_short_breakout_failure_proof_floor_update": proof_floor_update_path,
             "eurusd_short_breakout_failure_limit_s5_bidask_replay": limit_s5_bidask_replay_path,
+            "eurusd_short_breakout_failure_limit_sample_mining": limit_sample_mining_path,
         }
         self.output_path = output_path
         self.report_path = report_path
@@ -123,6 +128,9 @@ class ActiveTraderContract:
         replay = _limit_replay_contract_state(
             artifacts["eurusd_short_breakout_failure_limit_s5_bidask_replay"],
             proof=proof,
+        )
+        limit_sample_mining = _limit_sample_mining_contract_state(
+            artifacts["eurusd_short_breakout_failure_limit_sample_mining"]
         )
         scout = _normalize_stale_blocker_codes(scout, proof=proof, proof_floor=proof_floor, replay=replay)
         proof_floor = _normalize_stale_blocker_codes(
@@ -166,6 +174,7 @@ class ActiveTraderContract:
             live_order=live_order,
             replay=replay,
             proof_floor=proof_floor,
+            limit_sample_mining=limit_sample_mining,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -186,7 +195,7 @@ class ActiveTraderContract:
             "no_action_allowed": bool(no_action["no_action_allowed"]),
             "no_action_contract": no_action,
             "active_deployment_gap": active_deployment_gap,
-            "next_trade_enabling_action": _next_trade_enabling_action(selected_active_path, replay),
+            "next_trade_enabling_action": _next_trade_enabling_action(selected_active_path, replay, limit_sample_mining),
             "remaining_blockers": remaining_blockers,
             "current_state": {
                 "harvest": harvest,
@@ -198,6 +207,7 @@ class ActiveTraderContract:
                 "goal_loop": goal_loop,
                 "proof_floor": proof_floor,
                 "limit_s5_bidask_replay": replay,
+                "limit_sample_mining": limit_sample_mining,
             },
             "safety_contract": _safety_contract(),
             "next_prompt": _next_prompt(selected_active_path, remaining_blockers),
@@ -468,6 +478,44 @@ def _limit_replay_contract_state(artifact: dict[str, Any], *, proof: dict[str, A
     }
 
 
+def _limit_sample_mining_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "status": "MISSING",
+            "floor_met": False,
+            "blocker_codes": ["LIMIT_SAMPLE_MINING_ARTIFACT_MISSING"],
+        }
+    floor = artifact.get("sample_floor") if isinstance(artifact.get("sample_floor"), dict) else {}
+    execution = (
+        artifact.get("execution_ledger_coverage")
+        if isinstance(artifact.get("execution_ledger_coverage"), dict)
+        else {}
+    )
+    legacy = (
+        artifact.get("legacy_history_coverage")
+        if isinstance(artifact.get("legacy_history_coverage"), dict)
+        else {}
+    )
+    return {
+        "artifact_status": "present",
+        "status": artifact.get("status"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "target_shape": artifact.get("target_shape"),
+        "current_replayed_exact_limit_samples": _first_int(floor.get("current_replayed_exact_limit_samples"), 0),
+        "additional_acceptable_local_samples_found": _first_int(
+            floor.get("additional_acceptable_local_samples_found"),
+            0,
+        ),
+        "remaining_exact_limit_samples": _first_int(floor.get("remaining_exact_limit_samples"), 0),
+        "required_exact_limit_samples": _first_int(floor.get("required_exact_limit_samples"), 20),
+        "floor_met": bool(floor.get("floor_met")),
+        "execution_ledger_summary": execution.get("summary") or {},
+        "legacy_history_summary": legacy.get("summary") or {},
+        "blocker_codes": _codes_from_blockers(artifact.get("remaining_blockers")),
+    }
+
+
 def _active_deployment_gap(
     *,
     harvest: dict[str, Any],
@@ -593,6 +641,7 @@ def _remaining_blockers(
     live_order: dict[str, Any],
     replay: dict[str, Any],
     proof_floor: dict[str, Any],
+    limit_sample_mining: dict[str, Any],
 ) -> list[dict[str, Any]]:
     codes = _unique(
         _string_list(harvest.get("promotion_blockers"))
@@ -600,6 +649,7 @@ def _remaining_blockers(
         + _string_list(board.get("blocker_codes"))
         + _string_list(replay.get("blocker_codes"))
         + _string_list(proof_floor.get("blocker_codes"))
+        + _string_list(limit_sample_mining.get("blocker_codes"))
     )
     proof_queue_count = proof.get("proof_queue_count", 0)
     if proof_queue_count == 0:
@@ -682,7 +732,11 @@ def _normalize_stale_blocker_codes(
 def _blocker_status(code: str) -> str:
     if code in {"NEGATIVE_EXPECTANCY_ACTIVE", "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"}:
         return "VISIBLE_PROFITABILITY_BLOCKER"
-    if code in {"S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"}:
+    if code in {
+        "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+        "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+        "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+    }:
         return "BLOCKING_PROOF_QUEUE_PROMOTION"
     if "GUARDIAN" in code or "OPERATOR" in code:
         return "BLOCKING_ROUTING_OR_REVIEW"
@@ -770,10 +824,19 @@ def _expected_edge_improvement(
     )
 
 
-def _next_trade_enabling_action(selected_active_path: str, replay: dict[str, Any]) -> str:
+def _next_trade_enabling_action(
+    selected_active_path: str,
+    replay: dict[str, Any],
+    limit_sample_mining: dict[str, Any] | None = None,
+) -> str:
     if selected_active_path == "EVIDENCE_ACQUISITION":
         if replay.get("artifact_status") == "missing":
             return "Generate exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST S5 bid/ask replay artifact."
+        if (limit_sample_mining or {}).get("status") == "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED":
+            return (
+                "Canonicalize the exact LIMIT S5 bid/ask replay and import or locate additional "
+                "exact LIMIT/HARVEST rows; current local execution/legacy coverage found 0 new acceptable samples."
+            )
         return "Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples."
     if selected_active_path == "OPERATOR_REVIEW_REPORT":
         return "Package SCOUT approval/rejection evidence without creating live permission."
@@ -816,6 +879,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     blockers = payload.get("remaining_blockers") or []
     current = payload.get("current_state") if isinstance(payload.get("current_state"), dict) else {}
     replay = current.get("limit_s5_bidask_replay") if isinstance(current.get("limit_s5_bidask_replay"), dict) else {}
+    mining = current.get("limit_sample_mining") if isinstance(current.get("limit_sample_mining"), dict) else {}
     no_action = payload.get("no_action_contract") if isinstance(payload.get("no_action_contract"), dict) else {}
     lines = [
         "# Active Trader Contract",
@@ -851,6 +915,13 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Wins/losses: `{replay.get('replay_wins')}` / `{replay.get('replay_losses')}`",
         f"- Net expectancy after bid/ask: `{replay.get('net_expectancy_after_bidask')}`",
         f"- Live-grade candidate: `{replay.get('live_grade_candidate')}`",
+        "",
+        "## Exact LIMIT Sample Mining",
+        "",
+        f"- Mining status: `{mining.get('status')}`",
+        f"- Current samples: `{mining.get('current_replayed_exact_limit_samples')}`",
+        f"- Additional acceptable local samples: `{mining.get('additional_acceptable_local_samples_found')}`",
+        f"- Remaining exact LIMIT gap: `{mining.get('remaining_exact_limit_samples')}`",
         "",
         "## Remaining Blockers",
         "",
