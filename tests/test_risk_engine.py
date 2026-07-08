@@ -733,7 +733,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
-    def test_oanda_firepower_relaxed_mode_cannot_override_negative_expectancy(self) -> None:
+    def test_oanda_firepower_relaxed_mode_allows_matching_normal_cap_shape(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.LONG,
@@ -789,8 +789,8 @@ class RiskEngineTest(unittest.TestCase):
             snapshot(),
         )
 
-        self.assertFalse(decision.allowed)
-        self.assertIn(
+        self.assertTrue(decision.allowed)
+        self.assertNotIn(
             "LOSS_ASYMMETRY_GUARD_EXCEEDED",
             {issue.code for issue in decision.issues},
         )

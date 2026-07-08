@@ -804,6 +804,11 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             and _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(intent, metadata)
         ):
             return []
+    if (
+        mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
+        and _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(intent, metadata, metrics)
+    ):
+        return []
     status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
     avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
