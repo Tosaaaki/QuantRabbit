@@ -597,6 +597,16 @@ def _remaining_blockers(
             "PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION",
         }
         codes = [code for code in codes if code not in stale_empty_queue_codes]
+    harvest_tp = harvest.get("tp_proof") if isinstance(harvest.get("tp_proof"), dict) else {}
+    broad_tp_proof_reached = bool(proof_floor.get("proof_floor_reached")) or _first_int(
+        harvest_tp.get("proof_gap_trades"),
+        999,
+    ) == 0
+    if broad_tp_proof_reached:
+        codes = [code for code in codes if code != "SAMPLE_GAP"]
+    replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
+    if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
+        codes = [code for code in codes if code != "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING"]
     if not proof_floor.get("proof_floor_reached"):
         codes.append("PROOF_FLOOR_NOT_CANONICALLY_REACHED")
     if not replay.get("live_grade_candidate"):
@@ -858,3 +868,14 @@ def _first_int(*values: Any) -> int:
         if parsed is not None:
             return parsed
     return 0
+
+
+def _first_float(*values: Any) -> float | None:
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None

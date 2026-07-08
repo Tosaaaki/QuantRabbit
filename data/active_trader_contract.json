@@ -5,6 +5,7 @@
       "SCOUT_CANDIDATE_PRESENT",
       "MAX_LOSS_CAP_DEFINED",
       "MIN_LOT_FEASIBLE",
+      "PROOF_QUEUE_HAS_CANDIDATES",
       "REPLAY_OR_PROOF_ACTION_AVAILABLE"
     ],
     "live_deployment_allowed": false,
@@ -25,15 +26,15 @@
   "artifact_index": {
     "artifacts": {
       "as_lane_candidate_board": {
-        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "generated_at_utc": "2026-07-08T06:46:15Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/as_lane_candidate_board.json",
-        "sha256": "015886a8f2129a05d6bee63acd6279d0dbec6e552773cee0e63b105a6b839fc6",
+        "sha256": "a78c43e4de9230ba3d050f858cbca846ffcd27ea183c114c25d92daa48e2cc96",
         "status": "present"
       },
       "as_proof_pack_queue": {
-        "generated_at_utc": "2026-07-06T18:30:26Z",
+        "generated_at_utc": "2026-07-08T06:46:15Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/as_proof_pack_queue.json",
-        "sha256": "f9110391f72a296021167354e050f9e0812dc9bda33cb1f3ad3163d6c5b285b7",
+        "sha256": "e3635a95c74ac07765b5d8aaf7e6b54d90b66aee965f78d3b84722197644e3fe",
         "status": "present"
       },
       "broker_snapshot": {
@@ -67,37 +68,37 @@
         "status": "present"
       },
       "harvest_live_grade_path": {
-        "generated_at_utc": "2026-07-07T12:05:30.789731Z",
+        "generated_at_utc": "2026-07-08T06:46:51Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/harvest_live_grade_path.json",
-        "sha256": "eb37c48622f849e09a9308a3aa579c17b838a82987944f51f01ffc4ec3b2b8bc",
+        "sha256": "e96fc06da1aeb9863df03abd9be10dd1e7d7b437bf2e8af8d7cd9b55169f2426",
         "status": "present"
       },
       "live_order_request": {
-        "generated_at_utc": "2026-07-08T05:55:20.682326+00:00",
+        "generated_at_utc": "2026-07-08T06:26:19.281789+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/live_order_request.json",
-        "sha256": "9f9fc51aaeb115642088b22ec43b6480f8a3bc22176b6f3423e1d9ad8929776f",
+        "sha256": "f80b54898248e3af6ff5b15f62bec88cc972ecb6aae8aec9b50fb72fd5ef9496",
         "status": "present"
       },
       "payoff_shape_diagnosis": {
-        "generated_at_utc": "2026-07-07T11:44:01.450053+00:00",
+        "generated_at_utc": "2026-07-08T06:46:07.970055+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/payoff_shape_diagnosis.json",
-        "sha256": "619f58f8e5ed54a85e50255cbc2536f38d44eb419411e2e2efbd8a06d29a92ac",
+        "sha256": "9524bc578fde2104b12c7ad088cb624aba9ddcc24b8a1803b6dff57caca5b705",
         "status": "present"
       },
       "portfolio_4x_path_planner": {
-        "generated_at_utc": "2026-07-06T18:30:29Z",
+        "generated_at_utc": "2026-07-08T06:46:51Z",
         "path": "/Users/tossaki/App/QuantRabbit/data/portfolio_4x_path_planner.json",
-        "sha256": "17379fb8a3721436087b2ccda43144836a8f0de17731c2fd70cd9fdfbb3cc798",
+        "sha256": "3b2de30e3bf70784dc5d35692e53479eac8f868ea44ca722c1a0977b026612ca",
         "status": "present"
       },
       "trader_goal_loop_orchestrator": {
-        "generated_at_utc": "2026-07-07T15:42:47.638991+00:00",
+        "generated_at_utc": "2026-07-08T06:47:07.603933+00:00",
         "path": "/Users/tossaki/App/QuantRabbit/data/trader_goal_loop_orchestrator.json",
-        "sha256": "696105caff125ddb313dc578eafe95f69dbb296c50a86c3e34e9a987fefb1caf",
+        "sha256": "248206b65c1660d59fd15fe776346bfadbf4faf19881ce47d939b1514a1d24fe",
         "status": "present"
       }
     },
-    "combined_sha256": "d0a65e70a1a6f85422fd5d6e4c0222d37911a5ac6e8836ec4585da0b6cd7e029"
+    "combined_sha256": "9b4aff8430b1a76eca2dd22599096047292ea22880fc881a99d0405355668837"
   },
   "contract_goal": "monthly_funding_adjusted_equity_4x",
   "contract_version": "active_trader_contract_v1",
@@ -115,23 +116,23 @@
         "MEMORY_HEALTH_BLOCKED",
         "PROFITABILITY_ACCEPTANCE_BLOCKED"
       ],
-      "generated_at_utc": "2026-07-06T18:30:26Z",
+      "generated_at_utc": "2026-07-08T06:46:15Z",
       "normal_routing_status": "BLOCKED",
       "primary_blocker": "PROFITABILITY_ACCEPTANCE_BLOCKED",
       "routing_allowed": false
     },
     "goal_loop": {
       "artifact_status": "present",
-      "expected_edge_improvement": "TP proof 17勝 / 0 TP負け、期待値 613.2 JPY、proof gap 3 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
-      "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 3。",
-      "generated_at_utc": "2026-07-07T15:42:47.638991+00:00",
+      "expected_edge_improvement": "TP proof 20勝 / 0 TP負け、期待値 613.2 JPY、proof gap 0 sample、max_loss_jpy_cap 418.0 を起点に、追加証拠で HARVEST の薄い正期待値を補強し、market-close leak / negative expectancy / month-scale replay negative を隠さず NO_TRADE 除外へ回す。",
+      "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE の attached-TP HARVEST 証拠を proof floor まで進め、market-close leak と month-scale negative を隠さず除外/修復できれば、rolling 30d funding-adjusted equity 4x に近づく 正の期待値レーンを増やせる。現在の不足サンプルは 0。",
+      "generated_at_utc": "2026-07-08T06:47:07.603933+00:00",
       "live_permission_allowed": false,
       "root_improvement_target": "EUR_USD|SHORT|BREAKOUT_FAILURE を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。",
       "selected_next_work_type": "OPERATOR_REVIEW_REPORT",
       "status": "NEXT_WORK_SELECTED"
     },
     "harvest": {
-      "actual_proof_queue_member": false,
+      "actual_proof_queue_member": true,
       "artifact_status": "present",
       "can_create_live_permission": false,
       "candidate_id": "EUR_USD|SHORT|BREAKOUT_FAILURE",
@@ -146,37 +147,53 @@
         ],
         "order_type": "LIMIT",
         "risk_allowed": false,
-        "risk_jpy": 418.0,
+        "risk_jpy": 302.1984705599234,
         "status": "DRY_RUN_BLOCKED",
         "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
         "tp_target_intent": "HARVEST",
         "units": 3000
       },
-      "generated_at_utc": "2026-07-07T12:05:30.789731Z",
+      "generated_at_utc": "2026-07-08T06:46:51Z",
       "live_promotion_allowed": false,
-      "planner_can_enter_proof_pack": false,
+      "planner_can_enter_proof_pack": true,
       "promotion_blockers": [
-        "FORECAST_ADVERSE_PATH_BLOCK",
-        "GUARDIAN_OPERATOR_REVIEW_BLOCK",
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
         "MARKET_CLOSE_LEAK_PRESENT",
-        "NOT_IN_PROOF_QUEUE",
-        "SAMPLE_GAP",
+        "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+        "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "RISK_ENGINE_PASS_MISSING",
+        "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
+        "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
+        "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+        "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
         "NEGATIVE_EXPECTANCY_ACTIVE",
-        "PROFITABILITY_ACCEPTANCE_BLOCKED",
+        "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
         "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
-        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
-        "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
         "NO_LIVE_READY_PORTFOLIO",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+        "NO_FRESH_GATEWAY_PERMISSION",
+        "SELF_IMPROVEMENT_P0_PRESENT",
+        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+        "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+        "PROFITABILITY_ACCEPTANCE_BLOCKED",
+        "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+        "NO_LIVE_READY_LANES",
+        "PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION",
+        "PROOF_QUEUE_NOT_PROOF_READY",
+        "PROOF_QUEUE_CANNOT_CREATE_LIVE_PERMISSION"
       ],
       "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION",
       "target_shape_without_vehicle": "EUR_USD|SHORT|BREAKOUT_FAILURE",
       "tp_proof": {
         "proof_floor_trades": 20,
-        "proof_gap_trades": 3,
+        "proof_gap_trades": 0,
         "take_profit_expectancy_jpy": 613.2,
         "take_profit_losses": 0,
-        "take_profit_trades": 17
+        "take_profit_trades": 20
       }
     },
     "limit_s5_bidask_replay": {
@@ -217,7 +234,7 @@
     },
     "live_order": {
       "artifact_status": "present",
-      "generated_at_utc": "2026-07-08T05:55:20.682326+00:00",
+      "generated_at_utc": "2026-07-08T06:26:19.281789+00:00",
       "send_requested": false,
       "sent": false,
       "status": "NO_ACTION"
@@ -226,17 +243,17 @@
       "artifact_status": "present",
       "can_create_live_permission": false,
       "can_reach_4x_now": false,
-      "generated_at_utc": "2026-07-06T18:30:29Z",
+      "generated_at_utc": "2026-07-08T06:46:51Z",
       "live_ready_lanes": 0,
       "portfolio_status": "NO_LIVE_READY_PORTFOLIO"
     },
     "proof": {
       "artifact_status": "present",
       "can_create_live_permission_count": 0,
-      "generated_at_utc": "2026-07-06T18:30:26Z",
-      "proof_queue_count": 0,
+      "generated_at_utc": "2026-07-08T06:46:15Z",
+      "proof_queue_count": 2,
       "proof_queue_count_is_live_permission": false,
-      "proof_queue_empty": true,
+      "proof_queue_empty": false,
       "proof_ready_count": 0,
       "rejected_candidate_count": 4
     },
@@ -349,12 +366,12 @@
       "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE"
     }
   },
-  "expected_edge_improvement": "Expected improvement is evidence quality, not live permission: exact LIMIT replay and proof-floor reconciliation can separate TP-positive HARVEST (20/0 material; harvest artifact currently 17/0) from market-close leakage.",
+  "expected_edge_improvement": "Expected improvement is evidence quality, not live permission: exact LIMIT replay and proof-floor reconciliation can separate TP-positive HARVEST (20/0 material; harvest artifact currently 20/0) from market-close leakage.",
   "four_x_progress_hypothesis": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only as read-only HARVEST evidence: broad TP proof material shows 20/0, exact LIMIT S5 replay shows 4/0 with expectancy 813.7734 JPY/trade, while proof queue, guardian, negative expectancy, and live gateway blockers remain visible.",
-  "generated_at_utc": "2026-07-08T05:56:58.510225+00:00",
+  "generated_at_utc": "2026-07-08T06:50:21.025902+00:00",
   "live_permission_allowed": false,
   "live_side_effects": [],
-  "next_prompt": "Implement EVIDENCE_ACQUISITION for EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST as read-only work. Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. Keep blockers visible: FORECAST_ADVERSE_PATH_BLOCK, GUARDIAN_OPERATOR_REVIEW_BLOCK, MARKET_CLOSE_LEAK_PRESENT, NOT_IN_PROOF_QUEUE, SAMPLE_GAP, NEGATIVE_EXPECTANCY_ACTIVE, PROFITABILITY_ACCEPTANCE_BLOCKED, MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE, MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE, PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION.",
+  "next_prompt": "Implement EVIDENCE_ACQUISITION for EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST as read-only work. Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. Keep blockers visible: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED, MARKET_CLOSE_LEAK_PRESENT, LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY, S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING, ACTIVE_DAY_FLOOR_NOT_MET, RISK_ENGINE_PASS_MISSING, LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING.",
   "next_trade_enabling_action": "Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples.",
   "no_action_allowed": false,
   "no_action_contract": {
@@ -363,6 +380,7 @@
       "SCOUT_CANDIDATE_PRESENT",
       "MAX_LOSS_CAP_DEFINED",
       "MIN_LOT_FEASIBLE",
+      "PROOF_QUEUE_HAS_CANDIDATES",
       "REPLAY_OR_PROOF_ACTION_AVAILABLE"
     ],
     "next_unlock_action": "Preserve S5 fill/touch lag and reconcile legacy LIMIT rows before proof import.",
@@ -376,57 +394,17 @@
   "remaining_blockers": [
     {
       "blocks_live_permission": true,
-      "code": "FORECAST_ADVERSE_PATH_BLOCK",
+      "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
       "blocks_live_permission": true,
-      "code": "GUARDIAN_OPERATOR_REVIEW_BLOCK",
+      "code": "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
       "status": "BLOCKING_ROUTING_OR_REVIEW"
     },
     {
       "blocks_live_permission": true,
-      "code": "MARKET_CLOSE_LEAK_PRESENT",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "NOT_IN_PROOF_QUEUE",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "SAMPLE_GAP",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
-      "status": "VISIBLE_PROFITABILITY_BLOCKER"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "PROFITABILITY_ACCEPTANCE_BLOCKED",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
-      "status": "VISIBLE_PROFITABILITY_BLOCKER"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "NO_LIVE_READY_PORTFOLIO",
+      "code": "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
@@ -436,12 +414,67 @@
     },
     {
       "blocks_live_permission": true,
-      "code": "CURRENT_LANE_BLOCKERS",
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
       "blocks_live_permission": true,
-      "code": "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "ACTIVE_DAY_FLOOR_NOT_MET",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "RISK_ENGINE_PASS_MISSING",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "status": "VISIBLE_PROFITABILITY_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "status": "VISIBLE_PROFITABILITY_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NO_LIVE_READY_PORTFOLIO",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
@@ -451,12 +484,57 @@
     },
     {
       "blocks_live_permission": true,
+      "code": "SELF_IMPROVEMENT_P0_PRESENT",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
       "code": "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
       "blocks_live_permission": true,
-      "code": "SELF_IMPROVEMENT_P0_PRESENT",
+      "code": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+      "status": "BLOCKING_ROUTING_OR_REVIEW"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+      "status": "BLOCKING_ROUTING_OR_REVIEW"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NO_LIVE_READY_LANES",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PROOF_QUEUE_NOT_PROOF_READY",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PROOF_QUEUE_CANNOT_CREATE_LIVE_PERMISSION",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "CURRENT_LANE_BLOCKERS",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
@@ -467,21 +545,6 @@
     {
       "blocks_live_permission": true,
       "code": "MEMORY_HEALTH_BLOCKED",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
-      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
-      "status": "BLOCKING_PROOF_QUEUE_PROMOTION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {
@@ -501,17 +564,7 @@
     },
     {
       "blocks_live_permission": true,
-      "code": "PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
       "code": "LIMIT_S5_REPLAY_NOT_LIVE_GRADE",
-      "status": "BLOCKING_LIVE_PERMISSION"
-    },
-    {
-      "blocks_live_permission": true,
-      "code": "PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION",
       "status": "BLOCKING_LIVE_PERMISSION"
     },
     {

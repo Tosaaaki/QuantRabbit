@@ -6,36 +6,30 @@
     "REJECTED",
     "HISTORICAL_ONLY"
   ],
-  "generated_at_utc": "2026-07-06T15:11:03Z",
+  "generated_at_utc": "2026-07-08T06:46:15Z",
   "live_side_effects": [],
   "mode": "read_only_as_proof_pack_queue",
   "queue": [
     {
       "can_create_live_permission": false,
-      "can_enter_proof_pack": false,
+      "can_enter_proof_pack": true,
       "current_blockers": [
         "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-        "REWARD_RISK_TOO_LOW",
-        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
-        "MATRIX_REPAIR_REJECT_CONTEXT",
-        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "EXHAUSTION_RANGE_CHASE",
-        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
-        "STRATEGY_NOT_ELIGIBLE"
+        "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
       ],
-      "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 34.3376,
-      "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
-      "method": "TREND_CONTINUATION",
+      "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
+      "expected_daily_return_pct_on_funding_adjusted_equity": null,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
       "missing_proof": {
-        "active_day_floor": true,
+        "active_day_floor": false,
         "attached_tp_proof": true,
         "daily_stability_floor": true,
         "forecast_executable_proof": true,
-        "fresh_744h_replay": false,
-        "geometry_proof": false,
+        "fresh_744h_replay": true,
+        "geometry_proof": true,
         "gpt_verifier_pass": false,
         "live_order_gateway_pass": false,
         "market_close_absence_or_close_gate_proof": true,
@@ -45,58 +39,156 @@
         "residual_family_absence": true,
         "risk_engine_pass": false,
         "s5_bidask_spread_included_replay": false,
-        "sample_count_floor": true
+        "sample_count_floor": false
       },
-      "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
+      "notes": "Candidate may enter proof work, but missing proof items must be filled exactly.",
       "order_type": "STOP-ENTRY",
-      "pair": "USD_CHF",
-      "proof_classification": "HISTORICAL_ONLY",
+      "pair": "EUR_USD",
+      "proof_classification": "EVIDENCE_GAP",
       "proof_distance": 7,
+      "side": "SHORT"
+    },
+    {
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": true,
+      "current_blockers": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ],
+      "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
+      "expected_daily_return_pct_on_funding_adjusted_equity": null,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "method": "BREAKOUT_FAILURE",
+      "missing_proof": {
+        "active_day_floor": false,
+        "attached_tp_proof": true,
+        "daily_stability_floor": true,
+        "forecast_executable_proof": true,
+        "fresh_744h_replay": true,
+        "geometry_proof": true,
+        "gpt_verifier_pass": false,
+        "live_order_gateway_pass": false,
+        "market_close_absence_or_close_gate_proof": true,
+        "no_guardian_operator_review_blocker": false,
+        "no_stale_packaged_rule": true,
+        "positive_day_rate_floor": true,
+        "residual_family_absence": true,
+        "risk_engine_pass": false,
+        "s5_bidask_spread_included_replay": false,
+        "sample_count_floor": false
+      },
+      "notes": "Candidate may enter proof work, but missing proof items must be filled exactly.",
+      "order_type": "LIMIT",
+      "pair": "EUR_USD",
+      "proof_classification": "EVIDENCE_GAP",
+      "proof_distance": 7,
+      "side": "SHORT"
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "current_blockers": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "PATTERN_REVERSAL_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ],
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8869,
+      "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+      "method": "BREAKOUT_FAILURE",
+      "notes": "Rejected before proof work because the exact spread-included bid/ask replay is negative.",
+      "order_type": "STOP-ENTRY",
+      "pair": "AUD_JPY",
+      "proof_classification": "REJECTED",
+      "rejection_reasons": [
+        "spread_included_bidask_replay_negative_for_exact_lane",
+        "packaged_bidask_rule_live_block_negative_expectancy"
+      ],
+      "side": "SHORT"
+    },
+    {
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "current_blockers": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "S5_DAILY_SAMPLE_CONCENTRATED",
+        "S5_POSITIVE_DAY_RATE_LOW"
+      ],
+      "expected_daily_return_pct_on_funding_adjusted_equity": 3.8869,
+      "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "method": "BREAKOUT_FAILURE",
+      "notes": "Rejected before proof work because the exact spread-included bid/ask replay is negative.",
+      "order_type": "LIMIT",
+      "pair": "AUD_JPY",
+      "proof_classification": "REJECTED",
+      "rejection_reasons": [
+        "spread_included_bidask_replay_negative_for_exact_lane",
+        "packaged_bidask_rule_live_block_negative_expectancy"
+      ],
+      "side": "SHORT"
+    },
+    {
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "current_blockers": [
+        "STALE_QUOTE",
+        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "STRATEGY_NOT_ELIGIBLE"
+      ],
+      "expected_daily_return_pct_on_funding_adjusted_equity": 8.368,
+      "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+      "method": "RANGE_ROTATION",
+      "notes": "Rejected before proof work because the exact spread-included bid/ask replay is negative.",
+      "order_type": "LIMIT",
+      "pair": "GBP_USD",
+      "proof_classification": "REJECTED",
+      "rejection_reasons": [
+        "spread_included_bidask_replay_negative_for_exact_lane",
+        "packaged_bidask_rule_live_block_negative_expectancy"
+      ],
       "side": "LONG"
     },
     {
       "can_create_live_permission": false,
       "can_enter_proof_pack": false,
       "current_blockers": [
-        "REWARD_RISK_TOO_LOW",
-        "RANGE_COUNTERTREND_RR_TOO_LOW",
-        "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
-        "MATRIX_REPAIR_REJECT_CONTEXT",
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-        "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+        "PATTERN_REVERSAL_CHASE",
+        "EXHAUSTION_RANGE_CHASE",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
         "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-        "FORECAST_WATCH_ONLY",
         "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+        "STRATEGY_NOT_ELIGIBLE"
       ],
-      "exit_shape": "ATTACHED_TECHNICAL_TP",
-      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9116,
-      "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
-      "method": "RANGE_ROTATION",
-      "missing_proof": {
-        "active_day_floor": true,
-        "attached_tp_proof": true,
-        "daily_stability_floor": true,
-        "forecast_executable_proof": true,
-        "fresh_744h_replay": false,
-        "geometry_proof": false,
-        "gpt_verifier_pass": false,
-        "live_order_gateway_pass": false,
-        "market_close_absence_or_close_gate_proof": true,
-        "no_guardian_operator_review_blocker": false,
-        "no_stale_packaged_rule": true,
-        "positive_day_rate_floor": true,
-        "residual_family_absence": true,
-        "risk_engine_pass": false,
-        "s5_bidask_spread_included_replay": false,
-        "sample_count_floor": true
-      },
-      "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
-      "order_type": "LIMIT",
-      "pair": "GBP_USD",
-      "proof_classification": "HISTORICAL_ONLY",
-      "proof_distance": 7,
-      "side": "LONG"
+      "expected_daily_return_pct_on_funding_adjusted_equity": 7.9407,
+      "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "notes": "Rejected before proof work because the exact spread-included bid/ask replay is negative.",
+      "order_type": "STOP-ENTRY",
+      "pair": "AUD_JPY",
+      "proof_classification": "REJECTED",
+      "rejection_reasons": [
+        "spread_included_bidask_replay_negative_for_exact_lane",
+        "packaged_bidask_rule_live_block_negative_expectancy"
+      ],
+      "side": "SHORT"
     }
   ],
   "source_artifacts": [
@@ -111,6 +203,7 @@
     "can_create_live_permission_count": 0,
     "proof_ready_count": 0,
     "queue_count": 2,
-    "remaining_p0_rows": 5
+    "rejected_candidate_count": 4,
+    "remaining_p0_rows": 4
   }
 }

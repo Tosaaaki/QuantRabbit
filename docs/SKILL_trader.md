@@ -657,9 +657,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # - as-live-ready-evidence-loop and as-4x-proof-path are read-only artifact
 #   builders that run after trader-support-bot. They refresh
 #   `data/rolling_30d_4x_firepower_board.json`, `data/as_proof_pack_queue.json`,
-#   `data/as_lane_candidate_board.json`, and `data/portfolio_4x_path_planner.json`
-#   from the final broker/target/order/profitability/support packet so A/S proof
-#   queue and 4x math cannot stay stale after `cycle-refresh`.
+#   `data/as_lane_candidate_board.json`, `data/portfolio_4x_path_planner.json`,
+#   and `data/harvest_live_grade_path.json` from the final broker/target/order/
+#   profitability/support packet so A/S proof queue, HARVEST live-grade path,
+#   and 4x math cannot stay stale after `cycle-refresh`.
 # - trader-repair-orchestrator is read-only and runs after those A/S proof
 #   artifacts.
 #   It converts `repair_requests` into a Codex repair queue with suggested

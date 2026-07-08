@@ -128,30 +128,24 @@
   "capture_status": "NEGATIVE_EXPECTANCY",
   "closest_candidate_to_proof_pack": {
     "can_create_live_permission": false,
-    "can_enter_proof_pack": false,
+    "can_enter_proof_pack": true,
     "current_blockers": [
       "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-      "REWARD_RISK_TOO_LOW",
-      "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
-      "MATRIX_REPAIR_REJECT_CONTEXT",
-      "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-      "EXHAUSTION_RANGE_CHASE",
-      "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
-      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-      "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
-      "STRATEGY_NOT_ELIGIBLE"
+      "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+      "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+      "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
     ],
-    "exit_shape": "ATTACHED_TECHNICAL_TP",
-    "expected_daily_return_pct_on_funding_adjusted_equity": 34.3376,
-    "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
-    "method": "TREND_CONTINUATION",
+    "exit_shape": "TP_PROOF_COLLECTION_HARVEST",
+    "expected_daily_return_pct_on_funding_adjusted_equity": null,
+    "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+    "method": "BREAKOUT_FAILURE",
     "missing_proof": {
-      "active_day_floor": true,
+      "active_day_floor": false,
       "attached_tp_proof": true,
       "daily_stability_floor": true,
       "forecast_executable_proof": true,
-      "fresh_744h_replay": false,
-      "geometry_proof": false,
+      "fresh_744h_replay": true,
+      "geometry_proof": true,
       "gpt_verifier_pass": false,
       "live_order_gateway_pass": false,
       "market_close_absence_or_close_gate_proof": true,
@@ -161,14 +155,14 @@
       "residual_family_absence": true,
       "risk_engine_pass": false,
       "s5_bidask_spread_included_replay": false,
-      "sample_count_floor": true
+      "sample_count_floor": false
     },
-    "notes": "Historical evidence can rank repair work only; fresh executable proof is missing.",
+    "notes": "Candidate may enter proof work, but missing proof items must be filled exactly.",
     "order_type": "STOP-ENTRY",
-    "pair": "USD_CHF",
-    "proof_classification": "HISTORICAL_ONLY",
+    "pair": "EUR_USD",
+    "proof_classification": "EVIDENCE_GAP",
     "proof_distance": 7,
-    "side": "LONG"
+    "side": "SHORT"
   },
   "eur_jpy_short_proof_result": {
     "as_candidate": false,
@@ -399,7 +393,6 @@
     "normal_routing_must_remain_blocked": true,
     "p0_rows": [
       "MEMORY_HEALTH_BLOCKED",
-      "TARGET_OPEN_NO_LIVE_READY_LANES",
       "NEGATIVE_EXPECTANCY_ACTIVE",
       "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
       "MARKET_CLOSE_LEAK_FAMILY_BLOCKED"
@@ -409,13 +402,13 @@
   "firepower_board_summary": {
     "as_live_ready_path_exists": false,
     "can_create_live_permission_rows": 0,
-    "can_enter_proof_pack_rows": 0,
-    "candidate_rows_after_hard_exclusions": 68,
-    "hard_excluded_rows": 33,
+    "can_enter_proof_pack_rows": 4,
+    "candidate_rows_after_hard_exclusions": 51,
+    "hard_excluded_rows": 29,
     "normal_routing_status": "BLOCKED",
-    "p0_dependency_count": 5,
+    "p0_dependency_count": 4,
     "rows_meeting_required_daily_return_prefilter": 2,
-    "total_order_intent_rows": 101
+    "total_order_intent_rows": 80
   },
   "funding_adjusted_30d_status": {
     "broker_nav_jpy": 270740.4982,
@@ -429,7 +422,7 @@
     "performance_basis": "funding_adjusted",
     "rolling_30d_multiplier_funding_adjusted_is_kpi": true
   },
-  "generated_at_utc": "2026-07-06T15:11:03Z",
+  "generated_at_utc": "2026-07-08T06:46:15Z",
   "live_ready_lanes": 0,
   "live_side_effects": [],
   "manual_eurusd_472987": {
@@ -793,7 +786,7 @@
     }
   ],
   "normal_routing_status": "BLOCKED",
-  "order_intents_generated_at_utc": "2026-07-06T15:02:44.070184+00:00",
+  "order_intents_generated_at_utc": "2026-07-06T18:29:52.121870+00:00",
   "previous_board_generated_at_utc": "2026-07-05T16:24:00Z",
   "profitability_blockers": [
     {
@@ -1243,16 +1236,6 @@
         "normal routing"
       ],
       "can_create_live_permission": false,
-      "classification": "ACTIVE_BLOCKER",
-      "node": "TARGET_OPEN_NO_LIVE_READY_LANES",
-      "requires": "regenerated order_intents must contain at least one LIVE_READY lane after profitability, telemetry, guardian, risk, and gateway gates pass."
-    },
-    {
-      "blocks": [
-        "A/S LIVE_READY",
-        "normal routing"
-      ],
-      "can_create_live_permission": false,
       "classification": "NEGATIVE_EXPECTANCY_REALIZED",
       "node": "NEGATIVE_EXPECTANCY_ACTIVE",
       "requires": "Regenerated post-gate realized capture economics must be non-negative without relying only on excluded blocked historical families. Exact positive attached-TP HARVEST evidence may enter a proof pack, but cannot create live permission by itself."
@@ -1290,21 +1273,21 @@
   ],
   "rolling_30d_4x_target_math": {
     "capital_flows_30d": 100000.0,
-    "current_equity_raw": 280353.4689,
-    "funding_adjusted_equity": 180353.4689,
+    "current_equity_raw": 270516.4198,
+    "funding_adjusted_equity": 170516.4198,
     "pace_state": "BEHIND",
     "performance_basis": "funding_adjusted",
-    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 721413.8756,
-    "remaining_to_4x_funding_adjusted": 520866.7519,
-    "remaining_to_4x_raw": 420866.7519,
-    "required_active_day_return_funding_adjusted_pct": 8.240683,
-    "required_calendar_daily_profit_jpy": 10783.2888,
-    "required_calendar_daily_return_funding_adjusted_pct": 5.978975,
-    "rolling_30d_multiplier_funding_adjusted": 1.028798,
-    "rolling_30d_multiplier_raw": 1.599232,
-    "rolling_30d_start_equity": 175305.0552,
+    "prompt_style_target_equity_current_funding_adjusted_4x_jpy": 682065.6792,
+    "remaining_to_4x_funding_adjusted": 515223.801,
+    "remaining_to_4x_raw": 415223.801,
+    "required_active_day_return_funding_adjusted_pct": 7.759236,
+    "required_calendar_daily_profit_jpy": 9605.3383,
+    "required_calendar_daily_return_funding_adjusted_pct": 5.633087,
+    "rolling_30d_multiplier_funding_adjusted": 0.994641,
+    "rolling_30d_multiplier_raw": 1.577953,
+    "rolling_30d_start_equity": 171435.0552,
     "sizing_basis": "raw_nav",
-    "target_equity_from_rolling_start_4x_jpy": 701220.2208
+    "target_equity_from_rolling_start_4x_jpy": 685740.2208
   },
   "routing_allowed": false,
   "safety": {
@@ -1347,7 +1330,7 @@
     "data/historical_profit_capture_missed_table.json"
   ],
   "support_status": "SUPPORT_BLOCKED",
-  "total_lanes": 101,
+  "total_lanes": 80,
   "usd_jpy_rejection_state": {
     "as_allowed": false,
     "exact_blockers": [

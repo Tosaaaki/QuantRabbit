@@ -1,6 +1,6 @@
 # Payoff Shape Diagnosis Report
 
-- Generated at UTC: `2026-07-07T11:44:01.450053+00:00`
+- Generated at UTC: `2026-07-08T06:46:07.970055+00:00`
 - Status: `OK`
 - Verdict: `MIXED_HARVEST_PRIMARY`
 - Live promotion allowed: `False`

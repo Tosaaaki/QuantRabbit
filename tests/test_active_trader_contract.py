@@ -121,6 +121,107 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", blocker_codes)
         self.assertIn("S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", blocker_codes)
 
+    def test_proof_floor_and_positive_replay_filter_stale_scout_sample_gap(self) -> None:
+        now = datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["harvest"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION",
+                    "live_promotion_allowed": False,
+                    "closest_harvest_candidate": {
+                        "candidate_id": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                        "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                        "actual_proof_queue_member": True,
+                        "planner_can_enter_proof_pack": True,
+                        "can_create_live_permission": False,
+                        "live_promotion_allowed": False,
+                        "promotion_blockers": [
+                            "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                            "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+                        ],
+                        "tp_proof": {
+                            "take_profit_trades": 20,
+                            "take_profit_losses": 0,
+                            "proof_floor_trades": 20,
+                            "proof_gap_trades": 0,
+                            "take_profit_expectancy_jpy": 613.2,
+                        },
+                    },
+                },
+            )
+            _write_json(
+                paths["scout"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+                    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                    "scout_mode_allowed": False,
+                    "operator_approval_required": True,
+                    "max_loss_jpy_cap": 418.0,
+                    "min_lot_feasibility": {
+                        "status": "MIN_LOT_NUMERICALLY_FEASIBLE_BUT_OTHER_GATES_BLOCK",
+                        "feasible_if_all_non_lot_gates_clear": True,
+                    },
+                    "proof_queue_entry_blockers": [
+                        {"code": "SAMPLE_GAP"},
+                        {"code": "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING"},
+                        {"code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"},
+                    ],
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["proof"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "summary": {
+                        "queue_count": 2,
+                        "proof_ready_count": 0,
+                        "can_create_live_permission_count": 0,
+                        "rejected_candidate_count": 4,
+                    },
+                    "queue": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "proof_classification": "EVIDENCE_GAP",
+                            "can_create_live_permission": False,
+                            "can_enter_proof_pack": True,
+                        }
+                    ],
+                    "live_side_effects": [],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["current_state"]["harvest"]["tp_proof"]["proof_gap_trades"], 0)
+        self.assertTrue(payload["current_state"]["limit_s5_bidask_replay"]["passed"])
+        self.assertNotIn("SAMPLE_GAP", blocker_codes)
+        self.assertNotIn("POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING", blocker_codes)
+        self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", blocker_codes)
+        self.assertIn("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY", blocker_codes)
+
     def test_missing_exact_replay_is_evidence_acquisition_blocker(self) -> None:
         now = datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

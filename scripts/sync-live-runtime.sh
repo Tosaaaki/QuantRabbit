@@ -147,6 +147,7 @@ data/eurusd_short_breakout_failure_proof_floor_update.json|\
 data/eurusd_short_breakout_failure_scout_plan.json|\
 data/eurusd_short_breakout_failure_spread_slippage_proof.json|\
 data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json|\
+data/harvest_live_grade_path.json|\
 data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\
 data/portfolio_4x_path_planner.json|\

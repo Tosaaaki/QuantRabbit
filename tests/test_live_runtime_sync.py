@@ -86,12 +86,14 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
             _run(["git", "branch", "-m", "main"], cwd=repo)
             _commit_file(repo, "data/as_proof_pack_queue.json", '{"generated_at":"old"}\n', "track proof queue")
+            _commit_file(repo, "data/harvest_live_grade_path.json", '{"generated_at":"old"}\n', "track harvest path")
             _commit_file(repo, "data/portfolio_4x_path_planner.json", '{"generated_at":"old"}\n', "track planner")
             _commit_file(repo, "docs/as_proof_pack_queue.md", "old proof report\n", "track proof report")
             _run(["git", "checkout", "-b", "feature"], cwd=repo)
             _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
             _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
             (live / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"runtime"}\n')
+            (live / "data" / "harvest_live_grade_path.json").write_text('{"generated_at":"runtime"}\n')
             (live / "data" / "portfolio_4x_path_planner.json").write_text('{"generated_at":"runtime"}\n')
             (live / "docs" / "as_proof_pack_queue.md").write_text("runtime proof report\n")
 
@@ -102,12 +104,14 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
             self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
             self.assertEqual((live / "data" / "as_proof_pack_queue.json").read_text(), '{"generated_at":"runtime"}\n')
+            self.assertEqual((live / "data" / "harvest_live_grade_path.json").read_text(), '{"generated_at":"runtime"}\n')
             self.assertEqual((live / "data" / "portfolio_4x_path_planner.json").read_text(), '{"generated_at":"runtime"}\n')
             self.assertEqual((live / "docs" / "as_proof_pack_queue.md").read_text(), "runtime proof report\n")
             self.assertEqual(
                 {line.strip() for line in _git(live, "status", "--short").splitlines()},
                 {
                     "M data/as_proof_pack_queue.json",
+                    "M data/harvest_live_grade_path.json",
                     "M data/portfolio_4x_path_planner.json",
                     "M docs/as_proof_pack_queue.md",
                 },

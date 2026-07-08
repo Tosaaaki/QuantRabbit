@@ -45,8 +45,14 @@ def main() -> int:
         "data/audjpy_short_breakout_failure_limit_proof_pack.json": build_audjpy_limit_proof_pack(generated_at, context),
         "data/manual_eurusd_tp_replacement_provenance.json": build_manual_eurusd_tp_replacement_provenance(generated_at, context),
         "data/profitability_acceptance_blocker_reconciliation.json": build_profitability_acceptance_blocker_reconciliation(generated_at, context),
-        "data/portfolio_4x_path_planner.json": build_portfolio_planner(generated_at, context),
     }
+    portfolio_planner = build_portfolio_planner(generated_at, context)
+    payloads["data/portfolio_4x_path_planner.json"] = portfolio_planner
+    payloads["data/harvest_live_grade_path.json"] = build_harvest_live_grade_path(
+        generated_at,
+        context,
+        portfolio_planner,
+    )
     markdown = {
         "docs/post_gate_expectancy_gap_trace.md": post_gate_gap_md(payloads["data/post_gate_expectancy_gap_trace.json"]),
         "docs/historical_only_to_fresh_proof_replay.md": historical_replay_md(payloads["data/historical_only_to_fresh_proof_replay.json"]),
@@ -55,6 +61,7 @@ def main() -> int:
         "docs/manual_eurusd_tp_replacement_provenance.md": manual_eurusd_tp_replacement_provenance_md(payloads["data/manual_eurusd_tp_replacement_provenance.json"]),
         "docs/profitability_acceptance_blocker_reconciliation.md": profitability_acceptance_blocker_reconciliation_md(payloads["data/profitability_acceptance_blocker_reconciliation.json"]),
         "docs/portfolio_4x_path_planner.md": portfolio_planner_md(payloads["data/portfolio_4x_path_planner.json"]),
+        "docs/harvest_live_grade_path_report.md": harvest_live_grade_path_md(payloads["data/harvest_live_grade_path.json"]),
     }
     for rel, payload in payloads.items():
         _write_json(rel, payload)
@@ -784,6 +791,538 @@ def build_portfolio_planner(generated_at: str, ctx: dict[str, Any]) -> dict[str,
     }
 
 
+def build_harvest_live_grade_path(
+    generated_at: str,
+    ctx: dict[str, Any],
+    portfolio_planner: dict[str, Any],
+) -> dict[str, Any]:
+    payoff = ctx["payoff_shape"]
+    harvest_candidates = payoff.get("harvest_candidates") if isinstance(payoff.get("harvest_candidates"), list) else []
+    rankings = [
+        harvest_rank_row(row, ctx, portfolio_planner)
+        for row in harvest_candidates
+        if isinstance(row, dict)
+    ]
+    rankings.sort(key=lambda item: (-item["rank_score"], item["proof_gap_trades"], item["shape_key"]))
+    for index, row in enumerate(rankings, start=1):
+        row["rank"] = index
+    closest = rankings[0] if rankings else None
+    proof_summary = ctx["proof_queue"].get("summary") if isinstance(ctx["proof_queue"].get("summary"), dict) else {}
+    proof_queue_count = _int(proof_summary.get("queue_count"))
+    if proof_queue_count is None:
+        proof_queue_count = len(ctx["proof_queue"].get("queue") or [])
+    proof_ready_count = _int(proof_summary.get("proof_ready_count")) or 0
+    can_create_count = _int(proof_summary.get("can_create_live_permission_count")) or 0
+    blockers = harvest_blockers(closest or {}, ctx, portfolio_planner)
+    return {
+        "generated_at_utc": generated_at,
+        "mode": "read_only_harvest_live_grade_path",
+        "status": "DIAGNOSIS_COMPLETE_BLOCKED_NO_LIVE_PERMISSION",
+        "read_only": True,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+        "live_promotion_allowed": False,
+        "runner_creation_decision": "HARVEST_PROOF_FIRST",
+        "source_artifacts": [
+            "data/payoff_shape_diagnosis.json",
+            "data/rolling_30d_4x_firepower_board.json",
+            "data/as_proof_pack_queue.json",
+            "data/as_lane_candidate_board.json",
+            "data/portfolio_4x_path_planner.json",
+            "data/eurusd_short_breakout_failure_proof_floor_update.json",
+            "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+            "data/profitability_acceptance.json",
+            "data/trader_support_bot.json",
+            "data/live_order_request.json",
+            "data/broker_snapshot.json",
+        ],
+        "proof_queue_summary": {
+            "queue_count": proof_queue_count,
+            "proof_ready_count": proof_ready_count,
+            "can_create_live_permission_count": can_create_count,
+            "proof_queue_count_is_live_permission": False,
+        },
+        "portfolio_summary": {
+            "portfolio_status": portfolio_planner.get("portfolio_status"),
+            "can_reach_4x_now": bool(portfolio_planner.get("can_reach_4x_now")),
+            "can_create_live_permission": bool(_nested(portfolio_planner, "summary", "can_create_live_permission")),
+            "live_ready_lanes": _int(portfolio_planner.get("live_ready_lanes")) or 0,
+        },
+        "runner_candidates": payoff.get("runner_candidates") or [],
+        "harvest_candidate_count": len(rankings),
+        "closest_harvest_candidate": closest,
+        "ranked_harvest_candidates": rankings[:20],
+        "promotion_blockers": blockers,
+        "required_next_actions": harvest_required_next_actions(closest or {}, ctx),
+        "safety_contract": {
+            "do_not_send_orders": True,
+            "do_not_cancel_orders": True,
+            "do_not_close_positions": True,
+            "do_not_modify_launchd": True,
+            "do_not_relax_gates": True,
+            "do_not_backsolve_lot_from_4x_deficit": True,
+            "do_not_mix_market_or_stop_rows_into_limit_proof": True,
+            "do_not_mix_market_close_losses_into_harvest_proof": True,
+            "proof_queue_count_is_not_live_permission": True,
+            "negative_expectancy_must_remain_visible": True,
+            "month_scale_negative_must_remain_visible": True,
+        },
+    }
+
+
+def harvest_rank_row(
+    row: dict[str, Any],
+    ctx: dict[str, Any],
+    portfolio_planner: dict[str, Any],
+) -> dict[str, Any]:
+    shape_key = str(row.get("shape_key") or "")
+    pair = str(row.get("pair") or _shape_part(shape_key, 0))
+    side = str(row.get("side") or _shape_part(shape_key, 1))
+    method = str(row.get("method") or _shape_part(shape_key, 2))
+    firepower_rows = [
+        candidate
+        for candidate in all_firepower_candidates(ctx)
+        if candidate.get("pair") == pair and candidate.get("side") == side and candidate.get("method") == method
+    ]
+    current_best = _preferred_firepower_row(firepower_rows)
+    proof_rows = _matching_proof_rows(ctx["proof_queue"], pair, side, method)
+    proof_queue_member = bool(proof_rows)
+    proof_best = _preferred_proof_row(proof_rows, current_best)
+    portfolio_best = _matching_portfolio_row(portfolio_planner, pair, side, method, current_best)
+    adjusted = _adjusted_tp_proof(row, ctx)
+    limit_replay = _target_limit_replay(row, ctx)
+    proof_gap = _int(adjusted.get("proof_gap_trades"))
+    if proof_gap is None:
+        proof_gap = _int(row.get("proof_gap_trades")) or 999
+    overall_net = _float(row.get("overall_net_jpy")) or 0.0
+    market_close_losses = _int(row.get("market_close_losses")) or 0
+    month_blocked = bool(row.get("month_scale_blocker"))
+    current_blockers = list(current_best.get("current_blockers") or [])
+    if not current_blockers:
+        current_blockers = list(current_best.get("live_blocker_codes") or [])
+    planner_can_enter = bool(
+        (portfolio_best or {}).get("can_enter_proof_pack")
+        or current_best.get("can_enter_proof_pack")
+        or proof_best.get("can_enter_proof_pack")
+    )
+    can_create = bool(
+        (portfolio_best or {}).get("can_create_live_permission")
+        or current_best.get("can_create_live_permission")
+        or proof_best.get("can_create_live_permission")
+    )
+    target_bonus = 35.0 if shape_key == ctx["proof_floor_update"].get("target_shape") else 0.0
+    proof_floor_bonus = 30.0 if adjusted.get("proof_floor_reached") else 0.0
+    rank_score = _round(
+        target_bonus
+        + proof_floor_bonus
+        + (35.0 if overall_net > 0 else -25.0)
+        + (20.0 if current_best else 0.0)
+        + (20.0 if proof_queue_member else 0.0)
+        + (12.0 if planner_can_enter else 0.0)
+        + (8.0 if not month_blocked else -20.0)
+        + (_float(adjusted.get("take_profit_expectancy_jpy")) or 0.0) / 100.0
+        - proof_gap * 3.0
+        - market_close_losses * 1.5
+        - len(current_blockers) * 1.0
+    )
+    lane_id = current_best.get("lane_id") or proof_best.get("lane_id") or (portfolio_best or {}).get("lane_id")
+    current_intent = _current_intent_summary(lane_id, ctx)
+    blockers = _candidate_promotion_blockers(
+        row=row,
+        current_best=current_best,
+        proof_best=proof_best,
+        portfolio_best=portfolio_best or {},
+        adjusted=adjusted,
+        limit_replay=limit_replay,
+        ctx=ctx,
+    )
+    return {
+        "rank": None,
+        "rank_score": rank_score,
+        "rank_reason": _harvest_rank_reason(row, adjusted, proof_queue_member, planner_can_enter, limit_replay),
+        "proof_gap_trades": proof_gap,
+        "candidate_id": shape_key,
+        "shape_key": shape_key,
+        "classification": adjusted.get("classification") or row.get("classification"),
+        "pair": pair,
+        "side": side,
+        "method": method,
+        "current_intent_count": len(firepower_rows),
+        "current_intent_best": current_intent,
+        "portfolio_planner_best": portfolio_best,
+        "actual_proof_queue_member": proof_queue_member,
+        "proof_queue_entries": [
+            {
+                "lane_id": item.get("lane_id"),
+                "order_type": item.get("order_type"),
+                "proof_classification": item.get("proof_classification"),
+                "proof_distance": item.get("proof_distance"),
+                "can_enter_proof_pack": bool(item.get("can_enter_proof_pack")),
+                "can_create_live_permission": bool(item.get("can_create_live_permission")),
+                "missing_proof": item.get("missing_proof") or {},
+            }
+            for item in proof_rows
+        ],
+        "planner_can_enter_proof_pack": planner_can_enter,
+        "can_create_live_permission": can_create,
+        "live_promotion_allowed": False,
+        "promotion_blockers": blockers,
+        "evidence_refs": row.get("evidence_refs") or [],
+        "tp_proof": adjusted,
+        "shape_pnl": {
+            "overall_net_jpy": row.get("overall_net_jpy"),
+            "overall_expectancy_jpy_per_trade": row.get("overall_expectancy_jpy_per_trade"),
+            "market_close_losses": row.get("market_close_losses"),
+            "market_close_net_jpy": row.get("market_close_net_jpy"),
+        },
+        "month_scale_blocker": row.get("month_scale_blocker"),
+        "limit_s5_bidask_replay": limit_replay,
+    }
+
+
+def harvest_blockers(
+    closest: dict[str, Any],
+    ctx: dict[str, Any],
+    portfolio_planner: dict[str, Any],
+) -> list[dict[str, Any]]:
+    codes = list(closest.get("promotion_blockers") or [])
+    codes.extend(_codes_from_values(ctx["acceptance"].get("blockers") or []))
+    codes.extend(_codes_from_values(ctx["support"].get("blockers") or []))
+    if ctx["acceptance"].get("status"):
+        codes.append(str(ctx["acceptance"].get("status")))
+    memory_status = str(ctx["memory"].get("status") or "")
+    if memory_status and memory_status not in {"OK", "PASS", "MEMORY_HEALTH_PASS"}:
+        codes.append(memory_status)
+    if portfolio_planner.get("portfolio_status") == "NO_LIVE_READY_PORTFOLIO":
+        codes.append("NO_LIVE_READY_PORTFOLIO")
+    if _nested(portfolio_planner, "summary", "can_create_live_permission") is not True:
+        codes.append("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION")
+    proof_summary = ctx["proof_queue"].get("summary") if isinstance(ctx["proof_queue"].get("summary"), dict) else {}
+    if (_int(proof_summary.get("proof_ready_count")) or 0) == 0:
+        codes.append("PROOF_QUEUE_NOT_PROOF_READY")
+    if (_int(proof_summary.get("can_create_live_permission_count")) or 0) == 0:
+        codes.append("PROOF_QUEUE_CANNOT_CREATE_LIVE_PERMISSION")
+    live_order = ctx["live_order_request"]
+    if live_order.get("status") in {None, "NO_ACTION"} or live_order.get("send_requested") is not True:
+        codes.append("NO_FRESH_GATEWAY_PERMISSION")
+    rows = []
+    for code in _unique_strings(codes):
+        rows.append({"code": code, "status": "BLOCKING_LIVE_GRADE"})
+    return rows
+
+
+def harvest_required_next_actions(closest: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    target = closest.get("candidate_id") or closest.get("shape_key")
+    return [
+        {
+            "action_id": "canonicalize_limit_s5_bidask_replay",
+            "target": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+            "read_only": True,
+            "live_side_effects": [],
+            "success_condition": {
+                "legacy_limit_rows_reconciled": ["469278", "469427", "469898"],
+                "limit_only_sample_floor_met": True,
+                "s5_bidask_spread_included_replay": "positive_for_exact_limit_harvest_vehicle",
+            },
+        },
+        {
+            "action_id": "mine_additional_exact_limit_harvest_samples",
+            "target": target,
+            "read_only": True,
+            "live_side_effects": [],
+            "success_condition": "Additional accepted rows are LIMIT + ATTACHED_TECHNICAL_TP + HARVEST only; MARKET/STOP rows remain excluded.",
+        },
+        {
+            "action_id": "refresh_profitability_and_goal_chain",
+            "target": "portfolio",
+            "commands": [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            ],
+            "read_only": True,
+            "live_side_effects": [],
+            "success_condition": "harvest/proof/portfolio/goal/active artifacts agree on proof queue membership while live_permission_allowed remains false until all gates pass.",
+        },
+    ]
+
+
+def _preferred_firepower_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {}
+    return sorted(
+        rows,
+        key=lambda item: (
+            item.get("order_type") != "LIMIT",
+            not bool(item.get("can_enter_proof_pack")),
+            _int(item.get("proof_gap_count")) or 999,
+            str(item.get("lane_id") or ""),
+        ),
+    )[0]
+
+
+def _matching_proof_rows(proof_queue: dict[str, Any], pair: str, side: str, method: str) -> list[dict[str, Any]]:
+    rows = []
+    for row in proof_queue.get("queue") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("pair") == pair and row.get("side") == side and row.get("method") == method:
+            rows.append(row)
+    return rows
+
+
+def _preferred_proof_row(rows: list[dict[str, Any]], current_best: dict[str, Any]) -> dict[str, Any]:
+    if not rows:
+        return {}
+    current_lane = current_best.get("lane_id")
+    return sorted(
+        rows,
+        key=lambda item: (
+            item.get("lane_id") != current_lane,
+            item.get("order_type") != "LIMIT",
+            not bool(item.get("can_enter_proof_pack")),
+            _int(item.get("proof_distance")) or 999,
+            str(item.get("lane_id") or ""),
+        ),
+    )[0]
+
+
+def _matching_portfolio_row(
+    portfolio: dict[str, Any],
+    pair: str,
+    side: str,
+    method: str,
+    current_best: dict[str, Any],
+) -> dict[str, Any]:
+    current_lane = current_best.get("lane_id")
+    rows = [
+        row
+        for row in portfolio.get("candidate_rankings") or []
+        if isinstance(row, dict)
+        and row.get("pair") == pair
+        and row.get("side") == side
+        and row.get("method") == method
+    ]
+    if not rows:
+        return {}
+    return sorted(
+        rows,
+        key=lambda item: (
+            item.get("lane_id") != current_lane,
+            item.get("order_type") != "LIMIT",
+            -(_float(item.get("rank_score")) or 0.0),
+            _int(item.get("proof_distance")) or 999,
+        ),
+    )[0]
+
+
+def _adjusted_tp_proof(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    proof_floor_update = ctx["proof_floor_update"]
+    shape_key = row.get("shape_key")
+    if shape_key == proof_floor_update.get("target_shape"):
+        post = proof_floor_update.get("post_update_tp_proof")
+        post = post if isinstance(post, dict) else {}
+        return {
+            "proof_source": "data/eurusd_short_breakout_failure_proof_floor_update.json",
+            "classification": _nested(
+                proof_floor_update,
+                "harvest_live_grade_re_evaluation",
+                "post_update_candidate_classification",
+            )
+            or row.get("classification"),
+            "take_profit_trades": _int(post.get("wins")),
+            "take_profit_wins": _int(post.get("wins")),
+            "take_profit_losses": _int(post.get("losses")),
+            "proof_floor_trades": _int(post.get("proof_floor")),
+            "proof_gap_trades": _int(post.get("remaining_samples")),
+            "proof_floor_reached": bool(post.get("proof_floor_reached")),
+            "take_profit_expectancy_jpy": row.get("take_profit_expectancy_jpy"),
+            "take_profit_avg_win_jpy": row.get("take_profit_avg_win_jpy"),
+            "take_profit_net_jpy": row.get("take_profit_net_jpy"),
+            "legacy_samples_accepted": proof_floor_update.get("legacy_samples_accepted") or [],
+            "canonical_integration_status": proof_floor_update.get("canonical_integration_status"),
+        }
+    proof_floor = _int(row.get("proof_floor_trades"))
+    gap = _int(row.get("proof_gap_trades"))
+    return {
+        "proof_source": "data/payoff_shape_diagnosis.json",
+        "classification": row.get("classification"),
+        "take_profit_trades": _int(row.get("take_profit_trades")),
+        "take_profit_wins": _int(row.get("take_profit_wins")),
+        "take_profit_losses": _int(row.get("take_profit_losses")),
+        "proof_floor_trades": proof_floor,
+        "proof_gap_trades": gap,
+        "proof_floor_reached": bool(gap == 0 and proof_floor is not None),
+        "take_profit_expectancy_jpy": row.get("take_profit_expectancy_jpy"),
+        "take_profit_avg_win_jpy": row.get("take_profit_avg_win_jpy"),
+        "take_profit_net_jpy": row.get("take_profit_net_jpy"),
+        "legacy_samples_accepted": [],
+        "canonical_integration_status": None,
+    }
+
+
+def _target_limit_replay(row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] | None:
+    replay = ctx["limit_s5_bidask_replay"]
+    if row.get("shape_key") != "EUR_USD|SHORT|BREAKOUT_FAILURE":
+        return None
+    blockers = []
+    for item in replay.get("remaining_blockers") or []:
+        code = _code_from_value(item)
+        if code == "NOT_IN_PROOF_QUEUE":
+            continue
+        blockers.append(code)
+    proof_rows = _matching_proof_rows(ctx["proof_queue"], "EUR_USD", "SHORT", "BREAKOUT_FAILURE")
+    if proof_rows:
+        blockers.append("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY")
+    return {
+        "status": replay.get("status"),
+        "s5_bidask_replay_status": replay.get("s5_bidask_replay_status"),
+        "target_shape": replay.get("target_shape"),
+        "replay_sample_count": _int(replay.get("replay_sample_count")),
+        "replay_wins": _int(replay.get("replay_wins")),
+        "replay_losses": _int(replay.get("replay_losses")),
+        "net_expectancy_after_bidask": replay.get("net_expectancy_after_bidask"),
+        "live_grade_candidate": bool(replay.get("live_grade_candidate")),
+        "market_stop_samples_excluded": bool(replay.get("market_stop_samples_excluded")),
+        "market_close_excluded": bool(replay.get("market_close_excluded")),
+        "remaining_blocker_codes": _unique_strings(blockers),
+    }
+
+
+def _current_intent_summary(lane_id: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    intent_row = ctx["intent_by_lane"].get(str(lane_id)) if lane_id else {}
+    intent_row = intent_row if isinstance(intent_row, dict) else {}
+    intent = intent_row.get("intent") if isinstance(intent_row.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    risk_metrics = intent_row.get("risk_metrics") if isinstance(intent_row.get("risk_metrics"), dict) else {}
+    return {
+        "lane_id": lane_id,
+        "status": intent_row.get("status"),
+        "order_type": intent.get("order_type"),
+        "attach_take_profit_on_fill": metadata.get("attach_take_profit_on_fill"),
+        "tp_execution_mode": metadata.get("tp_execution_mode"),
+        "tp_target_intent": metadata.get("tp_target_intent"),
+        "positive_rotation_mode": metadata.get("positive_rotation_mode"),
+        "risk_allowed": bool(intent_row.get("risk_allowed")),
+        "risk_jpy": risk_metrics.get("risk_jpy") or metadata.get("sizing_actual_risk_jpy") or metadata.get("max_loss_jpy"),
+        "units": intent.get("units"),
+        "entry": intent.get("entry"),
+        "tp": intent.get("tp"),
+        "sl": intent.get("sl"),
+        "live_blocker_codes": list(intent_row.get("live_blocker_codes") or []),
+    }
+
+
+def _candidate_promotion_blockers(
+    *,
+    row: dict[str, Any],
+    current_best: dict[str, Any],
+    proof_best: dict[str, Any],
+    portfolio_best: dict[str, Any],
+    adjusted: dict[str, Any],
+    limit_replay: dict[str, Any] | None,
+    ctx: dict[str, Any],
+) -> list[str]:
+    blockers = []
+    blockers.extend(current_best.get("current_blockers") or [])
+    blockers.extend(current_best.get("live_blocker_codes") or [])
+    blockers.extend(portfolio_best.get("current_blockers") or [])
+    if row.get("month_scale_blocker"):
+        blockers.append("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE")
+    if (row.get("market_close_losses") or 0) > 0:
+        blockers.append("MARKET_CLOSE_LEAK_PRESENT")
+    if adjusted.get("proof_floor_reached") is not True:
+        blockers.append("SAMPLE_GAP")
+    if proof_best:
+        missing = proof_best.get("missing_proof") if isinstance(proof_best.get("missing_proof"), dict) else {}
+        if missing.get("sample_count_floor") is False:
+            blockers.append("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY")
+        if missing.get("s5_bidask_spread_included_replay") is False:
+            blockers.append("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING")
+        if missing.get("active_day_floor") is False:
+            blockers.append("ACTIVE_DAY_FLOOR_NOT_MET")
+        if missing.get("risk_engine_pass") is False:
+            blockers.append("RISK_ENGINE_PASS_MISSING")
+        if missing.get("live_order_gateway_pass") is False:
+            blockers.append("LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING")
+        if missing.get("gpt_verifier_pass") is False:
+            blockers.append("FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING")
+        if missing.get("no_guardian_operator_review_blocker") is False:
+            blockers.append("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+        if proof_best.get("can_create_live_permission") is not True:
+            blockers.append("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY")
+    else:
+        blockers.append("NOT_IN_PROOF_QUEUE")
+    if limit_replay:
+        blockers.extend(limit_replay.get("remaining_blocker_codes") or [])
+    blockers.extend(_codes_from_values(ctx["acceptance"].get("blockers") or []))
+    if ctx["acceptance"].get("status"):
+        blockers.append(str(ctx["acceptance"].get("status")))
+    return _unique_strings(blockers)
+
+
+def _harvest_rank_reason(
+    row: dict[str, Any],
+    adjusted: dict[str, Any],
+    proof_queue_member: bool,
+    planner_can_enter: bool,
+    limit_replay: dict[str, Any] | None,
+) -> str:
+    pieces = [
+        f"TP proof {adjusted.get('take_profit_trades')}/{adjusted.get('proof_floor_trades')} gap {adjusted.get('proof_gap_trades')}",
+        f"proof_queue_member={proof_queue_member}",
+        f"planner_can_enter_proof_pack={planner_can_enter}",
+    ]
+    if limit_replay:
+        pieces.append(
+            "LIMIT S5 bid/ask replay "
+            f"{limit_replay.get('replay_wins')}/{limit_replay.get('replay_sample_count')} "
+            f"net={limit_replay.get('net_expectancy_after_bidask')}"
+        )
+    if row.get("overall_net_jpy") is not None:
+        pieces.append(f"overall_net_jpy={row.get('overall_net_jpy')}")
+    if row.get("month_scale_blocker"):
+        pieces.append("direct_month_scale_blocker=present")
+    return "; ".join(pieces)
+
+
+def _shape_part(shape_key: str, index: int) -> str:
+    parts = shape_key.split("|")
+    return parts[index] if len(parts) > index else ""
+
+
+def _codes_from_values(values: list[Any]) -> list[str]:
+    return [_code_from_value(value) for value in values if _code_from_value(value)]
+
+
+def _code_from_value(value: Any) -> str:
+    if isinstance(value, dict):
+        raw = value.get("code") or value.get("reason_code") or value.get("status")
+    else:
+        raw = value
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    return text.split(":", 1)[0].strip()
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = _code_from_value(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
 def _context(as_loop: Any) -> dict[str, Any]:
     acceptance = _load_json("data/profitability_acceptance.json")
     self_audit = _load_json("data/self_improvement_audit.json")
@@ -822,6 +1361,10 @@ def _context(as_loop: Any) -> dict[str, Any]:
         "support": _load_json("data/trader_support_bot.json"),
         "p0_decomposition": _load_json("data/remaining_profitability_p0_decomposition.json"),
         "as_board": _load_json("data/as_lane_candidate_board.json"),
+        "payoff_shape": _load_json("data/payoff_shape_diagnosis.json"),
+        "proof_floor_update": _load_json("data/eurusd_short_breakout_failure_proof_floor_update.json"),
+        "limit_s5_bidask_replay": _load_json("data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json"),
+        "live_order_request": _load_json("data/live_order_request.json"),
         "candidate_by_lane": candidate_by_lane,
         "proof_by_lane": proof_by_lane,
         "intent_by_lane": intent_by_lane,
@@ -1814,6 +2357,96 @@ def portfolio_planner_md(payload: dict[str, Any]) -> str:
             f"| {idx} | `{row.get('lane_id')}` | `{row.get('proof_classification')}` | {row.get('expected_daily_return_pct_on_funding_adjusted_equity')} | {row.get('rank_score')} | {row.get('proof_distance')} | {row.get('realistic_units')} | {row.get('current_blocker_count')} |"
         )
     lines.extend(["", "## Global Blockers", "", f"- `{payload.get('global_blockers')}`"])
+    return "\n".join(lines) + "\n"
+
+
+def harvest_live_grade_path_md(payload: dict[str, Any]) -> str:
+    closest = payload.get("closest_harvest_candidate") if isinstance(payload.get("closest_harvest_candidate"), dict) else {}
+    proof = payload.get("proof_queue_summary") if isinstance(payload.get("proof_queue_summary"), dict) else {}
+    portfolio = payload.get("portfolio_summary") if isinstance(payload.get("portfolio_summary"), dict) else {}
+    lines = [
+        "# HARVEST Live-Grade Path",
+        "",
+        f"Generated: `{payload.get('generated_at_utc')}`",
+        "",
+        "## Verdict",
+        "",
+        f"- Status: `{payload.get('status')}`",
+        f"- Live permission allowed: `{payload.get('live_permission_allowed')}`",
+        f"- Live promotion allowed: `{payload.get('live_promotion_allowed')}`",
+        f"- Runner creation decision: `{payload.get('runner_creation_decision')}`",
+        f"- Closest HARVEST: `{closest.get('candidate_id')}`",
+        f"- Proof queue: queue=`{proof.get('queue_count')}` proof_ready=`{proof.get('proof_ready_count')}` can_create_live_permission=`{proof.get('can_create_live_permission_count')}`",
+        f"- Portfolio: `{portfolio.get('portfolio_status')}` live_ready_lanes=`{portfolio.get('live_ready_lanes')}`",
+        "",
+        "This is a read-only diagnosis. It did not send orders, cancel orders, close positions, change launchd, relax gates, or derive lot size from the 4x deficit.",
+        "",
+        "## Closest Candidate",
+        "",
+        f"- Shape: `{closest.get('candidate_id')}`",
+        f"- Class: `{closest.get('classification')}`",
+        f"- Proof queue member: `{closest.get('actual_proof_queue_member')}`",
+        f"- Planner can enter proof pack: `{closest.get('planner_can_enter_proof_pack')}`",
+        f"- Can create live permission: `{closest.get('can_create_live_permission')}`",
+        f"- Rank reason: {closest.get('rank_reason')}",
+        "",
+    ]
+    tp = closest.get("tp_proof") if isinstance(closest.get("tp_proof"), dict) else {}
+    if tp:
+        lines.extend(
+            [
+                "## TP Proof",
+                "",
+                f"- Source: `{tp.get('proof_source')}`",
+                f"- TAKE_PROFIT_ORDER wins/trades: `{tp.get('take_profit_wins') or tp.get('take_profit_trades')}`",
+                f"- TAKE_PROFIT_ORDER losses: `{tp.get('take_profit_losses')}`",
+                f"- Proof floor: `{tp.get('proof_floor_trades')}`",
+                f"- Remaining broad TP gap: `{tp.get('proof_gap_trades')}`",
+                f"- Legacy samples accepted: `{', '.join(tp.get('legacy_samples_accepted') or [])}`",
+                f"- Canonical integration: `{tp.get('canonical_integration_status')}`",
+                "",
+            ]
+        )
+    replay = closest.get("limit_s5_bidask_replay") if isinstance(closest.get("limit_s5_bidask_replay"), dict) else {}
+    if replay:
+        lines.extend(
+            [
+                "## Exact LIMIT S5 Bid/Ask Replay",
+                "",
+                f"- Status: `{replay.get('status')}`",
+                f"- Samples: `{replay.get('replay_sample_count')}`",
+                f"- Wins/Losses: `{replay.get('replay_wins')}` / `{replay.get('replay_losses')}`",
+                f"- Net expectancy after bid/ask: `{replay.get('net_expectancy_after_bidask')}`",
+                f"- Live-grade candidate: `{replay.get('live_grade_candidate')}`",
+                "",
+            ]
+        )
+    lines.extend(["## Promotion Blockers", ""])
+    for row in payload.get("promotion_blockers") or []:
+        lines.append(f"- `{row.get('code')}`: {row.get('status')}")
+    lines.extend(["", "## Ranked HARVEST Candidates", ""])
+    lines.append("| Rank | Shape | Class | TP proof | Queue | Planner | Live |")
+    lines.append("|---:|---|---|---:|---|---|---|")
+    for row in payload.get("ranked_harvest_candidates") or []:
+        tp_row = row.get("tp_proof") if isinstance(row.get("tp_proof"), dict) else {}
+        lines.append(
+            "| {rank} | `{shape}` | `{classification}` | {trades}/{floor} gap {gap} | `{queue}` | `{planner}` | `{live}` |".format(
+                rank=row.get("rank"),
+                shape=row.get("shape_key"),
+                classification=row.get("classification"),
+                trades=tp_row.get("take_profit_trades"),
+                floor=tp_row.get("proof_floor_trades"),
+                gap=tp_row.get("proof_gap_trades"),
+                queue=row.get("actual_proof_queue_member"),
+                planner=row.get("planner_can_enter_proof_pack"),
+                live=row.get("live_promotion_allowed"),
+            )
+        )
+    lines.extend(["", "## Next Read-Only Actions", ""])
+    for action in payload.get("required_next_actions") or []:
+        lines.append(
+            f"- `{action.get('action_id')}`: target `{action.get('target')}`; live_side_effects={action.get('live_side_effects')}"
+        )
     return "\n".join(lines) + "\n"
 
 

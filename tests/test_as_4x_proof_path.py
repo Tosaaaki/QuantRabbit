@@ -666,6 +666,169 @@ class As4xProofPathTests(unittest.TestCase):
         self.assertEqual(manual_tp_summary["last_transaction_id"], "472996")
         self.assertEqual(manual_tp_summary["active_take_profit_order"], "472996")
 
+    def test_harvest_live_grade_path_uses_current_proof_queue_membership(self) -> None:
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        ctx = {
+            "payoff_shape": {
+                "runner_candidates": [],
+                "harvest_candidates": [
+                    {
+                        "shape_key": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                        "classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "method": "BREAKOUT_FAILURE",
+                        "take_profit_trades": 17,
+                        "take_profit_wins": 17,
+                        "take_profit_losses": 0,
+                        "proof_floor_trades": 20,
+                        "proof_gap_trades": 3,
+                        "take_profit_expectancy_jpy": 613.2,
+                        "overall_net_jpy": 3705.2,
+                        "overall_expectancy_jpy_per_trade": 102.9,
+                        "market_close_losses": 10,
+                        "market_close_net_jpy": -7636.3,
+                        "month_scale_blocker": None,
+                    }
+                ],
+            },
+            "proof_queue": {
+                "summary": {
+                    "queue_count": 2,
+                    "proof_ready_count": 0,
+                    "can_create_live_permission_count": 0,
+                },
+                "queue": [
+                    {
+                        "lane_id": lane_id,
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "method": "BREAKOUT_FAILURE",
+                        "order_type": "LIMIT",
+                        "proof_classification": "EVIDENCE_GAP",
+                        "proof_distance": 7,
+                        "can_enter_proof_pack": True,
+                        "can_create_live_permission": False,
+                        "missing_proof": {
+                            "sample_count_floor": False,
+                            "s5_bidask_spread_included_replay": False,
+                            "risk_engine_pass": False,
+                            "live_order_gateway_pass": False,
+                            "gpt_verifier_pass": False,
+                            "no_guardian_operator_review_blocker": False,
+                        },
+                    }
+                ],
+            },
+            "proof_floor_update": {
+                "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                "canonical_integration_status": "CANONICAL_PROOF_UPDATE_READY_AS_EVIDENCE_ONLY",
+                "legacy_samples_accepted": ["469278", "469427", "469898"],
+                "post_update_tp_proof": {
+                    "wins": 20,
+                    "losses": 0,
+                    "proof_floor": 20,
+                    "remaining_samples": 0,
+                    "proof_floor_reached": True,
+                },
+                "harvest_live_grade_re_evaluation": {
+                    "post_update_candidate_classification": "HARVEST_PROOF_FLOOR_REACHED_EVIDENCE_ONLY"
+                },
+            },
+            "limit_s5_bidask_replay": {
+                "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
+                "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+                "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+                "replay_sample_count": 4,
+                "replay_wins": 4,
+                "replay_losses": 0,
+                "net_expectancy_after_bidask": 813.7734,
+                "live_grade_candidate": False,
+                "market_stop_samples_excluded": True,
+                "market_close_excluded": True,
+                "remaining_blockers": [
+                    {"code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"},
+                    {"code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION"},
+                    {"code": "NOT_IN_PROOF_QUEUE"},
+                ],
+            },
+            "intent_by_lane": {
+                lane_id: {
+                    "status": "DRY_RUN_BLOCKED",
+                    "risk_allowed": False,
+                    "live_blocker_codes": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+                    "risk_metrics": {"risk_jpy": 418.0},
+                    "intent": {
+                        "order_type": "LIMIT",
+                        "units": 3000,
+                        "metadata": {
+                            "attach_take_profit_on_fill": True,
+                            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                            "tp_target_intent": "HARVEST",
+                            "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                        },
+                    },
+                }
+            },
+            "acceptance": {
+                "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                "blockers": ["NEGATIVE_EXPECTANCY_ACTIVE: capture economics remains negative"],
+            },
+            "support": {"blockers": []},
+            "memory": {"status": "OK"},
+            "live_order_request": {"status": "NO_ACTION", "send_requested": False},
+        }
+        firepower_candidate = {
+            "lane_id": lane_id,
+            "pair": "EUR_USD",
+            "side": "SHORT",
+            "method": "BREAKOUT_FAILURE",
+            "order_type": "LIMIT",
+            "can_enter_proof_pack": True,
+            "can_create_live_permission": False,
+            "proof_gap_count": 7,
+            "current_blockers": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+        }
+        portfolio = {
+            "portfolio_status": "NO_LIVE_READY_PORTFOLIO",
+            "can_reach_4x_now": False,
+            "live_ready_lanes": 0,
+            "summary": {"can_create_live_permission": False},
+            "candidate_rankings": [
+                {
+                    "lane_id": lane_id,
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "method": "BREAKOUT_FAILURE",
+                    "order_type": "LIMIT",
+                    "can_enter_proof_pack": True,
+                    "can_create_live_permission": False,
+                    "rank_score": 10.0,
+                    "proof_distance": 7,
+                    "current_blockers": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+                }
+            ],
+        }
+
+        with patch.object(proof_path, "all_firepower_candidates", return_value=[firepower_candidate]):
+            payload = proof_path.build_harvest_live_grade_path("2026-07-08T00:00:00Z", ctx, portfolio)
+
+        closest = payload["closest_harvest_candidate"]
+        blocker_codes = {row["code"] for row in payload["promotion_blockers"]}
+        candidate_blockers = set(closest["promotion_blockers"])
+        self.assertEqual(closest["candidate_id"], "EUR_USD|SHORT|BREAKOUT_FAILURE")
+        self.assertTrue(closest["actual_proof_queue_member"])
+        self.assertTrue(closest["planner_can_enter_proof_pack"])
+        self.assertFalse(closest["can_create_live_permission"])
+        self.assertEqual(closest["tp_proof"]["take_profit_trades"], 20)
+        self.assertEqual(closest["tp_proof"]["proof_gap_trades"], 0)
+        self.assertIn("469278", closest["tp_proof"]["legacy_samples_accepted"])
+        self.assertNotIn("NOT_IN_PROOF_QUEUE", candidate_blockers)
+        self.assertNotIn("PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION", blocker_codes)
+        self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", candidate_blockers)
+        self.assertIn("PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY", candidate_blockers)
+        self.assertFalse(payload["live_permission_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()
