@@ -116,6 +116,7 @@ docs/as_proof_pack_queue.md|\
 docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
 docs/audjpy_short_breakout_failure_repair_proof.md|\
 docs/active_trader_contract.md|\
+docs/active_opportunity_board.md|\
 docs/eurusd_short_breakout_failure_evidence_acquisition_plan.md|\
 docs/eurusd_short_breakout_failure_legacy_sample_search.md|\
 docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md|\
@@ -143,6 +144,7 @@ data/as_proof_pack_queue.json|\
 data/audjpy_short_breakout_failure_limit_proof_pack.json|\
 data/audjpy_short_breakout_failure_repair_proof.json|\
 data/active_trader_contract.json|\
+data/active_opportunity_board.json|\
 data/eurusd_short_breakout_failure_evidence_acquisition_plan.json|\
 data/eurusd_short_breakout_failure_legacy_sample_search.json|\
 data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json|\
@@ -370,6 +372,8 @@ verify_automation() {
     'named proof/acceptance evidence' \
     'data/trader_goal_loop_orchestrator.json' \
     'data/active_trader_contract.json' \
+    'data/active_opportunity_board.json' \
+    'docs/active_opportunity_board.md' \
     'eurusd_short_breakout_failure_*' \
     'runtime drift and **do not** block the run'
   do
