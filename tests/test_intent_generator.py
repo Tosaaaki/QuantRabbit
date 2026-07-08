@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Quote, Side, TradeMethod
+from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
@@ -12158,6 +12159,8 @@ class IntentGeneratorTest(unittest.TestCase):
             for result in payload["results"]:
                 self.assertLessEqual(result["intent"]["units"], 6000)
                 self.assertLessEqual(result["risk_metrics"]["margin_utilization_after_pct"], 92.0)
+                buffered_budget = result["risk_metrics"]["margin_budget_jpy"] * MARGIN_AWARE_BASKET_BUFFER
+                self.assertLessEqual(result["risk_metrics"]["estimated_margin_jpy"], buffered_budget + 1e-6)
                 issue_codes = {issue["code"] for issue in result["risk_issues"]}
                 self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
                 self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", issue_codes)

@@ -1700,7 +1700,7 @@ from quant_rabbit.market_close_leak_gate import (
     market_close_leak_family_payload_issue,
 )
 from quant_rabbit.month_scale_residual_gate import month_scale_residual_metadata_issue
-from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
+from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
     FORECAST_ADVERSE_PATH_BLOCKER_CODE,
     forecast_adverse_path_exempted_by_tp_harvest_repair,
@@ -4733,7 +4733,7 @@ def _draft_effective_margin_room(packet: dict[str, Any]) -> float | None:
     base_room = min(available, utilization_room)
     # Same C-4 engineering buffer documented in AGENT_CONTRACT. It absorbs
     # intra-cycle margin drift and is not a market edge threshold.
-    return max(0.0, base_room) * 0.9
+    return max(0.0, base_room) * MARGIN_AWARE_BASKET_BUFFER
 
 
 def _draft_market_read_first(
@@ -8076,8 +8076,7 @@ def _pending_entry_orders(packet: dict[str, Any]) -> list[dict[str, Any]]:
     snapshot = packet.get("broker_snapshot", {})
     orders: list[dict[str, Any]] = []
     for order in snapshot.get("pending_orders", []) or []:
-        owner = str(order.get("owner") or "")
-        if owner in {"manual", "unknown"}:
+        if _operator_managed_owner(order.get("owner")):
             continue
         if order.get("trade_id"):
             continue
@@ -8126,7 +8125,7 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
     sl_free_active = _trader_sl_repair_disabled()
     for position in snapshot.get("position_summaries", []) or []:
         owner = str(position.get("owner") or "")
-        if owner in {"manual", "unknown"}:
+        if _operator_managed_owner(owner):
             continue
         # SL-free regime: trader-owned SL=None is intentional, and missing
         # broker TP is a no-broker-TP runner unless repair is explicitly
@@ -8142,6 +8141,11 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
             f"non-layerable position {position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
         )
     return blockers
+
+
+def _operator_managed_owner(owner: Any) -> bool:
+    normalized = str(owner or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized in {"manual", "unknown", "operator_manual"}
 
 
 def _trader_exposure_present(packet: dict[str, Any]) -> bool:

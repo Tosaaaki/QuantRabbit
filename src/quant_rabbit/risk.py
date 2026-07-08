@@ -1072,6 +1072,10 @@ DEFAULT_SPECS: dict[str, InstrumentSpec] = {
     for pair in DEFAULT_TRADER_PAIRS
 }
 
+# C-4 margin-aware basket tolerance. This is engineering headroom for
+# intra-cycle broker-margin drift, not a market edge threshold.
+MARGIN_AWARE_BASKET_BUFFER = 0.9
+
 
 def estimate_required_margin_jpy(*, units: int, entry_price: float, quote_to_jpy: float, spec: InstrumentSpec) -> float:
     """Estimate initial margin in account JPY for a candidate FX order."""

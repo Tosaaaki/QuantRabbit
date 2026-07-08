@@ -45,6 +45,7 @@ from quant_rabbit.paths import (
 from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
+    MARGIN_AWARE_BASKET_BUFFER,
     MIN_PRODUCTION_LOT_UNITS,
     RiskEngine,
     RiskPolicy,
@@ -14732,7 +14733,7 @@ def _margin_budgeted_units(
         if side is not None
         else 0
     )
-    budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+    budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct) * MARGIN_AWARE_BASKET_BUFFER
     if budget <= 0:
         return float(broker_margin_free)
     margin_per_unit = estimate_required_margin_jpy(units=1, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
@@ -14791,6 +14792,11 @@ def _margin_sizing_metadata(
             "hedge_margin_free_units": margin_free_hedge_units,
             "broker_margin_free_units": broker_margin_free,
             "margin_budget_jpy": round(margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct), 3),
+            "margin_budget_buffered_jpy": round(
+                margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+                * MARGIN_AWARE_BASKET_BUFFER,
+                3,
+            ),
             "margin_used_jpy": round(account.margin_used_jpy, 3),
             "margin_available_jpy": round(account.margin_available_jpy, 3),
             "margin_utilization_after_pct": (

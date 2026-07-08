@@ -88,7 +88,7 @@ from quant_rabbit.ai_test_bot import AITestBotBacktester
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
-from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
+from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_position_raw
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.ensemble import CampaignPlanner
@@ -128,7 +128,6 @@ GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
 # marginAvailable here was a bug: the discretionary receipt could claim a
 # basket fit while the gateway correctly rejected it with
 # `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`.
-MARGIN_AWARE_BASKET_BUFFER = 0.9
 
 # A GPT replacement must improve same-lane fill odds by at least one current
 # spread before it is allowed to churn an otherwise equivalent pending order.

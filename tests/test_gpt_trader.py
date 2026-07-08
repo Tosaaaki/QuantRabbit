@@ -238,6 +238,32 @@ class GPTTraderBrainTest(unittest.TestCase):
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
 
+    def test_draft_ignores_operator_manual_position_for_scheduled_trader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": 30000,
+                        "entry_price": 1.14048,
+                        "take_profit": 1.1361,
+                        "stop_loss": None,
+                        "owner": "operator_manual",
+                    }
+                ],
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.action, "TRADE")
+            report = (root / "trader_decision_draft.md").read_text()
+            self.assertNotIn("non-layerable position EUR_USD SHORT id=472987", report)
+
     def test_draft_classifies_expired_guardian_receipt_before_trade_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
