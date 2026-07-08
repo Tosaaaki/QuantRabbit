@@ -324,7 +324,13 @@ class BidAskReplayPackagerTest(unittest.TestCase):
             "pair_filter": ["EUR_JPY"],
             "price_truth_coverage": {"status": "PRICE_TRUTH_OK"},
             "precision_rules": {
-                "adoption_summary": {"negative_block_rules": 1},
+                "adoption_summary": {
+                    "has_live_grade_support": False,
+                    "has_rank_only_support": False,
+                    "live_grade_support_rules": 0,
+                    "rank_only_support_rules": 0,
+                    "negative_block_rules": 1,
+                },
                 "negative_rules": [
                     {
                         "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
@@ -338,7 +344,31 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         existing = {
             "generated_at_utc": "2026-07-03T14:52:18Z",
             "source_report": "logs/reports/forecast_improvement/old.json",
-            "adoption_summary": {"negative_block_rules": 2},
+            "adoption_summary": {
+                "has_live_grade_support": True,
+                "has_rank_only_support": True,
+                "live_grade_support_rules": 3,
+                "rank_only_support_rules": 2,
+                "negative_block_rules": 2,
+            },
+            "daily_stable_edge_rules": [
+                {
+                    "name": "GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+                    "pair": "GBP_USD",
+                    "direction": "DOWN",
+                    "samples": 50,
+                    "adoption_status": "LIVE_GRADE",
+                }
+            ],
+            "edge_rules": [
+                {
+                    "name": "AUD_USD_UP_S5_BIDASK_RANK_ONLY",
+                    "pair": "AUD_USD",
+                    "direction": "UP",
+                    "samples": 65,
+                    "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+                }
+            ],
             "negative_rules": [
                 {
                     "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
@@ -376,6 +406,10 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         )
         self.assertTrue(packaged["existing_rule_rows_preserved"])
         self.assertEqual(packaged["adoption_summary"]["negative_block_rules"], 2)
+        self.assertEqual(packaged["adoption_summary"]["live_grade_support_rules"], 3)
+        self.assertEqual(packaged["adoption_summary"]["rank_only_support_rules"], 2)
+        self.assertTrue(packaged["adoption_summary"]["has_live_grade_support"])
+        self.assertTrue(packaged["adoption_summary"]["has_rank_only_support"])
 
 
 if __name__ == "__main__":

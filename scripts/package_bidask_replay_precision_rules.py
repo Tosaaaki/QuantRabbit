@@ -303,6 +303,16 @@ def _preserve_adoption_summary_counts(packaged: dict[str, Any], existing: dict[s
         prior_value = _optional_int(prior.get(key))
         if prior_value is not None and (current_value is None or prior_value > current_value):
             current[key] = prior_value
+    _sync_adoption_summary_flags(current)
+
+
+def _sync_adoption_summary_flags(summary: dict[str, Any]) -> None:
+    live_count = _optional_int(summary.get("live_grade_support_rules"))
+    if live_count is not None:
+        summary["has_live_grade_support"] = live_count > 0
+    rank_count = _optional_int(summary.get("rank_only_support_rules"))
+    if rank_count is not None:
+        summary["has_rank_only_support"] = rank_count > 0
 
 
 def _source_report_label(source_report: Path) -> str:
