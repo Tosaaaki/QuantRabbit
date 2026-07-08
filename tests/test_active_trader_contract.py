@@ -486,6 +486,81 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("top lane failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT is OPERATOR_REVIEW_REQUIRED", payload["selected_active_path_reason"])
         self.assertIn("operator/guardian review evidence", payload["next_trade_enabling_action"])
 
+    def test_board_all_no_trade_with_guardian_clear_overrides_stale_single_lane_evidence(self) -> None:
+        now = datetime(2026, 7, 8, 10, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_NO_TRADE_WITH_CAUSE",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "global_safety": {
+                        "guardian_receipt_normal_routing_allowed": True,
+                        "live_permission_allowed": False,
+                    },
+                    "coverage_summary": {
+                        "total_lanes": 112,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 0,
+                        "operator_review_required_count": 0,
+                        "no_trade_count": 112,
+                        "pairs_scanned": ["USD_CHF", "EUR_USD"],
+                        "vehicles_scanned": ["LIMIT", "STOP", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "trend_trader:USD_CHF:LONG:TREND_CONTINUATION",
+                        "pair": "USD_CHF",
+                        "direction": "LONG",
+                        "strategy_family": "TREND_CONTINUATION",
+                        "vehicle": "STOP",
+                        "status": "NO_TRADE_WITH_CAUSE",
+                        "next_action": "No trade for USD_CHF|LONG|TREND_CONTINUATION|STOP; preserve blocker cause.",
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                        ],
+                        "stale_source_blockers": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": "NO_TRADE_WITH_CAUSE: all lanes blocked by current profitability/replay causes.",
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "NO_TRADE_WITH_CAUSE")
+        self.assertIn("all lanes as NO_TRADE_WITH_CAUSE", payload["selected_active_path_reason"])
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", blocker_codes)
+        self.assertNotIn("GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
+
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
     paths = {

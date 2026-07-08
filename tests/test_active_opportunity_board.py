@@ -35,6 +35,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
                 replay_artifact_paths=[paths["limit_replay"]],
                 output_path=paths["output"],
                 report_path=paths["report"],
@@ -83,6 +85,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
                 replay_artifact_paths=[paths["limit_replay"]],
                 output_path=paths["output"],
                 report_path=paths["report"],
@@ -94,6 +98,49 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["operator_review_status"], "REQUIRED")
         self.assertGreaterEqual(payload["coverage_summary"]["operator_review_required_count"], 4)
         self.assertIn("OPERATOR_REVIEW_REQUIRED", payload["next_active_path"])
+
+    def test_cleared_guardian_receipt_suppresses_stale_planner_guardian_blocker(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            portfolio = json.loads(paths["portfolio"].read_text())
+            portfolio["candidate_rankings"][0]["current_blockers"] = [
+                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+            ]
+            _write_json(paths["portfolio"], portfolio)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = next(
+            row
+            for row in payload["ranked_active_lanes"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertEqual(lane["status"], "EVIDENCE_ACQUISITION")
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", lane["blockers"])
+        self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", lane["stale_source_blockers"])
 
     def test_negative_replay_lane_is_no_trade_with_cause(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
@@ -114,6 +161,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
                 replay_artifact_paths=[paths["limit_replay"]],
                 output_path=paths["output"],
                 report_path=paths["report"],
@@ -148,6 +197,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
                 replay_artifact_paths=[],
                 output_path=paths["output"],
                 report_path=paths["report"],
@@ -179,6 +230,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
                 replay_artifact_paths=[paths["limit_replay"], paths["stop_replay"]],
                 output_path=paths["output"],
                 report_path=paths["report"],
@@ -211,6 +264,8 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
         "verification": root / "data" / "verification_ledger.json",
         "execution_db": root / "data" / "execution_ledger.db",
         "strategy": root / "data" / "strategy_profile.json",
+        "guardian_consumption": root / "data" / "guardian_receipt_consumption.json",
+        "guardian_operator_review": root / "data" / "guardian_receipt_operator_review.json",
         "limit_replay": root / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
         "stop_replay": root / "data" / "eurusd_short_breakout_failure_stop_harvest_replay.json",
         "output": root / "data" / "active_opportunity_board.json",
@@ -245,6 +300,31 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
     _write_json(paths["broker"], {"fetched_at_utc": now.isoformat(), "quotes": {"EUR_USD": {}, "AUD_JPY": {}}})
     _write_json(paths["verification"], {"blocking_evidence": [], "learning_evidence": [], "status": "OK"})
     _write_json(paths["strategy"], {"profiles": []})
+    _write_json(
+        paths["guardian_consumption"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+            "normal_routing_allowed": True,
+            "current_p0_p1_blocks_routing": False,
+            "classifications": [],
+            "live_side_effects": [],
+            "read_only": True,
+        },
+    )
+    _write_json(
+        paths["guardian_operator_review"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED",
+            "normal_routing_allowed": True,
+            "unresolved_review_count": 0,
+            "classifications": [],
+            "live_side_effects": [],
+            "read_only": True,
+            "no_live_side_effects": True,
+        },
+    )
 
     if scout_only:
         _write_json(

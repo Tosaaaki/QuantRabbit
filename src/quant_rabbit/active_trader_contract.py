@@ -59,6 +59,7 @@ NEGATIVE_BLOCKER_MARKERS = (
     "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
 )
 OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS = ("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",)
 
 
 @dataclass(frozen=True)
@@ -557,6 +558,7 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
             "consumed_failed_replay_blocker_codes": [],
         }
     summary = artifact.get("coverage_summary") if isinstance(artifact.get("coverage_summary"), dict) else {}
+    global_safety = artifact.get("global_safety") if isinstance(artifact.get("global_safety"), dict) else {}
     top_lane = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
     lanes = artifact.get("ranked_active_lanes") if isinstance(artifact.get("ranked_active_lanes"), list) else []
     consumed: list[dict[str, Any]] = []
@@ -601,6 +603,7 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
         "vehicles_scanned": _string_list(summary.get("vehicles_scanned")),
         "next_active_path": artifact.get("next_active_path"),
         "top_lane": _contract_lane_summary(top_lane),
+        "guardian_receipt_normal_routing_allowed": global_safety.get("guardian_receipt_normal_routing_allowed") is True,
         "failed_exact_replay_consumed_count": len(consumed),
         "consumed_failed_replay_lanes": consumed[:10],
         "consumed_failed_replay_blocker_codes": _unique(blocker_codes),
@@ -634,6 +637,7 @@ def _contract_lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
         "expected_edge_jpy": lane.get("expected_edge_jpy"),
         "next_action": lane.get("next_action"),
         "blockers": blockers[:24],
+        "stale_source_blockers": _string_list(lane.get("stale_source_blockers"))[:12],
     }
 
 
@@ -641,10 +645,12 @@ def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
     raw = str(status or "NO_TRADE_WITH_CAUSE")
     if any(any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
-    if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
+    if any(any(marker in blocker for marker in GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS) for blocker in blockers):
         return "OPERATOR_REVIEW_REQUIRED"
     if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
+    if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
+        return "OPERATOR_REVIEW_REQUIRED"
     return raw
 
 
@@ -738,6 +744,22 @@ def _select_active_path(
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     board_status = str(board_top.get("status") or "")
+    if active_opportunity_board.get("total_lanes", 0) > 0 and board_status == "NO_TRADE_WITH_CAUSE":
+        active_counts = sum(
+            int(active_opportunity_board.get(key) or 0)
+            for key in (
+                "live_ready_count",
+                "harvest_ready_count",
+                "scout_ready_count",
+                "evidence_acquisition_count",
+                "operator_review_required_count",
+            )
+        )
+        if active_counts == 0:
+            return (
+                "NO_TRADE_WITH_CAUSE",
+                "Latest active opportunity board reranked all lanes as NO_TRADE_WITH_CAUSE; do not fall back to stale single-lane evidence work.",
+            )
     if active_opportunity_board.get("total_lanes", 0) > 0 and board_status in {
         "LIVE_READY",
         "HARVEST_READY",
@@ -842,6 +864,13 @@ def _remaining_blockers(
     ) == 0
     if broad_tp_proof_reached:
         codes = [code for code in codes if code != "SAMPLE_GAP"]
+    if active_opportunity_board.get("guardian_receipt_normal_routing_allowed") is True:
+        stale_guardian_receipt_codes = {
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+            "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+        }
+        codes = [code for code in codes if code not in stale_guardian_receipt_codes]
     replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
     if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
         stale_spread_codes = {
@@ -1061,6 +1090,12 @@ def _next_trade_enabling_action(
         return "Verify proof queue, risk, verifier, gateway, guardian, and current broker truth without sending orders."
     if selected_active_path == "EDGE_IMPROVEMENT_EXPERIMENT":
         return "Design read-only payoff/sampling experiment for HARVEST candidate."
+    if selected_active_path == "NO_TRADE_WITH_CAUSE" and board_top:
+        blockers = ", ".join(_string_list(board_top.get("blockers"))[:5])
+        return (
+            "Emit NO_TRADE_WITH_CAUSE from the latest active_opportunity_board: "
+            f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}) is blocked by {blockers}."
+        )
     return "Emit NO_TRADE_WITH_CAUSE with machine-readable blockers and next unlock action."
 
 

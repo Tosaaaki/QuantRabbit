@@ -16,6 +16,8 @@ from quant_rabbit.paths import (
     DEFAULT_AS_PROOF_PACK_QUEUE,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_HARVEST_LIVE_GRADE_PATH,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_ORDER_INTENTS,
@@ -80,6 +82,7 @@ RISK_BLOCKER_MARKERS = (
     "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
 )
 OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS = ("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",)
 GUARDIAN_MARKERS = ("GUARDIAN",)
 FAILED_EXACT_REPLAY_MARKERS = (
     "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
@@ -115,6 +118,8 @@ class ActiveOpportunityBoard:
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
+        guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         replay_artifact_paths: list[Path] | None = None,
         output_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
         report_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT,
@@ -133,6 +138,8 @@ class ActiveOpportunityBoard:
             "order_intents": order_intents_path,
             "verification_ledger": verification_ledger_path,
             "strategy_profile": strategy_profile_path,
+            "guardian_receipt_consumption": guardian_receipt_consumption_path,
+            "guardian_receipt_operator_review": guardian_receipt_operator_review_path,
         }
         self.execution_ledger_db_path = execution_ledger_db_path
         self.replay_artifact_paths = replay_artifact_paths if replay_artifact_paths is not None else _default_replay_artifacts()
@@ -174,8 +181,12 @@ class ActiveOpportunityBoard:
         _attach_verification_ledger(lanes, artifacts["verification_ledger"])
 
         execution_ledger_summary = _execution_ledger_summary(self.execution_ledger_db_path)
+        guardian_routing_clear = _guardian_routing_clear(
+            artifacts["guardian_receipt_consumption"],
+            artifacts["guardian_receipt_operator_review"],
+        )
         for lane in lanes.values():
-            _finalize_lane(lane)
+            _finalize_lane(lane, guardian_routing_clear=guardian_routing_clear)
 
         ranked_lanes = sorted(
             lanes.values(),
@@ -229,6 +240,7 @@ class ActiveOpportunityBoard:
                 "operator_decision_inference_allowed": False,
                 "broker_state_mutation_allowed": False,
                 "live_permission_allowed": False,
+                "guardian_receipt_normal_routing_allowed": guardian_routing_clear,
             },
         }
         if payload["live_permission_allowed"]:
@@ -317,11 +329,17 @@ def _add_order_intent_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str
         lane["risk_jpy"] = _first_number(lane.get("risk_jpy"), metrics.get("risk_jpy"))
         lane["reward_jpy"] = _first_number(lane.get("reward_jpy"), metrics.get("reward_jpy"))
         lane["units"] = _first_number(lane.get("units"), intent.get("units"))
-        lane["blockers"].extend(_string_list(row.get("live_blocker_codes")))
-        lane["blockers"].extend(_issue_codes(row.get("risk_issues")))
-        lane["blockers"].extend(_issue_codes(row.get("strategy_issues")))
-        lane["strategy_issue_codes"].extend(_issue_codes(row.get("strategy_issues")))
-        lane["risk_issue_codes"].extend(_issue_codes(row.get("risk_issues")))
+        intent_blockers = _string_list(row.get("live_blocker_codes"))
+        risk_issue_codes = _issue_codes(row.get("risk_issues"))
+        strategy_issue_codes = _issue_codes(row.get("strategy_issues"))
+        lane["blockers"].extend(intent_blockers)
+        lane["blockers"].extend(risk_issue_codes)
+        lane["blockers"].extend(strategy_issue_codes)
+        lane["order_intent_blockers"].extend(intent_blockers)
+        lane["order_intent_blockers"].extend(risk_issue_codes)
+        lane["order_intent_blockers"].extend(strategy_issue_codes)
+        lane["strategy_issue_codes"].extend(strategy_issue_codes)
+        lane["risk_issue_codes"].extend(risk_issue_codes)
 
 
 def _add_proof_queue_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
@@ -653,6 +671,8 @@ def _ensure_lane(
             "source_refs": [],
             "risk_issue_codes": [],
             "strategy_issue_codes": [],
+            "order_intent_blockers": [],
+            "stale_source_blockers": [],
         }
     lane = lanes[lane_id]
     for key, value in (
@@ -685,11 +705,13 @@ def _matching_lane_ids(
     ]
 
 
-def _finalize_lane(lane: dict[str, Any]) -> None:
+def _finalize_lane(lane: dict[str, Any], *, guardian_routing_clear: bool) -> None:
     lane["blockers"] = _unique(_string_list(lane.get("blockers")))
     lane["source_refs"] = _unique(_string_list(lane.get("source_refs")))
     lane["risk_issue_codes"] = _unique(_string_list(lane.get("risk_issue_codes")))
     lane["strategy_issue_codes"] = _unique(_string_list(lane.get("strategy_issue_codes")))
+    lane["order_intent_blockers"] = _unique(_string_list(lane.get("order_intent_blockers")))
+    _suppress_stale_guardian_receipt_blockers(lane, guardian_routing_clear=guardian_routing_clear)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
     lane["guardian_status"] = _marker_status(lane["blockers"], GUARDIAN_MARKERS, "BLOCKED", "NOT_BLOCKED")
@@ -697,8 +719,31 @@ def _finalize_lane(lane: dict[str, Any]) -> None:
     lane["proof_status"] = _computed_proof_status(lane)
     lane["replay_status"] = _computed_replay_status(lane)
     lane["status"] = _classify_lane(lane)
+    if lane["status"] == "NO_TRADE_WITH_CAUSE" and not lane["blockers"]:
+        lane["blockers"].append("NO_CURRENT_EXECUTABLE_INTENT")
     lane["next_action"] = _lane_next_action(lane)
     lane["_rank_score"] = _rank_score(lane)
+
+
+def _guardian_routing_clear(consumption: dict[str, Any], operator_review: dict[str, Any]) -> bool:
+    if consumption.get("_artifact_status") != "present" or operator_review.get("_artifact_status") != "present":
+        return False
+    return consumption.get("normal_routing_allowed") is True and operator_review.get("normal_routing_allowed") is True
+
+
+def _suppress_stale_guardian_receipt_blockers(lane: dict[str, Any], *, guardian_routing_clear: bool) -> None:
+    if not guardian_routing_clear:
+        return
+    current_intent_blockers = _string_list(lane.get("order_intent_blockers"))
+    if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" in current_intent_blockers:
+        return
+    blockers = _string_list(lane.get("blockers"))
+    if "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED" not in blockers:
+        return
+    lane["blockers"] = [code for code in blockers if code != "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"]
+    lane["stale_source_blockers"] = _unique(
+        _string_list(lane.get("stale_source_blockers")) + ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"]
+    )
 
 
 def _classify_lane(lane: dict[str, Any]) -> str:
@@ -709,10 +754,12 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "LIVE_READY"
     if _has_marker(blockers, FAILED_EXACT_REPLAY_MARKERS):
         return "NO_TRADE_WITH_CAUSE"
-    if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
+    if _has_marker(blockers, GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS):
         return "OPERATOR_REVIEW_REQUIRED"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
+    if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
+        return "OPERATOR_REVIEW_REQUIRED"
     if _is_scout_ready_candidate(lane):
         return "SCOUT_READY"
     if has_evidence:
@@ -774,6 +821,8 @@ def _rank_score(lane: dict[str, Any]) -> float:
         score -= 260.0
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKER_MARKERS):
         score -= 160.0
+    if "NO_CURRENT_EXECUTABLE_INTENT" in (lane.get("blockers") or []):
+        score -= 220.0
     score -= min(len(lane.get("blockers") or []) * 4.0, 80.0)
     return round(score, 4)
 
@@ -832,6 +881,8 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     if status == "HARVEST_READY":
         return f"Run HARVEST readiness checks for {lane_key} while preserving negative/replay blockers."
     if status == "OPERATOR_REVIEW_REQUIRED":
+        if _has_marker(lane.get("blockers") or [], GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS):
+            return f"Package guardian receipt operator-review evidence for {lane_key}; do not infer approval."
         return f"Package operator/guardian review evidence for {lane_key}; do not infer approval."
     return f"No trade for {lane_key}; preserve blocker cause and compare another pair/vehicle."
 
@@ -855,6 +906,7 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
         "live_permission_allowed": False,
         "next_action": str(lane.get("next_action") or ""),
         "blockers": _unique(_string_list(lane.get("blockers"))),
+        "stale_source_blockers": _unique(_string_list(lane.get("stale_source_blockers"))),
         "rank_score": _json_number_or_none(lane.get("_rank_score")),
         "source_refs": _unique(_string_list(lane.get("source_refs"))),
     }

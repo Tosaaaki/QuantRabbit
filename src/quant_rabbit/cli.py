@@ -4071,6 +4071,18 @@ def main(argv: list[str] | None = None) -> int:
     p_active_board.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_active_board.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_active_board.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=Path(os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION)),
+    )
+    p_active_board.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=Path(
+            os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)
+        ),
+    )
+    p_active_board.add_argument(
         "--replay-artifact",
         dest="replay_artifacts",
         action="append",
@@ -6876,6 +6888,8 @@ def main(argv: list[str] | None = None) -> int:
                 verification_ledger_path=args.verification_ledger,
                 execution_ledger_db_path=args.execution_ledger_db,
                 strategy_profile_path=args.strategy_profile,
+                guardian_receipt_consumption_path=args.guardian_receipt_consumption,
+                guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 replay_artifact_paths=args.replay_artifacts,
                 output_path=args.output,
                 report_path=args.report,
