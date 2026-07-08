@@ -110,6 +110,7 @@ BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRE
 TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
 TP_PROOF_COLLECTION_MIN_TRADES = 5
 BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
 BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS = 3
@@ -207,6 +208,7 @@ class ActiveOpportunityBoard:
         _add_replay_lanes(lanes, replay_artifacts)
         _attach_strategy_profile(lanes, artifacts["strategy_profile"])
         _attach_verification_ledger(lanes, artifacts["verification_ledger"])
+        _attach_goal_loop_edge_improvement_context(lanes, artifacts["trader_goal_loop_orchestrator"])
 
         execution_ledger_summary = _execution_ledger_summary(self.execution_ledger_db_path)
         guardian_routing_clear = _guardian_routing_clear(
@@ -689,6 +691,66 @@ def _verification_ledger_blocker_codes(row: dict[str, Any]) -> list[str]:
     return [check_name] if check_name else []
 
 
+def _attach_goal_loop_edge_improvement_context(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
+    if artifact.get("selected_next_work_type") != "EDGE_IMPROVEMENT_EXPERIMENT":
+        return
+    state = artifact.get("edge_improvement_state") if isinstance(artifact.get("edge_improvement_state"), dict) else {}
+    targets = _goal_loop_edge_targets(state)
+    if not targets:
+        return
+    for lane in lanes.values():
+        for target in targets:
+            if not _lane_matches_target(lane, target):
+                continue
+            lane["edge_improvement_candidate"] = True
+            lane["edge_improvement_target"] = _shape_from_target(target)
+            lane["source_refs"].append("data/trader_goal_loop_orchestrator.json:edge_improvement_state")
+            break
+
+
+def _goal_loop_edge_targets(state: dict[str, Any]) -> list[dict[str, str]]:
+    target_values: list[str] = []
+    for key in ("target_shape", "target", "target_shape_key", "closest_harvest_candidate_id"):
+        value = state.get(key)
+        if isinstance(value, str):
+            target_values.append(value)
+    for experiment in _list(state.get("experiments")):
+        if isinstance(experiment, dict) and isinstance(experiment.get("target"), str):
+            target_values.append(str(experiment["target"]))
+
+    targets: list[dict[str, str]] = []
+    for value in target_values:
+        parsed = _parse_shape(value)
+        if not (parsed.get("pair") and parsed.get("direction") and parsed.get("strategy_family")):
+            continue
+        if parsed not in targets:
+            targets.append(parsed)
+    return targets
+
+
+def _lane_matches_target(lane: dict[str, Any], target: dict[str, str]) -> bool:
+    if lane.get("pair") != target.get("pair"):
+        return False
+    if lane.get("direction") != target.get("direction"):
+        return False
+    if lane.get("strategy_family") != target.get("strategy_family"):
+        return False
+    target_vehicle = _normalize_vehicle(target.get("vehicle"))
+    return target_vehicle == "UNKNOWN" or lane.get("vehicle") == target_vehicle
+
+
+def _shape_from_target(target: dict[str, str]) -> str:
+    parts = [
+        target.get("pair", "UNKNOWN"),
+        target.get("direction", "UNKNOWN"),
+        target.get("strategy_family", "UNKNOWN"),
+    ]
+    vehicle = _normalize_vehicle(target.get("vehicle"))
+    if vehicle != "UNKNOWN":
+        parts.append(vehicle)
+    return "|".join(parts)
+
+
 def _best_replay_row(artifact: dict[str, Any]) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for key in ("target_shape", "required_shape", "requested_shape", "stale_candidate_shape"):
@@ -796,6 +858,7 @@ def _finalize_lane(
         guardian_routing_clear=guardian_routing_clear,
         guardian_intent_blockers_stale=guardian_intent_blockers_stale,
     )
+    _suppress_stale_proof_queue_absence_blockers(lane)
     _suppress_stale_current_intent_owned_blockers(lane)
     _suppress_live_ready_stale_diagnostic_blockers(lane)
     _mark_bidask_negative_evidence_refresh(lane, now_utc=now_utc)
@@ -846,6 +909,20 @@ def _suppress_stale_guardian_receipt_blockers(
     lane["stale_source_blockers"] = _unique(
         _string_list(lane.get("stale_source_blockers")) + ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"]
     )
+
+
+def _suppress_stale_proof_queue_absence_blockers(lane: dict[str, Any]) -> None:
+    if not (
+        lane.get("can_enter_proof_pack")
+        or "data/as_proof_pack_queue.json:queue" in _string_list(lane.get("source_refs"))
+    ):
+        return
+    blockers = _string_list(lane.get("blockers"))
+    stale_codes = [code for code in STALE_PROOF_QUEUE_ABSENCE_BLOCKERS if code in blockers]
+    if not stale_codes:
+        return
+    lane["blockers"] = [code for code in blockers if code not in stale_codes]
+    lane["stale_source_blockers"] = _unique(_string_list(lane.get("stale_source_blockers")) + stale_codes)
 
 
 def _suppress_stale_current_intent_owned_blockers(lane: dict[str, Any]) -> None:
@@ -1141,6 +1218,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "EVIDENCE_ACQUISITION"
     if has_negative and _local_tp_proof_acquisition_required(lane):
         return "EVIDENCE_ACQUISITION"
+    if has_negative and _edge_improvement_evidence_required(lane):
+        return "EVIDENCE_ACQUISITION"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
     if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
@@ -1208,6 +1287,34 @@ def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
         "capture_take_profit_wins",
     )
     return any(proof.get(key) is None for key in required_numeric)
+
+
+def _edge_improvement_evidence_required(lane: dict[str, Any]) -> bool:
+    if lane.get("edge_improvement_candidate") is not True:
+        return False
+    if not lane.get("can_enter_proof_pack"):
+        return False
+    if not _has_evidence_path(lane):
+        return False
+    return _has_positive_harvest_or_edge_evidence(lane)
+
+
+def _has_positive_harvest_or_edge_evidence(lane: dict[str, Any]) -> bool:
+    proof = lane.get("local_tp_proof")
+    if isinstance(proof, dict):
+        trades = _float(proof.get("capture_take_profit_trades"))
+        losses = _float(proof.get("capture_take_profit_losses"))
+        expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+        if (
+            trades is not None
+            and trades >= TP_PROOF_COLLECTION_MIN_TRADES
+            and (losses is None or losses == 0)
+            and expectancy is not None
+            and expectancy > 0
+        ):
+            return True
+    edge = _float(lane.get("expected_edge_jpy"))
+    return edge is not None and edge > 0
 
 
 def _is_scout_ready_candidate(lane: dict[str, Any]) -> bool:
@@ -1352,6 +1459,12 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
                 f"Collect exact local TAKE_PROFIT_ORDER proof for {scope_key}; require positive expectancy, "
                 "zero TP losses, and positive Wilson-stressed expectancy before reranking. Do not send."
             )
+        if lane.get("edge_improvement_candidate") is True:
+            target = lane.get("edge_improvement_target") or lane_key
+            return (
+                f"Run read-only EDGE_IMPROVEMENT_EXPERIMENT for {target}; preserve negative/month-scale blockers, "
+                "canonicalize proof/replay/sample gaps, rerank, and do not send."
+            )
         return f"Acquire or canonicalize proof/replay evidence for {lane_key}; do not send or mix vehicles."
     if status == "SCOUT_READY":
         return f"Prepare read-only SCOUT judgement material for {lane_key}; gateway permission remains false."
@@ -1408,6 +1521,9 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
         public["bidask_negative_evidence"] = lane["bidask_negative_evidence"]
     if isinstance(lane.get("local_tp_proof"), dict):
         public["local_tp_proof"] = lane["local_tp_proof"]
+    if lane.get("edge_improvement_candidate") is True:
+        public["edge_improvement_candidate"] = True
+        public["edge_improvement_target"] = str(lane.get("edge_improvement_target") or "")
     if public["status"] not in LANE_STATUSES:
         raise ValueError(f"unknown lane status: {public['status']}")
     return public

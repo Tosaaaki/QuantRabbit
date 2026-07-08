@@ -1255,6 +1255,133 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("do not repeat the same exact replay", stop["next_action"])
         self.assertNotEqual(payload["top_lane"]["lane_id"], stop["lane_id"])
 
+    def test_proof_queue_member_suppresses_stale_not_in_proof_queue_blocker(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            replay = json.loads(paths["limit_replay"].read_text())
+            replay["remaining_blockers"] = [
+                {"code": "NOT_IN_PROOF_QUEUE"},
+                {"code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION"},
+            ]
+            _write_json(paths["limit_replay"], replay)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = next(
+            row
+            for row in payload["ranked_active_lanes"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertNotIn("NOT_IN_PROOF_QUEUE", lane["blockers"])
+        self.assertIn("NOT_IN_PROOF_QUEUE", lane["stale_source_blockers"])
+        self.assertIn("S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", lane["blockers"])
+
+    def test_goal_loop_edge_target_with_negative_blockers_surfaces_read_only_evidence_path(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            goal_loop = json.loads(paths["goal_loop"].read_text())
+            goal_loop["edge_improvement_state"] = {
+                "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                "experiments": [{"target": "EUR_USD|SHORT|BREAKOUT_FAILURE"}],
+            }
+            _write_json(paths["goal_loop"], goal_loop)
+            order_intents = json.loads(paths["order_intents"].read_text())
+            for row in order_intents["results"]:
+                if row["lane_id"] != lane_id:
+                    continue
+                row["live_blocker_codes"] = [
+                    "NEGATIVE_EXPECTANCY_ACTIVE",
+                    "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                    "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+                ]
+                row["intent"]["metadata"].update(
+                    {
+                        "attach_take_profit_on_fill": True,
+                        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                        "tp_target_intent": "HARVEST",
+                    }
+                )
+            _write_json(paths["order_intents"], order_intents)
+            _write_json(
+                paths["capture"],
+                _capture_payload(
+                    "EUR_USD",
+                    "SHORT",
+                    "BREAKOUT_FAILURE",
+                    trades=20,
+                    wins=20,
+                    losses=0,
+                    expectancy=643.2912,
+                    avg_win=643.2912,
+                    avg_loss=0.0,
+                ),
+            )
+            replay = json.loads(paths["limit_replay"].read_text())
+            replay["remaining_blockers"] = [
+                {"code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"},
+                {"code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION"},
+                {"code": "NEGATIVE_EXPECTANCY_ACTIVE"},
+            ]
+            _write_json(paths["limit_replay"], replay)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
+        self.assertTrue(payload["top_lane"]["edge_improvement_candidate"])
+        self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", payload["top_lane"]["blockers"])
+        self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", payload["top_lane"]["blockers"])
+        self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", payload["top_lane"]["next_action"])
+        self.assertEqual(payload["status"], "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY")
+        self.assertFalse(payload["live_permission_allowed"])
+
 
 def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False) -> dict[str, Path]:
     paths = {
