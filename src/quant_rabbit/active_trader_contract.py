@@ -776,22 +776,11 @@ def _select_active_path(
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     board_status = str(board_top.get("status") or "")
-    if active_opportunity_board.get("total_lanes", 0) > 0 and board_status == "NO_TRADE_WITH_CAUSE":
-        active_counts = sum(
-            int(active_opportunity_board.get(key) or 0)
-            for key in (
-                "live_ready_count",
-                "harvest_ready_count",
-                "scout_ready_count",
-                "evidence_acquisition_count",
-                "operator_review_required_count",
-            )
+    if _active_board_all_no_trade(active_opportunity_board, board_status=board_status):
+        return (
+            "NO_TRADE_WITH_CAUSE",
+            "Latest active opportunity board reranked all lanes as NO_TRADE_WITH_CAUSE; do not fall back to stale single-lane evidence work.",
         )
-        if active_counts == 0:
-            return (
-                "NO_TRADE_WITH_CAUSE",
-                "Latest active opportunity board reranked all lanes as NO_TRADE_WITH_CAUSE; do not fall back to stale single-lane evidence work.",
-            )
     if active_opportunity_board.get("total_lanes", 0) > 0 and board_status in {
         "LIVE_READY",
         "HARVEST_READY",
@@ -869,33 +858,40 @@ def _remaining_blockers(
 ) -> list[dict[str, Any]]:
     active_board_top = active_opportunity_board.get("top_lane")
     active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
-    codes = _unique(
-        _string_list(harvest.get("promotion_blockers"))
-        + _string_list(scout.get("blocker_codes"))
-        + _string_list(board.get("blocker_codes"))
-        + _string_list(replay.get("blocker_codes"))
-        + _string_list(proof_floor.get("blocker_codes"))
-        + _string_list(limit_sample_mining.get("blocker_codes"))
-        + _string_list(active_board_top.get("blockers"))
-        + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
-    )
-    proof_queue_count = proof.get("proof_queue_count", 0)
-    if proof_queue_count == 0:
-        codes.append("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION")
+    active_board_all_no_trade = _active_board_all_no_trade(active_opportunity_board)
+    if active_board_all_no_trade:
+        codes = _unique(
+            _string_list(active_board_top.get("blockers"))
+            + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
+        )
     else:
-        stale_empty_queue_codes = {
-            "NOT_IN_PROOF_QUEUE",
-            "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
-            "PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION",
-        }
-        codes = [code for code in codes if code not in stale_empty_queue_codes]
-    harvest_tp = harvest.get("tp_proof") if isinstance(harvest.get("tp_proof"), dict) else {}
-    broad_tp_proof_reached = bool(proof_floor.get("proof_floor_reached")) or _first_int(
-        harvest_tp.get("proof_gap_trades"),
-        999,
-    ) == 0
-    if broad_tp_proof_reached:
-        codes = [code for code in codes if code != "SAMPLE_GAP"]
+        codes = _unique(
+            _string_list(harvest.get("promotion_blockers"))
+            + _string_list(scout.get("blocker_codes"))
+            + _string_list(board.get("blocker_codes"))
+            + _string_list(replay.get("blocker_codes"))
+            + _string_list(proof_floor.get("blocker_codes"))
+            + _string_list(limit_sample_mining.get("blocker_codes"))
+            + _string_list(active_board_top.get("blockers"))
+            + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
+        )
+        proof_queue_count = proof.get("proof_queue_count", 0)
+        if proof_queue_count == 0:
+            codes.append("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION")
+        else:
+            stale_empty_queue_codes = {
+                "NOT_IN_PROOF_QUEUE",
+                "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
+                "PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION",
+            }
+            codes = [code for code in codes if code not in stale_empty_queue_codes]
+        harvest_tp = harvest.get("tp_proof") if isinstance(harvest.get("tp_proof"), dict) else {}
+        broad_tp_proof_reached = bool(proof_floor.get("proof_floor_reached")) or _first_int(
+            harvest_tp.get("proof_gap_trades"),
+            999,
+        ) == 0
+        if broad_tp_proof_reached:
+            codes = [code for code in codes if code != "SAMPLE_GAP"]
     if active_opportunity_board.get("guardian_receipt_normal_routing_allowed") is True:
         codes = [code for code in codes if code not in GUARDIAN_RECEIPT_ROUTING_CLEAR_STALE_CODES]
     active_board_stale_codes = set(
@@ -905,23 +901,24 @@ def _remaining_blockers(
     if active_board_stale_codes:
         suppress_from_board_truth = active_board_stale_codes & ACTIVE_BOARD_STALE_SOURCE_SUPPRESSED_CODES
         codes = [code for code in codes if code not in suppress_from_board_truth]
-    replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
-    if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
-        stale_spread_codes = {
-            "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
-            "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
-            "SPREAD_SLIPPAGE_PROOF_MISSING",
-        }
-        codes = [code for code in codes if code not in stale_spread_codes]
-    if not proof_floor.get("proof_floor_reached"):
-        codes.append("PROOF_FLOOR_NOT_CANONICALLY_REACHED")
-    if not replay.get("live_grade_candidate"):
-        codes.append("LIMIT_S5_REPLAY_NOT_LIVE_GRADE")
-    if not portfolio.get("can_create_live_permission"):
-        codes.append("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION")
+    if not active_board_all_no_trade:
+        replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
+        if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
+            stale_spread_codes = {
+                "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+                "S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING",
+                "SPREAD_SLIPPAGE_PROOF_MISSING",
+            }
+            codes = [code for code in codes if code not in stale_spread_codes]
+        if not proof_floor.get("proof_floor_reached"):
+            codes.append("PROOF_FLOOR_NOT_CANONICALLY_REACHED")
+        if not replay.get("live_grade_candidate"):
+            codes.append("LIMIT_S5_REPLAY_NOT_LIVE_GRADE")
+        if not portfolio.get("can_create_live_permission"):
+            codes.append("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION")
     if live_order.get("send_requested") or live_order.get("sent"):
         codes.append("UNEXPECTED_LIVE_ORDER_REQUEST_STATE")
-    else:
+    elif not active_board_all_no_trade:
         codes.append("NO_LIVE_ORDER_REQUEST")
     rows = []
     for code in _unique(codes):
@@ -933,6 +930,25 @@ def _remaining_blockers(
             }
         )
     return rows
+
+
+def _active_board_all_no_trade(active_opportunity_board: dict[str, Any], *, board_status: str | None = None) -> bool:
+    board_top = active_opportunity_board.get("top_lane")
+    board_top = board_top if isinstance(board_top, dict) else {}
+    status = str(board_status if board_status is not None else board_top.get("status") or "")
+    if active_opportunity_board.get("total_lanes", 0) <= 0 or status != "NO_TRADE_WITH_CAUSE":
+        return False
+    active_counts = sum(
+        int(active_opportunity_board.get(key) or 0)
+        for key in (
+            "live_ready_count",
+            "harvest_ready_count",
+            "scout_ready_count",
+            "evidence_acquisition_count",
+            "operator_review_required_count",
+        )
+    )
+    return active_counts == 0
 
 
 def _normalize_stale_blocker_codes(

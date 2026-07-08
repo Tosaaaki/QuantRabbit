@@ -577,6 +577,10 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertNotIn("GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING", blocker_codes)
         self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING", blocker_codes)
         self.assertNotIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", blocker_codes)
+        self.assertNotIn("NEGATIVE_EXPECTANCY_ACTIVE", blocker_codes)
+        self.assertNotIn("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION", blocker_codes)
+        self.assertNotIn("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION", blocker_codes)
+        self.assertNotIn("NO_LIVE_ORDER_REQUEST", blocker_codes)
         self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
         self.assertNotIn(
             "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
