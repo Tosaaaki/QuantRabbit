@@ -329,7 +329,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
-# trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract) in one
+# trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract →
+# active-opportunity-board) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -558,7 +559,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator` → `trader-goal-loop-orchestrator` →
-# `active-trader-contract`. It preserves the original
+# `active-trader-contract` → `active-opportunity-board`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -585,7 +586,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → as-live-ready-evidence-loop → as-4x-proof-path
 #   → trader-repair-orchestrator → trader-goal-loop-orchestrator
-#   → active-trader-contract
+#   → active-trader-contract → active-opportunity-board
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -702,6 +703,15 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   proof queue, negative expectancy, month-scale replay, guardian, and gateway
 #   blockers visible with `live_permission_allowed=false` and
 #   `live_side_effects=[]`.
+# - active-opportunity-board is read-only and runs after active-trader-contract.
+#   It writes `data/active_opportunity_board.json` and
+#   `docs/active_opportunity_board.md`, compares all visible pairs, directions,
+#   strategy families, and LIMIT/STOP/MARKET vehicles, and ranks the next active
+#   4x path without letting EUR_USD|SHORT|BREAKOUT_FAILURE become the only loop.
+#   Each lane is classified as LIVE_READY, HARVEST_READY, SCOUT_READY,
+#   EVIDENCE_ACQUISITION, OPERATOR_REVIEW_REQUIRED, or NO_TRADE_WITH_CAUSE.
+#   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
+#   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
@@ -726,6 +736,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Filled `10% EXTENSION GATE`; if YES, cite each gate condition, otherwise report NO.
 - Filled `USER ALPHA CONTINUATION`; if active, state thesis-alive / RELOAD / SECOND SHOT / exact blocker / next trigger.
 - Dry-run sizing result from `tools/position_sizing.py` or `tools/place_trader_order.py` for any fresh target-path order.
+- Active opportunity board checked for the next read-only active path across pairs, directions, strategy families, and vehicles.
 - Final action: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, or `CANCEL_PENDING`.
 - Sent flag: `true`, `false`, or dry-run.
 - Selected lane id(s), if any.

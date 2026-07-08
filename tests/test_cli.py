@@ -5852,6 +5852,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
     def test_trader_loop_artifact_commands_have_overlap_guard(self) -> None:
         self.assertIn("trader-goal-loop-orchestrator", _LIVE_ARTIFACT_WRITER_COMMANDS)
         self.assertIn("active-trader-contract", _LIVE_ARTIFACT_WRITER_COMMANDS)
+        self.assertIn("active-opportunity-board", _LIVE_ARTIFACT_WRITER_COMMANDS)
 
     def test_gpt_trader_decision_bootstraps_without_qr_live_enabled(self) -> None:
         # In production the cli is invoked by the routine (not pytest), so
@@ -6100,6 +6101,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertIn(("trader-repair-orchestrator",), argv)
         self.assertIn(("trader-goal-loop-orchestrator",), argv)
         self.assertIn(("active-trader-contract",), argv)
+        self.assertIn(("active-opportunity-board",), argv)
         intent_idx = argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"))
         coverage_idx = argv.index(("optimize-coverage",))
         post_intent_position_management_idx = max(
@@ -6149,6 +6151,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(
             argv.index(("trader-goal-loop-orchestrator",)),
             argv.index(("active-trader-contract",)),
+        )
+        self.assertLess(
+            argv.index(("active-trader-contract",)),
+            argv.index(("active-opportunity-board",)),
         )
 
     def test_post_autotrade_failure_sidecars_is_live_runtime_command(self) -> None:
@@ -6511,7 +6517,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("as-4x-proof-path"), refresh.index("trader-repair-orchestrator"))
         self.assertLess(refresh.index("trader-repair-orchestrator"), refresh.index("trader-goal-loop-orchestrator"))
         self.assertLess(refresh.index("trader-goal-loop-orchestrator"), refresh.index("active-trader-contract"))
-        self.assertEqual(refresh[-1], "active-trader-contract")
+        self.assertLess(refresh.index("active-trader-contract"), refresh.index("active-opportunity-board"))
+        self.assertEqual(refresh[-1], "active-opportunity-board")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertEqual(refresh_by_step[month_scale_timing_step]["timeout_seconds"], 180.0)
         self.assertFalse(refresh_by_step[month_scale_timing_step]["required"])
@@ -6532,6 +6539,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(refresh_by_step["trader-repair-orchestrator"]["ok_rcs"], [0, 2])
         self.assertTrue(refresh_by_step["trader-goal-loop-orchestrator"]["required"])
         self.assertTrue(refresh_by_step["active-trader-contract"]["required"])
+        self.assertTrue(refresh_by_step["active-opportunity-board"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
             sidecar_specs = _cycle_sidecar_steps()
@@ -6619,7 +6627,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("as-4x-proof-path"), sidecars.index("trader-repair-orchestrator"))
         self.assertLess(sidecars.index("trader-repair-orchestrator"), sidecars.index("trader-goal-loop-orchestrator"))
         self.assertLess(sidecars.index("trader-goal-loop-orchestrator"), sidecars.index("active-trader-contract"))
-        self.assertEqual(sidecars[-1], "active-trader-contract")
+        self.assertLess(sidecars.index("active-trader-contract"), sidecars.index("active-opportunity-board"))
+        self.assertEqual(sidecars[-1], "active-opportunity-board")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step[intent_step]["required"])
         self.assertTrue(sidecars_by_step["position-management"]["required"])
@@ -6640,6 +6649,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(sidecars_by_step["trader-repair-orchestrator"]["ok_rcs"], [0, 2])
         self.assertTrue(sidecars_by_step["trader-goal-loop-orchestrator"]["required"])
         self.assertTrue(sidecars_by_step["active-trader-contract"]["required"])
+        self.assertTrue(sidecars_by_step["active-opportunity-board"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
@@ -6740,7 +6750,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             direct_sidecars.index("trader-goal-loop-orchestrator"),
             direct_sidecars.index("active-trader-contract"),
         )
-        self.assertEqual(direct_sidecars[-1], "active-trader-contract")
+        self.assertLess(
+            direct_sidecars.index("active-trader-contract"),
+            direct_sidecars.index("active-opportunity-board"),
+        )
+        self.assertEqual(direct_sidecars[-1], "active-opportunity-board")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
         self.assertTrue(direct_sidecar_specs[intent_step]["required"])
@@ -6754,6 +6768,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(direct_sidecar_specs["trader-repair-orchestrator"]["ok_rcs"], [0, 2])
         self.assertTrue(direct_sidecar_specs["trader-goal-loop-orchestrator"]["required"])
         self.assertTrue(direct_sidecar_specs["active-trader-contract"]["required"])
+        self.assertTrue(direct_sidecar_specs["active-opportunity-board"]["required"])
         cycle_digest.assert_called_once_with(
             kind="direct_autotrade_audit_sidecars_digest",
             step_results=step_results,

@@ -61,6 +61,8 @@ from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, Orde
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
     ROOT,
+    DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT,
     DEFAULT_ACTIVE_TRADER_CONTRACT,
     DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
     DEFAULT_ADVERSE_PARTIAL_CLOSE,
@@ -118,6 +120,7 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT,
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT,
     DEFAULT_GUARDIAN_WAKE_DISPATCHER_STATE,
+    DEFAULT_HARVEST_LIVE_GRADE_PATH,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
     DEFAULT_MARKET_STATUS,
@@ -151,6 +154,9 @@ from quant_rabbit.paths import (
     DEFAULT_POST_TRADE_LEARNING_REPORT,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS_REPORT,
+    DEFAULT_AS_LANE_CANDIDATE_BOARD,
+    DEFAULT_AS_PROOF_PACK_QUEUE,
+    DEFAULT_PORTFOLIO_4X_PATH_PLANNER,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
     DEFAULT_MONTH_SCALE_TP_REPLAY_RESIDUALS,
@@ -1490,6 +1496,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "trader-repair-orchestrator",
         "trader-goal-loop-orchestrator",
         "active-trader-contract",
+        "active-opportunity-board",
     }
 )
 
@@ -2309,6 +2316,10 @@ def _active_trader_contract_step() -> dict[str, Any]:
     return {"argv": ["active-trader-contract"], "required": True}
 
 
+def _active_opportunity_board_step() -> dict[str, Any]:
+    return {"argv": ["active-opportunity-board"], "required": True}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2415,6 +2426,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
         _active_trader_contract_step(),
+        _active_opportunity_board_step(),
     ]
 
 
@@ -2476,6 +2488,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
         _active_trader_contract_step(),
+        _active_opportunity_board_step(),
     ]
 
 
@@ -2514,6 +2527,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
         _active_trader_contract_step(),
+        _active_opportunity_board_step(),
     ]
 
 
@@ -2552,6 +2566,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
         _active_trader_contract_step(),
+        _active_opportunity_board_step(),
     ]
 
 
@@ -4036,6 +4051,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
+
+    p_active_board = sub.add_parser(
+        "active-opportunity-board",
+        help="Write the read-only multi-pair/multi-vehicle active opportunity board.",
+    )
+    p_active_board.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_active_board.add_argument("--trader-goal-loop", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
+    p_active_board.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_active_board.add_argument("--harvest-live-grade-path", type=Path, default=DEFAULT_HARVEST_LIVE_GRADE_PATH)
+    p_active_board.add_argument("--as-proof-pack-queue", type=Path, default=DEFAULT_AS_PROOF_PACK_QUEUE)
+    p_active_board.add_argument("--as-lane-candidate-board", type=Path, default=DEFAULT_AS_LANE_CANDIDATE_BOARD)
+    p_active_board.add_argument("--portfolio-4x-path-planner", type=Path, default=DEFAULT_PORTFOLIO_4X_PATH_PLANNER)
+    p_active_board.add_argument("--live-order-request", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_active_board.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_active_board.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_active_board.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_active_board.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_active_board.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_active_board.add_argument(
+        "--replay-artifact",
+        dest="replay_artifacts",
+        action="append",
+        type=Path,
+        default=None,
+        help="Optional replay/proof artifact path. May be provided multiple times; defaults to data/*replay*.json and data/*proof*.json.",
+    )
+    p_active_board.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_active_board.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -6805,6 +6848,46 @@ def main(argv: list[str] | None = None) -> int:
                     "output_path": str(summary.output_path),
                     "report_path": str(summary.report_path),
                     "selected_active_path": summary.selected_active_path,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "active-opportunity-board":
+        try:
+            from quant_rabbit.active_opportunity_board import ActiveOpportunityBoard
+
+            summary = ActiveOpportunityBoard(
+                active_trader_contract_path=args.active_trader_contract,
+                trader_goal_loop_path=args.trader_goal_loop,
+                payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
+                harvest_live_grade_path=args.harvest_live_grade_path,
+                proof_pack_queue_path=args.as_proof_pack_queue,
+                lane_candidate_board_path=args.as_lane_candidate_board,
+                portfolio_4x_path_planner_path=args.portfolio_4x_path_planner,
+                live_order_request_path=args.live_order_request,
+                broker_snapshot_path=args.broker_snapshot,
+                order_intents_path=args.order_intents,
+                verification_ledger_path=args.verification_ledger,
+                execution_ledger_db_path=args.execution_ledger_db,
+                strategy_profile_path=args.strategy_profile,
+                replay_artifact_paths=args.replay_artifacts,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "top_lane_id": summary.top_lane_id,
                     "live_permission_allowed": summary.live_permission_allowed,
                 },
                 ensure_ascii=False,
