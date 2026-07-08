@@ -587,8 +587,16 @@ def _remaining_blockers(
         + _string_list(replay.get("blocker_codes"))
         + _string_list(proof_floor.get("blocker_codes"))
     )
-    if proof.get("proof_queue_count", 0) == 0:
+    proof_queue_count = proof.get("proof_queue_count", 0)
+    if proof_queue_count == 0:
         codes.append("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION")
+    else:
+        stale_empty_queue_codes = {
+            "NOT_IN_PROOF_QUEUE",
+            "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION",
+            "PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION",
+        }
+        codes = [code for code in codes if code not in stale_empty_queue_codes]
     if not proof_floor.get("proof_floor_reached"):
         codes.append("PROOF_FLOOR_NOT_CANONICALLY_REACHED")
     if not replay.get("live_grade_candidate"):

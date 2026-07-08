@@ -67,6 +67,60 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE", blocker_codes)
         self.assertIn("Selected active path: `EVIDENCE_ACQUISITION`", report)
 
+    def test_non_empty_proof_queue_filters_stale_queue_empty_blockers(self) -> None:
+        now = datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["proof"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "summary": {
+                        "queue_count": 2,
+                        "proof_ready_count": 0,
+                        "can_create_live_permission_count": 0,
+                        "rejected_candidate_count": 4,
+                    },
+                    "queue": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "proof_classification": "EVIDENCE_GAP",
+                            "can_create_live_permission": False,
+                            "can_enter_proof_pack": True,
+                        }
+                    ],
+                    "live_side_effects": [],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["current_state"]["proof"]["proof_queue_count"], 2)
+        self.assertIn("PROOF_QUEUE_HAS_CANDIDATES", payload["active_deployment_gap"]["active_path_triggers"])
+        self.assertNotIn("NOT_IN_PROOF_QUEUE", blocker_codes)
+        self.assertNotIn("PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION", blocker_codes)
+        self.assertNotIn("PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION", blocker_codes)
+        self.assertIn("LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY", blocker_codes)
+        self.assertIn("S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", blocker_codes)
+
     def test_missing_exact_replay_is_evidence_acquisition_blocker(self) -> None:
         now = datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

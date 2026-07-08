@@ -118,6 +118,100 @@ class As4xProofPathTests(unittest.TestCase):
         )
         self.assertEqual(board["closest_candidate_to_proof_pack"]["lane_id"], next_candidate["lane_id"])
 
+    def test_positive_rotation_proof_collection_can_enter_without_daily_cadence(self) -> None:
+        blocked = {
+            "market_close_trade_ids": set(),
+            "residual_trade_ids": set(),
+            "residual_keys": set(),
+            "market_close_family_key": ("EUR_USD", "LONG", "BREAKOUT_FAILURE"),
+        }
+        filler_results = []
+        for index in range(25):
+            filler_results.append(
+                {
+                    "lane_id": f"range_trader:PAIR_{index}:LONG:RANGE_ROTATION",
+                    "status": "DRY_RUN_BLOCKED",
+                    "risk_allowed": False,
+                    "live_blocker_codes": [],
+                    "intent": {
+                        "pair": f"PAIR_{index}",
+                        "side": "LONG",
+                        "order_type": "LIMIT",
+                        "market_context": {"method": "RANGE_ROTATION"},
+                        "metadata": {
+                            "capture_take_profit_expectancy_jpy": 1000.0,
+                            "capture_take_profit_trades": 30,
+                            "positive_rotation_proof_collection_ready": False,
+                            "bidask_replay_precision_seed_rule": {
+                                "samples": 30,
+                                "active_days": 3,
+                                "avg_daily_samples": 10,
+                                "adoption_status": "HISTORICAL_ONLY",
+                                "live_grade": False,
+                            },
+                        },
+                    },
+                }
+            )
+        target = {
+            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+            "status": "DRY_RUN_BLOCKED",
+            "risk_allowed": False,
+            "live_blocker_codes": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+            "intent": {
+                "pair": "EUR_USD",
+                "side": "SHORT",
+                "order_type": "LIMIT",
+                "market_context": {"method": "BREAKOUT_FAILURE"},
+                "metadata": {
+                    "attach_take_profit_on_fill": True,
+                    "capture_take_profit_scope_key": "EUR_USD|SHORT|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 17,
+                    "capture_take_profit_wins": 17,
+                    "capture_take_profit_expectancy_jpy": 613.2,
+                    "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                    "positive_rotation_proof_collection_ready": True,
+                    "positive_rotation_pessimistic_expectancy_jpy": 304.0708,
+                },
+            },
+        }
+
+        firepower = evidence_loop._build_firepower_board(
+            generated_at="2026-07-08T00:00:00Z",
+            order_intents={"generated_at_utc": "2026-07-08T00:00:00Z", "results": filler_results + [target]},
+            daily={
+                "funding_adjusted_equity": 100000.0,
+                "required_calendar_daily_return_funding_adjusted": 5.0,
+            },
+            broker={},
+            blocked=blocked,
+            p0_decomposition={"rows": []},
+        )
+        target_row = next(
+            row
+            for row in firepower["candidates"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertTrue(target_row["proof_collection_ready"])
+        self.assertTrue(target_row["can_enter_proof_pack"])
+        self.assertIsNone(target_row["expected_daily_return_pct_on_funding_adjusted_equity"])
+        self.assertIn("ACTIVE_DAY_FLOOR_NOT_MET", target_row["exact_proof_gaps"])
+        self.assertIn("S5_BIDASK_SPREAD_INCLUDED_REPLAY_MISSING", target_row["exact_proof_gaps"])
+
+        queue = evidence_loop._build_proof_pack_queue(
+            generated_at="2026-07-08T00:00:00Z",
+            firepower=firepower,
+            p0_decomposition={"rows": []},
+        )
+        queued_target = next(
+            row
+            for row in queue["queue"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertFalse(queued_target["can_create_live_permission"])
+        self.assertTrue(queued_target["can_enter_proof_pack"])
+        self.assertFalse(queued_target["missing_proof"]["s5_bidask_spread_included_replay"])
+
     def test_fresh_direction_evidence_marks_under_sampled_gap(self) -> None:
         replay = {
             "price_truth_coverage": {

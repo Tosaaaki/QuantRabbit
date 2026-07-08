@@ -692,7 +692,15 @@ def _build_firepower_board(
             hard_excluded.append({k: row.get(k) for k in ("lane_id", "pair", "side", "method", "hard_exclusion_reasons")})
         else:
             rows.append(row)
-    rows.sort(key=lambda item: (not item["candidate_daily_expected_return_pct_ge_required"], -(item.get("expected_daily_return_pct_on_funding_adjusted_equity") or -9999), item["proof_gap_count"], item["lane_id"]))
+    rows.sort(
+        key=lambda item: (
+            not item["can_enter_proof_pack"],
+            not item["candidate_daily_expected_return_pct_ge_required"],
+            -(item.get("expected_daily_return_pct_on_funding_adjusted_equity") or -9999),
+            item["proof_gap_count"],
+            item["lane_id"],
+        )
+    )
     top = rows[:20]
     return {
         "generated_at_utc": generated_at,
@@ -786,17 +794,22 @@ def _candidate_firepower_row(
         active_days=active_days,
     )
     source_evidence = _source_evidence(metadata, rule)
+    proof_collection_ready = bool(
+        metadata.get("positive_rotation_proof_collection_ready") is True
+        and expected_jpy is not None
+        and expected_jpy > 0
+    )
     can_enter = bool(
-        expected_daily_return_pct is not None
-        and expected_daily_return_pct > 0
-        and not hard_reasons
+        not hard_reasons
         and (
             (
-                expected_daily_return_pct
+                expected_daily_return_pct is not None
+                and expected_daily_return_pct > 0
+                and expected_daily_return_pct
                 >= (_float(daily.get("required_calendar_daily_return_funding_adjusted")) or math.inf)
                 and not source_evidence.get("historical_only")
             )
-            or metadata.get("positive_rotation_proof_collection_ready") is True
+            or proof_collection_ready
         )
     )
     return {
@@ -807,6 +820,7 @@ def _candidate_firepower_row(
         "order_type": order_type,
         "exit_shape": exit_shape,
         "source_evidence": source_evidence,
+        "proof_collection_ready": proof_collection_ready,
         "sample_count": sample_count,
         "active_days": active_days,
         "win_rate": round(win_rate, 6) if isinstance(win_rate, float) else win_rate,
