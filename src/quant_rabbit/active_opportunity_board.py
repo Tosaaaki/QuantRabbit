@@ -178,7 +178,7 @@ class ActiveOpportunityBoard:
         _add_portfolio_lanes(lanes, artifacts["portfolio_4x_path_planner"])
         _add_lane_board_lanes(lanes, artifacts["as_lane_candidate_board"])
         _add_payoff_lanes(lanes, artifacts["payoff_shape_diagnosis"])
-        _add_harvest_lanes(lanes, artifacts["harvest_live_grade_path"])
+        _add_harvest_lanes(lanes, artifacts["harvest_live_grade_path"], artifacts["order_intents"])
         _add_replay_lanes(lanes, replay_artifacts)
         _attach_strategy_profile(lanes, artifacts["strategy_profile"])
         _attach_verification_ledger(lanes, artifacts["verification_ledger"])
@@ -201,13 +201,7 @@ class ActiveOpportunityBoard:
 
         ranked_lanes = sorted(
             lanes.values(),
-            key=lambda lane: (
-                -float(lane.get("_rank_score") or 0.0),
-                str(lane.get("pair")),
-                str(lane.get("direction")),
-                str(lane.get("strategy_family")),
-                str(lane.get("vehicle")),
-            ),
+            key=_rank_sort_key,
         )
         public_lanes = [_public_lane(lane) for lane in ranked_lanes]
         top_lane = public_lanes[0] if public_lanes else {}
@@ -480,7 +474,12 @@ def _attach_payoff_row(lane: dict[str, Any], row: dict[str, Any], key: str, payo
             lane["blockers"].append(str(reason))
 
 
-def _add_harvest_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
+def _add_harvest_lanes(
+    lanes: dict[str, dict[str, Any]],
+    artifact: dict[str, Any],
+    order_intents: dict[str, Any],
+) -> None:
+    stale_vs_order_intents = _artifact_is_older_than(artifact, order_intents)
     for key in ("ranked_harvest_candidates", "closest_harvest_candidate"):
         rows = artifact.get(key)
         if isinstance(rows, dict):
@@ -498,10 +497,23 @@ def _add_harvest_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any
             for lane_id in target_lane_ids:
                 lane_vehicle = vehicle if vehicle != "UNKNOWN" else lanes.get(lane_id, {}).get("vehicle", vehicle)
                 lane = _ensure_lane(lanes, lane_id, pair, direction, strategy, str(lane_vehicle))
-                _attach_harvest_row(lane, row, key, payoff)
+                _attach_harvest_row(
+                    lane,
+                    row,
+                    key,
+                    payoff,
+                    stale_vs_order_intents=stale_vs_order_intents,
+                )
 
 
-def _attach_harvest_row(lane: dict[str, Any], row: dict[str, Any], key: str, payoff: str) -> None:
+def _attach_harvest_row(
+    lane: dict[str, Any],
+    row: dict[str, Any],
+    key: str,
+    payoff: str,
+    *,
+    stale_vs_order_intents: bool = False,
+) -> None:
     lane["source_refs"].append(f"data/harvest_live_grade_path.json:{key}")
     lane["payoff_shape"] = _first_str(payoff, "HARVEST", lane.get("payoff_shape"), "UNKNOWN")
     lane["harvest_classification"] = _first_str(row.get("classification"), lane.get("harvest_classification"), "")
@@ -521,7 +533,11 @@ def _attach_harvest_row(lane: dict[str, Any], row: dict[str, Any], key: str, pay
         lane.get("expected_edge_jpy"),
         tp_proof.get("take_profit_expectancy_jpy"),
     )
-    lane["blockers"].extend(_string_list(row.get("promotion_blockers")))
+    promotion_blockers = _string_list(row.get("promotion_blockers"))
+    if stale_vs_order_intents and lane.get("order_intent_status"):
+        lane["stale_source_blockers"].extend(promotion_blockers)
+    else:
+        lane["blockers"].extend(promotion_blockers)
 
 
 def _preferred_harvest_lane_ids(
@@ -877,6 +893,31 @@ def _rank_score(lane: dict[str, Any]) -> float:
         score -= 220.0
     score -= min(len(lane.get("blockers") or []) * 4.0, 80.0)
     return round(score, 4)
+
+
+def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
+    blockers = lane.get("blockers") or []
+    return (
+        -float(STATUS_PRIORITY.get(str(lane.get("status")), 0)),
+        _current_intent_sort_bucket(lane),
+        len(blockers),
+        -float(lane.get("_rank_score") or 0.0),
+        str(lane.get("pair")),
+        str(lane.get("direction")),
+        str(lane.get("strategy_family")),
+        str(lane.get("vehicle")),
+    )
+
+
+def _current_intent_sort_bucket(lane: dict[str, Any]) -> int:
+    blockers = lane.get("blockers") or []
+    if lane.get("order_intent_status") and lane.get("vehicle") != "UNKNOWN":
+        return 0
+    if "NO_CURRENT_EXECUTABLE_INTENT" in blockers:
+        return 2
+    if lane.get("vehicle") == "UNKNOWN":
+        return 3
+    return 1
 
 
 def _spread_status(lane: dict[str, Any]) -> str:
@@ -1340,6 +1381,14 @@ def _parse_utc(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _artifact_is_older_than(source: dict[str, Any], newer: dict[str, Any]) -> bool:
+    source_generated = _parse_utc(source.get("generated_at_utc") or source.get("fetched_at_utc"))
+    newer_generated = _parse_utc(newer.get("generated_at_utc") or newer.get("fetched_at_utc"))
+    if source_generated is None or newer_generated is None:
+        return False
+    return source_generated < newer_generated
 
 
 def _string_list(value: Any) -> list[str]:

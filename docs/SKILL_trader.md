@@ -723,6 +723,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   both current guardian artifacts have `normal_routing_allowed=true`, stale
 #   `GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED` inherited only from older
 #   planner/proof/replay artifacts must move to `stale_source_blockers`.
+#   If HARVEST live-grade output is older than current `order_intents`, its
+#   promotion blockers are stale diagnostics for newer current-intent lanes
+#   until refreshed; keep them in `stale_source_blockers` rather than hard
+#   blockers. Within the same status, especially all-lane
+#   `NO_TRADE_WITH_CAUSE`, rank current `order_intents` executable candidates
+#   with fewer current hard blockers before high-score diagnostic lanes.
 #   Failed exact replay and current guardian receipt operator review outrank
 #   evidence-acquisition; negative-expectancy and replay-negative blockers
 #   outrank manual/operator-overlap review. `NO_TRADE_WITH_CAUSE` must carry a
