@@ -650,14 +650,31 @@ def _attach_strategy_profile(lanes: dict[str, dict[str, Any]], artifact: dict[st
 
 def _attach_verification_ledger(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
     for row in _list(artifact.get("blocking_evidence")) + _list(artifact.get("learning_evidence")):
+        if not _verification_row_is_blocking(row):
+            continue
         subject_id = row.get("subject_id")
         if not subject_id or str(subject_id) not in lanes:
             continue
         lane = lanes[str(subject_id)]
+        blocker_codes = _verification_ledger_blocker_codes(row)
+        if not blocker_codes:
+            continue
         lane["source_refs"].append("data/verification_ledger.json")
-        check_name = row.get("check_name")
-        if check_name:
-            lane["blockers"].append(str(check_name))
+        lane["blockers"].extend(blocker_codes)
+
+
+def _verification_row_is_blocking(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    return str(row.get("status") or "").upper() == "BLOCK" or str(row.get("severity") or "").upper() == "BLOCK"
+
+
+def _verification_ledger_blocker_codes(row: dict[str, Any]) -> list[str]:
+    check_name = str(row.get("check_name") or "")
+    if check_name == "lane_blockers":
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        return _blocker_object_codes(evidence.get("blockers"))
+    return [check_name] if check_name else []
 
 
 def _best_replay_row(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -1519,6 +1536,19 @@ def _codes_from_blockers(value: Any) -> list[str]:
                 codes.append(str(code))
         elif item:
             codes.append(str(item))
+    return codes
+
+
+def _blocker_object_codes(value: Any) -> list[str]:
+    codes: list[str] = []
+    for item in _list(value):
+        if not isinstance(item, dict):
+            continue
+        if "severity" in item and str(item.get("severity") or "").upper() != "BLOCK":
+            continue
+        code = item.get("code") or item.get("row_code") or item.get("blocker")
+        if code:
+            codes.append(str(code))
     return codes
 
 

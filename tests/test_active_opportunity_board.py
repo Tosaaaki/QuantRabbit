@@ -358,6 +358,160 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["lane_id"], close_lane)
         self.assertEqual(payload["top_lane"]["blockers"], ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"])
 
+    def test_verification_lane_blockers_uses_concrete_codes_not_generic_check_name(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            lane_id = "range_trader:CAD_JPY:SHORT:RANGE_ROTATION"
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            lane_id,
+                            "CAD_JPY",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        )
+                    ],
+                },
+            )
+            _write_json(
+                paths["verification"],
+                {
+                    "blocking_evidence": [
+                        {
+                            "check_name": "lane_blockers",
+                            "status": "BLOCK",
+                            "severity": "BLOCK",
+                            "subject_id": lane_id,
+                            "subject_type": "lane",
+                            "evidence": {
+                                "blockers": [
+                                    {
+                                        "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "severity": "BLOCK",
+                                    },
+                                    "negative expectancy diagnostic text without a code",
+                                ]
+                            },
+                        }
+                    ],
+                    "learning_evidence": [
+                        {
+                            "check_name": "read_only_learning",
+                            "status": "PASS",
+                            "severity": "INFO",
+                            "subject_id": lane_id,
+                            "subject_type": "lane",
+                        }
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(payload["top_lane"]["blockers"], ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"])
+        self.assertNotIn("lane_blockers", payload["top_lane"]["blockers"])
+        self.assertNotIn("read_only_learning", payload["top_lane"]["blockers"])
+
+    def test_verification_lane_blockers_preserves_concrete_codes_when_intent_omits_them(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            lane_id = "range_trader:CHF_JPY:SHORT:RANGE_ROTATION"
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [_intent_row(lane_id, "CHF_JPY", "SHORT", "LIMIT", blockers=[])],
+                },
+            )
+            _write_json(
+                paths["verification"],
+                {
+                    "blocking_evidence": [
+                        {
+                            "check_name": "lane_blockers",
+                            "status": "BLOCK",
+                            "severity": "BLOCK",
+                            "subject_id": lane_id,
+                            "subject_type": "lane",
+                            "evidence": {
+                                "blockers": [
+                                    {"code": "SPREAD_TOO_WIDE", "severity": "BLOCK"},
+                                    {"code": "FORECAST_WATCH_ONLY", "severity": "WARN"},
+                                    "spread diagnostic text without a code",
+                                ]
+                            },
+                        }
+                    ],
+                    "learning_evidence": [],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], lane_id)
+        self.assertIn("SPREAD_TOO_WIDE", payload["top_lane"]["blockers"])
+        self.assertNotIn("FORECAST_WATCH_ONLY", payload["top_lane"]["blockers"])
+        self.assertNotIn("lane_blockers", payload["top_lane"]["blockers"])
+
     def test_stale_bidask_negative_evidence_becomes_evidence_acquisition(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
