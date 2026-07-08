@@ -358,6 +358,75 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["lane_id"], close_lane)
         self.assertEqual(payload["top_lane"]["blockers"], ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"])
 
+    def test_no_trade_ranking_prefers_current_non_negative_unlock_before_bidask_negative(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            bidask_lane = "range_trader:EUR_JPY:SHORT:RANGE_ROTATION"
+            unlock_lane = "range_trader:GBP_USD:SHORT:RANGE_ROTATION"
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            bidask_lane,
+                            "EUR_JPY",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=[
+                                "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+                                "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                            ],
+                        ),
+                        _intent_row(
+                            unlock_lane,
+                            "GBP_USD",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=[
+                                "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+                                "RANGE_FORMING_HTF_TREND_CONFLICT",
+                                "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+                            ],
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], unlock_lane)
+        self.assertEqual(payload["top_lane"]["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertNotIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", payload["top_lane"]["blockers"])
+        self.assertEqual(payload["ranked_active_lanes"][1]["lane_id"], bidask_lane)
+
     def test_verification_lane_blockers_uses_concrete_codes_not_generic_check_name(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

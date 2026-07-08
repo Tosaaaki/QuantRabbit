@@ -1063,6 +1063,7 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
     return (
         -float(STATUS_PRIORITY.get(str(lane.get("status")), 0)),
         _current_intent_sort_bucket(lane),
+        _live_unlock_blocker_sort_bucket(lane),
         len(blockers),
         -float(lane.get("_rank_score") or 0.0),
         str(lane.get("pair")),
@@ -1070,6 +1071,17 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
         str(lane.get("strategy_family")),
         str(lane.get("vehicle")),
     )
+
+
+def _live_unlock_blocker_sort_bucket(lane: dict[str, Any]) -> int:
+    blockers = lane.get("blockers") or []
+    if _has_marker(blockers, FAILED_EXACT_REPLAY_MARKERS):
+        return 3
+    if _has_marker(blockers, NEGATIVE_BLOCKER_MARKERS):
+        return 2
+    if lane.get("vehicle") == "UNKNOWN" or "NO_CURRENT_EXECUTABLE_INTENT" in blockers:
+        return 4
+    return 0
 
 
 def _current_intent_sort_bucket(lane: dict[str, Any]) -> int:
