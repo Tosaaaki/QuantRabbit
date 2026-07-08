@@ -1,0 +1,366 @@
+{
+  "status": "LEGACY_SAMPLES_FOUND_PROOF_FLOOR_REACHED",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+  "read_only": true,
+  "live_side_effects": [],
+  "live_permission_allowed": false,
+  "current_tp_proof": {
+    "wins": 17,
+    "losses": 0,
+    "proof_floor": 20,
+    "remaining_samples": 3
+  },
+  "post_search_tp_proof": {
+    "wins": 20,
+    "losses": 0,
+    "proof_floor": 20,
+    "remaining_samples": 0,
+    "accepted_legacy_samples_added": 3
+  },
+  "searched_sources": [
+    {
+      "source": "docs/AGENT_CONTRACT.md",
+      "mode": "read_only",
+      "result": "Contract read before acting. Relevant constraints preserved: proof floor 20, no live side effects, archive is read-only, market-close losses must stay separate from attached TP proof, negative expectancy must remain visible."
+    },
+    {
+      "source": "data/eurusd_short_breakout_failure_evidence_acquisition_plan.json",
+      "mode": "read_only",
+      "result": "Input plan confirms current exact TP proof is 17 wins / 0 losses with proof_floor 20 and 3 samples missing. It forbids live orders, cancels, closes, launchd changes, gate loosening, proof-floor lowering, negative-expectancy hiding, market-close leakage hiding, 4x lot backsolve, and secret printing."
+    },
+    {
+      "source": "data/eurusd_short_breakout_failure_scout_plan.json",
+      "mode": "read_only",
+      "result": "SCOUT remains blocked: status SCOUT_BLOCKED_OPERATOR_REVIEW and scout_mode_allowed=false."
+    },
+    {
+      "source": "data/harvest_live_grade_path.json",
+      "mode": "read_only",
+      "result": "Closest harvest candidate is EUR_USD|SHORT|BREAKOUT_FAILURE with TAKE_PROFIT_ORDER proof 17 trades / 0 losses / proof gap 3, live_promotion_allowed=false, and blockers FORECAST_ADVERSE_PATH_BLOCK, GUARDIAN_OPERATOR_REVIEW_BLOCK, MARKET_CLOSE_LEAK_PRESENT, NOT_IN_PROOF_QUEUE, SAMPLE_GAP."
+    },
+    {
+      "source": "data/payoff_shape_diagnosis.json and data/capture_economics.json",
+      "mode": "read_only",
+      "result": "Global capture economics remains negative: 229 trades, win_rate 0.5983, avg_win_jpy 418.0, avg_loss_jpy 1063.9, expectancy_jpy_per_trade -177.4, net_jpy -40616.9. Target shape still has market-close leak: 10 market-close losses for -7636.3 JPY."
+    },
+    {
+      "source": "data/execution_ledger.db",
+      "mode": "read_only_sqlite",
+      "result": "Current attributed target-shape proof remained 17 existing TP wins. Duplicate check for accepted legacy trade IDs 469278, 469427, and 469898 returned duplicate_count=0 in execution_events/order_id rows."
+    },
+    {
+      "source": "data/legacy_history.db live_trade_events",
+      "mode": "read_only_sqlite",
+      "result": "Searched EUR_USD SHORT CLOSE rows with reason TAKE_PROFIT_ORDER and joined matching ENTRY/FILL rows by trade_id. Found accepted candidates 469278, 469427, and 469898 with timestamp, units, entry/exit price, attached TP, spread, thesis/strategy tag, realized P/L, exit reason, and transaction ID."
+    },
+    {
+      "source": "data/legacy_history.db legacy_records",
+      "mode": "read_only_sqlite",
+      "result": "Cross-checked chunks, seat_outcomes, pretrade_outcomes, and trades rows for strategy equivalence. Accepted records contain shelf retest, failed shelf retest, upper-box fade, or medium-term breakout/failure wording. Ambiguous TP rows were kept out of accepted proof."
+    },
+    {
+      "source": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/collab_trade",
+      "mode": "read_only_archive",
+      "result": "Searched daily/state/strategy memory markdown. Raw archive supports 469278 and 469427 directly. For 469898, raw state.md supports the live direct-USD breakout/failure family while legacy_history.db live_trade_events carries the exact entry and TAKE_PROFIT_ORDER close rows."
+    },
+    {
+      "source": "Notion workspace",
+      "mode": "read_only_search_and_fetch",
+      "result": "Used notion-workspace-curator discipline: searched for QuantRabbit EUR_USD SHORT proof-floor and legacy trade evidence, fetched quant-rabbit-profitability-evidence-repair-2026-07-03 only. Notion corroborates no broker-side actions, negative expectancy, market-close leakage, month-scale blockers, no-live-ready gates, and operator review blockers. No Notion pages were created, moved, edited, or commented on."
+    },
+    {
+      "source": "credential-like archive paths",
+      "mode": "skipped",
+      "result": "Secret-looking archive paths were deliberately not read or printed."
+    }
+  ],
+  "found_candidate_samples": [
+    {
+      "candidate_id": "legacy:live_trade_events:469278",
+      "trade_id": "469278",
+      "verdict": "ACCEPTED",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_tag_evidence": [
+        "ENTRY thesis=direct_usd_shelf_retest_short",
+        "archive thesis: failed retest of broken shelf",
+        "seat_outcomes mtf_chain: M5 shelf break + M1 failed repair under the shelf",
+        "close note: broken-shelf retest paid into pre-armed TP"
+      ],
+      "entry": {
+        "timestamp_utc": "2026-04-21T08:32:39Z",
+        "price": 1.17656,
+        "units": 3000,
+        "order_type": "LIMIT",
+        "take_profit": 1.1759,
+        "stop_loss": 1.1769,
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10433"
+      },
+      "exit": {
+        "timestamp_utc": "2026-04-21T09:08:35Z",
+        "price": 1.1759,
+        "realized_pl_jpy": 314.6844,
+        "exit_reason": "TAKE_PROFIT_ORDER",
+        "transaction_id": "469281",
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10434"
+      },
+      "supporting_sources": [
+        "legacy_records chunks source_id=86206/86207",
+        "legacy_records pretrade_outcomes source_id=983",
+        "legacy_records seat_outcomes source_id=14735",
+        "archive collab_trade/daily/2026-04-21/trades.md",
+        "archive collab_trade/strategy_memory.md"
+      ],
+      "duplicate_check": {
+        "execution_ledger_db_duplicate_count": 0,
+        "current_proof_trade_ids_start_at_470xxx_for_accepted_target_rows": true
+      },
+      "not_market_close": true,
+      "acceptance_reason": "Unambiguous EUR_USD SHORT broken-shelf/failed-retest LIMIT with attached TP and broker TAKE_PROFIT_ORDER close."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:469427",
+      "trade_id": "469427",
+      "verdict": "ACCEPTED",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_tag_evidence": [
+        "ENTRY thesis=EUR offered / USD bid; failed shelf retest; lower-half churn",
+        "strategy_memory: 4/22 late EUR_USD SHORT retrace LIMIT -> TP +270 JPY",
+        "seat_outcomes mtf_chain: long shelf failed, M5 lower-half rejection, M1 failed reclaim"
+      ],
+      "entry": {
+        "timestamp_utc": "2026-04-22T14:33:24Z",
+        "price": 1.17325,
+        "units": 2000,
+        "order_type": "LIMIT",
+        "limit_order_id": "469426",
+        "take_profit": 1.1724,
+        "stop_loss": 1.17442,
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10519"
+      },
+      "exit": {
+        "timestamp_utc": "2026-04-22T14:53:12Z",
+        "price": 1.1724,
+        "realized_pl_jpy": 270.2989,
+        "exit_reason": "TAKE_PROFIT_ORDER",
+        "transaction_id": "469430",
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10520"
+      },
+      "supporting_sources": [
+        "archive collab_trade/daily/2026-04-22/trades.md",
+        "archive collab_trade/strategy_memory.md",
+        "legacy_records pretrade_outcomes source_id=1110",
+        "legacy_records seat_outcomes source_id=22804"
+      ],
+      "duplicate_check": {
+        "execution_ledger_db_duplicate_count": 0,
+        "current_proof_trade_ids_start_at_470xxx_for_accepted_target_rows": true
+      },
+      "not_market_close": true,
+      "acceptance_reason": "EUR_USD SHORT failed shelf retest/retrace LIMIT with attached TP and broker TAKE_PROFIT_ORDER close."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:469898",
+      "trade_id": "469898",
+      "verdict": "ACCEPTED",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_tag_evidence": [
+        "ENTRY thesis=eurusd_failed_shelf_retest",
+        "state.md: medium-term breakout/failure EUR_USD SHORT via 469898",
+        "state.md: next add needs fresh retest failure under 1.16890/1.16910",
+        "seat_outcomes mtf_chain: H4 late bear + H1 trend-bear + M5 upper-box fade + M1 under invalidation"
+      ],
+      "entry": {
+        "timestamp_utc": "2026-04-29T23:16:58Z",
+        "price": 1.1679,
+        "units": 8000,
+        "order_type": "LIMIT",
+        "limit_order_id": "469893",
+        "take_profit": 1.16645,
+        "initial_stop_loss": 1.16835,
+        "updated_stop_loss": 1.16929,
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10889"
+      },
+      "exit": {
+        "timestamp_utc": "2026-04-30T02:45:12Z",
+        "price": 1.16645,
+        "realized_pl_jpy": 1856.3399,
+        "exit_reason": "TAKE_PROFIT_ORDER",
+        "transaction_id": "469912",
+        "spread_pips": 0.8,
+        "source": "data/legacy_history.db live_trade_events line_no=10893"
+      },
+      "supporting_sources": [
+        "archive collab_trade/daily/2026-04-29/state.md",
+        "archive collab_trade/strategy_memory.md",
+        "legacy_records seat_outcomes source_id=36888",
+        "legacy_records trades source_id=58785"
+      ],
+      "duplicate_check": {
+        "execution_ledger_db_duplicate_count": 0,
+        "current_proof_trade_ids_start_at_470xxx_for_accepted_target_rows": true
+      },
+      "not_market_close": true,
+      "acceptance_reason": "EUR_USD SHORT failed-shelf-retest / medium-term breakout-failure LIMIT with attached TP and broker TAKE_PROFIT_ORDER close."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:469523",
+      "trade_id": "469523",
+      "verdict": "REJECTED_FOR_THIS_PROOF_PACK",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "rejection_reason": "TP close exists, but inspected entry thesis did not unambiguously map to BREAKOUT_FAILURE or an equivalent failed-retest/shelf-failure tag."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:469530",
+      "trade_id": "469530",
+      "verdict": "REJECTED_FOR_THIS_PROOF_PACK",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "rejection_reason": "TP close exists, but inspected thesis was direct_usd_support/lower-shelf continuation rather than a clear BREAKOUT_FAILURE equivalent."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:469548",
+      "trade_id": "469548",
+      "verdict": "REJECTED_FOR_THIS_PROOF_PACK",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "rejection_reason": "TP close exists, but inspected thesis was live direct-USD/inventory lead rather than a clear failed-breakout or failed-shelf retest proof row."
+    },
+    {
+      "candidate_id": "legacy:live_trade_events:other_eurusd_short_tp_rows",
+      "trade_ids": [
+        "469641",
+        "469715",
+        "469741",
+        "469855",
+        "469880"
+      ],
+      "verdict": "REJECTED_FOR_THIS_PROOF_PACK",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "rejection_reason": "TP close rows found, but the searched join did not expose enough entry/strategy evidence to prove BREAKOUT_FAILURE equivalence without deeper reconciliation. Not needed after three stronger accepted samples reached the floor."
+    }
+  ],
+  "accepted_tp_harvest_samples": [
+    {
+      "trade_id": "469278",
+      "transaction_id": "469281",
+      "timestamp_utc": "2026-04-21T09:08:35Z",
+      "entry_price": 1.17656,
+      "exit_price": 1.1759,
+      "units": 3000,
+      "realized_pl_jpy": 314.6844,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "strategy_equivalence": "broken-shelf / failed-retest LIMIT with pre-armed TP"
+    },
+    {
+      "trade_id": "469427",
+      "transaction_id": "469430",
+      "timestamp_utc": "2026-04-22T14:53:12Z",
+      "entry_price": 1.17325,
+      "exit_price": 1.1724,
+      "units": 2000,
+      "realized_pl_jpy": 270.2989,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "strategy_equivalence": "failed shelf retest / lower-half churn LIMIT with attached TP"
+    },
+    {
+      "trade_id": "469898",
+      "transaction_id": "469912",
+      "timestamp_utc": "2026-04-30T02:45:12Z",
+      "entry_price": 1.1679,
+      "exit_price": 1.16645,
+      "units": 8000,
+      "realized_pl_jpy": 1856.3399,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "strategy_equivalence": "failed shelf retest / medium-term breakout-failure LIMIT with attached TP"
+    }
+  ],
+  "rejected_samples": [
+    {
+      "trade_id": "469523",
+      "reason_codes": [
+        "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+      ],
+      "evidence": "Entry row has TP and TAKE_PROFIT_ORDER close, but inspected thesis is eur-usd-short-state-focus-best-direct-usd-seat... not a clear failed-retest or breakout-failure tag."
+    },
+    {
+      "trade_id": "469530",
+      "reason_codes": [
+        "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+      ],
+      "evidence": "Entry row has LIMIT fill and TAKE_PROFIT_ORDER close, but inspected thesis is direct_usd_support/lower-shelf continuation, not clearly BREAKOUT_FAILURE."
+    },
+    {
+      "trade_id": "469548",
+      "reason_codes": [
+        "STRATEGY_TAG_NOT_UNAMBIGUOUS_BREAKOUT_FAILURE"
+      ],
+      "evidence": "Entry row has TP and TAKE_PROFIT_ORDER close, but inspected supporting state describes live direct-USD/inventory lead rather than failed-breakout proof."
+    },
+    {
+      "trade_id": "469404",
+      "reason_codes": [
+        "NOT_TP_PROOF",
+        "LOSS_ROW"
+      ],
+      "evidence": "EUR_USD SHORT first-retest/rebreak was closed by STOP_LOSS_ORDER for a loss and is not TP/HARVEST proof."
+    },
+    {
+      "trade_id": "469357",
+      "reason_codes": [
+        "NOT_TP_PROOF",
+        "MARKET_OR_MANUAL_CLOSE_STYLE_LOSS"
+      ],
+      "evidence": "EUR_USD SHORT close was a false-break reclaim loss, not a TAKE_PROFIT_ORDER proof row."
+    },
+    {
+      "trade_id": "469641,469715,469741,469855,469880",
+      "reason_codes": [
+        "ENTRY_OR_STRATEGY_SOURCE_INSUFFICIENT"
+      ],
+      "evidence": "TAKE_PROFIT_ORDER close rows were visible, but the searched joined source did not supply enough entry/strategy tag evidence to accept them for the exact shape."
+    }
+  ],
+  "remaining_samples_after_search": 0,
+  "proof_floor_reached": true,
+  "remaining_blockers_visible": [
+    "NEGATIVE_EXPECTANCY_ACTIVE: global capture_economics overall expectancy remains -177.4 JPY/trade and net -40616.9 JPY.",
+    "MARKET_CLOSE_LEAK_PRESENT: target shape still has 10 market-close losses for -7636.3 JPY; these were not counted as TP proof.",
+    "SPREAD_SLIPPAGE_PROOF_MISSING: accepted legacy rows have spread fields, but target still needs the separate positive spread/slippage proof artifact.",
+    "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE: global month-scale TP-progress replay residual remains a blocker from the input plan.",
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED and live gateway blockers remain; proof-floor recovery does not create live permission."
+  ],
+  "next_action": "Reconcile/import these three accepted legacy TP rows into the exact proof artifact and rebuild capture_economics/payoff/harvest reports read-only. Then re-run spread/slippage and month-scale checks. Even after proof floor reaches 20, keep live permission false until market-close leak containment, negative expectancy, guardian/operator review, current forecast, risk, verifier, and gateway checks all pass on fresh broker truth.",
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage a live order from this search.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify TP or SL.",
+    "Do not load, reload, start, stop, or edit launchd agents.",
+    "Do not modify broker state.",
+    "Do not loosen gates.",
+    "Do not lower the proof floor below 20.",
+    "Do not hide negative expectancy.",
+    "Do not hide month-scale replay negatives.",
+    "Do not hide market-close leakage.",
+    "Do not count MARKET_ORDER_TRADE_CLOSE or market-close losses as TP/HARVEST proof.",
+    "Do not derive lot size from remaining_to_4x or any 4x deficit.",
+    "Do not invent an operator decision.",
+    "Do not print, copy, or persist secrets or tokens.",
+    "Do not treat proof-floor recovery as live permission."
+  ]
+}

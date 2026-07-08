@@ -115,7 +115,14 @@ docs/as_lane_candidate_board.md|\
 docs/as_proof_pack_queue.md|\
 docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
 docs/audjpy_short_breakout_failure_repair_proof.md|\
+docs/active_trader_contract.md|\
+docs/eurusd_short_breakout_failure_evidence_acquisition_plan.md|\
+docs/eurusd_short_breakout_failure_legacy_sample_search.md|\
+docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md|\
+docs/eurusd_short_breakout_failure_proof_floor_update.md|\
 docs/eurusd_short_breakout_failure_scout_plan.md|\
+docs/eurusd_short_breakout_failure_spread_slippage_proof.md|\
+docs/eurusd_short_breakout_failure_vehicle_split_diagnosis.md|\
 docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
 docs/portfolio_4x_path_planner.md|\
@@ -132,6 +139,14 @@ data/as_lane_candidate_board.json|\
 data/as_proof_pack_queue.json|\
 data/audjpy_short_breakout_failure_limit_proof_pack.json|\
 data/audjpy_short_breakout_failure_repair_proof.json|\
+data/active_trader_contract.json|\
+data/eurusd_short_breakout_failure_evidence_acquisition_plan.json|\
+data/eurusd_short_breakout_failure_legacy_sample_search.json|\
+data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json|\
+data/eurusd_short_breakout_failure_proof_floor_update.json|\
+data/eurusd_short_breakout_failure_scout_plan.json|\
+data/eurusd_short_breakout_failure_spread_slippage_proof.json|\
+data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json|\
 data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\
 data/portfolio_4x_path_planner.json|\
@@ -347,6 +362,8 @@ verify_automation() {
     'data/guardian_receipt_operator_review.json' \
     'named proof/acceptance evidence' \
     'data/trader_goal_loop_orchestrator.json' \
+    'data/active_trader_contract.json' \
+    'eurusd_short_breakout_failure_*' \
     'runtime drift and **do not** block the run'
   do
     if ! grep -Fq "$required" "$AUTOMATION_FILE"; then

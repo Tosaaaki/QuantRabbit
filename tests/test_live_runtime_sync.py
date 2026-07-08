@@ -113,6 +113,65 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 },
             )
 
+    def test_promotes_after_preserving_active_contract_and_eurusd_evidence_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _commit_file(repo, "data/active_trader_contract.json", '{"status":"old"}\n', "track active contract")
+            _commit_file(repo, "docs/active_trader_contract.md", "old active contract\n", "track active report")
+            _commit_file(
+                repo,
+                "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+                '{"status":"old"}\n',
+                "track eurusd replay",
+            )
+            _commit_file(
+                repo,
+                "docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
+                "old eurusd replay\n",
+                "track eurusd replay report",
+            )
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (live / "data" / "active_trader_contract.json").write_text('{"status":"runtime"}\n')
+            (live / "docs" / "active_trader_contract.md").write_text("runtime active contract\n")
+            (live / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json").write_text(
+                '{"status":"runtime"}\n'
+            )
+            (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").write_text(
+                "runtime eurusd replay\n"
+            )
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            feature_head = _git(repo, "rev-parse", "feature")
+            self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
+            self.assertEqual((live / "data" / "active_trader_contract.json").read_text(), '{"status":"runtime"}\n')
+            self.assertEqual((live / "docs" / "active_trader_contract.md").read_text(), "runtime active contract\n")
+            self.assertEqual(
+                (live / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json").read_text(),
+                '{"status":"runtime"}\n',
+            )
+            self.assertEqual(
+                (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").read_text(),
+                "runtime eurusd replay\n",
+            )
+            self.assertEqual(
+                {line.strip() for line in _git(live, "status", "--short").splitlines()},
+                {
+                    "M data/active_trader_contract.json",
+                    "M docs/active_trader_contract.md",
+                    "M data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+                    "M docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
+                },
+            )
+
     def test_blocks_when_development_has_source_dirty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
@@ -493,7 +552,7 @@ def _current_trader_prompt_sentinel() -> str:
         [
             "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
             "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
-            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, and `data/trader_goal_loop_orchestrator.json` diffs are runtime drift and **do not** block the run.",
+            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run.",
         ]
     )
 

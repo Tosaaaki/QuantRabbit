@@ -1,0 +1,294 @@
+{
+  "schema_version": "eurusd_short_breakout_failure_scout_plan_v1",
+  "generated_at_utc": "2026-07-07T12:59:09Z",
+  "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+  "source_artifacts": [
+    "data/harvest_live_grade_path.json",
+    "data/payoff_shape_diagnosis.json",
+    "data/as_proof_pack_queue.json",
+    "data/as_lane_candidate_board.json",
+    "data/portfolio_4x_path_planner.json",
+    "data/trader_repair_orchestrator.json",
+    "data/execution_timing_audit.json",
+    "data/profitability_acceptance.json",
+    "data/capture_economics.json",
+    "data/order_intents.json",
+    "data/live_order_request.json",
+    "data/guardian_receipt_consumption.json",
+    "data/guardian_receipt_operator_review.json"
+  ],
+  "proof_queue_entry_blockers": [
+    {
+      "code": "NOT_IN_PROOF_QUEUE",
+      "reason": "data/as_proof_pack_queue.json has queue_count=0, and harvest_live_grade_path says actual_proof_queue_member=false / planner_can_enter_proof_pack=false for this shape.",
+      "evidence": {
+        "proof_queue_count": 0,
+        "actual_proof_queue_member": false,
+        "can_create_live_permission": false,
+        "live_promotion_allowed": false
+      }
+    },
+    {
+      "code": "SAMPLE_GAP",
+      "reason": "Exact TAKE_PROFIT_ORDER proof is positive but thin: 17 TP trades, 0 TP losses, proof floor 20, gap 3.",
+      "evidence": {
+        "take_profit_trades": 17,
+        "take_profit_losses": 0,
+        "take_profit_expectancy_jpy": 613.2,
+        "proof_floor_trades": 20,
+        "proof_gap_trades": 3
+      }
+    },
+    {
+      "code": "CURRENT_LANE_BLOCKERS",
+      "reason": "The current LIMIT/STOP proof-collection intents are DRY_RUN_BLOCKED, not proof-queue eligible.",
+      "evidence": {
+        "best_vehicle": "LIMIT attached-TP HARVEST",
+        "live_blocker_codes": [
+          "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+          "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+          "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+          "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+        ],
+        "forecast_direction": "RANGE",
+        "forecast_market_support_ok": false,
+        "chart_direction_bias": "LONG"
+      }
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
+      "reason": "This exact shape is overall positive only after TP wins, but system MARKET_ORDER_TRADE_CLOSE leakage remains material and must not be hidden.",
+      "evidence": {
+        "market_close_losses": 10,
+        "market_close_net_jpy": -7636.3,
+        "overall_net_jpy": 3705.2,
+        "overall_expectancy_jpy_per_trade": 102.9
+      }
+    },
+    {
+      "code": "POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING",
+      "reason": "harvest_live_grade_path reports no positive spread/slippage proof attached; absence of a negative row is not live-grade proof.",
+      "evidence": {
+        "spread_slippage_status": "NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED"
+      }
+    },
+    {
+      "code": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+      "reason": "Global acceptance is still blocked; SCOUT must not hide negative expectancy or month-scale replay findings.",
+      "evidence": {
+        "profitability_acceptance_status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+        "blockers": [
+          "SELF_IMPROVEMENT_P0_PRESENT",
+          "NEGATIVE_EXPECTANCY_ACTIVE",
+          "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+          "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+          "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+        ]
+      }
+    },
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "reason": "guardian receipt consumption has normal_routing_allowed=false and classifications=NEEDS_OPERATOR_REVIEW; operator review is stale/current-P0 blocked.",
+      "evidence": {
+        "guardian_receipt_consumption_status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+        "normal_routing_allowed": false,
+        "operator_review_status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING"
+      }
+    },
+    {
+      "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "reason": "live_order_request is NO_ACTION, broker snapshot is not fresh relative to this plan, and the last GPT decision is an old CANCEL_PENDING receipt, not a fresh TRADE/SCOUT proof receipt.",
+      "evidence": {
+        "live_order_request_status": "NO_ACTION",
+        "broker_snapshot_fetched_at_utc": "2026-07-06T18:29:43.982661+00:00",
+        "last_decision_action": "CANCEL_PENDING",
+        "last_decision_generated_at_utc": "2026-06-26T02:32:16.315457+00:00"
+      }
+    }
+  ],
+  "missing_evidence": [
+    {
+      "category": "sample_size",
+      "status": "MISSING",
+      "detail": "Need at least 3 additional exact EUR_USD SHORT BREAKOUT_FAILURE TAKE_PROFIT_ORDER samples without introducing TP losses, bringing TP sample count from 17 to >=20."
+    },
+    {
+      "category": "expectancy",
+      "status": "MIXED_BLOCKED",
+      "detail": "Exact TP HARVEST expectancy is positive, but global capture_economics remains NEGATIVE_EXPECTANCY: 229 trades, win_rate=0.5983, payoff_ratio=0.393, expectancy=-177.4 JPY/trade, net=-40616.9 JPY."
+    },
+    {
+      "category": "replay",
+      "status": "PARTIAL",
+      "detail": "harvest_live_grade_path shows no direct month-scale blocker for this exact shape, but profitability_acceptance still has MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE globally. Any direct residual blocker for this shape would make SCOUT invalid."
+    },
+    {
+      "category": "market_close_leak",
+      "status": "BLOCKING",
+      "detail": "The shape has 10 MARKET_ORDER_TRADE_CLOSE losses for -7636.3 JPY. SCOUT proof must be attached-TP HARVEST only and must not rely on market close leakage."
+    },
+    {
+      "category": "guardian",
+      "status": "BLOCKING_OPERATOR_REVIEW_REQUIRED",
+      "detail": "guardian receipt consumption/operator review prevents normal routing. SCOUT cannot go through any gateway while normal_routing_allowed=false."
+    },
+    {
+      "category": "current_market_and_gateway",
+      "status": "BLOCKING",
+      "detail": "Current intent packet has RANGE forecast, no directional projection support, LONG chart bias, operator-manual same-theme block, stale/freshness gaps, and no fresh GPT proof receipt."
+    },
+    {
+      "category": "spread_slippage",
+      "status": "MISSING",
+      "detail": "No attached positive spread/slippage or bid/ask replay proof for the exact current SCOUT vehicle."
+    }
+  ],
+  "scout_mode_allowed": false,
+  "scout_mode_reason": "SCOUT design is worth keeping as a future proof-collection contract because the exact attached-TP HARVEST sample is 17 wins / 0 TP losses with only 3 samples to the proof floor, min-lot is numerically feasible, and harvest_live_grade_path finds no direct target month-scale blocker. It is not currently allowed because guardian/operator review blocks normal routing, current intent gates are BLOCK, proof_queue_count=0 is not permission, and fresh broker truth plus a fresh GPT proof receipt are missing.",
+  "operator_approval_required": true,
+  "max_loss_jpy_cap": 418.0,
+  "normal_live_risk_reference_jpy": 2871.8597,
+  "max_loss_cap_is_below_normal_live_risk": true,
+  "max_loss_jpy_cap_basis": "Use the current loss_asymmetry_guard_effective_max_loss_jpy / observed average winner cap from order_intents for this exact shape. This is below the current normal live base max_loss_jpy reference of 2871.8597. Do not derive lot or loss cap from remaining_to_4x.",
+  "min_lot_feasibility": {
+    "status": "MIN_LOT_NUMERICALLY_FEASIBLE_BUT_OTHER_GATES_BLOCK",
+    "min_production_lot_units": 1000,
+    "proposed_scout_units": 3000,
+    "intent_units": 3000,
+    "planner_realistic_units": 3000,
+    "estimated_margin_jpy": 22305.367,
+    "loss_budget_min_lot_blocker_present": false,
+    "no_4x_deficit_lot_backsolve": true,
+    "feasible_if_all_non_lot_gates_clear": true
+  },
+  "scout_contract_if_unblocked": {
+    "mode": "HARVEST_PROOF_COLLECTION_SCOUT",
+    "vehicle": "LIMIT only; non-market attached technical TP HARVEST; no MARKET proof scout and no failed-side STOP chase",
+    "live_permission": false,
+    "proof_queue_permission": "only after evidence_success_conditions pass on fresh artifacts",
+    "risk_controls": [
+      "max_loss_jpy <= 418.0",
+      "units must remain >= 1000 and must not be calculated from remaining_to_4x",
+      "attach_take_profit_on_fill=true",
+      "tp_execution_mode=ATTACHED_TECHNICAL_TP",
+      "tp_target_intent=HARVEST",
+      "no order send without fresh broker truth, fresh GPT receipt, RiskEngine live validation, strategy-profile validation, guardian/operator clearance, and gateway approval"
+    ]
+  },
+  "invalid_conditions": [
+    "Any live order send, cancel, close, position modification, or launchd mutation is requested by the SCOUT plan itself.",
+    "guardian_receipt_consumption.normal_routing_allowed remains false or GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED remains present.",
+    "Fresh broker truth and a fresh GPT TRADE/SCOUT proof receipt are missing.",
+    "The current target lane remains DRY_RUN_BLOCKED by RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, or chart-direction conflict that has not been resolved by fresh evidence.",
+    "The vehicle is MARKET, a failed-side STOP chase, RUNNER_NO_BROKER_TP, or any shape other than exact EUR_USD SHORT BREAKOUT_FAILURE attached-TP HARVEST.",
+    "max_loss_jpy would exceed 418.0, units would fall below 1000, or sizing is derived from remaining_to_4x instead of current equity/risk evidence.",
+    "Spread/slippage or bid/ask replay is negative or missing for the exact current vehicle.",
+    "A direct month-scale residual blocker appears for EUR_USD SHORT BREAKOUT_FAILURE, or the current month-scale replay remains unresolvable.",
+    "Market-close leakage is used as a proof path or any planned proof requires a market close instead of broker attached TP.",
+    "Any TAKE_PROFIT_ORDER loss appears in the exact TP proof set before proof_queue admission.",
+    "partial TP plus runner is treated as live permission rather than a diagnostic-only replay hypothesis."
+  ],
+  "withdrawal_conditions": [
+    "Stop pursuing SCOUT if the next refreshed artifacts still cannot reduce the exact sample gap or if the exact TP sample adds any TAKE_PROFIT_ORDER loss before reaching the proof floor.",
+    "Stop pursuing SCOUT if spread-included replay remains missing or negative for the exact LIMIT attached-TP HARVEST vehicle.",
+    "Stop pursuing SCOUT if market-close leakage cannot be contained without using cancel/close/market-exit behavior.",
+    "Stop pursuing SCOUT if a direct month-scale residual blocker appears for EUR_USD SHORT BREAKOUT_FAILURE or if global month-scale replay remains negative with no target-specific containment path.",
+    "Stop pursuing SCOUT if guardian/operator review cannot set normal_routing_allowed=true or current P0/P1 guardian issues remain.",
+    "Stop pursuing SCOUT if fresh broker truth reprices the vehicle below the 1000-unit production floor, above the 418.0 JPY max-loss cap, or into adverse spread/slippage.",
+    "Stop pursuing SCOUT if current market evidence keeps RANGE forecast without valid BREAKOUT_FAILURE HARVEST geometry, LONG chart bias, or SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH as hard blockers.",
+    "Stop pursuing SCOUT if proof acquisition would require deriving lot from remaining_to_4x or relaxing any existing gate."
+  ],
+  "evidence_success_conditions": [
+    {
+      "field": "take_profit_trades",
+      "operator": ">=",
+      "value": 20,
+      "current": 17
+    },
+    {
+      "field": "take_profit_losses",
+      "operator": "==",
+      "value": 0,
+      "current": 0
+    },
+    {
+      "field": "take_profit_expectancy_jpy",
+      "operator": ">",
+      "value": 0,
+      "current": 613.2
+    },
+    {
+      "field": "positive_rotation_pessimistic_expectancy_jpy",
+      "operator": ">",
+      "value": 0,
+      "current": 304.0708
+    },
+    {
+      "field": "spread_included_replay_net",
+      "operator": ">=",
+      "value": 0,
+      "current": null
+    },
+    {
+      "field": "market_close_leak_blocker",
+      "operator": "==",
+      "value": false,
+      "current": true
+    },
+    {
+      "field": "direct_month_scale_residual_blocker_for_target",
+      "operator": "==",
+      "value": false,
+      "current": false
+    },
+    {
+      "field": "guardian_normal_routing_allowed",
+      "operator": "==",
+      "value": true,
+      "current": false
+    },
+    {
+      "field": "fresh_broker_truth_and_fresh_gpt_receipt",
+      "operator": "==",
+      "value": true,
+      "current": false
+    },
+    {
+      "field": "proof_queue_member",
+      "operator": "==",
+      "value": true,
+      "current": false
+    }
+  ],
+  "no_scout_reasons": [],
+  "next_read_only_actions": [
+    {
+      "action": "refresh_target_profitability_evidence",
+      "commands": [
+        "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance"
+      ],
+      "live_side_effects": []
+    },
+    {
+      "action": "rebuild_as_proof_artifacts_after_refresh",
+      "commands": [
+        "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator"
+      ],
+      "live_side_effects": []
+    },
+    {
+      "action": "targeted_read_only_verification",
+      "commands": [
+        "python3 -m json.tool data/eurusd_short_breakout_failure_scout_plan.json >/dev/null",
+        "python3 - <<'PY'\nimport json\np=json.load(open('data/eurusd_short_breakout_failure_scout_plan.json'))\nassert p['status']=='SCOUT_BLOCKED_OPERATOR_REVIEW'\nassert p['scout_mode_allowed'] is False\nassert p['operator_approval_required'] is True\nassert p['live_side_effects']==[]\nassert p['max_loss_jpy_cap']==418.0\nPY"
+      ],
+      "live_side_effects": []
+    }
+  ],
+  "live_side_effects": []
+}

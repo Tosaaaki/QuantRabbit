@@ -1,0 +1,271 @@
+{
+  "status": "PROOF_FLOOR_REACHED_STILL_BLOCKED",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+  "generated_at_utc": "2026-07-08T01:07:29Z",
+  "read_only": true,
+  "live_side_effects": [],
+  "live_permission_allowed": false,
+  "legacy_samples_accepted": [
+    "469278",
+    "469427",
+    "469898"
+  ],
+  "pre_update_tp_proof": {
+    "wins": 17,
+    "losses": 0,
+    "proof_floor": 20,
+    "remaining_samples": 3
+  },
+  "post_update_tp_proof": {
+    "wins": 20,
+    "losses": 0,
+    "proof_floor": 20,
+    "remaining_samples": 0,
+    "proof_floor_reached": true
+  },
+  "canonical_integration_status": "CANONICAL_PROOF_UPDATE_READY_AS_EVIDENCE_ONLY",
+  "spread_slippage_proof_status": "MISSING_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED",
+  "market_close_leak_status": "PRESENT_EXCLUDED_FROM_TP_PROOF",
+  "month_scale_replay_status": "GLOBAL_BLOCKING_REPLAY_NEGATIVE_NO_DIRECT_TARGET_BLOCKER_IN_CURRENT_HARVEST_PACKET",
+  "guardian_operator_review_status": "BLOCKED_OPERATOR_REVIEW_REQUIRED_NORMAL_ROUTING_FALSE",
+  "scout_status_after_update": "SCOUT_STILL_BLOCKED_OPERATOR_REVIEW",
+  "harvest_live_grade_status_after_update": "PROOF_FLOOR_REACHED_BUT_NOT_LIVE_GRADE",
+  "canonical_update_scope": {
+    "updates_existing_generated_artifacts": false,
+    "updated_artifact": "data/eurusd_short_breakout_failure_proof_floor_update.json",
+    "existing_harvest_live_grade_path_still_reports": {
+      "take_profit_trades": 17,
+      "take_profit_losses": 0,
+      "proof_gap_trades": 3,
+      "live_promotion_allowed": false
+    },
+    "interpretation": "This packet records the proof-floor update as canonical evidence material. It does not rewrite data/harvest_live_grade_path.json, data/payoff_shape_diagnosis.json, data/as_proof_pack_queue.json, or any gateway/risk artifact."
+  },
+  "accepted_sample_checks": [
+    {
+      "trade_id": "469278",
+      "transaction_id": "469281",
+      "duplicate": false,
+      "duplicate_check": "execution_ledger.db duplicate_count=0 for trade_id/order_id set 469278/469281",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_equivalence": "broken-shelf / failed-retest LIMIT with pre-armed TP",
+      "entry_timestamp_utc": "2026-04-21T08:32:39Z",
+      "exit_timestamp_utc": "2026-04-21T09:08:35Z",
+      "entry_price": 1.17656,
+      "exit_price": 1.1759,
+      "units": 3000,
+      "spread_pips": 0.8,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "realized_pl_jpy": 314.6844,
+      "market_close_mixed_in": false,
+      "usable_for_spread_slippage_evaluation": true,
+      "source": "data/legacy_history.db live_trade_events line_no=10433/10434"
+    },
+    {
+      "trade_id": "469427",
+      "transaction_id": "469430",
+      "duplicate": false,
+      "duplicate_check": "execution_ledger.db duplicate_count=0 for trade_id/order_id set 469427/469430",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_equivalence": "failed shelf retest / lower-half churn LIMIT with attached TP",
+      "entry_timestamp_utc": "2026-04-22T14:33:24Z",
+      "exit_timestamp_utc": "2026-04-22T14:53:12Z",
+      "entry_price": 1.17325,
+      "exit_price": 1.1724,
+      "units": 2000,
+      "spread_pips": 0.8,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "realized_pl_jpy": 270.2989,
+      "market_close_mixed_in": false,
+      "usable_for_spread_slippage_evaluation": true,
+      "source": "data/legacy_history.db live_trade_events line_no=10519/10520"
+    },
+    {
+      "trade_id": "469898",
+      "transaction_id": "469912",
+      "duplicate": false,
+      "duplicate_check": "execution_ledger.db duplicate_count=0 for trade_id/order_id set 469898/469912",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "strategy_equivalence": "failed shelf retest / medium-term breakout-failure LIMIT with attached TP",
+      "entry_timestamp_utc": "2026-04-29T23:16:58Z",
+      "exit_timestamp_utc": "2026-04-30T02:45:12Z",
+      "entry_price": 1.1679,
+      "exit_price": 1.16645,
+      "units": 8000,
+      "spread_pips": 0.8,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "realized_pl_jpy": 1856.3399,
+      "market_close_mixed_in": false,
+      "usable_for_spread_slippage_evaluation": true,
+      "source": "data/legacy_history.db live_trade_events line_no=10889/10893"
+    }
+  ],
+  "required_checks": {
+    "duplicates_checked": {
+      "passed": true,
+      "evidence": "sqlite execution_ledger.db duplicate_count=0 for trade_id in 469278/469427/469898 or order_id in 469281/469430/469912."
+    },
+    "tp_or_attached_harvest_checked": {
+      "passed": true,
+      "evidence": "All accepted close rows have exit_reason=TAKE_PROFIT_ORDER and matching entry rows include TP prices and LIMIT/attached-TP evidence."
+    },
+    "market_close_excluded": {
+      "passed": true,
+      "evidence": "No accepted sample has MARKET_ORDER_TRADE_CLOSE. Existing target-shape market-close losses remain listed under blockers."
+    },
+    "spread_slippage_fields_present": {
+      "passed": true,
+      "evidence": "Each accepted row includes timestamp, entry/exit price, units, exit reason, and Sp=0.8pip in legacy live_trade_events."
+    },
+    "live_permission_not_created": {
+      "passed": true,
+      "evidence": "live_permission_allowed=false, live_side_effects=[], live_order_request.status=NO_ACTION, send_requested=false, and current planner/queue artifacts still report no live-ready path."
+    }
+  },
+  "proof_floor_delta": {
+    "sample_gap_before": 3,
+    "sample_gap_after": 0,
+    "sample_gap_status_after_update": "CLEARED_BY_ACCEPTED_LEGACY_TP_SAMPLES",
+    "proof_queue_membership_after_update": false,
+    "proof_queue_note": "Proof-floor count is evidence-complete in this update packet, but as_proof_pack_queue.json still has queue_count=0 and was not rewritten."
+  },
+  "harvest_live_grade_re_evaluation": {
+    "pre_update_candidate_classification": "HARVEST_POSITIVE_THIN_SAMPLE",
+    "post_update_candidate_classification": "HARVEST_PROOF_FLOOR_REACHED_EVIDENCE_ONLY",
+    "former_sample_gap_blocker": "CLEARED_IN_THIS_UPDATE_PACKET",
+    "current_intent_best": {
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "status": "DRY_RUN_BLOCKED",
+      "order_type": "LIMIT",
+      "attach_take_profit_on_fill": true,
+      "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+      "tp_target_intent": "HARVEST",
+      "risk_allowed": false,
+      "risk_jpy": 418.0,
+      "units": 3000,
+      "live_blocker_codes": [
+        "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+        "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED",
+        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+      ]
+    },
+    "live_promotion_allowed_after_update": false,
+    "can_create_live_permission_after_update": false,
+    "why_not_live_grade": [
+      "Positive spread/slippage proof is still missing for the exact LIMIT attached-TP HARVEST vehicle.",
+      "Target-shape market-close leak remains present and excluded from proof.",
+      "Global capture economics remains NEGATIVE_EXPECTANCY.",
+      "Global month-scale TP-progress replay residual remains negative.",
+      "Guardian/operator review keeps normal routing blocked.",
+      "The lane is not a proof-queue member and current order/gateway packet is not live-ready.",
+      "Broker snapshot is stale for live permission and live_order_request is NO_ACTION."
+    ]
+  },
+  "remaining_blockers": [
+    {
+      "code": "SPREAD_SLIPPAGE_PROOF_MISSING",
+      "status": "BLOCKING_LIVE_GRADE",
+      "evidence": "harvest_live_grade_path.spread_slippage_gaps reports NO_POSITIVE_SPREAD_SLIPPAGE_PROOF_ATTACHED for EUR_USD|SHORT|BREAKOUT_FAILURE.",
+      "clearing_condition": "Run/attach positive spread-included bid/ask replay or equivalent slippage proof for the exact LIMIT attached-TP HARVEST geometry."
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
+      "status": "BLOCKING_LIVE_GRADE",
+      "evidence": "Target shape has 10 MARKET_ORDER_TRADE_CLOSE losses for -7636.3 JPY in payoff/harvest artifacts.",
+      "clearing_condition": "Keep market-close losses out of TP proof and repair/exclude the market-close path before any live-grade promotion."
+    },
+    {
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "status": "VISIBLE_GLOBAL_BLOCKER",
+      "evidence": "capture_economics overall: 229 trades, win_rate 0.5983, avg_win_jpy 418.0, avg_loss_jpy 1063.9, expectancy_jpy_per_trade -177.4, net_jpy -40616.9.",
+      "clearing_condition": "Refresh capture_economics/profitability_acceptance after exact proof import and prove the exception without hiding global negative expectancy."
+    },
+    {
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "status": "GLOBAL_BLOCKING",
+      "evidence": "harvest_live_grade_path and profitability artifacts report global residual -20504.5826 JPY; current harvest packet shows no direct target-shape month-scale blocker.",
+      "clearing_condition": "Rerun 744h execution-timing-audit/profitability-acceptance until the residual is non-negative or no matching blocker applies."
+    },
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "status": "BLOCKING_ROUTING",
+      "evidence": "operator_review_report status OPERATOR_REVIEW_STILL_BLOCKED; receipt 832d2908eeb84b2f is expired/stale for routing and normal_routing_allowed=false.",
+      "clearing_condition": "A fresh explicit operator review must clear routing through the guardian receipt operator-review flow. This update does not invent that decision."
+    },
+    {
+      "code": "NOT_IN_PROOF_QUEUE",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "as_proof_pack_queue summary has queue_count=0, proof_ready_count=0, can_create_live_permission_count=0.",
+      "clearing_condition": "Regenerate A/S proof artifacts after canonical import; proof_queue membership still cannot be inferred from this update alone."
+    },
+    {
+      "code": "NO_LIVE_READY_PORTFOLIO",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "portfolio_4x_path_planner status NO_LIVE_READY_PORTFOLIO, can_reach_4x_now=false, live_ready_lanes=0.",
+      "clearing_condition": "Only fresh broker truth plus passing forecast, spread, strategy, risk, verifier, guardian, and gateway checks can create a live-ready lane."
+    },
+    {
+      "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "live_order_request.status=NO_ACTION, send_requested=false, sent=false; broker_snapshot.fetched_at_utc=2026-07-06T18:29:43.982661+00:00.",
+      "clearing_condition": "Refresh broker truth and run the normal gateway/verifier path. This proof update is not a gateway packet."
+    }
+  ],
+  "next_read_only_actions": [
+    "Import or reconcile accepted legacy TP rows 469278, 469427, and 469898 into the canonical proof/capture source path without changing broker state.",
+    "Rerun capture-economics and payoff/harvest diagnostics read-only so generated artifacts move from 17/0 gap 3 to 20/0 gap 0.",
+    "Attach exact spread/slippage proof for the LIMIT attached-TP HARVEST vehicle; timestamp/price/units are available from legacy rows but are not a positive replay by themselves.",
+    "Rerun execution-timing-audit --lookback-hours 744 and profitability-acceptance read-only to check whether the month-scale/global blockers still apply.",
+    "Regenerate A/S proof queue and portfolio planner read-only after the canonical proof import; do not treat queue_count=0 or mathematical planner rank as permission.",
+    "Package guardian/operator-review evidence only; do not invent operator clearance or route to live until normal_routing_allowed is true on fresh artifacts."
+  ],
+  "source_artifacts": [
+    "data/eurusd_short_breakout_failure_legacy_sample_search.json",
+    "docs/eurusd_short_breakout_failure_legacy_sample_search.md",
+    "data/eurusd_short_breakout_failure_evidence_acquisition_plan.json",
+    "data/eurusd_short_breakout_failure_scout_plan.json",
+    "data/harvest_live_grade_path.json",
+    "data/payoff_shape_diagnosis.json",
+    "data/trader_goal_loop_orchestrator.json",
+    "data/operator_review_report.json",
+    "data/as_proof_pack_queue.json",
+    "data/as_lane_candidate_board.json",
+    "data/portfolio_4x_path_planner.json",
+    "data/live_order_request.json",
+    "data/broker_snapshot.json",
+    "data/capture_economics.json",
+    "data/profitability_acceptance.json",
+    "data/legacy_history.db",
+    "data/execution_ledger.db",
+    "Notion: quant-rabbit-profitability-evidence-repair-2026-07-03 fetched read-only"
+  ],
+  "notion_check": {
+    "read_only": true,
+    "updates_made": false,
+    "query": "QuantRabbit EUR_USD SHORT BREAKOUT_FAILURE proof floor legacy samples 469278 469427 469898 negative expectancy market close leak",
+    "fetched_page": "quant-rabbit-profitability-evidence-repair-2026-07-03",
+    "result": "Notion corroborates no broker-side actions, negative expectancy, market-close leakage, month-scale replay blockers, no-live-ready gates, and operator-review blockers. It did not override local artifacts or create authorization."
+  },
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage a live order from this proof update.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify TP or SL.",
+    "Do not load, reload, start, stop, or edit launchd agents.",
+    "Do not loosen gates.",
+    "Do not lower the proof floor below 20.",
+    "Do not hide negative expectancy.",
+    "Do not hide month-scale replay negatives.",
+    "Do not hide market-close leakage.",
+    "Do not mix market-close losses into TP/HARVEST proof.",
+    "Do not derive lot size from remaining_to_4x or any 4x deficit.",
+    "Do not print, copy, or persist secrets or tokens.",
+    "Do not invent an operator decision.",
+    "Do not treat proof-floor recovery as live permission."
+  ]
+}

@@ -1,0 +1,310 @@
+{
+  "status": "LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+  "generated_at_utc": "2026-07-08T05:33:07Z",
+  "read_only": true,
+  "live_side_effects": [],
+  "live_permission_allowed": false,
+  "limit_samples_observed": {
+    "wins": 4,
+    "losses": 0,
+    "net_jpy": 3255.0938
+  },
+  "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+  "replay_sample_count": 4,
+  "replay_wins": 4,
+  "replay_losses": 0,
+  "net_expectancy_after_bidask": 813.7734,
+  "spread_slippage_summary": {
+    "basis": "Independent local OANDA S5 bid/ask candles from the live worktree replay history. SHORT/DOWN LIMIT entry is checked on bid touch and attached TAKE_PROFIT_ORDER exit is checked on ask touch.",
+    "source_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260703T120929Z/EUR_USD/EUR_USD_S5_BA_20260305T120929Z_20260703T120929Z.jsonl.gz",
+    "source_read_only": true,
+    "granularity": "S5",
+    "price": "BA",
+    "pair": "EUR_USD",
+    "exact_vehicle_only": true,
+    "entry_order_type": "LIMIT_ORDER",
+    "tp_type": "TAKE_PROFIT_ORDER",
+    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+    "tp_target_intent": "HARVEST",
+    "order_side_model": {
+      "short_entry_price_stream": "bid",
+      "short_tp_exit_price_stream": "ask"
+    },
+    "s5_spread_pips": {
+      "min": 1.4,
+      "max": 10.0,
+      "sample_avg_min": 1.5831,
+      "sample_avg_max": 1.7694
+    },
+    "observed_realized_net_jpy": 3255.0938,
+    "observed_expectancy_jpy_per_trade": 813.7734,
+    "observed_realized_pl_is_cost_inclusive": true,
+    "s5_touch_replay_passed": true,
+    "samples_with_entry_touch_after_order_time": 4,
+    "samples_with_tp_touch_after_entry_touch": 4,
+    "strict_same_candle_fill_timestamp_touch_count": 0,
+    "touch_lag_note": "The replay treats the recorded entry timestamp as the LIMIT arming/reference time and requires an S5 entry touch followed by an S5 TP touch. The exact recorded fill/close timestamp candle often misses by one or more S5 bars, so touch times are retained in sample_replay_details instead of hidden.",
+    "timestamp_alignment": {
+      "strict_same_candle_fill_timestamp_touch_count": 0,
+      "strict_same_candle_tp_timestamp_touch_count": 0,
+      "status": "TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+      "interpretation": "Positive touch-order replay is usable as read-only evidence, but generated proof import should preserve the fill/touch lag and should not claim exact same-candle S5 fill reconstruction."
+    },
+    "ledger_full_price_cross_check": {
+      "trade_id": "472732",
+      "entry_full_price_bid": 1.14486,
+      "entry_full_price_ask": 1.14494,
+      "exit_full_price_bid": 1.14398,
+      "exit_full_price_ask": 1.14406,
+      "entry_half_spread_cost_jpy": 40.6506,
+      "exit_half_spread_cost_jpy": 40.7701,
+      "interpretation": "Canonical OANDA transaction fullPrice confirms the live-worktree execution-ledger sample is bid/ask cost-inclusive even though local S5 candle aggregation touches the level a few seconds later."
+    },
+    "legacy_rows_upgraded_from_spread_field_only": [
+      "469278",
+      "469427",
+      "469898"
+    ],
+    "market_stop_samples_excluded": true,
+    "market_close_excluded": true
+  },
+  "market_stop_samples_excluded": true,
+  "market_close_excluded": true,
+  "live_grade_candidate": false,
+  "sample_replay_details": [
+    {
+      "trade_id": "472732",
+      "source": "execution_ledger.db",
+      "entry_timestamp_utc": "2026-06-19T08:01:32.903433014Z",
+      "exit_timestamp_utc": "2026-06-22T13:01:28.498118489Z",
+      "units": 6300,
+      "entry_order_price": 1.14486,
+      "tp_order_price": 1.14406,
+      "realized_pl_jpy": 813.7706,
+      "entry_candle_start_utc": "2026-06-19T08:01:30Z",
+      "entry_bid_high": 1.14481,
+      "entry_touch_bid_high_gte_order": false,
+      "first_entry_touch_utc": "2026-06-19T08:01:45.000000000Z",
+      "exit_candle_start_utc": "2026-06-22T13:01:25Z",
+      "exit_ask_low": 1.14411,
+      "exit_touch_ask_low_lte_tp": false,
+      "first_tp_touch_after_entry_utc": "2026-06-22T13:01:30.000000000Z",
+      "holding_min_ask_low": 1.14411,
+      "holding_max_bid_high": 1.14799,
+      "s5_spread_pips_min": 1.4,
+      "s5_spread_pips_max": 10.0,
+      "s5_spread_pips_avg": 1.7694,
+      "replay_win": true,
+      "replay_loss": false,
+      "market_close_mixed_in": false,
+      "market_or_stop_vehicle_mixed_in": false
+    },
+    {
+      "trade_id": "469278",
+      "source": "legacy_history.db live_trade_events",
+      "entry_timestamp_utc": "2026-04-21T08:32:39Z",
+      "exit_timestamp_utc": "2026-04-21T09:08:35Z",
+      "units": 3000,
+      "entry_order_price": 1.17656,
+      "tp_order_price": 1.1759,
+      "realized_pl_jpy": 314.6844,
+      "entry_candle_start_utc": "2026-04-21T08:32:35Z",
+      "entry_bid_high": 1.17655,
+      "entry_touch_bid_high_gte_order": false,
+      "first_entry_touch_utc": "2026-04-21T08:33:10.000000000Z",
+      "exit_candle_start_utc": "2026-04-21T09:08:35Z",
+      "exit_ask_low": 1.17591,
+      "exit_touch_ask_low_lte_tp": false,
+      "first_tp_touch_after_entry_utc": "2026-04-21T09:09:00.000000000Z",
+      "holding_min_ask_low": 1.17591,
+      "holding_max_bid_high": 1.17662,
+      "s5_spread_pips_min": 1.4,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_avg": 1.6118,
+      "replay_win": true,
+      "replay_loss": false,
+      "market_close_mixed_in": false,
+      "market_or_stop_vehicle_mixed_in": false
+    },
+    {
+      "trade_id": "469427",
+      "source": "legacy_history.db live_trade_events",
+      "entry_timestamp_utc": "2026-04-22T14:33:24Z",
+      "exit_timestamp_utc": "2026-04-22T14:53:12Z",
+      "units": 2000,
+      "entry_order_price": 1.17325,
+      "tp_order_price": 1.1724,
+      "realized_pl_jpy": 270.2989,
+      "entry_candle_start_utc": "2026-04-22T14:33:20Z",
+      "entry_bid_high": 1.17276,
+      "entry_touch_bid_high_gte_order": false,
+      "first_entry_touch_utc": "2026-04-22T14:39:05.000000000Z",
+      "exit_candle_start_utc": "2026-04-22T14:53:10Z",
+      "exit_ask_low": 1.17243,
+      "exit_touch_ask_low_lte_tp": false,
+      "first_tp_touch_after_entry_utc": "2026-04-22T14:53:20.000000000Z",
+      "holding_min_ask_low": 1.17243,
+      "holding_max_bid_high": 1.17342,
+      "s5_spread_pips_min": 1.4,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_avg": 1.5831,
+      "replay_win": true,
+      "replay_loss": false,
+      "market_close_mixed_in": false,
+      "market_or_stop_vehicle_mixed_in": false
+    },
+    {
+      "trade_id": "469898",
+      "source": "legacy_history.db live_trade_events",
+      "entry_timestamp_utc": "2026-04-29T23:16:58Z",
+      "exit_timestamp_utc": "2026-04-30T02:45:12Z",
+      "units": 8000,
+      "entry_order_price": 1.1679,
+      "tp_order_price": 1.16645,
+      "realized_pl_jpy": 1856.3399,
+      "entry_candle_start_utc": "2026-04-29T23:16:55Z",
+      "entry_bid_high": 1.16786,
+      "entry_touch_bid_high_gte_order": false,
+      "first_entry_touch_utc": "2026-04-29T23:32:10.000000000Z",
+      "exit_candle_start_utc": "2026-04-30T02:45:10Z",
+      "exit_ask_low": 1.16647,
+      "exit_touch_ask_low_lte_tp": false,
+      "first_tp_touch_after_entry_utc": "2026-04-30T02:45:15.000000000Z",
+      "holding_min_ask_low": 1.16647,
+      "holding_max_bid_high": 1.16888,
+      "s5_spread_pips_min": 1.4,
+      "s5_spread_pips_max": 2.0,
+      "s5_spread_pips_avg": 1.62,
+      "replay_win": true,
+      "replay_loss": false,
+      "market_close_mixed_in": false,
+      "market_or_stop_vehicle_mixed_in": false
+    }
+  ],
+  "proof_queue_blockers_if_positive": [
+    {
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
+      "evidence": "Only 4 exact LIMIT_ORDER / ATTACHED_TECHNICAL_TP / HARVEST samples are replayed. The broader 20/0 proof floor includes MARKET and STOP vehicles and is not used here."
+    },
+    {
+      "code": "LEGACY_LIMIT_ROWS_NOT_CANONICAL_EXECUTION_LEDGER_PROOF",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
+      "evidence": "Legacy rows 469278, 469427, and 469898 are accepted as duplicate-free evidence but still need canonical reconciliation/import before generated proof artifacts can consume them as first-class rows."
+    },
+    {
+      "code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
+      "evidence": "The S5 replay passes by touch order, but strict same-candle fill/TP timestamp touch count is 0. Proof import must preserve this lag and cross-check transaction fullPrice where available."
+    },
+    {
+      "code": "NOT_IN_PROOF_QUEUE",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "data/as_proof_pack_queue.json has queue_count=0, proof_ready_count=0, and can_create_live_permission_count=0."
+    },
+    {
+      "code": "CURRENT_LANE_BLOCKERS_STILL_ACTIVE",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "harvest/operator artifacts still report current blockers including RANGE_FORECAST_REQUIRES_RANGE_ROTATION, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, and GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED."
+    }
+  ],
+  "negative_replay_no_scout_conditions": [
+    "Return the LIMIT vehicle to NO_SCOUT / NO_TRADE if a refreshed exact LIMIT/HARVEST S5 bid/ask replay has net_expectancy_after_bidask <= 0.",
+    "Return the LIMIT vehicle to NO_SCOUT / NO_TRADE if exact replay losses appear and the win/loss mix no longer clears positive expectancy after bid/ask and slippage.",
+    "Return the LIMIT vehicle to NO_SCOUT / NO_TRADE if a month-scale replay for the same exact LIMIT/HARVEST vehicle is negative or contradicts these 4 sample results.",
+    "Return the LIMIT vehicle to NO_SCOUT / NO_TRADE if the bid/ask path cannot prove entry touch followed by TP touch without using MARKET, STOP, or market-close outcomes."
+  ],
+  "remaining_blockers": [
+    {
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "status": "BLOCKING_LIVE_GRADE",
+      "evidence": "4 exact LIMIT samples is positive but under-sampled for live-grade proof."
+    },
+    {
+      "code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+      "status": "BLOCKING_PROOF_QUEUE_PROMOTION",
+      "evidence": "Replay passed by entry-touch then TP-touch sequence, but exact fill/TP timestamp candles did not themselves touch the levels; generated proof must not claim same-candle S5 fill reconstruction."
+    },
+    {
+      "code": "NOT_IN_PROOF_QUEUE",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "A/S proof queue remains empty and cannot create live permission."
+    },
+    {
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "status": "GLOBAL_BLOCKER_VISIBLE",
+      "evidence": "capture_economics overall remains negative; prior artifact reports expectancy -177.4 JPY/trade and net -40616.9 JPY."
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
+      "status": "VISIBLE_TARGET_SHAPE_BLOCKER",
+      "evidence": "payoff_shape_diagnosis reports 10 EUR_USD SHORT BREAKOUT_FAILURE MARKET_ORDER_TRADE_CLOSE losses for -7636.3 JPY. These are excluded from HARVEST proof, not hidden."
+    },
+    {
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "status": "GLOBAL_BLOCKING",
+      "evidence": "harvest/profitability artifacts keep the month-scale residual blocker visible; this 4 sample replay does not clear the global residual."
+    },
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "status": "BLOCKING_ROUTING",
+      "evidence": "operator_review_report remains OPERATOR_REVIEW_STILL_BLOCKED with normal routing blocked."
+    },
+    {
+      "code": "NO_LIVE_READY_PORTFOLIO",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "portfolio_4x_path_planner remains NO_LIVE_READY_PORTFOLIO with live_ready_lanes=0 in prior artifacts."
+    },
+    {
+      "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "status": "BLOCKING_LIVE_PERMISSION",
+      "evidence": "This replay is not a gateway packet and does not request, stage, or send any order."
+    }
+  ],
+  "next_read_only_actions": [
+    "Reconcile/import accepted legacy LIMIT rows 469278, 469427, and 469898 into the canonical proof/capture source path without broker mutation.",
+    "Mine additional exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT/ATTACHED_TECHNICAL_TP/HARVEST samples; do not use MARKET_ORDER or STOP_ORDER rows to reach the LIMIT-only floor.",
+    "Regenerate payoff_shape_diagnosis, harvest_live_grade_path, A/S proof queue, portfolio planner, and trader_goal_loop_orchestrator read-only after the canonical replay artifact is consumed.",
+    "Rerun execution-timing-audit and profitability-acceptance read-only to keep market-close leakage, global negative expectancy, and month-scale residual blockers visible.",
+    "If the next exact replay turns negative, classify the LIMIT vehicle as NO_SCOUT / NO_TRADE until a new exact positive bid/ask proof exists.",
+    "Keep live permission false until current forecast, spread, strategy, risk, guardian/operator review, verifier, and gateway checks pass on fresh broker truth."
+  ],
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage live orders from this replay.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify broker TP or SL.",
+    "Do not load, reload, start, stop, or edit launchd agents.",
+    "Do not loosen gates or convert this replay into live permission.",
+    "Do not mix MARKET_ORDER or STOP_ORDER samples into LIMIT proof.",
+    "Do not mix MARKET_ORDER_TRADE_CLOSE losses into TP/HARVEST proof.",
+    "Do not hide negative expectancy or month-scale replay negatives.",
+    "Do not derive lot size from remaining_to_4x or any 4x deficit.",
+    "Do not invent or imply operator clearance.",
+    "Do not print, copy, or persist secrets or credentials."
+  ],
+  "source_artifacts": [
+    "data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json",
+    "docs/eurusd_short_breakout_failure_vehicle_split_diagnosis.md",
+    "data/eurusd_short_breakout_failure_spread_slippage_proof.json",
+    "data/eurusd_short_breakout_failure_proof_floor_update.json",
+    "data/eurusd_short_breakout_failure_legacy_sample_search.json",
+    "data/harvest_live_grade_path.json",
+    "data/payoff_shape_diagnosis.json",
+    "data/operator_review_report.json",
+    "data/trader_goal_loop_orchestrator.json",
+    "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260703T120929Z/EUR_USD/EUR_USD_S5_BA_20260305T120929Z_20260703T120929Z.jsonl.gz"
+  ],
+  "notion_context": {
+    "searched": true,
+    "write_performed": false,
+    "relevant_page": "https://app.notion.com/p/392f1c8e53a781afa467d6ce4635b5cd",
+    "applied_context": [
+      "Keep negative expectancy and market-close leak blockers visible.",
+      "Do not treat EUR_USD operator/manual context or audit-only firepower as live permission.",
+      "No broker-side action occurred."
+    ]
+  }
+}
