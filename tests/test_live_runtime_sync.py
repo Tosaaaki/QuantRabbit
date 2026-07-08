@@ -126,6 +126,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             _run(["git", "branch", "-m", "main"], cwd=repo)
             _commit_file(repo, "data/active_trader_contract.json", '{"status":"old"}\n', "track active contract")
             _commit_file(repo, "docs/active_trader_contract.md", "old active contract\n", "track active report")
+            _commit_file(repo, "data/active_opportunity_board.json", '{"status":"old"}\n', "track active board")
+            _commit_file(repo, "docs/active_opportunity_board.md", "old active board\n", "track active board report")
             _commit_file(
                 repo,
                 "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
@@ -179,6 +181,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
             (live / "data" / "active_trader_contract.json").write_text('{"status":"runtime"}\n')
             (live / "docs" / "active_trader_contract.md").write_text("runtime active contract\n")
+            (live / "data" / "active_opportunity_board.json").write_text('{"status":"runtime"}\n')
+            (live / "docs" / "active_opportunity_board.md").write_text("runtime active board\n")
             (live / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json").write_text(
                 '{"status":"runtime"}\n'
             )
@@ -212,6 +216,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
             self.assertEqual((live / "data" / "active_trader_contract.json").read_text(), '{"status":"runtime"}\n')
             self.assertEqual((live / "docs" / "active_trader_contract.md").read_text(), "runtime active contract\n")
+            self.assertEqual((live / "data" / "active_opportunity_board.json").read_text(), '{"status":"runtime"}\n')
+            self.assertEqual((live / "docs" / "active_opportunity_board.md").read_text(), "runtime active board\n")
             self.assertEqual(
                 (live / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json").read_text(),
                 '{"status":"runtime"}\n',
@@ -249,6 +255,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 {
                     "M data/active_trader_contract.json",
                     "M docs/active_trader_contract.md",
+                    "M data/active_opportunity_board.json",
+                    "M docs/active_opportunity_board.md",
                     "M data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
                     "M data/eurusd_short_breakout_failure_limit_sample_mining.json",
                     "M data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json",
@@ -640,7 +648,7 @@ def _current_trader_prompt_sentinel() -> str:
         [
             "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
             "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
-            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run.",
+            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, `data/active_opportunity_board.json`, `docs/active_opportunity_board.md`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run.",
         ]
     )
 
