@@ -42,6 +42,13 @@ EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS = (
     "data/qr_trader_run_watchdog.json",
     "docs/qr_trader_run_watchdog_report.md",
 )
+EXPECTED_QR_TRADER_RUNTIME_DRIFT_PROMPT_PHRASES = (
+    "data/guardian_receipt_consumption.json",
+    "data/guardian_receipt_operator_review.json",
+    "named proof/acceptance evidence",
+    "data/trader_goal_loop_orchestrator.json",
+    "runtime drift and **do not** block the run",
+)
 SOURCE_DIRT_EXPLANATION_REQUIRED_PATHS = (
     "src/quant_rabbit/automation.py",
     "src/quant_rabbit/broker/execution.py",
@@ -80,6 +87,9 @@ def _validate_qr_trader_automation(issues: list[str], *, now_utc: datetime | Non
     for required_path in EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS:
         if required_path not in prompt:
             issues.append(f"qr-trader automation prompt missing guardian startup read: {required_path}")
+    for required_phrase in EXPECTED_QR_TRADER_RUNTIME_DRIFT_PROMPT_PHRASES:
+        if required_phrase not in prompt:
+            issues.append(f"qr-trader automation prompt missing runtime drift allowance: {required_phrase}")
 
 
 def _load_toml_payload(text: str) -> dict[str, Any]:

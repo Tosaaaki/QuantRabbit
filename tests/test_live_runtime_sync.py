@@ -342,6 +342,39 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(result.returncode, 6)
             self.assertIn("stale recent-receipt STOP text", result.stderr)
 
+    def test_live_only_blocks_stale_clean_tree_runtime_drift_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(
+                automation_file,
+                live,
+                status="ACTIVE",
+                prompt="\n".join(
+                    [
+                        "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
+                        "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
+                        "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, and `data/guardian_trigger_contract.json` diffs are runtime drift and **do not** block the run.",
+                    ]
+                ),
+            )
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("clean-tree runtime drift allow-list is stale", result.stderr)
+
     def test_live_only_blocks_too_fast_trader_cadence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
@@ -460,6 +493,7 @@ def _current_trader_prompt_sentinel() -> str:
         [
             "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
             "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
+            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, and `data/trader_goal_loop_orchestrator.json` diffs are runtime drift and **do not** block the run.",
         ]
     )
 

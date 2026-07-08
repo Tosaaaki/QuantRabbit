@@ -342,6 +342,18 @@ verify_automation() {
     echo "[sync-live-runtime] QR vNext Trader automation is missing recent-receipt router handoff text." >&2
     exit 6
   fi
+  for required in \
+    'data/guardian_receipt_consumption.json' \
+    'data/guardian_receipt_operator_review.json' \
+    'named proof/acceptance evidence' \
+    'data/trader_goal_loop_orchestrator.json' \
+    'runtime drift and **do not** block the run'
+  do
+    if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
+      echo "[sync-live-runtime] QR vNext Trader automation clean-tree runtime drift allow-list is stale; missing: $required" >&2
+      exit 6
+    fi
+  done
   if grep -Fq 'status = "ACTIVE"' "$AUTOMATION_FILE"; then
     return 0
   fi
