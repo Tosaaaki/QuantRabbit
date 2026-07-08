@@ -92,7 +92,7 @@ OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_ROOT = ROOT / "logs" / "replay" / "oanda_history"
 OANDA_HISTORY_FILENAME_RE = re.compile(
     r"^(?P<pair>[A-Z]{3}_[A-Z]{3})_(?P<granularity>S5|M5)_BA_"
-    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl$"
+    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl(?:\.gz)?$"
 )
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
@@ -3767,7 +3767,7 @@ def _oanda_audit_only_history_coverage(pairs: list[str], *, history_root: Path) 
 
     best_files: dict[tuple[str, str], dict[str, Any]] = {}
     if history_root.exists():
-        for path in history_root.rglob("*.jsonl"):
+        for path in history_root.rglob("*.jsonl*"):
             match = OANDA_HISTORY_FILENAME_RE.match(path.name)
             if not match:
                 continue

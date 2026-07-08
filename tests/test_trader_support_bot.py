@@ -3945,9 +3945,8 @@ class TraderSupportBotTest(unittest.TestCase):
             start = (now - timedelta(days=120)).strftime("%Y%m%dT%H%M%SZ")
             end = now.strftime("%Y%m%dT%H%M%SZ")
             for granularity in ("S5", "M5"):
-                (history_pair_dir / f"GBP_JPY_{granularity}_BA_{start}_{end}.jsonl").write_text(
-                    "{}\n",
-                    encoding="utf-8",
+                (history_pair_dir / f"GBP_JPY_{granularity}_BA_{start}_{end}.jsonl.gz").write_bytes(
+                    b"{}\n"
                 )
 
             with mock.patch.dict(os.environ, env, clear=False):
