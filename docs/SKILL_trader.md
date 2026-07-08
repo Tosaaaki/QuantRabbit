@@ -710,7 +710,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   the contract must select `NO_TRADE_WITH_CAUSE` instead of falling back to
 #   stale single-lane EUR_USD replay work; stale guardian receipt blockers
 #   cleared by the board's current guardian artifacts must not remain in
-#   `remaining_blockers`.
+#   `remaining_blockers`. If the selected path comes from the board top lane,
+#   `next_prompt` must name that current lane shape rather than the legacy fixed
+#   EUR_USD target.
 # - active-opportunity-board is read-only and runs after active-trader-contract.
 #   It writes `data/active_opportunity_board.json` and
 #   `docs/active_opportunity_board.md`, compares all visible pairs, directions,
@@ -738,7 +740,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   blocker is backed only by stale packaged evidence or a missing audit report,
 #   keep the negative blocker visible, add `BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED`,
 #   and route the lane to `EVIDENCE_ACQUISITION` for a fresh exact S5 bid/ask
-#   replay/rule-package refresh rather than permanent no-trade. `NO_TRADE_WITH_CAUSE` must carry a concrete
+#   replay/rule-package refresh rather than permanent no-trade. Pair-filtered
+#   bid/ask replay refresh is allowed for the board-ranked frontier, but package
+#   refresh must preserve existing runtime rule rows for pairs outside
+#   `source_pair_filter`; a targeted refresh must not erase unrelated pair
+#   blockers/support while updating or clearing the refreshed pairs. `NO_TRADE_WITH_CAUSE` must carry a concrete
 #   machine-readable blocker, not an empty cause set.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.

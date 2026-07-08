@@ -260,7 +260,11 @@ class ActiveTraderContract:
                 "active_opportunity_board": active_opportunity_board,
             },
             "safety_contract": _safety_contract(),
-            "next_prompt": _next_prompt(selected_active_path, remaining_blockers),
+            "next_prompt": _next_prompt(
+                selected_active_path,
+                remaining_blockers,
+                active_opportunity_board=active_opportunity_board,
+            ),
             "artifact_index": artifact_index,
         }
         if selected_active_path not in ALLOWED_ACTIVE_PATHS:
@@ -1195,13 +1199,31 @@ def _safety_contract() -> dict[str, Any]:
     }
 
 
-def _next_prompt(selected_active_path: str, remaining_blockers: list[dict[str, Any]]) -> str:
+def _next_prompt(
+    selected_active_path: str,
+    remaining_blockers: list[dict[str, Any]],
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
+) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
+    target_shape = _active_board_target_shape(active_opportunity_board) or TARGET_SHAPE
     return (
-        f"Implement {selected_active_path} for {TARGET_SHAPE} as read-only work. "
+        f"Implement {selected_active_path} for {target_shape} as read-only work. "
         "Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. "
         f"Keep blockers visible: {blocker_codes}."
     )
+
+
+def _active_board_target_shape(active_opportunity_board: dict[str, Any] | None) -> str | None:
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    pair = str(top.get("pair") or "").strip().upper()
+    direction = str(top.get("direction") or top.get("side") or "").strip().upper()
+    strategy = str(top.get("strategy_family") or "").strip().upper()
+    vehicle = str(top.get("vehicle") or "").strip().upper()
+    payoff = str(top.get("payoff_shape") or "").strip().upper()
+    parts = [part for part in (pair, direction, strategy, vehicle, payoff) if part]
+    return "|".join(parts) if len(parts) >= 4 else None
 
 
 def _render_report(payload: dict[str, Any]) -> str:

@@ -318,6 +318,65 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         )
         self.assertEqual(packaged["price_truth_coverage"]["status"], "PARTIAL_PRICE_TRUTH")
 
+    def test_pair_filtered_refresh_preserves_rules_for_unrefreshed_pairs(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-07-08T12:30:00Z",
+            "pair_filter": ["EUR_JPY"],
+            "price_truth_coverage": {"status": "PRICE_TRUTH_OK"},
+            "precision_rules": {
+                "adoption_summary": {"negative_block_rules": 1},
+                "negative_rules": [
+                    {
+                        "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                        "pair": "EUR_JPY",
+                        "direction": "DOWN",
+                        "samples": 1200,
+                    }
+                ],
+            },
+        }
+        existing = {
+            "generated_at_utc": "2026-07-03T14:52:18Z",
+            "source_report": "logs/reports/forecast_improvement/old.json",
+            "adoption_summary": {"negative_block_rules": 2},
+            "negative_rules": [
+                {
+                    "name": "EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                    "pair": "EUR_JPY",
+                    "direction": "DOWN",
+                    "samples": 1147,
+                },
+                {
+                    "name": "USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                    "pair": "USD_JPY",
+                    "direction": "DOWN",
+                    "samples": 525,
+                },
+            ],
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("eurjpy.json"))
+        packager.preserve_existing_rule_rows(packaged, existing)
+
+        rows_by_name = {row["name"]: row for row in packaged["negative_rules"]}
+        self.assertEqual(
+            rows_by_name["EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY"]["samples"],
+            1200,
+        )
+        self.assertNotIn(
+            "preserved_from_existing_packaged_artifact",
+            rows_by_name["EUR_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY"],
+        )
+        preserved = rows_by_name["USD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY"]
+        self.assertTrue(preserved["preserved_from_existing_packaged_artifact"])
+        self.assertTrue(preserved["preserved_because_pair_filtered_source"])
+        self.assertEqual(
+            preserved["preserved_from_source_report"],
+            "logs/reports/forecast_improvement/old.json",
+        )
+        self.assertTrue(packaged["existing_rule_rows_preserved"])
+        self.assertEqual(packaged["adoption_summary"]["negative_block_rules"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

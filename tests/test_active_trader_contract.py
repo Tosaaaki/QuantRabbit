@@ -653,6 +653,14 @@ class ActiveTraderContractTest(unittest.TestCase):
         )
         self.assertEqual(refresh["status"], "BLOCKING_EVIDENCE_REFRESH")
         self.assertIn("Refresh exact S5 bid/ask replay evidence", payload["next_trade_enabling_action"])
+        self.assertIn(
+            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
+            payload["next_prompt"],
+        )
+        self.assertNotIn(
+            "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+            payload["next_prompt"],
+        )
 
     def test_board_all_no_trade_with_guardian_clear_overrides_stale_single_lane_evidence(self) -> None:
         now = datetime(2026, 7, 8, 10, 45, tzinfo=timezone.utc)

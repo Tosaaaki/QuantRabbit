@@ -99,6 +99,10 @@ def main() -> int:
         source_report=args.source_report,
         allow_partial=bool(args.allow_partial),
     )
+    if args.output.exists():
+        existing = json.loads(args.output.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            preserve_existing_rule_rows(packaged, existing)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(packaged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -146,6 +150,7 @@ def package_payload(
         "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
         "source_report": _source_report_label(source_report),
         "history_dirs": _history_dirs(payload.get("history_dirs")),
+        "source_pair_filter": _string_list(payload.get("pair_filter")),
         "granularity": payload.get("granularity"),
         "truth_source": payload.get("truth_source"),
         "price_truth_coverage": _copy_fields(truth, TRUTH_FIELDS),
@@ -160,6 +165,144 @@ def package_payload(
         rows = precision.get(section)
         packaged[section] = copy.deepcopy(rows if isinstance(rows, list) else [])
     return packaged
+
+
+def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+    """Merge focused bid/ask replay refreshes without dropping untouched pairs.
+
+    A targeted ``--pairs`` validation run is the right operational unit for the
+    active board's next lane, but publishing it must not erase unrelated pair
+    blockers/support from the broader runtime artifact. Existing rows for
+    refreshed pairs are intentionally not preserved when absent from the new
+    report, so a pair-scoped refresh can clear stale blockers for that pair.
+    """
+
+    refreshed_pairs = {
+        str(pair).upper()
+        for pair in packaged.get("source_pair_filter") or []
+        if str(pair).strip()
+    }
+    if not refreshed_pairs:
+        return
+    preservation_metadata = {
+        "preserved_from_source_report": existing.get("source_report"),
+        "preserved_from_generated_at_utc": existing.get("generated_at_utc"),
+        "preserved_during_packaging_source_report": packaged.get("source_report"),
+        "preserved_during_packaging_generated_at_utc": packaged.get("generated_at_utc"),
+    }
+    preserved_count = 0
+    for section in RULE_SECTIONS:
+        current_rows = packaged.get(section)
+        existing_rows = existing.get(section)
+        if not isinstance(current_rows, list) or not isinstance(existing_rows, list):
+            continue
+        merged = _merge_rule_rows_for_refreshed_pairs(
+            current_rows,
+            existing_rows,
+            refreshed_pairs=refreshed_pairs,
+            preservation_metadata=preservation_metadata,
+        )
+        preserved_count += max(len(merged) - len(current_rows), 0)
+        packaged[section] = merged
+    if preserved_count <= 0:
+        return
+    packaged["existing_rule_rows_preserved"] = True
+    packaged["existing_rule_rows_preserved_count"] = preserved_count
+    packaged["existing_rule_rows_preservation_reason"] = (
+        "source report is a pair-filtered bid/ask replay refresh; preserved "
+        "existing rule rows for pairs outside source_pair_filter"
+    )
+    packaged["existing_rule_rows_preserved_excluding_pairs"] = sorted(refreshed_pairs)
+    _preserve_adoption_summary_counts(packaged, existing)
+
+
+def _merge_rule_rows_for_refreshed_pairs(
+    current_rows: list[Any],
+    existing_rows: list[Any],
+    *,
+    refreshed_pairs: set[str],
+    preservation_metadata: dict[str, Any],
+) -> list[Any]:
+    merged: list[Any] = []
+    index_by_key: dict[tuple[Any, ...], int] = {}
+    for row in existing_rows:
+        if _row_pair(row) in refreshed_pairs:
+            continue
+        key = _rule_row_key(row)
+        index_by_key[key] = len(merged)
+        merged.append(_annotated_preserved_row(row, preservation_metadata))
+    for row in current_rows:
+        key = _rule_row_key(row)
+        if key in index_by_key:
+            merged[index_by_key[key]] = row
+            continue
+        index_by_key[key] = len(merged)
+        merged.append(row)
+    return merged
+
+
+def _row_pair(row: Any) -> str | None:
+    if not isinstance(row, dict):
+        return None
+    pair = str(row.get("pair") or "").upper().strip()
+    return pair or None
+
+
+def _rule_row_key(row: Any) -> tuple[Any, ...]:
+    if not isinstance(row, dict):
+        return ("raw", repr(row))
+    name = str(row.get("name") or "").strip()
+    if name:
+        return ("name", name)
+    key_fields = (
+        "pair",
+        "side",
+        "direction",
+        "forecast_direction",
+        "faded_direction",
+        "horizon_bucket",
+        "confidence_bucket",
+        "granularity",
+        "optimized_take_profit_pips",
+        "optimized_stop_loss_pips",
+    )
+    return tuple((field, _normalise_key_value(row.get(field))) for field in key_fields)
+
+
+def _normalise_key_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_normalise_key_value(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((key, _normalise_key_value(item)) for key, item in value.items()))
+    return value
+
+
+def _annotated_preserved_row(row: Any, preservation_metadata: dict[str, Any]) -> Any:
+    if not isinstance(row, dict):
+        return row
+    out = copy.deepcopy(row)
+    out["preserved_from_existing_packaged_artifact"] = True
+    out["preserved_because_pair_filtered_source"] = True
+    for key, value in preservation_metadata.items():
+        if value is not None:
+            out.setdefault(key, value)
+    return out
+
+
+def _preserve_adoption_summary_counts(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+    current = packaged.get("adoption_summary")
+    prior = existing.get("adoption_summary")
+    if not isinstance(current, dict) or not isinstance(prior, dict):
+        return
+    for key in (
+        "live_grade_support_rules",
+        "rank_only_support_rules",
+        "negative_block_rules",
+    ):
+        current_value = _optional_int(current.get(key))
+        prior_value = _optional_int(prior.get(key))
+        if prior_value is not None and (current_value is None or prior_value > current_value):
+            current[key] = prior_value
 
 
 def _source_report_label(source_report: Path) -> str:
@@ -180,6 +323,21 @@ def _history_dirs(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(item) for item in raw if str(item).strip()]
+
+
+def _string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = None) -> dict[str, Any]:
