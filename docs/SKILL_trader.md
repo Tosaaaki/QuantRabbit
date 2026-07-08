@@ -702,7 +702,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   machine-readable NO_ACTION contract. It keeps exact LIMIT S5 bid/ask replay,
 #   proof queue, negative expectancy, month-scale replay, guardian, and gateway
 #   blockers visible with `live_permission_allowed=false` and
-#   `live_side_effects=[]`.
+#   `live_side_effects=[]`. When a previous `active_opportunity_board` exists,
+#   it consumes the board-ranked multi-pair/multi-vehicle facts as loop-break
+#   context only: a failed STOP exact replay remains not-SCOUT-ready and must
+#   not be repeated as the next active step unless new independent evidence
+#   appears.
 # - active-opportunity-board is read-only and runs after active-trader-contract.
 #   It writes `data/active_opportunity_board.json` and
 #   `docs/active_opportunity_board.md`, compares all visible pairs, directions,
@@ -710,6 +714,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   4x path without letting EUR_USD|SHORT|BREAKOUT_FAILURE become the only loop.
 #   Each lane is classified as LIVE_READY, HARVEST_READY, SCOUT_READY,
 #   EVIDENCE_ACQUISITION, OPERATOR_REVIEW_REQUIRED, or NO_TRADE_WITH_CAUSE.
+#   Failed exact replay, guardian/operator review, and negative-expectancy
+#   blockers outrank evidence-acquisition so a blocked lane cannot look
+#   actionable merely because proof/replay work is also visible.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # Manual recovery only:

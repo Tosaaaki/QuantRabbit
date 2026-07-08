@@ -60,6 +60,41 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT", payload["next_active_path"])
         self.assertIn("Active Opportunity Board", report)
 
+    def test_operator_review_precedes_evidence_when_guardian_blocks_lane(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            order_intents = json.loads(paths["order_intents"].read_text())
+            for row in order_intents["results"]:
+                row["live_blocker_codes"].append("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+            _write_json(paths["order_intents"], order_intents)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["status"], "OPERATOR_REVIEW_REQUIRED")
+        self.assertEqual(payload["top_lane"]["operator_review_status"], "REQUIRED")
+        self.assertGreaterEqual(payload["coverage_summary"]["operator_review_required_count"], 4)
+        self.assertIn("OPERATOR_REVIEW_REQUIRED", payload["next_active_path"])
+
     def test_negative_replay_lane_is_no_trade_with_cause(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,6 +160,41 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertFalse(payload["top_lane"]["live_permission_allowed"])
         self.assertIn("SCOUT_READY", payload["next_active_path"])
 
+    def test_failed_stop_exact_replay_is_consumed_as_no_trade_not_replayed(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                replay_artifact_paths=[paths["limit_replay"], paths["stop_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lanes = {row["lane_id"]: row for row in payload["ranked_active_lanes"]}
+        stop = lanes["failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"]
+        self.assertEqual(stop["vehicle"], "STOP")
+        self.assertEqual(stop["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(stop["replay_status"], "STOP_HARVEST_EXACT_S5_BIDASK_REPLAY_FAILED_BLOCKED")
+        self.assertIn("S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS", stop["blockers"])
+        self.assertIn("do not repeat the same exact replay", stop["next_action"])
+        self.assertNotEqual(payload["top_lane"]["lane_id"], stop["lane_id"])
+
 
 def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False) -> dict[str, Path]:
     paths = {
@@ -142,6 +212,7 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
         "execution_db": root / "data" / "execution_ledger.db",
         "strategy": root / "data" / "strategy_profile.json",
         "limit_replay": root / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+        "stop_replay": root / "data" / "eurusd_short_breakout_failure_stop_harvest_replay.json",
         "output": root / "data" / "active_opportunity_board.json",
         "report": root / "docs" / "active_opportunity_board.md",
     }
@@ -343,6 +414,25 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
             "replay_sample_count": 4,
             "net_expectancy_after_bidask": 120.0,
             "remaining_blockers": [{"code": "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION"}],
+            "live_permission_allowed": False,
+            "live_side_effects": [],
+        },
+    )
+    _write_json(
+        paths["stop_replay"],
+        {
+            "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|HARVEST",
+            "status": "STOP_HARVEST_EXACT_S5_BIDASK_REPLAY_FAILED_BLOCKED",
+            "bidask_replay_status": "S5_TRIGGER_OR_TP_PATH_INCOMPLETE_STILL_BLOCKED",
+            "replay_sample_count": 7,
+            "net_expectancy_after_bidask_slippage": 901.0337,
+            "remaining_blockers": [
+                {"code": "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED"},
+                {"code": "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS"},
+                {"code": "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE"},
+                {"code": "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY"},
+            ],
+            "scout_candidate_after_replay": False,
             "live_permission_allowed": False,
             "live_side_effects": [],
         },

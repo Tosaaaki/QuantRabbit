@@ -4049,6 +4049,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
     )
+    p_active_contract.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
@@ -6835,6 +6836,7 @@ def main(argv: list[str] | None = None) -> int:
                 daily_target_state_path=args.daily_target_state,
                 proof_floor_update_path=args.proof_floor_update,
                 limit_s5_bidask_replay_path=args.limit_s5_bidask_replay,
+                active_opportunity_board_path=args.active_opportunity_board,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

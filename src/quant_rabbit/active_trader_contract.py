@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
     DEFAULT_ACTIVE_TRADER_CONTRACT,
     DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
     DEFAULT_BROKER_SNAPSHOT,
@@ -45,6 +46,19 @@ DEFAULT_EURUSD_LIMIT_S5_BIDASK_REPLAY = (
 DEFAULT_EURUSD_LIMIT_SAMPLE_MINING = (
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_sample_mining.json"
 )
+FAILED_EXACT_REPLAY_MARKERS = (
+    "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+    "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+)
+NEGATIVE_BLOCKER_MARKERS = (
+    "NEGATIVE_EXPECTANCY",
+    "REPLAY_NEGATIVE",
+    "BIDASK_REPLAY_NEGATIVE",
+    "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+    "MARKET_CLOSE_LEAK_DOMINATES",
+    "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+)
+OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
 
 
 @dataclass(frozen=True)
@@ -75,6 +89,7 @@ class ActiveTraderContract:
         proof_floor_update_path: Path = DEFAULT_EURUSD_PROOF_FLOOR_UPDATE,
         limit_s5_bidask_replay_path: Path = DEFAULT_EURUSD_LIMIT_S5_BIDASK_REPLAY,
         limit_sample_mining_path: Path = DEFAULT_EURUSD_LIMIT_SAMPLE_MINING,
+        active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
         output_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         report_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
         now_utc: datetime | None = None,
@@ -93,6 +108,7 @@ class ActiveTraderContract:
             "eurusd_short_breakout_failure_proof_floor_update": proof_floor_update_path,
             "eurusd_short_breakout_failure_limit_s5_bidask_replay": limit_s5_bidask_replay_path,
             "eurusd_short_breakout_failure_limit_sample_mining": limit_sample_mining_path,
+            "active_opportunity_board": active_opportunity_board_path,
         }
         self.output_path = output_path
         self.report_path = report_path
@@ -132,6 +148,9 @@ class ActiveTraderContract:
         limit_sample_mining = _limit_sample_mining_contract_state(
             artifacts["eurusd_short_breakout_failure_limit_sample_mining"]
         )
+        active_opportunity_board = _active_opportunity_board_contract_state(
+            artifacts["active_opportunity_board"]
+        )
         scout = _normalize_stale_blocker_codes(scout, proof=proof, proof_floor=proof_floor, replay=replay)
         proof_floor = _normalize_stale_blocker_codes(
             proof_floor,
@@ -146,6 +165,7 @@ class ActiveTraderContract:
             board=board,
             portfolio=portfolio,
             replay=replay,
+            active_opportunity_board=active_opportunity_board,
         )
         no_action = _no_action_contract(
             harvest=harvest,
@@ -154,6 +174,7 @@ class ActiveTraderContract:
             board=board,
             portfolio=portfolio,
             replay=replay,
+            active_opportunity_board=active_opportunity_board,
             active_deployment_gap=active_deployment_gap,
         )
         selected_active_path, selection_reason = _select_active_path(
@@ -164,6 +185,7 @@ class ActiveTraderContract:
             goal_loop=goal_loop,
             harvest=harvest,
             proof=proof,
+            active_opportunity_board=active_opportunity_board,
         )
         remaining_blockers = _remaining_blockers(
             harvest=harvest,
@@ -175,6 +197,7 @@ class ActiveTraderContract:
             replay=replay,
             proof_floor=proof_floor,
             limit_sample_mining=limit_sample_mining,
+            active_opportunity_board=active_opportunity_board,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -195,7 +218,12 @@ class ActiveTraderContract:
             "no_action_allowed": bool(no_action["no_action_allowed"]),
             "no_action_contract": no_action,
             "active_deployment_gap": active_deployment_gap,
-            "next_trade_enabling_action": _next_trade_enabling_action(selected_active_path, replay, limit_sample_mining),
+            "next_trade_enabling_action": _next_trade_enabling_action(
+                selected_active_path,
+                replay,
+                limit_sample_mining,
+                active_opportunity_board=active_opportunity_board,
+            ),
             "remaining_blockers": remaining_blockers,
             "current_state": {
                 "harvest": harvest,
@@ -208,6 +236,7 @@ class ActiveTraderContract:
                 "proof_floor": proof_floor,
                 "limit_s5_bidask_replay": replay,
                 "limit_sample_mining": limit_sample_mining,
+                "active_opportunity_board": active_opportunity_board,
             },
             "safety_contract": _safety_contract(),
             "next_prompt": _next_prompt(selected_active_path, remaining_blockers),
@@ -516,6 +545,109 @@ def _limit_sample_mining_contract_state(artifact: dict[str, Any]) -> dict[str, A
     }
 
 
+def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "status": "MISSING",
+            "total_lanes": 0,
+            "top_lane": {},
+            "failed_exact_replay_consumed_count": 0,
+            "consumed_failed_replay_lanes": [],
+            "consumed_failed_replay_blocker_codes": [],
+        }
+    summary = artifact.get("coverage_summary") if isinstance(artifact.get("coverage_summary"), dict) else {}
+    top_lane = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+    lanes = artifact.get("ranked_active_lanes") if isinstance(artifact.get("ranked_active_lanes"), list) else []
+    consumed: list[dict[str, Any]] = []
+    blocker_codes: list[str] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        blockers = _string_list(lane.get("blockers"))
+        if not any(any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS) for blocker in blockers):
+            continue
+        failed_codes = [
+            blocker
+            for blocker in blockers
+            if any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS)
+        ]
+        blocker_codes.extend(failed_codes)
+        consumed.append(
+            {
+                "lane_id": lane.get("lane_id"),
+                "pair": lane.get("pair"),
+                "direction": lane.get("direction"),
+                "strategy_family": lane.get("strategy_family"),
+                "vehicle": lane.get("vehicle"),
+                "status": lane.get("status"),
+                "replay_status": lane.get("replay_status"),
+                "scout_candidate_after_replay": False,
+                "consumed_as": "FAILED_EXACT_REPLAY_NOT_SCOUT_READY",
+                "failed_blocker_codes": _unique(failed_codes),
+            }
+        )
+    return {
+        "artifact_status": "present",
+        "status": artifact.get("status"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "total_lanes": _first_int(summary.get("total_lanes"), len(lanes)),
+        "live_ready_count": _first_int(summary.get("live_ready_count"), 0),
+        "harvest_ready_count": _first_int(summary.get("harvest_ready_count"), 0),
+        "scout_ready_count": _first_int(summary.get("scout_ready_count"), 0),
+        "evidence_acquisition_count": _first_int(summary.get("evidence_acquisition_count"), 0),
+        "operator_review_required_count": _first_int(summary.get("operator_review_required_count"), 0),
+        "pairs_scanned_count": len(_string_list(summary.get("pairs_scanned"))),
+        "vehicles_scanned": _string_list(summary.get("vehicles_scanned")),
+        "next_active_path": artifact.get("next_active_path"),
+        "top_lane": _contract_lane_summary(top_lane),
+        "failed_exact_replay_consumed_count": len(consumed),
+        "consumed_failed_replay_lanes": consumed[:10],
+        "consumed_failed_replay_blocker_codes": _unique(blocker_codes),
+        "stop_harvest_failed_replay_consumed": any(
+            row.get("pair") == "EUR_USD"
+            and row.get("direction") == "SHORT"
+            and row.get("strategy_family") == "BREAKOUT_FAILURE"
+            and row.get("vehicle") == "STOP"
+            for row in consumed
+        ),
+        "live_permission_allowed": False,
+    }
+
+
+def _contract_lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
+    if not lane:
+        return {}
+    blockers = _string_list(lane.get("blockers"))
+    return {
+        "lane_id": lane.get("lane_id"),
+        "pair": lane.get("pair"),
+        "direction": lane.get("direction"),
+        "strategy_family": lane.get("strategy_family"),
+        "vehicle": lane.get("vehicle"),
+        "status": _normalized_board_lane_status(lane.get("status"), blockers),
+        "replay_status": lane.get("replay_status"),
+        "proof_status": lane.get("proof_status"),
+        "risk_status": lane.get("risk_status"),
+        "guardian_status": lane.get("guardian_status"),
+        "operator_review_status": lane.get("operator_review_status"),
+        "expected_edge_jpy": lane.get("expected_edge_jpy"),
+        "next_action": lane.get("next_action"),
+        "blockers": blockers[:24],
+    }
+
+
+def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
+    raw = str(status or "NO_TRADE_WITH_CAUSE")
+    if any(any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS) for blocker in blockers):
+        return "NO_TRADE_WITH_CAUSE"
+    if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
+        return "OPERATOR_REVIEW_REQUIRED"
+    if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
+        return "NO_TRADE_WITH_CAUSE"
+    return raw
+
+
 def _active_deployment_gap(
     *,
     harvest: dict[str, Any],
@@ -524,6 +656,7 @@ def _active_deployment_gap(
     board: dict[str, Any],
     portfolio: dict[str, Any],
     replay: dict[str, Any],
+    active_opportunity_board: dict[str, Any],
 ) -> dict[str, Any]:
     triggers: list[str] = []
     if harvest.get("candidate_present"):
@@ -540,6 +673,10 @@ def _active_deployment_gap(
         triggers.append("REPLAY_OR_PROOF_ACTION_AVAILABLE")
     if board.get("as_live_ready_path_exists") or portfolio.get("can_reach_4x_now"):
         triggers.append("PORTFOLIO_PATH_REVIEW_AVAILABLE")
+    if active_opportunity_board.get("total_lanes", 0) > 0:
+        triggers.append("ACTIVE_OPPORTUNITY_BOARD_RERANK_AVAILABLE")
+    if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
+        triggers.append("FAILED_EXACT_REPLAY_CONSUMED")
     status = "ACTIVE_PATH_REQUIRED" if triggers else "NO_ACTIVE_GAP_INPUTS_VISIBLE"
     return {
         "status": status,
@@ -562,6 +699,7 @@ def _no_action_contract(
     board: dict[str, Any],
     portfolio: dict[str, Any],
     replay: dict[str, Any],
+    active_opportunity_board: dict[str, Any],
     active_deployment_gap: dict[str, Any],
 ) -> dict[str, Any]:
     blocked_by = list(active_deployment_gap.get("active_path_triggers") or [])
@@ -577,6 +715,7 @@ def _no_action_contract(
         "next_unlock_action": _unlock_action(replay),
         "why_no_scout": _why_no_scout(scout, board),
         "why_no_harvest": _why_no_harvest(harvest, proof, replay),
+        "why_no_board_rerank": _why_no_board_rerank(active_opportunity_board),
         "why_no_evidence_action": (
             ""
             if replay.get("artifact_status") == "missing" or not replay.get("live_grade_candidate")
@@ -594,7 +733,37 @@ def _select_active_path(
     goal_loop: dict[str, Any],
     harvest: dict[str, Any],
     proof: dict[str, Any],
+    active_opportunity_board: dict[str, Any],
 ) -> tuple[str, str]:
+    board_top = active_opportunity_board.get("top_lane")
+    board_top = board_top if isinstance(board_top, dict) else {}
+    board_status = str(board_top.get("status") or "")
+    if active_opportunity_board.get("total_lanes", 0) > 0 and board_status in {
+        "LIVE_READY",
+        "HARVEST_READY",
+        "SCOUT_READY",
+        "EVIDENCE_ACQUISITION",
+        "OPERATOR_REVIEW_REQUIRED",
+    }:
+        path_by_status = {
+            "LIVE_READY": "LIVE_PERMISSION_READY_CHECK",
+            "HARVEST_READY": "HARVEST_READY_CHECK",
+            "SCOUT_READY": "SCOUT_READY_CHECK",
+            "EVIDENCE_ACQUISITION": "EVIDENCE_ACQUISITION",
+            "OPERATOR_REVIEW_REQUIRED": "OPERATOR_REVIEW_REPORT",
+        }
+        consumed = active_opportunity_board.get("failed_exact_replay_consumed_count", 0)
+        consumed_note = (
+            f" Failed exact replay lanes consumed={consumed}; do not repeat the same STOP replay."
+            if consumed
+            else ""
+        )
+        return (
+            path_by_status[board_status],
+            "Latest active opportunity board is available from the previous refresh and has already "
+            f"ranked {active_opportunity_board.get('total_lanes')} lanes; top lane "
+            f"{board_top.get('lane_id')} is {board_status}.{consumed_note}",
+        )
     if not no_action.get("no_action_allowed") and (
         replay.get("artifact_status") == "missing"
         or not replay.get("passed")
@@ -642,7 +811,10 @@ def _remaining_blockers(
     replay: dict[str, Any],
     proof_floor: dict[str, Any],
     limit_sample_mining: dict[str, Any],
+    active_opportunity_board: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    active_board_top = active_opportunity_board.get("top_lane")
+    active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
     codes = _unique(
         _string_list(harvest.get("promotion_blockers"))
         + _string_list(scout.get("blocker_codes"))
@@ -650,6 +822,8 @@ def _remaining_blockers(
         + _string_list(replay.get("blocker_codes"))
         + _string_list(proof_floor.get("blocker_codes"))
         + _string_list(limit_sample_mining.get("blocker_codes"))
+        + _string_list(active_board_top.get("blockers"))
+        + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
     )
     proof_queue_count = proof.get("proof_queue_count", 0)
     if proof_queue_count == 0:
@@ -730,6 +904,8 @@ def _normalize_stale_blocker_codes(
 
 
 def _blocker_status(code: str) -> str:
+    if any(marker in code for marker in FAILED_EXACT_REPLAY_MARKERS):
+        return "FAILED_REPLAY_CONSUMED_BLOCKS_SCOUT"
     if code in {"NEGATIVE_EXPECTANCY_ACTIVE", "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"}:
         return "VISIBLE_PROFITABILITY_BLOCKER"
     if code in {
@@ -783,6 +959,20 @@ def _why_no_harvest(harvest: dict[str, Any], proof: dict[str, Any], replay: dict
     return "HARVEST readiness requires proof queue and live gateway checks."
 
 
+def _why_no_board_rerank(active_opportunity_board: dict[str, Any]) -> str:
+    if active_opportunity_board.get("artifact_status") == "missing":
+        return "No previous active opportunity board artifact is available yet."
+    if active_opportunity_board.get("total_lanes", 0) <= 0:
+        return "Previous active opportunity board has no lane candidates."
+    failed = active_opportunity_board.get("failed_exact_replay_consumed_count", 0)
+    if failed:
+        return (
+            f"Previous active opportunity board already consumed {failed} failed exact replay lane(s); "
+            "rerank from board facts instead of repeating that replay."
+        )
+    return "Previous active opportunity board is available for multi-pair/multi-vehicle rerank context."
+
+
 def _four_x_progress_hypothesis(
     replay: dict[str, Any],
     proof_floor: dict[str, Any],
@@ -828,8 +1018,23 @@ def _next_trade_enabling_action(
     selected_active_path: str,
     replay: dict[str, Any],
     limit_sample_mining: dict[str, Any] | None = None,
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
 ) -> str:
+    active_opportunity_board = active_opportunity_board or {}
+    board_top = active_opportunity_board.get("top_lane")
+    board_top = board_top if isinstance(board_top, dict) else {}
     if selected_active_path == "EVIDENCE_ACQUISITION":
+        if board_top:
+            suffix = ""
+            if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
+                suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
+            return (
+                "Use the latest active_opportunity_board rerank: "
+                f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
+                f"{board_top.get('next_action') or 'Acquire the next board-ranked evidence packet.'}"
+                f"{suffix}"
+            )
         if replay.get("artifact_status") == "missing":
             return "Generate exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST S5 bid/ask replay artifact."
         if (limit_sample_mining or {}).get("status") == "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED":
@@ -839,6 +1044,16 @@ def _next_trade_enabling_action(
             )
         return "Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples."
     if selected_active_path == "OPERATOR_REVIEW_REPORT":
+        if board_top:
+            suffix = ""
+            if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
+                suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
+            return (
+                "Package operator/guardian review evidence for the latest active_opportunity_board top lane "
+                f"{board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}); "
+                "keep live permission false until explicit operator review is recorded."
+                f"{suffix}"
+            )
         return "Package SCOUT approval/rejection evidence without creating live permission."
     if selected_active_path == "HARVEST_READY_CHECK":
         return "Check HARVEST proof queue admission blockers after exact replay/proof import."
@@ -880,6 +1095,12 @@ def _render_report(payload: dict[str, Any]) -> str:
     current = payload.get("current_state") if isinstance(payload.get("current_state"), dict) else {}
     replay = current.get("limit_s5_bidask_replay") if isinstance(current.get("limit_s5_bidask_replay"), dict) else {}
     mining = current.get("limit_sample_mining") if isinstance(current.get("limit_sample_mining"), dict) else {}
+    active_board = (
+        current.get("active_opportunity_board")
+        if isinstance(current.get("active_opportunity_board"), dict)
+        else {}
+    )
+    board_top = active_board.get("top_lane") if isinstance(active_board.get("top_lane"), dict) else {}
     no_action = payload.get("no_action_contract") if isinstance(payload.get("no_action_contract"), dict) else {}
     lines = [
         "# Active Trader Contract",
@@ -906,6 +1127,16 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Next unlock action: {no_action.get('next_unlock_action')}",
         f"- Why no scout: {no_action.get('why_no_scout')}",
         f"- Why no harvest: {no_action.get('why_no_harvest')}",
+        f"- Why no board rerank: {no_action.get('why_no_board_rerank')}",
+        "",
+        "## Active Opportunity Board",
+        "",
+        f"- Artifact status: `{active_board.get('artifact_status')}`",
+        f"- Generated at: `{active_board.get('generated_at_utc')}`",
+        f"- Lanes scanned: `{active_board.get('total_lanes')}`",
+        f"- Top lane: `{board_top.get('lane_id')}` / `{board_top.get('status')}`",
+        f"- Failed exact replay consumed count: `{active_board.get('failed_exact_replay_consumed_count')}`",
+        f"- STOP HARVEST failed replay consumed: `{active_board.get('stop_harvest_failed_replay_consumed')}`",
         "",
         "## Exact LIMIT S5 Replay",
         "",

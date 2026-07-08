@@ -81,6 +81,10 @@ RISK_BLOCKER_MARKERS = (
 )
 OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
 GUARDIAN_MARKERS = ("GUARDIAN",)
+FAILED_EXACT_REPLAY_MARKERS = (
+    "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+    "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+)
 
 
 @dataclass(frozen=True)
@@ -703,14 +707,16 @@ def _classify_lane(lane: dict[str, Any]) -> str:
     has_evidence = _has_evidence_path(lane)
     if lane.get("order_intent_status") == "LIVE_READY" and lane.get("risk_allowed") and not blockers:
         return "LIVE_READY"
-    if has_evidence:
-        return "EVIDENCE_ACQUISITION"
+    if _has_marker(blockers, FAILED_EXACT_REPLAY_MARKERS):
+        return "NO_TRADE_WITH_CAUSE"
+    if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
+        return "OPERATOR_REVIEW_REQUIRED"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
     if _is_scout_ready_candidate(lane):
         return "SCOUT_READY"
-    if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
-        return "OPERATOR_REVIEW_REQUIRED"
+    if has_evidence:
+        return "EVIDENCE_ACQUISITION"
     if _is_harvest_ready_candidate(lane):
         return "HARVEST_READY"
     return "NO_TRADE_WITH_CAUSE"
@@ -812,6 +818,11 @@ def _computed_replay_status(lane: dict[str, Any]) -> str:
 def _lane_next_action(lane: dict[str, Any]) -> str:
     status = lane.get("status")
     lane_key = _lane_key(lane)
+    if _has_marker(lane.get("blockers") or [], FAILED_EXACT_REPLAY_MARKERS):
+        return (
+            f"No trade for {lane_key}; consume the failed exact replay as not SCOUT-ready, "
+            "wait for new independent trigger/TP-path evidence, and do not repeat the same exact replay."
+        )
     if status == "LIVE_READY":
         return f"Keep {lane_key} visible for verifier/gateway checks only; this board grants no live permission."
     if status == "EVIDENCE_ACQUISITION":
@@ -864,6 +875,7 @@ def _coverage_summary(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "harvest_ready_count": _count_status(lanes, "HARVEST_READY"),
         "scout_ready_count": _count_status(lanes, "SCOUT_READY"),
         "evidence_acquisition_count": _count_status(lanes, "EVIDENCE_ACQUISITION"),
+        "operator_review_required_count": _count_status(lanes, "OPERATOR_REVIEW_REQUIRED"),
         "no_trade_count": _count_status(lanes, "NO_TRADE_WITH_CAUSE"),
     }
 
@@ -924,6 +936,8 @@ def _board_status(lanes: list[dict[str, Any]]) -> str:
         return "BOARD_BUILT_LIVE_READY_DIAGNOSTIC_ONLY"
     if any(lane["status"] in {"EVIDENCE_ACQUISITION", "SCOUT_READY", "HARVEST_READY"} for lane in lanes):
         return "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY"
+    if any(lane["status"] == "OPERATOR_REVIEW_REQUIRED" for lane in lanes):
+        return "BOARD_BUILT_OPERATOR_REVIEW_REQUIRED_READ_ONLY"
     return "BOARD_BUILT_NO_TRADE_WITH_CAUSE"
 
 
@@ -1011,6 +1025,7 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- HARVEST_READY count: `{summary.get('harvest_ready_count')}`",
             f"- SCOUT_READY count: `{summary.get('scout_ready_count')}`",
             f"- EVIDENCE_ACQUISITION count: `{summary.get('evidence_acquisition_count')}`",
+            f"- OPERATOR_REVIEW_REQUIRED count: `{summary.get('operator_review_required_count')}`",
             f"- NO_TRADE count: `{summary.get('no_trade_count')}`",
             "",
             "## Active Path",

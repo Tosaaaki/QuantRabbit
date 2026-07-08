@@ -35,6 +35,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
                 limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -115,6 +116,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
                 limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -242,6 +244,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
                 limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -283,6 +286,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 proof_floor_update_path=paths["proof_floor"],
                 limit_s5_bidask_replay_path=paths["replay"],
                 limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -298,6 +302,189 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload["next_trade_enabling_action"],
             "Generate exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST S5 bid/ask replay artifact.",
         )
+
+    def test_consumes_previous_board_failed_stop_replay_without_repeating_it(self) -> None:
+        now = datetime(2026, 7, 8, 9, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 93,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 17,
+                        "pairs_scanned": ["EUR_USD", "AUD_JPY"],
+                        "vehicles_scanned": ["LIMIT", "STOP", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "replay_status": "SPREAD_SLIPPAGE_PROOF_INCOMPLETE",
+                        "next_action": "Acquire exact LIMIT proof without mixing vehicles.",
+                        "blockers": ["LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"],
+                    },
+                    "ranked_active_lanes": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "status": "EVIDENCE_ACQUISITION",
+                            "replay_status": "SPREAD_SLIPPAGE_PROOF_INCOMPLETE",
+                            "next_action": "Acquire exact LIMIT proof without mixing vehicles.",
+                            "blockers": ["LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY"],
+                        },
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "STOP",
+                            "status": "NO_TRADE_WITH_CAUSE",
+                            "replay_status": "STOP_HARVEST_EXACT_S5_BIDASK_REPLAY_FAILED_BLOCKED",
+                            "next_action": "Do not repeat the same exact replay.",
+                            "blockers": [
+                                "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+                                "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+                            ],
+                        },
+                    ],
+                    "next_active_path": "EVIDENCE_ACQUISITION: failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT is the closest read-only path.",
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+            report = paths["report"].read_text()
+
+        board_state = payload["current_state"]["active_opportunity_board"]
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(board_state["total_lanes"], 93)
+        self.assertTrue(board_state["stop_harvest_failed_replay_consumed"])
+        self.assertEqual(board_state["failed_exact_replay_consumed_count"], 1)
+        self.assertIn("S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS", blocker_codes)
+        self.assertIn("STOP exact replay is already consumed", payload["next_trade_enabling_action"])
+        self.assertNotIn(
+            "STOP_HARVEST_EXACT_REPLAY_BEFORE_SCOUT_OR_OPERATOR_REVIEW",
+            payload["next_trade_enabling_action"],
+        )
+        self.assertIn("Failed exact replay consumed count: `1`", report)
+
+    def test_previous_board_guardian_blocker_overrides_stale_evidence_status(self) -> None:
+        now = datetime(2026, 7, 8, 10, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 93,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 17,
+                        "pairs_scanned": ["EUR_USD", "AUD_JPY"],
+                        "vehicles_scanned": ["LIMIT", "STOP", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": "Acquire exact LIMIT proof without mixing vehicles.",
+                        "blockers": [
+                            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                        ],
+                    },
+                    "ranked_active_lanes": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "status": "EVIDENCE_ACQUISITION",
+                            "next_action": "Acquire exact LIMIT proof without mixing vehicles.",
+                            "blockers": [
+                                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                                "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                            ],
+                        }
+                    ],
+                    "next_active_path": "EVIDENCE_ACQUISITION: stale previous board path.",
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        board_state = payload["current_state"]["active_opportunity_board"]
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(board_state["top_lane"]["status"], "OPERATOR_REVIEW_REQUIRED")
+        self.assertEqual(payload["selected_active_path"], "OPERATOR_REVIEW_REPORT")
+        self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", blocker_codes)
+        self.assertIn("top lane failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT is OPERATOR_REVIEW_REQUIRED", payload["selected_active_path_reason"])
+        self.assertIn("operator/guardian review evidence", payload["next_trade_enabling_action"])
 
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
@@ -315,6 +502,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "proof_floor": root / "data" / "eurusd_short_breakout_failure_proof_floor_update.json",
         "replay": root / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
         "mining": root / "data" / "eurusd_short_breakout_failure_limit_sample_mining.json",
+        "active_board": root / "data" / "active_opportunity_board.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }
