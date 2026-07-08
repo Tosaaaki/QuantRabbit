@@ -868,6 +868,7 @@ def _attach_bidask_negative_evidence(
         "audit_report",
         "rule_set_generated_at_utc",
         "rule_set_source",
+        "price_truth_coverage",
     ):
         if key in evidence:
             payload[key] = evidence[key]
@@ -902,7 +903,14 @@ def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: dat
     if last_day is None:
         reasons.append("BIDASK_REPLAY_LAST_DAY_MISSING")
     elif (now_utc.date() - last_day.date()).days > BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS:
-        reasons.append("BIDASK_REPLAY_LAST_DAY_STALE")
+        if _bidask_price_truth_complete(evidence) and not reasons:
+            evidence["last_day_refresh_bypassed_by_price_truth_coverage"] = True
+            evidence["last_day_refresh_bypass_reason"] = (
+                "PRICE_TRUTH_OK with zero missing bid/ask truth; stale last_day means no newer "
+                "matching negative-rule samples were observed in the refreshed source report."
+            )
+        else:
+            reasons.append("BIDASK_REPLAY_LAST_DAY_STALE")
 
     if not reasons:
         evidence["refresh_required"] = False
@@ -916,6 +924,22 @@ def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: dat
     lane["evidence_refresh_reasons"] = _unique(_string_list(lane.get("evidence_refresh_reasons")) + reasons)
     if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER not in blockers:
         lane["blockers"] = blockers + [BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER]
+
+
+def _bidask_price_truth_complete(evidence: dict[str, Any]) -> bool:
+    truth = evidence.get("price_truth_coverage")
+    if not isinstance(truth, dict):
+        return False
+    status = str(truth.get("status") or "").upper()
+    if status != "PRICE_TRUTH_OK":
+        return False
+    missing_samples = _float(truth.get("missing_price_truth_samples"))
+    missing_groups = _float(truth.get("missing_price_window_group_count"))
+    if missing_samples is not None and missing_samples > 0:
+        return False
+    if missing_groups is not None and missing_groups > 0:
+        return False
+    return True
 
 
 def _bidask_negative_evidence_refresh_required(lane: dict[str, Any]) -> bool:

@@ -2095,6 +2095,9 @@ def _load_bidask_replay_rule_sets(
         "generated_at_utc": payload.get("generated_at_utc"),
         "generated_from": payload.get("generated_from"),
     }
+    price_truth_coverage = payload.get("price_truth_coverage")
+    if isinstance(price_truth_coverage, dict):
+        source["price_truth_coverage"] = price_truth_coverage
     edge = _normalize_bidask_replay_rules(
         payload.get("edge_rules"),
         source=source,
@@ -2152,6 +2155,8 @@ def _normalize_bidask_replay_rules(
         rule["samples"] = samples
         rule.setdefault("rule_set_generated_at_utc", source.get("generated_at_utc"))
         rule.setdefault("rule_set_source", source.get("generated_from") or source.get("path"))
+        if isinstance(source.get("price_truth_coverage"), dict):
+            rule.setdefault("price_truth_coverage", source["price_truth_coverage"])
         out.append(rule)
     return tuple(out)
 
@@ -2324,6 +2329,7 @@ def _bidask_replay_rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
         "audit_report",
         "rule_set_generated_at_utc",
         "rule_set_source",
+        "price_truth_coverage",
     )
     return {key: rule[key] for key in keys if key in rule}
 

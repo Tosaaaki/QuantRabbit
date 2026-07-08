@@ -582,6 +582,60 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertTrue(issue["blocks_live_support"])
         self.assertIsNone(opposite_side_issue)
 
+    def test_bidask_negative_issue_carries_price_truth_coverage(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.62,
+            "chart_direction_bias": "LONG",
+        }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": "2026-07-08T11:45:00Z",
+            "generated_from": "unit-test-bidask-refresh",
+            "price_truth_coverage": {
+                "status": "PRICE_TRUTH_OK",
+                "missing_price_truth_samples": 0,
+                "missing_price_window_group_count": 0,
+            },
+            "edge_rules": [],
+            "contrarian_edge_rules": [],
+            "negative_rules": [
+                {
+                    "name": "GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                    "pair": "GBP_USD",
+                    "side": "LONG",
+                    "direction": "UP",
+                    "granularity": "S5",
+                    "samples": 1426,
+                    "active_days": 34,
+                    "last_day": "2026-07-04",
+                    "avg_final_pips": -5.894,
+                    "blocks_live_support": True,
+                    "audit_report": "unit-test.json",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "bidask_replay_rules.json"
+            rules_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            issue = bidask_replay_negative_precision_issue(
+                metadata,
+                pair="GBP_USD",
+                side="LONG",
+                order_type="STOP",
+                method="TREND_CONTINUATION",
+                entry=1.27200,
+                take_profit=1.27300,
+                stop_loss=1.27100,
+                rules_path=rules_path,
+            )
+
+        self.assertEqual(issue["name"], "GBP_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
+        self.assertEqual(issue["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
+        self.assertEqual(issue["price_truth_coverage"]["missing_price_truth_samples"], 0)
+
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {
             "forecast_direction": "UP",
