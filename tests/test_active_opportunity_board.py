@@ -32,6 +32,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -82,6 +83,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -120,6 +122,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -159,6 +162,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -202,6 +206,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -251,6 +256,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -346,6 +352,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -413,6 +420,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -479,6 +487,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -568,6 +577,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -625,6 +635,20 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
             _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
             _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_json(
+                paths["capture"],
+                _capture_payload(
+                    "USD_CAD",
+                    "LONG",
+                    "RANGE_ROTATION",
+                    trades=5,
+                    wins=5,
+                    losses=0,
+                    expectancy=556.2,
+                    avg_win=556.2,
+                    avg_loss=0.0,
+                ),
+            )
 
             ActiveOpportunityBoard(
                 active_trader_contract_path=paths["active_contract"],
@@ -637,6 +661,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -657,7 +682,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             payload["top_lane"]["next_action"],
         )
         self.assertIn("positive Wilson-stressed expectancy", payload["top_lane"]["next_action"])
-        self.assertEqual(payload["top_lane"]["local_tp_proof"]["capture_take_profit_scope"], "MISSING_METHOD_SCOPE")
+        self.assertEqual(payload["top_lane"]["local_tp_proof"]["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
+        self.assertEqual(payload["top_lane"]["local_tp_proof"]["capture_take_profit_trades"], 5)
         self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 1)
         self.assertEqual(payload["status"], "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY")
         market = next(
@@ -666,6 +692,75 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             if row["lane_id"] == "range_trader:USD_CAD:LONG:RANGE_ROTATION:MARKET"
         )
         self.assertEqual(market["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_zero_local_tp_proof_is_no_trade_not_evidence_acquisition(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "MISSING_METHOD_SCOPE",
+                "capture_take_profit_scope_key": "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            "range_trader:USD_CAD:LONG:RANGE_ROTATION",
+                            "USD_CAD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            metadata=metadata,
+                        )
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_json(paths["capture"], _capture_payload("USD_CAD", "LONG", "TREND_CONTINUATION"))
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], "range_trader:USD_CAD:LONG:RANGE_ROTATION")
+        self.assertEqual(top["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertIn("LOCAL_TP_PROOF_ZERO_TRADES", top["blockers"])
+        self.assertEqual(top["local_tp_proof"]["capture_take_profit_scope"], "MISSING_METHOD_SCOPE")
+        self.assertEqual(top["local_tp_proof"]["capture_take_profit_trades"], 0)
+        self.assertIn("0/20", top["next_action"])
+        self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 0)
+        self.assertEqual(payload["status"], "BOARD_BUILT_NO_TRADE_WITH_CAUSE")
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_verification_lane_blockers_preserves_concrete_codes_when_intent_omits_them(self) -> None:
@@ -719,6 +814,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -792,6 +888,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -886,6 +983,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -975,6 +1073,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -1029,6 +1128,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -1062,6 +1162,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -1098,6 +1199,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -1131,6 +1233,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 live_order_request_path=paths["live_order"],
                 broker_snapshot_path=paths["broker"],
                 order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
                 verification_ledger_path=paths["verification"],
                 execution_ledger_db_path=paths["execution_db"],
                 strategy_profile_path=paths["strategy"],
@@ -1165,6 +1268,7 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
         "live_order": root / "data" / "live_order_request.json",
         "broker": root / "data" / "broker_snapshot.json",
         "order_intents": root / "data" / "order_intents.json",
+        "capture": root / "data" / "capture_economics.json",
         "verification": root / "data" / "verification_ledger.json",
         "execution_db": root / "data" / "execution_ledger.db",
         "strategy": root / "data" / "strategy_profile.json",
@@ -1422,6 +1526,47 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
         },
     )
     return paths
+
+
+def _capture_payload(
+    pair: str,
+    side: str,
+    method: str,
+    *,
+    trades: int = 1,
+    wins: int = 1,
+    losses: int = 0,
+    expectancy: float = 500.0,
+    avg_win: float = 500.0,
+    avg_loss: float = 0.0,
+) -> dict[str, Any]:
+    return {
+        "generated_at_utc": "2026-07-08T11:00:00+00:00",
+        "status": "NEGATIVE_EXPECTANCY",
+        "min_sample_for_verdict": 20,
+        "segment_repair_priorities": {
+            "scoped_tp_proof_min_exit_trades": 20,
+            "items": [],
+        },
+        "by_pair_side_method_exit_reason": {
+            pair: {
+                side: {
+                    method: {
+                        "TAKE_PROFIT_ORDER": {
+                            "trades": trades,
+                            "wins": wins,
+                            "losses": losses,
+                            "expectancy_jpy_per_trade": expectancy,
+                            "avg_win_jpy": avg_win,
+                            "avg_loss_jpy": avg_loss,
+                        }
+                    }
+                }
+            }
+        },
+        "by_pair_side_exit_reason": {},
+        "live_side_effects": [],
+    }
 
 
 def _intent_row(

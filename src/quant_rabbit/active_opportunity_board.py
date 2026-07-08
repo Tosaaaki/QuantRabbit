@@ -15,6 +15,7 @@ from quant_rabbit.paths import (
     DEFAULT_AS_LANE_CANDIDATE_BOARD,
     DEFAULT_AS_PROOF_PACK_QUEUE,
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -107,6 +108,9 @@ FAILED_EXACT_REPLAY_MARKERS = (
 BIDASK_REPLAY_NEGATIVE_BLOCKER = "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"
 BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
 TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
+LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+TP_PROOF_COLLECTION_MIN_TRADES = 5
 BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
 BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS = 3
 
@@ -136,6 +140,7 @@ class ActiveOpportunityBoard:
         live_order_request_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         broker_snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         order_intents_path: Path = DEFAULT_ORDER_INTENTS,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
@@ -157,6 +162,7 @@ class ActiveOpportunityBoard:
             "live_order_request": live_order_request_path,
             "broker_snapshot": broker_snapshot_path,
             "order_intents": order_intents_path,
+            "capture_economics": capture_economics_path,
             "verification_ledger": verification_ledger_path,
             "strategy_profile": strategy_profile_path,
             "guardian_receipt_consumption": guardian_receipt_consumption_path,
@@ -192,6 +198,7 @@ class ActiveOpportunityBoard:
         lanes: dict[str, dict[str, Any]] = {}
 
         _add_order_intent_lanes(lanes, artifacts["order_intents"])
+        _attach_capture_economics_local_tp(lanes, artifacts["capture_economics"])
         _add_proof_queue_lanes(lanes, artifacts["as_proof_pack_queue"])
         _add_portfolio_lanes(lanes, artifacts["portfolio_4x_path_planner"])
         _add_lane_board_lanes(lanes, artifacts["as_lane_candidate_board"])
@@ -896,6 +903,104 @@ def _attach_local_tp_proof_context(lane: dict[str, Any], intent: dict[str, Any])
         lane["local_tp_proof"] = proof
 
 
+def _attach_capture_economics_local_tp(
+    lanes: dict[str, dict[str, Any]],
+    artifact: dict[str, Any],
+) -> None:
+    if artifact.get("_artifact_status") != "present":
+        return
+    floor = int(
+        _float((artifact.get("segment_repair_priorities") or {}).get("scoped_tp_proof_min_exit_trades"))
+        or _float(artifact.get("min_sample_for_verdict"))
+        or 20
+    )
+    for lane in lanes.values():
+        proof = lane.get("local_tp_proof")
+        if not isinstance(proof, dict) or not proof:
+            continue
+        pair = str(lane.get("pair") or "")
+        direction = str(lane.get("direction") or "")
+        method = str(lane.get("strategy_family") or "")
+        if not pair or not direction or not method:
+            continue
+        metrics, scope_name, scope_key = _capture_scoped_exit_metrics(
+            artifact,
+            pair=pair,
+            side=direction,
+            method=method,
+            exit_reason="TAKE_PROFIT_ORDER",
+        )
+        enriched = dict(proof)
+        enriched["capture_take_profit_scope"] = scope_name
+        enriched["capture_take_profit_scope_key"] = scope_key
+        enriched["capture_take_profit_proof_floor"] = floor
+        enriched["capture_take_profit_metrics_source"] = "data/capture_economics.json"
+        if metrics:
+            enriched["capture_take_profit_trades"] = _first_int(metrics.get("trades"), 0)
+            enriched["capture_take_profit_wins"] = _first_int(metrics.get("wins"), 0)
+            enriched["capture_take_profit_losses"] = _first_int(metrics.get("losses"), 0)
+            enriched["capture_take_profit_expectancy_jpy"] = _json_number_or_none(
+                metrics.get("expectancy_jpy_per_trade")
+            )
+            enriched["capture_take_profit_avg_win_jpy"] = _json_number_or_none(metrics.get("avg_win_jpy"))
+            enriched["capture_take_profit_avg_loss_jpy"] = _json_number_or_none(metrics.get("avg_loss_jpy"))
+        else:
+            enriched["capture_take_profit_trades"] = 0
+            enriched["capture_take_profit_wins"] = 0
+            enriched["capture_take_profit_losses"] = 0
+            enriched["capture_take_profit_expectancy_jpy"] = 0.0
+            enriched["capture_take_profit_avg_win_jpy"] = 0.0
+            enriched["capture_take_profit_avg_loss_jpy"] = 0.0
+            enriched["capture_take_profit_zero_trade"] = True
+        lane["local_tp_proof"] = enriched
+        _append_local_tp_proof_floor_blocker(lane, enriched)
+
+
+def _capture_scoped_exit_metrics(
+    artifact: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    exit_reason: str,
+) -> tuple[dict[str, Any], str, str]:
+    by_method = artifact.get("by_pair_side_method_exit_reason")
+    method_scopes = _nested_dict_get(by_method, pair, side)
+    if method_scopes is not None:
+        method_exits = method_scopes.get(method)
+        if isinstance(method_exits, dict):
+            metrics = method_exits.get(exit_reason)
+            if isinstance(metrics, dict):
+                return metrics, "PAIR_SIDE_METHOD", f"{pair}|{side}|{method}|{exit_reason}"
+            return {}, "MISSING_METHOD_EXIT", f"{pair}|{side}|{method}|{exit_reason}"
+        return {}, "MISSING_METHOD_SCOPE", f"{pair}|{side}|{method}|{exit_reason}"
+    by_pair_side = artifact.get("by_pair_side_exit_reason")
+    pair_side_metrics = _nested_dict_get(by_pair_side, pair, side, exit_reason)
+    if pair_side_metrics is not None:
+        return pair_side_metrics, "PAIR_SIDE", f"{pair}|{side}|{exit_reason}"
+    return {}, "MISSING_SCOPED", f"{pair}|{side}|{method}|{exit_reason}"
+
+
+def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
+    cursor: object = root
+    for key in keys:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    return cursor if isinstance(cursor, dict) else None
+
+
+def _append_local_tp_proof_floor_blocker(lane: dict[str, Any], proof: dict[str, Any]) -> None:
+    blockers = _string_list(lane.get("blockers"))
+    if TP_PROVEN_ROTATION_BLOCKER not in blockers:
+        return
+    trades = _first_int(proof.get("capture_take_profit_trades"), 0)
+    if trades <= 0:
+        lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER])
+    elif trades < TP_PROOF_COLLECTION_MIN_TRADES:
+        lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER])
+
+
 def _attach_bidask_negative_evidence(
     lane: dict[str, Any],
     intent: dict[str, Any],
@@ -1082,6 +1187,17 @@ def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
         return False
     if str(proof.get("tp_target_intent") or "") != "HARVEST":
         return False
+    trades = _float(proof.get("capture_take_profit_trades"))
+    if trades is not None:
+        if trades < TP_PROOF_COLLECTION_MIN_TRADES:
+            return False
+        losses = _float(proof.get("capture_take_profit_losses"))
+        expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+        if losses is None or losses > 0:
+            return False
+        if expectancy is None or expectancy <= 0:
+            return False
+        return True
     scope = str(proof.get("capture_take_profit_scope") or "")
     if scope.startswith("MISSING") or scope in {"", "None", "UNKNOWN"}:
         return True
@@ -1213,6 +1329,7 @@ def _computed_replay_status(lane: dict[str, Any]) -> str:
 def _lane_next_action(lane: dict[str, Any]) -> str:
     status = lane.get("status")
     lane_key = _lane_key(lane)
+    blockers = _string_list(lane.get("blockers"))
     if _has_marker(lane.get("blockers") or [], FAILED_EXACT_REPLAY_MARKERS):
         return (
             f"No trade for {lane_key}; consume the failed exact replay as not SCOUT-ready, "
@@ -1244,6 +1361,21 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
         if _has_marker(lane.get("blockers") or [], GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS):
             return f"Package guardian receipt operator-review evidence for {lane_key}; do not infer approval."
         return f"Package operator/guardian review evidence for {lane_key}; do not infer approval."
+    if LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER in blockers:
+        proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+        floor = proof.get("capture_take_profit_proof_floor") or 20
+        scope_key = proof.get("capture_take_profit_scope_key") or lane_key
+        return (
+            f"No trade for {lane_key}; exact local TAKE_PROFIT_ORDER proof for {scope_key} is 0/{floor}. "
+            "Wait for new local TP receipts or an explicitly approved proof-collection scout, then rerank."
+        )
+    if LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER in blockers:
+        proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+        trades = proof.get("capture_take_profit_trades") or 0
+        return (
+            f"No trade for {lane_key}; local TAKE_PROFIT_ORDER proof has only {trades} sample(s), below "
+            f"the {TP_PROOF_COLLECTION_MIN_TRADES}-trade proof-collection floor. Preserve the blocker and rerank."
+        )
     return f"No trade for {lane_key}; preserve blocker cause and compare another pair/vehicle."
 
 
@@ -1714,6 +1846,13 @@ def _first_number(*values: Any) -> float | None:
         if number is not None:
             return number
     return None
+
+
+def _first_int(value: Any, default: int) -> int:
+    number = _float(value)
+    if number is None:
+        return default
+    return int(number)
 
 
 def _float(value: Any) -> float | None:
