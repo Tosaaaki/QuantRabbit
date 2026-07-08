@@ -2320,6 +2320,18 @@ def _active_opportunity_board_step() -> dict[str, Any]:
     return {"argv": ["active-opportunity-board"], "required": True}
 
 
+def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
+    # The board reads the previous contract for narrative context, while the
+    # contract is the artifact the trader loop consumes for the final active
+    # path. Run contract -> board -> contract so the terminal contract always
+    # consumes the freshly reranked multi-lane board.
+    return [
+        _active_trader_contract_step(),
+        _active_opportunity_board_step(),
+        _active_trader_contract_step(),
+    ]
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2425,8 +2437,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
-        _active_trader_contract_step(),
-        _active_opportunity_board_step(),
+        *_active_board_contract_sync_steps(),
     ]
 
 
@@ -2487,8 +2498,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
-        _active_trader_contract_step(),
-        _active_opportunity_board_step(),
+        *_active_board_contract_sync_steps(),
     ]
 
 
@@ -2526,8 +2536,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
-        _active_trader_contract_step(),
-        _active_opportunity_board_step(),
+        *_active_board_contract_sync_steps(),
     ]
 
 
@@ -2565,8 +2574,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
-        _active_trader_contract_step(),
-        _active_opportunity_board_step(),
+        *_active_board_contract_sync_steps(),
     ]
 
 

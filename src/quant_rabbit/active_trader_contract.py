@@ -858,8 +858,8 @@ def _remaining_blockers(
 ) -> list[dict[str, Any]]:
     active_board_top = active_opportunity_board.get("top_lane")
     active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
-    active_board_all_no_trade = _active_board_all_no_trade(active_opportunity_board)
-    if active_board_all_no_trade:
+    active_board_authoritative = _active_board_authoritative(active_opportunity_board)
+    if active_board_authoritative:
         codes = _unique(
             _string_list(active_board_top.get("blockers"))
             + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
@@ -901,7 +901,7 @@ def _remaining_blockers(
     if active_board_stale_codes:
         suppress_from_board_truth = active_board_stale_codes & ACTIVE_BOARD_STALE_SOURCE_SUPPRESSED_CODES
         codes = [code for code in codes if code not in suppress_from_board_truth]
-    if not active_board_all_no_trade:
+    if not active_board_authoritative:
         replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
         if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
             stale_spread_codes = {
@@ -918,7 +918,7 @@ def _remaining_blockers(
             codes.append("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION")
     if live_order.get("send_requested") or live_order.get("sent"):
         codes.append("UNEXPECTED_LIVE_ORDER_REQUEST_STATE")
-    elif not active_board_all_no_trade:
+    elif not active_board_authoritative:
         codes.append("NO_LIVE_ORDER_REQUEST")
     rows = []
     for code in _unique(codes):
@@ -930,6 +930,20 @@ def _remaining_blockers(
             }
         )
     return rows
+
+
+def _active_board_authoritative(active_opportunity_board: dict[str, Any], *, board_status: str | None = None) -> bool:
+    board_top = active_opportunity_board.get("top_lane")
+    board_top = board_top if isinstance(board_top, dict) else {}
+    status = str(board_status if board_status is not None else board_top.get("status") or "")
+    return active_opportunity_board.get("total_lanes", 0) > 0 and status in {
+        "LIVE_READY",
+        "HARVEST_READY",
+        "SCOUT_READY",
+        "EVIDENCE_ACQUISITION",
+        "OPERATOR_REVIEW_REQUIRED",
+        "NO_TRADE_WITH_CAUSE",
+    }
 
 
 def _active_board_all_no_trade(active_opportunity_board: dict[str, Any], *, board_status: str | None = None) -> bool:
