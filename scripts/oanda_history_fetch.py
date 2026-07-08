@@ -8,6 +8,7 @@ places orders; it only calls the OANDA instruments/candles read endpoint.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import sys
 import time
@@ -97,6 +98,7 @@ def main() -> int:
                 sleep_seconds=args.sleep_seconds,
                 retries=args.retries,
                 include_incomplete=args.include_incomplete,
+                compress=args.compress,
                 dry_run=args.dry_run,
             )
             summary["tasks"].append(task_summary)
@@ -128,6 +130,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--sleep-seconds", type=float, default=0.2)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--include-incomplete", action="store_true")
+    compression = parser.add_mutually_exclusive_group()
+    compression.add_argument(
+        "--compress",
+        dest="compress",
+        action="store_true",
+        default=True,
+        help="write published history files as .jsonl.gz (default)",
+    )
+    compression.add_argument(
+        "--no-compress",
+        dest="compress",
+        action="store_false",
+        help="write published history files as plain .jsonl",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -175,14 +191,18 @@ def _fetch_task(
     sleep_seconds: float,
     retries: int,
     include_incomplete: bool,
+    compress: bool = True,
     dry_run: bool,
 ) -> dict[str, Any]:
     file_dir = run_dir / task.pair
     file_dir.mkdir(parents=True, exist_ok=True)
-    file_path = file_dir / (
+    file_name = (
         f"{task.pair}_{task.granularity}_{task.price}_"
         f"{_stamp(task.start)}_{_stamp(task.end)}.jsonl"
     )
+    if compress:
+        file_name += ".gz"
+    file_path = file_dir / file_name
     windows = list(
         _iter_time_chunks(
             task.start,
@@ -205,6 +225,7 @@ def _fetch_task(
         "rows": 0,
         "errors": [],
         "dry_run": dry_run,
+        "compressed": bool(compress),
     }
     if dry_run:
         return summary
@@ -214,7 +235,7 @@ def _fetch_task(
     partial_path = file_path.with_name(f"{file_path.name}.partial")
     tmp_path.unlink(missing_ok=True)
     partial_path.unlink(missing_ok=True)
-    with tmp_path.open("w", encoding="utf-8") as handle:
+    with _open_jsonl_writer(tmp_path, compress=compress) as handle:
         for window_start, window_end in windows:
             payload = _get_candles_with_retry(
                 client,
@@ -257,6 +278,12 @@ def _fetch_task(
         tmp_path.replace(file_path)
         summary["published"] = True
     return summary
+
+
+def _open_jsonl_writer(path: Path, *, compress: bool):
+    if compress:
+        return gzip.open(path, mode="wt", encoding="utf-8")
+    return path.open("w", encoding="utf-8")
 
 
 def _get_candles_with_retry(

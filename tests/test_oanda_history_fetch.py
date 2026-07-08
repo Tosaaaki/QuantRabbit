@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
 import json
 import os
 import subprocess
@@ -95,7 +96,7 @@ class OandaHistoryFetchTest(unittest.TestCase):
         self.assertEqual(rows[0]["bid"]["c"], 1.1001)
         self.assertEqual(rows[0]["ask"]["c"], 1.1002)
 
-    def test_fetch_task_writes_jsonl_and_dedupes_boundary_rows(self) -> None:
+    def test_fetch_task_writes_gzip_jsonl_by_default_and_dedupes_boundary_rows(self) -> None:
         class FakeClient:
             def __init__(self) -> None:
                 self.calls = 0
@@ -133,9 +134,48 @@ class OandaHistoryFetchTest(unittest.TestCase):
             self.assertGreater(summary["requests"], 1)
             self.assertEqual(summary["rows"], 1)
             self.assertTrue(summary["published"])
-            rows = Path(summary["path"]).read_text(encoding="utf-8").splitlines()
+            self.assertTrue(str(summary["path"]).endswith(".jsonl.gz"))
+            self.assertTrue(summary["compressed"])
+            with gzip.open(summary["path"], "rt", encoding="utf-8") as handle:
+                rows = handle.read().splitlines()
             self.assertEqual(len(rows), 1)
             self.assertEqual(json.loads(rows[0])["time"], "2026-06-01T00:00:00.000000000Z")
+
+    def test_fetch_task_can_write_plain_jsonl_for_debugging(self) -> None:
+        class FakeClient:
+            def get_json(self, _path, _query):
+                return {
+                    "candles": [
+                        {
+                            "time": "2026-06-01T00:00:00.000000000Z",
+                            "complete": True,
+                            "volume": 1,
+                            "mid": {"o": "1.0", "h": "1.1", "l": "0.9", "c": "1.0"},
+                        }
+                    ]
+                }
+
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=1)
+        task = hist.FetchTask(pair="EUR_USD", granularity="M1", start=start, end=end, price="M")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = hist._fetch_task(
+                FakeClient(),
+                task,
+                run_dir=Path(tmp),
+                max_candles_per_request=2,
+                sleep_seconds=0.0,
+                retries=1,
+                include_incomplete=False,
+                compress=False,
+                dry_run=False,
+            )
+
+            self.assertTrue(str(summary["path"]).endswith(".jsonl"))
+            self.assertFalse(summary["compressed"])
+            rows = Path(summary["path"]).read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(rows), 1)
 
     def test_fetch_task_keeps_failed_fetch_out_of_jsonl_discovery(self) -> None:
         class FailingClient:
@@ -163,7 +203,7 @@ class OandaHistoryFetchTest(unittest.TestCase):
             self.assertFalse(Path(summary["path"]).exists())
             self.assertIsNotNone(summary["partial_path"])
             self.assertTrue(Path(summary["partial_path"]).exists())
-            self.assertTrue(str(summary["partial_path"]).endswith(".jsonl.partial"))
+            self.assertTrue(str(summary["partial_path"]).endswith(".jsonl.gz.partial"))
 
     def test_dry_run_does_not_update_latest_summary(self) -> None:
         repo = Path(__file__).resolve().parents[1]
