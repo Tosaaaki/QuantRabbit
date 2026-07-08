@@ -731,8 +731,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   with fewer current hard blockers before high-score diagnostic lanes.
 #   Failed exact replay and current guardian receipt operator review outrank
 #   evidence-acquisition; negative-expectancy and replay-negative blockers
-#   outrank manual/operator-overlap review. `NO_TRADE_WITH_CAUSE` must carry a
-#   concrete machine-readable blocker, not an empty cause set.
+#   outrank manual/operator-overlap review. Manual overlap blockers such as
+#   `OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED` are live blockers but are not
+#   `OPERATOR_REVIEW_REQUIRED` unless an explicit guardian/operator-review code
+#   is also present. `NO_TRADE_WITH_CAUSE` must carry a concrete
+#   machine-readable blocker, not an empty cause set.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # Manual recovery only:
