@@ -97,6 +97,9 @@ GUARDIAN_MARKERS = ("GUARDIAN",)
 CURRENT_INTENT_OWNED_BLOCKERS = (
     "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
 )
+CURRENT_LIVE_READY_STALE_DIAGNOSTIC_BLOCKERS = (
+    "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+)
 FAILED_EXACT_REPLAY_MARKERS = (
     "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
     "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
@@ -785,6 +788,7 @@ def _finalize_lane(
         guardian_intent_blockers_stale=guardian_intent_blockers_stale,
     )
     _suppress_stale_current_intent_owned_blockers(lane)
+    _suppress_live_ready_stale_diagnostic_blockers(lane)
     _mark_bidask_negative_evidence_refresh(lane, now_utc=now_utc)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
@@ -841,6 +845,22 @@ def _suppress_stale_current_intent_owned_blockers(lane: dict[str, Any]) -> None:
     stale_codes = [
         code
         for code in CURRENT_INTENT_OWNED_BLOCKERS
+        if code in blockers and code not in current_intent_blockers
+    ]
+    if not stale_codes:
+        return
+    lane["blockers"] = [code for code in blockers if code not in stale_codes]
+    lane["stale_source_blockers"] = _unique(_string_list(lane.get("stale_source_blockers")) + stale_codes)
+
+
+def _suppress_live_ready_stale_diagnostic_blockers(lane: dict[str, Any]) -> None:
+    if lane.get("order_intent_status") != "LIVE_READY" or not lane.get("risk_allowed"):
+        return
+    current_intent_blockers = set(_string_list(lane.get("order_intent_blockers")))
+    blockers = _string_list(lane.get("blockers"))
+    stale_codes = [
+        code
+        for code in CURRENT_LIVE_READY_STALE_DIAGNOSTIC_BLOCKERS
         if code in blockers and code not in current_intent_blockers
     ]
     if not stale_codes:
