@@ -119,6 +119,8 @@ docs/active_trader_contract.md|\
 docs/eurusd_short_breakout_failure_evidence_acquisition_plan.md|\
 docs/eurusd_short_breakout_failure_legacy_sample_search.md|\
 docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md|\
+docs/eurusd_short_breakout_failure_limit_sample_mining.md|\
+docs/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md|\
 docs/eurusd_short_breakout_failure_proof_floor_update.md|\
 docs/eurusd_short_breakout_failure_scout_plan.md|\
 docs/eurusd_short_breakout_failure_spread_slippage_proof.md|\
@@ -143,6 +145,8 @@ data/active_trader_contract.json|\
 data/eurusd_short_breakout_failure_evidence_acquisition_plan.json|\
 data/eurusd_short_breakout_failure_legacy_sample_search.json|\
 data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json|\
+data/eurusd_short_breakout_failure_limit_sample_mining.json|\
+data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json|\
 data/eurusd_short_breakout_failure_proof_floor_update.json|\
 data/eurusd_short_breakout_failure_scout_plan.json|\
 data/eurusd_short_breakout_failure_spread_slippage_proof.json|\

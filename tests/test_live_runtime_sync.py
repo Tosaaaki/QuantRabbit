@@ -134,9 +134,33 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
             _commit_file(
                 repo,
+                "data/eurusd_short_breakout_failure_limit_sample_mining.json",
+                '{"status":"old"}\n',
+                "track eurusd limit sample mining",
+            )
+            _commit_file(
+                repo,
+                "data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json",
+                '{"status":"old"}\n',
+                "track eurusd market stop diagnosis",
+            )
+            _commit_file(
+                repo,
                 "docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
                 "old eurusd replay\n",
                 "track eurusd replay report",
+            )
+            _commit_file(
+                repo,
+                "docs/eurusd_short_breakout_failure_limit_sample_mining.md",
+                "old eurusd limit sample mining\n",
+                "track eurusd limit sample mining report",
+            )
+            _commit_file(
+                repo,
+                "docs/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md",
+                "old eurusd market stop diagnosis\n",
+                "track eurusd market stop diagnosis report",
             )
             _run(["git", "checkout", "-b", "feature"], cwd=repo)
             _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
@@ -146,8 +170,20 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             (live / "data" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json").write_text(
                 '{"status":"runtime"}\n'
             )
+            (live / "data" / "eurusd_short_breakout_failure_limit_sample_mining.json").write_text(
+                '{"status":"runtime"}\n'
+            )
+            (live / "data" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json").write_text(
+                '{"status":"runtime"}\n'
+            )
             (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").write_text(
                 "runtime eurusd replay\n"
+            )
+            (live / "docs" / "eurusd_short_breakout_failure_limit_sample_mining.md").write_text(
+                "runtime eurusd limit sample mining\n"
+            )
+            (live / "docs" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md").write_text(
+                "runtime eurusd market stop diagnosis\n"
             )
 
             result = _sync(repo, live, source_branch="feature")
@@ -163,8 +199,24 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 '{"status":"runtime"}\n',
             )
             self.assertEqual(
+                (live / "data" / "eurusd_short_breakout_failure_limit_sample_mining.json").read_text(),
+                '{"status":"runtime"}\n',
+            )
+            self.assertEqual(
+                (live / "data" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json").read_text(),
+                '{"status":"runtime"}\n',
+            )
+            self.assertEqual(
                 (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").read_text(),
                 "runtime eurusd replay\n",
+            )
+            self.assertEqual(
+                (live / "docs" / "eurusd_short_breakout_failure_limit_sample_mining.md").read_text(),
+                "runtime eurusd limit sample mining\n",
+            )
+            self.assertEqual(
+                (live / "docs" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md").read_text(),
+                "runtime eurusd market stop diagnosis\n",
             )
             self.assertEqual(
                 {line.strip() for line in _git(live, "status", "--short").splitlines()},
@@ -172,7 +224,11 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                     "M data/active_trader_contract.json",
                     "M docs/active_trader_contract.md",
                     "M data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+                    "M data/eurusd_short_breakout_failure_limit_sample_mining.json",
+                    "M data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json",
                     "M docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
+                    "M docs/eurusd_short_breakout_failure_limit_sample_mining.md",
+                    "M docs/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md",
                 },
             )
 
