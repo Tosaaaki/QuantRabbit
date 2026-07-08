@@ -1,0 +1,325 @@
+{
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage live orders.",
+    "Do not cancel or close trades.",
+    "Do not mutate broker state, TP, SL, or launchd.",
+    "Do not relax gates or infer operator approval.",
+    "Do not mix MARKET_ORDER or STOP_ORDER samples into LIMIT_HARVEST proof.",
+    "Do not merge MARKET_HARVEST and STOP_HARVEST into one proof vehicle.",
+    "Do not mix market-close losses into TP/HARVEST proof, and do not hide negative expectancy or month-scale blockers.",
+    "Do not backsolve lot size from the 4x deficit."
+  ],
+  "expected_edge_improvement": "A separate STOP/MARKET proof path could avoid waiting on exhausted LIMIT-only samples, but expected improvement is evidence quality only; it does not create live permission.",
+  "four_x_progress_hypothesis": "MARKET and STOP rows are positive as observed HARVEST evidence, but they must become separate vehicles. STOP_HARVEST is currently closer than MARKET_HARVEST because it has trigger/order prices and higher expectancy, while both still require exact replay, risk/invalidation contracts, and operator/guardian review before any active use.",
+  "generated_at_utc": "2026-07-08T08:19:44Z",
+  "limit_vehicle_baseline": {
+    "proof_boundary": {
+      "market_samples_allowed": false,
+      "reason": "LIMIT_HARVEST remains a separate exact LIMIT_ORDER proof floor.",
+      "stop_samples_allowed": false
+    },
+    "sample_floor": {
+      "additional_acceptable_local_samples_found": 0,
+      "current_replayed_exact_limit_samples": 4,
+      "floor_met": false,
+      "remaining_exact_limit_samples": 16,
+      "required_exact_limit_samples": 20
+    },
+    "sample_summary": {
+      "entry_order_type_counts": {
+        "LIMIT_ORDER": 4
+      },
+      "entry_spread_pips": {
+        "max": 0.8,
+        "min": 0.8
+      },
+      "exit_spread_pips": {
+        "max": 0.8,
+        "min": 0.8
+      },
+      "expectancy_jpy_per_trade": 813.7734,
+      "losses": 0,
+      "market_close_mixed_in_count": 0,
+      "net_jpy": 3255.0938,
+      "observed_cost_inclusive_pass_count": 4,
+      "sample_count": 4,
+      "wins": 4
+    },
+    "sample_trade_ids": [
+      "472732",
+      "469278",
+      "469427",
+      "469898"
+    ],
+    "status": "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED_STILL_UNDERSAMPLED",
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+    "vehicle": "LIMIT_HARVEST"
+  },
+  "live_permission_allowed": false,
+  "live_side_effects": [],
+  "market_harvest_vehicle": {
+    "entry_order_type": "MARKET_ORDER",
+    "entry_risk_slippage_invalidation": {
+      "blocking_reason": "MARKET_ORDER rows have observed fill/spread evidence, but no requested entry order price. A MARKET_HARVEST scout needs requested quote, max slippage, invalidation, and TP/SL geometry.",
+      "historical_fill_vs_requested_price_available": false,
+      "max_slippage_contract_defined": false,
+      "observed_entry_spread_available": true,
+      "pre_entry_invalidation_defined": false,
+      "requested_entry_order_price_available": false,
+      "risk_defined_for_scout": false
+    },
+    "exact_replay": {
+      "independent_s5_bidask_replay_attached": false,
+      "replay_status_counts": {
+        "MISSING_EXACT_INDEPENDENT_S5_BA_REPLAY": 9
+      },
+      "samples_requiring_replay": 9,
+      "source_status": "SPREAD_SLIPPAGE_PROOF_INCOMPLETE"
+    },
+    "proof_boundary": {
+      "included_in_limit_proof": false,
+      "market_close_mixed_in": false,
+      "mixed_with_stop_vehicle": false
+    },
+    "readiness": {
+      "can_create_live_permission": false,
+      "can_enter_proof_queue_now": false,
+      "next_gate": "Define MARKET risk/slippage/invalidation packet before exact replay or scout.",
+      "promising_observed_harvest": true
+    },
+    "sample_summary": {
+      "entry_order_type_counts": {
+        "MARKET_ORDER": 9
+      },
+      "entry_spread_pips": {
+        "max": 0.8,
+        "min": 0.8
+      },
+      "exit_spread_pips": {
+        "max": 1.0,
+        "min": 0.8
+      },
+      "expectancy_jpy_per_trade": 367.0559,
+      "losses": 0,
+      "market_close_mixed_in_count": 0,
+      "net_jpy": 3303.5031,
+      "observed_cost_inclusive_pass_count": 9,
+      "sample_count": 9,
+      "wins": 9
+    },
+    "sample_trade_ids": [
+      "470705",
+      "470788",
+      "470834",
+      "470901",
+      "470960",
+      "470948",
+      "471328",
+      "471367",
+      "471370"
+    ],
+    "status": "MARKET_HARVEST_REPLAY_REQUIRED",
+    "vehicle": "MARKET_HARVEST"
+  },
+  "next_read_only_actions": [
+    "Build exact STOP_HARVEST S5 bid/ask trigger and TP replay from the 7 STOP_ORDER samples.",
+    "Define STOP_HARVEST invalidation, max trigger slippage, and stop-chase rejection rules before scout review.",
+    "Build a MARKET_HARVEST packet with requested entry quote, max slippage, invalidation, and TP/SL geometry before replay.",
+    "Keep LIMIT_HARVEST proof isolated at 4/20; do not import MARKET or STOP samples into the LIMIT floor.",
+    "After exact replay packets exist, rerun proof queue, 4x planner, active contract, and operator-review material read-only."
+  ],
+  "read_only": true,
+  "recommended_active_path": "EVIDENCE_ACQUISITION:STOP_HARVEST_EXACT_REPLAY_BEFORE_SCOUT_OR_OPERATOR_REVIEW",
+  "remaining_blockers": [
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_HARVEST_EXACT_REPLAY_REQUIRED",
+      "status": "BLOCKING_MARKET_VEHICLE_PROOF"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "STOP_HARVEST_EXACT_REPLAY_REQUIRED",
+      "status": "BLOCKING_STOP_VEHICLE_PROOF"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_ENTRY_RISK_SLIPPAGE_INVALIDATION_UNDEFINED",
+      "status": "BLOCKING_MARKET_SCOUT"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "STOP_TRIGGER_SLIPPAGE_INVALIDATION_UNDEFINED",
+      "status": "BLOCKING_STOP_SCOUT"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+      "status": "VISIBLE_LIMIT_BASELINE_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_STOP_NOT_ALLOWED_IN_LIMIT_PROOF",
+      "status": "PROOF_BOUNDARY"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NO_LIVE_PERMISSION_CREATED",
+      "status": "SAFETY_BOUNDARY"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_CLOSE_LEAK_PRESENT",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NO_LIVE_READY_PORTFOLIO",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    },
+    {
+      "blocks_live_permission": true,
+      "code": "PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION",
+      "status": "VISIBLE_EXISTING_BLOCKER"
+    }
+  ],
+  "root_improvement_target": "Define and replay STOP_HARVEST first as a separate EUR_USD SHORT BREAKOUT_FAILURE vehicle, then evaluate MARKET_HARVEST with an explicit requested-entry/slippage/invalidation packet.",
+  "safety_checks": {
+    "limit_proof_mixes_market_stop_samples": false,
+    "live_permission_created": false,
+    "market_and_stop_aggregated_separately": true,
+    "market_close_losses_excluded_from_harvest_proof": true,
+    "market_stop_combined_used_as_single_vehicle": false
+  },
+  "source_artifacts": [
+    "data/eurusd_short_breakout_failure_limit_sample_mining.json",
+    "data/active_trader_contract.json",
+    "data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json",
+    "data/eurusd_short_breakout_failure_spread_slippage_proof.json",
+    "data/eurusd_short_breakout_failure_proof_floor_update.json",
+    "data/harvest_live_grade_path.json",
+    "data/payoff_shape_diagnosis.json",
+    "data/operator_review_report.json",
+    "data/trader_goal_loop_orchestrator.json",
+    "data/execution_ledger.db"
+  ],
+  "status": "MARKET_STOP_VEHICLE_PROMISING_STILL_BLOCKED",
+  "stop_harvest_vehicle": {
+    "entry_order_type": "STOP_ORDER",
+    "exact_replay": {
+      "independent_s5_bidask_replay_attached": false,
+      "replay_status_counts": {
+        "MISSING_EXACT_INDEPENDENT_S5_BA_REPLAY": 7
+      },
+      "samples_requiring_replay": 7,
+      "source_status": "SPREAD_SLIPPAGE_PROOF_INCOMPLETE"
+    },
+    "proof_boundary": {
+      "included_in_limit_proof": false,
+      "market_close_mixed_in": false,
+      "mixed_with_market_vehicle": false
+    },
+    "readiness": {
+      "can_create_live_permission": false,
+      "can_enter_proof_queue_now": false,
+      "next_gate": "Build STOP trigger/TP exact replay and define invalidation before operator review.",
+      "promising_observed_harvest": true
+    },
+    "sample_summary": {
+      "entry_order_type_counts": {
+        "STOP_ORDER": 7
+      },
+      "entry_spread_pips": {
+        "max": 0.8,
+        "min": 0.8
+      },
+      "exit_spread_pips": {
+        "max": 0.8,
+        "min": 0.8
+      },
+      "expectancy_jpy_per_trade": 901.0337,
+      "losses": 0,
+      "market_close_mixed_in_count": 0,
+      "net_jpy": 6307.2357,
+      "observed_cost_inclusive_pass_count": 7,
+      "sample_count": 7,
+      "wins": 7
+    },
+    "sample_trade_ids": [
+      "471292",
+      "471306",
+      "471345",
+      "471403",
+      "471460",
+      "471492",
+      "471495"
+    ],
+    "status": "STOP_HARVEST_REPLAY_REQUIRED",
+    "trigger_slippage_invalidation": {
+      "blocking_reason": "STOP_ORDER rows preserve trigger/order prices, but a STOP_HARVEST vehicle still needs trigger-side S5 replay, invalidation, max slippage, and stop-chase rules before scout or proof promotion.",
+      "max_trigger_slippage_contract_defined": false,
+      "observed_trigger_slippage_pips_max": 0.0,
+      "observed_trigger_spread_available": true,
+      "pre_or_post_trigger_invalidation_defined": false,
+      "risk_defined_for_scout": false,
+      "stop_trigger_price_available": true,
+      "trigger_contract_defined": true
+    },
+    "vehicle": "STOP_HARVEST"
+  },
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+  "vehicle_comparison": {
+    "limit_baseline": {
+      "current_exact_limit_samples": 4,
+      "local_coverage_exhausted": true,
+      "remaining_exact_limit_samples": 16
+    },
+    "market_vs_stop": {
+      "closer_to_4x_active_path": "STOP_HARVEST",
+      "market_expectancy_jpy_per_trade": 367.0559,
+      "market_net_jpy": 3303.5031,
+      "market_sample_count": 9,
+      "stop_expectancy_jpy_per_trade": 901.0337,
+      "stop_net_jpy": 6307.2357,
+      "stop_sample_count": 7,
+      "why": [
+        "STOP_HARVEST has explicit stop trigger/order prices while MARKET_HARVEST lacks requested entry prices.",
+        "STOP_HARVEST observed net and expectancy exceed MARKET_HARVEST in the current packet.",
+        "Both vehicles remain blocked until exact S5 bid/ask replay and risk/invalidation contracts exist."
+      ]
+    },
+    "recommended_active_path": "EVIDENCE_ACQUISITION:STOP_HARVEST_EXACT_REPLAY_BEFORE_SCOUT_OR_OPERATOR_REVIEW",
+    "scout_or_operator_review_now": false,
+    "why_not_scout_yet": "Risk/invalidation and exact S5 bid/ask replay are not complete for MARKET_HARVEST or STOP_HARVEST."
+  }
+}
