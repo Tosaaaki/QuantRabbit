@@ -240,7 +240,12 @@ class StrategyProfile:
                 ),
             )
         if entry.status == "WATCH_ONLY":
-            severity = _watch_only_severity(intent, sl_free=sl_free, for_live_send=for_live_send)
+            severity = _watch_only_severity(
+                intent,
+                entry,
+                sl_free=sl_free,
+                for_live_send=for_live_send,
+            )
             return (
                 RiskIssue(
                     "STRATEGY_NOT_ELIGIBLE",
@@ -669,7 +674,13 @@ def _is_reversal_recovery_hedge(metadata: dict[str, Any]) -> bool:
     )
 
 
-def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: bool) -> str:
+def _watch_only_severity(
+    intent: OrderIntent,
+    entry: StrategyProfileEntry,
+    *,
+    sl_free: bool,
+    for_live_send: bool,
+) -> str:
     """Return profile severity for a WATCH_ONLY mined lane.
 
     WATCH_ONLY remains a hard live blocker for ordinary campaign/mirror lanes:
@@ -685,6 +696,8 @@ def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: b
     if not sl_free:
         return "BLOCK"
     metadata = intent.metadata or {}
+    if entry.method is None and _oanda_campaign_firepower_new_vehicle_supported(intent):
+        return "WARN"
     if (
         metadata.get("forecast_seed")
         and intent.order_type != OrderType.MARKET
