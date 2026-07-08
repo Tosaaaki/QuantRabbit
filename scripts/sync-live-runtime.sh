@@ -124,6 +124,7 @@ docs/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md|\
 docs/eurusd_short_breakout_failure_proof_floor_update.md|\
 docs/eurusd_short_breakout_failure_scout_plan.md|\
 docs/eurusd_short_breakout_failure_spread_slippage_proof.md|\
+docs/eurusd_short_breakout_failure_stop_harvest_replay.md|\
 docs/eurusd_short_breakout_failure_vehicle_split_diagnosis.md|\
 docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
@@ -150,6 +151,7 @@ data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json|\
 data/eurusd_short_breakout_failure_proof_floor_update.json|\
 data/eurusd_short_breakout_failure_scout_plan.json|\
 data/eurusd_short_breakout_failure_spread_slippage_proof.json|\
+data/eurusd_short_breakout_failure_stop_harvest_replay.json|\
 data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json|\
 data/harvest_live_grade_path.json|\
 data/historical_only_to_fresh_proof_replay.json|\

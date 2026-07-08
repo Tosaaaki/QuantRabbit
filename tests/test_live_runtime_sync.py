@@ -146,6 +146,12 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
             _commit_file(
                 repo,
+                "data/eurusd_short_breakout_failure_stop_harvest_replay.json",
+                '{"status":"old"}\n',
+                "track eurusd stop harvest replay",
+            )
+            _commit_file(
+                repo,
                 "docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
                 "old eurusd replay\n",
                 "track eurusd replay report",
@@ -162,6 +168,12 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 "old eurusd market stop diagnosis\n",
                 "track eurusd market stop diagnosis report",
             )
+            _commit_file(
+                repo,
+                "docs/eurusd_short_breakout_failure_stop_harvest_replay.md",
+                "old eurusd stop harvest replay\n",
+                "track eurusd stop harvest replay report",
+            )
             _run(["git", "checkout", "-b", "feature"], cwd=repo)
             _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
             _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
@@ -176,6 +188,9 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             (live / "data" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json").write_text(
                 '{"status":"runtime"}\n'
             )
+            (live / "data" / "eurusd_short_breakout_failure_stop_harvest_replay.json").write_text(
+                '{"status":"runtime"}\n'
+            )
             (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").write_text(
                 "runtime eurusd replay\n"
             )
@@ -184,6 +199,9 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
             (live / "docs" / "eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md").write_text(
                 "runtime eurusd market stop diagnosis\n"
+            )
+            (live / "docs" / "eurusd_short_breakout_failure_stop_harvest_replay.md").write_text(
+                "runtime eurusd stop harvest replay\n"
             )
 
             result = _sync(repo, live, source_branch="feature")
@@ -207,6 +225,10 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 '{"status":"runtime"}\n',
             )
             self.assertEqual(
+                (live / "data" / "eurusd_short_breakout_failure_stop_harvest_replay.json").read_text(),
+                '{"status":"runtime"}\n',
+            )
+            self.assertEqual(
                 (live / "docs" / "eurusd_short_breakout_failure_limit_s5_bidask_replay.md").read_text(),
                 "runtime eurusd replay\n",
             )
@@ -219,6 +241,10 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 "runtime eurusd market stop diagnosis\n",
             )
             self.assertEqual(
+                (live / "docs" / "eurusd_short_breakout_failure_stop_harvest_replay.md").read_text(),
+                "runtime eurusd stop harvest replay\n",
+            )
+            self.assertEqual(
                 {line.strip() for line in _git(live, "status", "--short").splitlines()},
                 {
                     "M data/active_trader_contract.json",
@@ -226,9 +252,11 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                     "M data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
                     "M data/eurusd_short_breakout_failure_limit_sample_mining.json",
                     "M data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json",
+                    "M data/eurusd_short_breakout_failure_stop_harvest_replay.json",
                     "M docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md",
                     "M docs/eurusd_short_breakout_failure_limit_sample_mining.md",
                     "M docs/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.md",
+                    "M docs/eurusd_short_breakout_failure_stop_harvest_replay.md",
                 },
             )
 

@@ -118,6 +118,7 @@ docs/as_proof_pack_queue.md|\
 docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
 docs/audjpy_short_breakout_failure_repair_proof.md|\
 docs/eurusd_short_breakout_failure_scout_plan.md|\
+docs/eurusd_short_breakout_failure_stop_harvest_replay.md|\
 docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
 docs/portfolio_4x_path_planner.md|\
@@ -134,6 +135,7 @@ data/as_lane_candidate_board.json|\
 data/as_proof_pack_queue.json|\
 data/audjpy_short_breakout_failure_limit_proof_pack.json|\
 data/audjpy_short_breakout_failure_repair_proof.json|\
+data/eurusd_short_breakout_failure_stop_harvest_replay.json|\
 data/harvest_live_grade_path.json|\
 data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\

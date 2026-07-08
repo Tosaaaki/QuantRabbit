@@ -1,0 +1,1177 @@
+{
+  "bidask_replay_status": "S5_TRIGGER_OR_TP_PATH_INCOMPLETE_STILL_BLOCKED",
+  "do_not_do": [
+    "Do not send live orders.",
+    "Do not stage live orders.",
+    "Do not cancel orders.",
+    "Do not close positions.",
+    "Do not modify broker state, TP, SL, or launchd.",
+    "Do not relax gates.",
+    "Do not mix STOP samples into LIMIT proof.",
+    "Do not mix MARKET samples into STOP proof.",
+    "Do not mix market-close losses into TP/HARVEST proof.",
+    "Do not hide negative expectancy or month-scale replay negatives.",
+    "Do not backsolve lot size from the 4x deficit.",
+    "Do not infer or invent an operator decision.",
+    "Do not print, copy, or persist secrets."
+  ],
+  "generated_at_utc": "2026-07-08T09:27:13.917942Z",
+  "invalidation_model": {
+    "can_define_observed_replay_invalidations": true,
+    "can_define_scout_or_live_invalidations": false,
+    "observed_path_metrics": {
+      "post_trigger_mae_pips": {
+        "max": 61.1,
+        "median": 10.4,
+        "min": 1.6
+      },
+      "pre_trigger_max_ask_high_above_trigger_pips": {
+        "max": 5.0,
+        "median": 1.8,
+        "min": 1.4
+      }
+    },
+    "observed_replay_rules": [
+      "Accept only EUR_USD SHORT BREAKOUT_FAILURE rows with entry_order_type=STOP_ORDER and exit_reason=TAKE_PROFIT_ORDER.",
+      "Require independent S5 bid/ask trigger touch: SHORT STOP trigger passes only when bid_low <= trigger after order creation.",
+      "Require independent S5 bid/ask TP touch: SHORT attached TP passes only when ask_low <= active TAKE_PROFIT_ORDER after trigger.",
+      "Replay the active TP schedule from OANDA TAKE_PROFIT_ORDER creation/replacement rows; do not assume final TP was active from entry.",
+      "Reject MARKET_ORDER/LIMIT_ORDER rows and any MARKET_ORDER_TRADE_CLOSE exit from this STOP proof.",
+      "Mark replay invalid if trigger touch, active TP touch, OANDA bid/ask, or positive realized P/L is missing."
+    ],
+    "required_next_contract_fields": [
+      "pre_trigger_stop_chase_filter_from_out_of_sample_S5_path",
+      "post_trigger_invalidation_before_TP_from_out_of_sample_S5_path",
+      "max_allowed_trigger_slippage_pips_from_replay_distribution",
+      "equity_derived_max_loss_cap_jpy_for_scout",
+      "forecast_support_and_stop_entry_timing_rule_for_STOP_vehicle"
+    ],
+    "scout_gap": "The 7 historical OANDA transaction winners are useful broker-side evidence, but they do not by themselves prove a complete independent S5 trigger-to-TP path or define a production pre-trigger stop-chase cutoff, max trigger slippage, post-trigger invalidation level, or max loss cap.",
+    "status": "S5_PATH_REPLAYED_BUT_SCOUT_INVALIDATION_NOT_DEFINED"
+  },
+  "live_permission_allowed": false,
+  "live_side_effects": [],
+  "max_loss_cap_model": {
+    "observed_worst_path_adverse_jpy": 2628.0174,
+    "per_trade": {
+      "471292": {
+        "observed_path_adverse_jpy_at_mae": 558.4447,
+        "observed_post_trigger_mae_pips": 1.6
+      },
+      "471306": {
+        "observed_path_adverse_jpy_at_mae": 2145.9877,
+        "observed_post_trigger_mae_pips": 10.4
+      },
+      "471345": {
+        "observed_path_adverse_jpy_at_mae": 374.2564,
+        "observed_post_trigger_mae_pips": 11.8
+      },
+      "471403": {
+        "observed_path_adverse_jpy_at_mae": 63.5438,
+        "observed_post_trigger_mae_pips": 2.0
+      },
+      "471460": {
+        "observed_path_adverse_jpy_at_mae": 53.995,
+        "observed_post_trigger_mae_pips": 3.4
+      },
+      "471492": {
+        "observed_path_adverse_jpy_at_mae": 2628.0174,
+        "observed_post_trigger_mae_pips": 61.1
+      },
+      "471495": {
+        "observed_path_adverse_jpy_at_mae": 2628.0174,
+        "observed_post_trigger_mae_pips": 61.1
+      }
+    },
+    "production_max_loss_cap_defined": false,
+    "reason": "Observed MAE is useful for scout design, but production cap must be equity-derived and validated through RiskEngine/LiveOrderGateway before any SCOUT_READY_CHECK.",
+    "status": "OBSERVED_PATH_ONLY_NOT_SCOUT_READY"
+  },
+  "net_expectancy_after_bidask_slippage": 901.0337,
+  "next_read_only_actions": [
+    "Define STOP-specific pre-trigger stop-chase and post-trigger invalidation thresholds from a larger out-of-sample S5 set.",
+    "Define max trigger slippage and max loss cap from current risk budget before SCOUT_READY_CHECK.",
+    "Keep STOP_HARVEST separate from LIMIT_HARVEST and MARKET_HARVEST proof vehicles.",
+    "Refresh proof queue, 4x planner, harvest path, active contract, and operator-review material read-only after STOP contract fields exist.",
+    "Keep NEGATIVE_EXPECTANCY_ACTIVE, MARKET_CLOSE_LEAK_PRESENT, and MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE visible until refreshed artifacts clear them."
+  ],
+  "observed_stop_summary": {
+    "expectancy_jpy_per_trade": 901.0337,
+    "losses": 0,
+    "net_jpy": 6307.2357,
+    "sample_count": 7,
+    "wins": 7
+  },
+  "proof_boundary_checks": {
+    "limit_samples_mixed_in": false,
+    "market_close_losses_mixed_in": false,
+    "market_samples_mixed_in": false,
+    "sample_trade_ids": [
+      "471292",
+      "471306",
+      "471345",
+      "471403",
+      "471460",
+      "471492",
+      "471495"
+    ],
+    "stop_samples_only": true
+  },
+  "read_only": true,
+  "remaining_blockers": [
+    {
+      "code": "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+      "evidence": "At least one STOP sample lacks independent S5 trigger touch or active TP touch.",
+      "status": "BLOCKING_SCOUT_AND_LIVE_PERMISSION"
+    },
+    {
+      "code": "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+      "evidence": "OANDA transaction fullPrice confirms TP exits, but independent S5 bid/ask candles miss active TP touches for trades ['471306', '471492', '471495'].",
+      "status": "BLOCKING_SCOUT_AND_LIVE_PERMISSION"
+    },
+    {
+      "code": "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
+      "evidence": "STOP_HARVEST has only 7 STOP samples; even a fully reconstructed replay would not be live-grade proof.",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "code": "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+      "evidence": "Pre-trigger stop-chase, max trigger slippage, post-trigger invalidation, and max loss cap are not production-defined.",
+      "status": "BLOCKING_SCOUT"
+    },
+    {
+      "code": "GLOBAL_NEGATIVE_EXPECTANCY_ACTIVE",
+      "evidence": "This STOP packet does not clear global capture-economics or self-improvement blockers.",
+      "status": "VISIBLE_GLOBAL_BLOCKER"
+    },
+    {
+      "code": "MARKET_CLOSE_LEAK_PRESENT_EXCLUDED",
+      "evidence": "Market-close leakage remains excluded from this STOP/TP proof and must not be mixed into HARVEST proof.",
+      "status": "VISIBLE_TARGET_SHAPE_BLOCKER"
+    },
+    {
+      "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+      "evidence": "Existing profitability/harvest artifacts keep the month-scale residual blocker visible.",
+      "status": "VISIBLE_GLOBAL_BLOCKER"
+    },
+    {
+      "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+      "evidence": "Normal routing remains blocked until guardian receipt/operator-review state is cleared by its own contract.",
+      "status": "BLOCKING_ROUTING"
+    },
+    {
+      "code": "NO_LIVE_READY_PORTFOLIO",
+      "evidence": "Portfolio path still has no live-ready permission for STOP_HARVEST.",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    },
+    {
+      "code": "NO_FRESH_GATEWAY_PERMISSION",
+      "evidence": "No verifier/gateway packet exists for STOP_HARVEST.",
+      "status": "BLOCKING_LIVE_PERMISSION"
+    }
+  ],
+  "replay_losses": 0,
+  "replay_method": {
+    "kind": "independent_s5_bidask_trigger_to_tp_path_replay",
+    "observed_transaction_cross_check": "OANDA ORDER_FILL fullPrice bid/ask and realized P/L remain the cost-inclusive ledger truth.",
+    "result_interpretation": "Observed OANDA transaction replay is positive (7/7 wins), but independent S5 path replay only reconstructs 4/7 active TP touches after confirming 7/7 STOP triggers. Treat STOP_HARVEST as failed/blocked before SCOUT.",
+    "short_stop_trigger_stream": "bid_low_lte_stop_trigger",
+    "short_take_profit_stream": "ask_low_lte_active_tp",
+    "tp_schedule_model": "OANDA TAKE_PROFIT_ORDER replacements by trade_id; active TP changes over time."
+  },
+  "replay_rows": [
+    {
+      "entry_ask": 1.16085,
+      "entry_bid": 1.16077,
+      "entry_candle_bid_low": 1.16071,
+      "entry_candle_start_utc": "2026-05-20T00:38:15.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471292",
+      "entry_half_spread_cost_jpy": 139.9534,
+      "entry_order_created_at_utc": "2026-05-20T00:37:59.434906783Z",
+      "entry_order_id": "471291",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16077,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-20T00:38:17.225613808Z",
+      "exit_ask": 1.15946,
+      "exit_bid": 1.15938,
+      "exit_candle_ask_low": 1.15949,
+      "exit_candle_start_utc": "2026-05-20T05:47:25.000000000Z",
+      "exit_candle_tp_touch": false,
+      "exit_half_spread_cost_jpy": 139.891,
+      "exit_price": 1.15946,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-20T05:47:25.633573733Z",
+      "exit_transaction_id": "471296",
+      "final_tp_order_id": "471295",
+      "final_tp_order_price": 1.15946,
+      "holding_max_ask_high": 1.16093,
+      "holding_min_ask_low": 1.15944,
+      "initial_take_profit_on_fill_price": 1.1564,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 558.4447,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 349.027947,
+      "pips_to_exit": 13.1,
+      "post_trigger_mae_pips": 1.6,
+      "post_trigger_mfe_pips": 13.3,
+      "pre_trigger_max_ask_high_above_trigger_pips": 1.6,
+      "quote_pl_usd": 28.82,
+      "realized_pl_jpy": 4572.2661,
+      "s5_fill_lag_seconds_from_trigger_touch": 17.226,
+      "s5_first_tp_touch_after_trigger_utc": "2026-05-20T05:47:30.000000000Z",
+      "s5_first_tp_touch_ask_low": 1.15946,
+      "s5_first_tp_touch_order_id": "471295",
+      "s5_first_tp_touch_price": 1.15946,
+      "s5_first_trigger_touch_utc": "2026-05-20T00:38:00.000000000Z",
+      "s5_replay_loss": false,
+      "s5_replay_win": true,
+      "s5_spread_pips_avg": 1.5888,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": null,
+      "s5_tp_touch_after_trigger_pass": true,
+      "s5_tp_touch_lag_seconds_from_exit": 4.366,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.4,
+      "s5_trigger_touch_bid_low": 1.16073,
+      "s5_trigger_touch_lag_seconds_from_order": 0.565,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-20T00:38:17.225613808Z",
+          "order_id": "471293",
+          "price": 1.1564,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-20T03:21:51.844689867Z",
+          "order_id": "471295",
+          "price": 1.15946,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471292",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16077,
+      "units": -22000,
+      "units_abs": 22000
+    },
+    {
+      "entry_ask": 1.15968,
+      "entry_bid": 1.1596,
+      "entry_candle_bid_low": 1.15956,
+      "entry_candle_start_utc": "2026-05-20T11:08:05.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471306",
+      "entry_half_spread_cost_jpy": 82.7044,
+      "entry_order_created_at_utc": "2026-05-20T11:07:35.787950348Z",
+      "entry_order_id": "471305",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.1596,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-20T11:08:07.582094736Z",
+      "exit_ask": 1.15922,
+      "exit_bid": 1.15914,
+      "exit_candle_ask_low": 1.15926,
+      "exit_candle_start_utc": "2026-05-20T13:18:05.000000000Z",
+      "exit_candle_tp_touch": false,
+      "exit_half_spread_cost_jpy": 82.7034,
+      "exit_price": 1.15922,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-20T13:18:06.658285787Z",
+      "exit_transaction_id": "471324",
+      "final_tp_order_id": "471323",
+      "final_tp_order_price": 1.15922,
+      "holding_max_ask_high": 1.16064,
+      "holding_min_ask_low": 1.15926,
+      "initial_take_profit_on_fill_price": 1.15181,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 2145.9877,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 206.344974,
+      "pips_to_exit": 3.8,
+      "post_trigger_mae_pips": 10.4,
+      "post_trigger_mfe_pips": 3.4,
+      "pre_trigger_max_ask_high_above_trigger_pips": 1.6,
+      "quote_pl_usd": 4.94,
+      "realized_pl_jpy": 784.1109,
+      "s5_fill_lag_seconds_from_trigger_touch": 27.582,
+      "s5_first_tp_touch_after_trigger_utc": null,
+      "s5_first_tp_touch_ask_low": null,
+      "s5_first_tp_touch_order_id": null,
+      "s5_first_tp_touch_price": null,
+      "s5_first_trigger_touch_utc": "2026-05-20T11:07:40.000000000Z",
+      "s5_replay_loss": true,
+      "s5_replay_win": false,
+      "s5_spread_pips_avg": 1.5881,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": 0.4,
+      "s5_tp_touch_after_trigger_pass": false,
+      "s5_tp_touch_lag_seconds_from_exit": null,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.2,
+      "s5_trigger_touch_bid_low": 1.15958,
+      "s5_trigger_touch_lag_seconds_from_order": 4.212,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-20T11:08:07.582094736Z",
+          "order_id": "471307",
+          "price": 1.15181,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-20T13:07:33.901041815Z",
+          "order_id": "471323",
+          "price": 1.15922,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471306",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.1596,
+      "units": -13000,
+      "units_abs": 13000
+    },
+    {
+      "entry_ask": 1.16252,
+      "entry_bid": 1.16244,
+      "entry_candle_bid_low": 1.16239,
+      "entry_candle_start_utc": "2026-05-20T23:22:00.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471345",
+      "entry_half_spread_cost_jpy": 12.7091,
+      "entry_order_created_at_utc": "2026-05-20T23:08:12.222253228Z",
+      "entry_order_id": "471344",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16244,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-20T23:22:03.834877942Z",
+      "exit_ask": 1.1623,
+      "exit_bid": 1.16222,
+      "exit_candle_ask_low": 1.16234,
+      "exit_candle_start_utc": "2026-05-21T02:19:25.000000000Z",
+      "exit_candle_tp_touch": false,
+      "exit_half_spread_cost_jpy": 12.7121,
+      "exit_price": 1.1623,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-21T02:19:26.467117092Z",
+      "exit_transaction_id": "471360",
+      "final_tp_order_id": "471359",
+      "final_tp_order_price": 1.1623,
+      "holding_max_ask_high": 1.16362,
+      "holding_min_ask_low": 1.16227,
+      "initial_take_profit_on_fill_price": 1.16169,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 374.2564,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 31.716643,
+      "pips_to_exit": 1.4,
+      "post_trigger_mae_pips": 11.8,
+      "post_trigger_mfe_pips": 1.7,
+      "pre_trigger_max_ask_high_above_trigger_pips": 3.5,
+      "quote_pl_usd": 0.28,
+      "realized_pl_jpy": 44.4033,
+      "s5_fill_lag_seconds_from_trigger_touch": 198.835,
+      "s5_first_tp_touch_after_trigger_utc": "2026-05-21T02:19:45.000000000Z",
+      "s5_first_tp_touch_ask_low": 1.16229,
+      "s5_first_tp_touch_order_id": "471359",
+      "s5_first_tp_touch_price": 1.1623,
+      "s5_first_trigger_touch_utc": "2026-05-20T23:18:45.000000000Z",
+      "s5_replay_loss": false,
+      "s5_replay_win": true,
+      "s5_spread_pips_avg": 1.6059,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": null,
+      "s5_tp_touch_after_trigger_pass": true,
+      "s5_tp_touch_lag_seconds_from_exit": 18.533,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.0,
+      "s5_trigger_touch_bid_low": 1.16244,
+      "s5_trigger_touch_lag_seconds_from_order": 632.778,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-20T23:22:03.834877942Z",
+          "order_id": "471346",
+          "price": 1.16169,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-20T23:46:45.877034644Z",
+          "order_id": "471349",
+          "price": 1.16174,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-20T23:47:02.369601753Z",
+          "order_id": "471351",
+          "price": 1.1567,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-21T00:03:53.743347571Z",
+          "order_id": "471353",
+          "price": 1.16164,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-21T00:05:11.312995934Z",
+          "order_id": "471355",
+          "price": 1.15669,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-21T00:24:02.119294885Z",
+          "order_id": "471357",
+          "price": 1.16164,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-21T00:28:18.463351773Z",
+          "order_id": "471359",
+          "price": 1.1623,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471345",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16244,
+      "units": -2000,
+      "units_abs": 2000
+    },
+    {
+      "entry_ask": 1.16015,
+      "entry_bid": 1.16007,
+      "entry_candle_bid_low": 1.15999,
+      "entry_candle_start_utc": "2026-05-21T12:56:30.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471403",
+      "entry_half_spread_cost_jpy": 12.7315,
+      "entry_order_created_at_utc": "2026-05-21T12:51:21.353820261Z",
+      "entry_order_id": "471402",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16007,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-21T12:56:34.058814784Z",
+      "exit_ask": 1.1597,
+      "exit_bid": 1.15962,
+      "exit_candle_ask_low": 1.1597,
+      "exit_candle_start_utc": "2026-05-21T13:08:00.000000000Z",
+      "exit_candle_tp_touch": true,
+      "exit_half_spread_cost_jpy": 12.7342,
+      "exit_price": 1.1597,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-21T13:08:04.101809246Z",
+      "exit_transaction_id": "471407",
+      "final_tp_order_id": "471406",
+      "final_tp_order_price": 1.15971,
+      "holding_max_ask_high": 1.16027,
+      "holding_min_ask_low": 1.1597,
+      "initial_take_profit_on_fill_price": 1.15814,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 63.5438,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 31.771919,
+      "pips_to_exit": 3.7,
+      "post_trigger_mae_pips": 2.0,
+      "post_trigger_mfe_pips": 3.7,
+      "pre_trigger_max_ask_high_above_trigger_pips": 5.0,
+      "quote_pl_usd": 0.74,
+      "realized_pl_jpy": 117.5561,
+      "s5_fill_lag_seconds_from_trigger_touch": 9.059,
+      "s5_first_tp_touch_after_trigger_utc": "2026-05-21T13:08:00.000000000Z",
+      "s5_first_tp_touch_ask_low": 1.1597,
+      "s5_first_tp_touch_order_id": "471406",
+      "s5_first_tp_touch_price": 1.15971,
+      "s5_first_trigger_touch_utc": "2026-05-21T12:56:25.000000000Z",
+      "s5_replay_loss": false,
+      "s5_replay_win": true,
+      "s5_spread_pips_avg": 1.6209,
+      "s5_spread_pips_max": 1.9,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": null,
+      "s5_tp_touch_after_trigger_pass": true,
+      "s5_tp_touch_lag_seconds_from_exit": -4.102,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.3,
+      "s5_trigger_touch_bid_low": 1.16004,
+      "s5_trigger_touch_lag_seconds_from_order": 303.646,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-21T12:56:34.058814784Z",
+          "order_id": "471404",
+          "price": 1.15814,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-21T13:07:59.380926014Z",
+          "order_id": "471406",
+          "price": 1.15971,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471403",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16007,
+      "units": -2000,
+      "units_abs": 2000
+    },
+    {
+      "entry_ask": 1.16152,
+      "entry_bid": 1.16144,
+      "entry_candle_bid_low": 1.16137,
+      "entry_candle_start_utc": "2026-05-22T05:20:20.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471460",
+      "entry_half_spread_cost_jpy": 6.3635,
+      "entry_order_created_at_utc": "2026-05-22T05:15:32.788832882Z",
+      "entry_order_id": "471459",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16144,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-22T05:20:20.654408689Z",
+      "exit_ask": 1.16086,
+      "exit_bid": 1.16078,
+      "exit_candle_ask_low": 1.16083,
+      "exit_candle_start_utc": "2026-05-22T05:58:15.000000000Z",
+      "exit_candle_tp_touch": true,
+      "exit_half_spread_cost_jpy": 6.3651,
+      "exit_price": 1.16086,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-22T05:58:19.048214117Z",
+      "exit_transaction_id": "471462",
+      "final_tp_order_id": "471461",
+      "final_tp_order_price": 1.16086,
+      "holding_max_ask_high": 1.16178,
+      "holding_min_ask_low": 1.16083,
+      "initial_take_profit_on_fill_price": 1.16086,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 53.995,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 15.880879,
+      "pips_to_exit": 5.8,
+      "post_trigger_mae_pips": 3.4,
+      "post_trigger_mfe_pips": 6.1,
+      "pre_trigger_max_ask_high_above_trigger_pips": 1.8,
+      "quote_pl_usd": 0.58,
+      "realized_pl_jpy": 92.1091,
+      "s5_fill_lag_seconds_from_trigger_touch": 270.654,
+      "s5_first_tp_touch_after_trigger_utc": "2026-05-22T05:58:15.000000000Z",
+      "s5_first_tp_touch_ask_low": 1.16083,
+      "s5_first_tp_touch_order_id": "471461",
+      "s5_first_tp_touch_price": 1.16086,
+      "s5_first_trigger_touch_utc": "2026-05-22T05:15:50.000000000Z",
+      "s5_replay_loss": false,
+      "s5_replay_win": true,
+      "s5_spread_pips_avg": 1.5573,
+      "s5_spread_pips_max": 1.8,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": null,
+      "s5_tp_touch_after_trigger_pass": true,
+      "s5_tp_touch_lag_seconds_from_exit": -4.048,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.0,
+      "s5_trigger_touch_bid_low": 1.16144,
+      "s5_trigger_touch_lag_seconds_from_order": 17.211,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-22T05:20:20.654408689Z",
+          "order_id": "471461",
+          "price": 1.16086,
+          "reason": "ON_FILL"
+        }
+      ],
+      "trade_id": "471460",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16144,
+      "units": -1000,
+      "units_abs": 1000
+    },
+    {
+      "entry_ask": 1.16021,
+      "entry_bid": 1.16013,
+      "entry_candle_bid_low": 1.16008,
+      "entry_candle_start_utc": "2026-05-22T15:30:40.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471492",
+      "entry_half_spread_cost_jpy": 17.1861,
+      "entry_order_created_at_utc": "2026-05-22T15:30:42.712807333Z",
+      "entry_order_id": "471491",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16013,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-22T15:30:43.566015322Z",
+      "exit_ask": 1.15932,
+      "exit_bid": 1.15924,
+      "exit_candle_ask_low": 1.15936,
+      "exit_candle_start_utc": "2026-05-28T03:42:55.000000000Z",
+      "exit_candle_tp_touch": false,
+      "exit_half_spread_cost_jpy": 17.2392,
+      "exit_price": 1.15932,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-28T03:42:59.092300026Z",
+      "exit_transaction_id": "471707",
+      "final_tp_order_id": "471688",
+      "final_tp_order_price": 1.15933,
+      "holding_max_ask_high": 1.16624,
+      "holding_min_ask_low": 1.15935,
+      "initial_take_profit_on_fill_price": 1.1583,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 2628.0174,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 43.011741,
+      "pips_to_exit": 8.1,
+      "post_trigger_mae_pips": 61.1,
+      "post_trigger_mfe_pips": 7.8,
+      "pre_trigger_max_ask_high_above_trigger_pips": 1.9,
+      "quote_pl_usd": 2.187,
+      "realized_pl_jpy": 348.3951,
+      "s5_fill_lag_seconds_from_trigger_touch": -1.434,
+      "s5_first_tp_touch_after_trigger_utc": null,
+      "s5_first_tp_touch_ask_low": null,
+      "s5_first_tp_touch_order_id": null,
+      "s5_first_tp_touch_price": null,
+      "s5_first_trigger_touch_utc": "2026-05-22T15:30:45.000000000Z",
+      "s5_replay_loss": true,
+      "s5_replay_win": false,
+      "s5_spread_pips_avg": 1.7136,
+      "s5_spread_pips_max": 10.0,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": 0.2,
+      "s5_tp_touch_after_trigger_pass": false,
+      "s5_tp_touch_lag_seconds_from_exit": null,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.3,
+      "s5_trigger_touch_bid_low": 1.1601,
+      "s5_trigger_touch_lag_seconds_from_order": 2.287,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-22T15:30:43.566015322Z",
+          "order_id": "471493",
+          "price": 1.1583,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-25T01:50:38.916219108Z",
+          "order_id": "471505",
+          "price": 1.15505,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T03:29:49.937896373Z",
+          "order_id": "471511",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T05:27:54.297464563Z",
+          "order_id": "471517",
+          "price": 1.15687,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T05:47:58.745799205Z",
+          "order_id": "471523",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T07:08:07.419234432Z",
+          "order_id": "471529",
+          "price": 1.15683,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T07:47:34.309161121Z",
+          "order_id": "471535",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T08:51:19.800731558Z",
+          "order_id": "471541",
+          "price": 1.15675,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T12:28:13.793187388Z",
+          "order_id": "471547",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T14:47:54.855634607Z",
+          "order_id": "471553",
+          "price": 1.15697,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T15:09:09.462025583Z",
+          "order_id": "471559",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T15:27:56.324039632Z",
+          "order_id": "471565",
+          "price": 1.15697,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T16:09:01.128322181Z",
+          "order_id": "471571",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T05:08:55.046744294Z",
+          "order_id": "471598",
+          "price": 1.15776,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T05:28:49.651282065Z",
+          "order_id": "471606",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T07:08:57.459933839Z",
+          "order_id": "471616",
+          "price": 1.15766,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T07:49:23.075973990Z",
+          "order_id": "471627",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T08:29:38.103692171Z",
+          "order_id": "471637",
+          "price": 1.15766,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T09:28:49.736212595Z",
+          "order_id": "471648",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T12:49:41.725584206Z",
+          "order_id": "471669",
+          "price": 1.15753,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T18:48:56.154045556Z",
+          "order_id": "471688",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471492",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16013,
+      "units": -2700,
+      "units_abs": 2700
+    },
+    {
+      "entry_ask": 1.16021,
+      "entry_bid": 1.16013,
+      "entry_candle_bid_low": 1.16009,
+      "entry_candle_start_utc": "2026-05-22T15:49:55.000000000Z",
+      "entry_candle_trigger_touch": true,
+      "entry_fill_transaction_id": "471495",
+      "entry_half_spread_cost_jpy": 17.1926,
+      "entry_order_created_at_utc": "2026-05-22T15:49:52.297801913Z",
+      "entry_order_id": "471494",
+      "entry_order_type": "STOP_ORDER",
+      "entry_price": 1.16013,
+      "entry_spread_pips": 0.8,
+      "entry_timestamp_utc": "2026-05-22T15:49:55.655156327Z",
+      "exit_ask": 1.15932,
+      "exit_bid": 1.15924,
+      "exit_candle_ask_low": 1.15936,
+      "exit_candle_start_utc": "2026-05-28T03:42:55.000000000Z",
+      "exit_candle_tp_touch": false,
+      "exit_half_spread_cost_jpy": 17.2392,
+      "exit_price": 1.15932,
+      "exit_reason": "TAKE_PROFIT_ORDER",
+      "exit_spread_pips": 0.8,
+      "exit_timestamp_utc": "2026-05-28T03:42:59.092300026Z",
+      "exit_transaction_id": "471708",
+      "final_tp_order_id": "471686",
+      "final_tp_order_price": 1.15933,
+      "holding_max_ask_high": 1.16624,
+      "holding_min_ask_low": 1.15935,
+      "initial_take_profit_on_fill_price": 1.1583,
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+      "limit_sample_mixed_in": false,
+      "market_close_mixed_in": false,
+      "market_sample_mixed_in": false,
+      "observed_bidask_cost_inclusive_pass": true,
+      "observed_path_adverse_jpy_at_mae": 2628.0174,
+      "observed_trigger_fill_slippage_pips": 0.0,
+      "pip_value_jpy_per_pip": 43.011741,
+      "pips_to_exit": 8.1,
+      "post_trigger_mae_pips": 61.1,
+      "post_trigger_mfe_pips": 7.8,
+      "pre_trigger_max_ask_high_above_trigger_pips": 1.4,
+      "quote_pl_usd": 2.187,
+      "realized_pl_jpy": 348.3951,
+      "s5_fill_lag_seconds_from_trigger_touch": 0.655,
+      "s5_first_tp_touch_after_trigger_utc": null,
+      "s5_first_tp_touch_ask_low": null,
+      "s5_first_tp_touch_order_id": null,
+      "s5_first_tp_touch_price": null,
+      "s5_first_trigger_touch_utc": "2026-05-22T15:49:55.000000000Z",
+      "s5_replay_loss": true,
+      "s5_replay_win": false,
+      "s5_spread_pips_avg": 1.7141,
+      "s5_spread_pips_max": 10.0,
+      "s5_spread_pips_min": 1.4,
+      "s5_tp_miss_distance_pips": 0.2,
+      "s5_tp_touch_after_trigger_pass": false,
+      "s5_tp_touch_lag_seconds_from_exit": null,
+      "s5_trigger_candle_bid_low_below_trigger_pips": 0.4,
+      "s5_trigger_touch_bid_low": 1.16009,
+      "s5_trigger_touch_lag_seconds_from_order": 2.702,
+      "s5_trigger_touch_pass": true,
+      "source": "data/execution_ledger.db:oanda_transactions + logs/replay/oanda_history S5 BA",
+      "tp_schedule": [
+        {
+          "active_from_utc": "2026-05-22T15:49:55.655156327Z",
+          "order_id": "471496",
+          "price": 1.1583,
+          "reason": "ON_FILL"
+        },
+        {
+          "active_from_utc": "2026-05-25T01:50:37.041610646Z",
+          "order_id": "471503",
+          "price": 1.15505,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T03:29:49.573141074Z",
+          "order_id": "471509",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T05:27:54.093925816Z",
+          "order_id": "471515",
+          "price": 1.15687,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T05:47:58.551740290Z",
+          "order_id": "471521",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T07:08:06.166870250Z",
+          "order_id": "471527",
+          "price": 1.15683,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T07:47:34.108683092Z",
+          "order_id": "471533",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T08:51:19.530300102Z",
+          "order_id": "471539",
+          "price": 1.15675,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T12:28:13.589068154Z",
+          "order_id": "471545",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T14:47:54.652023114Z",
+          "order_id": "471551",
+          "price": 1.15697,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T15:09:09.216175640Z",
+          "order_id": "471557",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T15:27:56.120527064Z",
+          "order_id": "471563",
+          "price": 1.15697,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-25T16:09:00.909050067Z",
+          "order_id": "471569",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T05:08:54.814526655Z",
+          "order_id": "471596",
+          "price": 1.15776,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T05:28:49.380000169Z",
+          "order_id": "471604",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T07:08:57.234567193Z",
+          "order_id": "471614",
+          "price": 1.15766,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T07:49:22.837769624Z",
+          "order_id": "471625",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T08:29:37.872260360Z",
+          "order_id": "471635",
+          "price": 1.15766,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T09:28:49.438994464Z",
+          "order_id": "471646",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T12:49:41.406503045Z",
+          "order_id": "471667",
+          "price": 1.15753,
+          "reason": "REPLACEMENT"
+        },
+        {
+          "active_from_utc": "2026-05-27T18:48:55.941807331Z",
+          "order_id": "471686",
+          "price": 1.15933,
+          "reason": "REPLACEMENT"
+        }
+      ],
+      "trade_id": "471495",
+      "trigger_condition": "DEFAULT",
+      "trigger_mode": "TOP_OF_BOOK",
+      "trigger_price": 1.16013,
+      "units": -2700,
+      "units_abs": 2700
+    }
+  ],
+  "replay_sample_count": 7,
+  "replay_wins": 7,
+  "s5_path_replay_summary": {
+    "allowed_s5_touch_lag_seconds_after_exit": 60,
+    "max_observed_path_adverse_jpy": 2628.0174,
+    "post_trigger_mae_pips": {
+      "max": 61.1,
+      "median": 10.4,
+      "min": 1.6
+    },
+    "post_trigger_mfe_pips": {
+      "max": 13.3,
+      "median": 6.1,
+      "min": 1.7
+    },
+    "s5_losses": 3,
+    "s5_tp_path_missing_trade_ids": [
+      "471306",
+      "471492",
+      "471495"
+    ],
+    "s5_tp_touch_after_trigger_count": 4,
+    "s5_trigger_and_tp_path_passed": false,
+    "s5_trigger_missing_trade_ids": [],
+    "s5_trigger_touch_count": 7,
+    "s5_wins": 4,
+    "sample_count": 7,
+    "strict_same_candle_tp_touch_count": 2,
+    "strict_same_candle_trigger_touch_count": 7,
+    "timestamp_alignment_status": "S5_PATH_TOUCH_ORDER_CONFIRMED_WITH_FILL_LAG_VISIBLE"
+  },
+  "s5_transaction_mismatch_summary": {
+    "interpretation": "Observed OANDA ORDER_FILL fullPrice confirms the broker-side TP exits, but independent S5 bid/ask candles do not reconstruct every active-TP touch within the allowed lag. This is a hard SCOUT blocker, not evidence to relax the gate.",
+    "observed_transaction_wins": 7,
+    "s5_tp_miss_distance_pips": {
+      "max": 0.4,
+      "median": 0.2,
+      "min": 0.2
+    },
+    "s5_tp_missing_count": 3,
+    "s5_tp_missing_trade_ids": [
+      "471306",
+      "471492",
+      "471495"
+    ],
+    "status": "OANDA_TRANSACTION_TP_FILLS_NOT_FULLY_RECONSTRUCTED_BY_S5_BA_CANDLES"
+  },
+  "scout_candidate_after_replay": false,
+  "slippage_sensitivity": {
+    "basis": "Observed OANDA transaction bid/ask plus independent S5 trigger/TP path; sensitivity subtracts extra total adverse pips from each trade using realized JPY per pip.",
+    "break_even_extra_total_adverse_slippage_pips": {
+      "max": 13.1,
+      "median": 5.8,
+      "min": 1.4,
+      "per_trade": {
+        "471292": 13.1,
+        "471306": 3.8,
+        "471345": 1.4,
+        "471403": 3.7,
+        "471460": 5.8,
+        "471492": 8.1,
+        "471495": 8.1
+      }
+    },
+    "entry_spread_pips": {
+      "max": 0.8,
+      "median": 0.8,
+      "min": 0.8
+    },
+    "exit_spread_pips": {
+      "max": 0.8,
+      "median": 0.8,
+      "min": 0.8
+    },
+    "observed_trigger_fill_slippage_pips": {
+      "max": 0.0,
+      "median": 0.0,
+      "min": 0.0
+    },
+    "s5_trigger_candle_low_beyond_trigger_pips": {
+      "max": 0.4,
+      "median": 0.3,
+      "min": 0.0
+    },
+    "scenarios": [
+      {
+        "expectancy_jpy_per_trade": 901.0337,
+        "losses": 0,
+        "min_trade_jpy": 44.4033,
+        "net_jpy": 6307.2357,
+        "total_extra_adverse_slippage_pips": 0.0,
+        "wins": 7
+      },
+      {
+        "expectancy_jpy_per_trade": 890.737,
+        "losses": 0,
+        "min_trade_jpy": 41.2316,
+        "net_jpy": 6235.1591,
+        "total_extra_adverse_slippage_pips": 0.1,
+        "wins": 7
+      },
+      {
+        "expectancy_jpy_per_trade": 880.4404,
+        "losses": 0,
+        "min_trade_jpy": 38.06,
+        "net_jpy": 6163.0825,
+        "total_extra_adverse_slippage_pips": 0.2,
+        "wins": 7
+      },
+      {
+        "expectancy_jpy_per_trade": 849.5504,
+        "losses": 0,
+        "min_trade_jpy": 28.545,
+        "net_jpy": 5946.8528,
+        "total_extra_adverse_slippage_pips": 0.5,
+        "wins": 7
+      },
+      {
+        "expectancy_jpy_per_trade": 798.0671,
+        "losses": 0,
+        "min_trade_jpy": 12.6867,
+        "net_jpy": 5586.4699,
+        "total_extra_adverse_slippage_pips": 1.0,
+        "wins": 7
+      },
+      {
+        "expectancy_jpy_per_trade": 746.5838,
+        "losses": 1,
+        "min_trade_jpy": -3.1717,
+        "net_jpy": 5226.0869,
+        "total_extra_adverse_slippage_pips": 1.5,
+        "wins": 6
+      },
+      {
+        "expectancy_jpy_per_trade": 695.1006,
+        "losses": 1,
+        "min_trade_jpy": -19.03,
+        "net_jpy": 4865.704,
+        "total_extra_adverse_slippage_pips": 2.0,
+        "wins": 6
+      }
+    ]
+  },
+  "source_artifacts": [
+    "data/execution_ledger.db",
+    "data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json",
+    "data/eurusd_short_breakout_failure_market_stop_vehicle_diagnosis.json",
+    "logs/replay/oanda_history/20260708T091032Z/EUR_USD/EUR_USD_S5_BA_20260520T003000Z_20260528T035000Z.jsonl.gz"
+  ],
+  "status": "STOP_HARVEST_EXACT_S5_BIDASK_REPLAY_FAILED_BLOCKED",
+  "stop_vehicle_status": "OBSERVED_TRANSACTION_POSITIVE_BUT_EXACT_S5_PATH_REPLAY_FAILED",
+  "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|HARVEST",
+  "trigger_price_available": true
+}
