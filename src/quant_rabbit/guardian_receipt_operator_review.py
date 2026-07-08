@@ -30,6 +30,8 @@ OPERATOR_REVIEW_BLOCKING_DECISIONS = {
     OPERATOR_REQUESTS_KEEP_BLOCKED,
     OPERATOR_REQUESTS_FRESH_REVIEW,
 }
+OPERATOR_REVIEW_CLEARS_RECEIPT = "OPERATOR_REVIEW_CLEARS_RECEIPT"
+OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT = "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT"
 
 NEEDS_OPERATOR_REVIEW = "NEEDS_OPERATOR_REVIEW"
 OPERATOR_REVIEW_ISSUE_CODE = "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW"
@@ -320,10 +322,60 @@ def operator_review_clearance_status(
     if broker_clear is not True:
         return _blocked("BROKER_TRUTH_EMERGENCY_NOT_CLEARED", str(broker_clear))
     return {
-        "status": "OPERATOR_REVIEW_CLEARS_RECEIPT",
+        "status": OPERATOR_REVIEW_CLEARS_RECEIPT,
         "normal_routing_allowed": True,
         "operator_decision": decision,
         "reason": f"operator_decision={decision} is fresh and broker truth clears the reviewed event",
+    }
+
+
+def operator_review_durable_clearance_status(
+    issue: dict[str, Any],
+    review_payload: dict[str, Any] | None,
+    *,
+    broker_snapshot_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not receipt_requires_operator_review(issue):
+        return {
+            "status": "OPERATOR_REVIEW_NOT_REQUIRED",
+            "normal_routing_allowed": True,
+            "reason": "receipt does not require operator review",
+        }
+    if _issue_lifecycle(issue) not in HISTORICAL_LIFECYCLES:
+        return _blocked("RECEIPT_NOT_HISTORICAL", "receipt is not expired/historical; durable review cannot clear it")
+    row = _matching_review_row(_review_rows(review_payload), issue)
+    if row is None:
+        return _blocked("OPERATOR_REVIEW_MISSING", "operator review artifact has no matching row")
+    if row.get("no_live_side_effects") is not True:
+        return _blocked("OPERATOR_REVIEW_SIDE_EFFECT_BOUNDARY_MISSING", "operator review row must set no_live_side_effects=true")
+    decision = _operator_decision(row)
+    if decision not in OPERATOR_REVIEW_CLEARANCE_DECISIONS:
+        return _blocked("OPERATOR_REVIEW_DECISION_BLOCKS", f"operator_decision={decision} does not allow clearance")
+    generated_at = _parse_utc(row.get("generated_at_utc"))
+    expires_at = _parse_utc(row.get("expires_at_utc"))
+    if generated_at is None:
+        return _blocked("OPERATOR_REVIEW_NOT_DURABLY_CLEARED", "operator review row missing generated_at_utc")
+    if expires_at is None:
+        return _blocked("OPERATOR_REVIEW_NOT_DURABLY_CLEARED", "operator review row missing expires_at_utc")
+    if expires_at <= generated_at:
+        return _blocked("OPERATOR_REVIEW_NOT_DURABLY_CLEARED", "operator review row expiry is not after generation")
+    clearance_status = str(row.get("clearance_status") or "").upper()
+    if row.get("normal_routing_allowed") is not True or clearance_status != OPERATOR_REVIEW_CLEARS_RECEIPT:
+        return _blocked(
+            "OPERATOR_REVIEW_NOT_DURABLY_CLEARED",
+            "operator review row was not previously generated as a cleared receipt",
+        )
+    broker_clear = _broker_truth_clears_event(issue, broker_snapshot_payload, decision)
+    if broker_clear is not True:
+        return _blocked("BROKER_TRUTH_EMERGENCY_NOT_CLEARED", str(broker_clear))
+    return {
+        "status": OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT,
+        "normal_routing_allowed": True,
+        "operator_decision": decision,
+        "reason": (
+            f"operator_decision={decision} previously fresh-cleared this historical receipt and "
+            "current broker truth still clears the reviewed event"
+        ),
     }
 
 

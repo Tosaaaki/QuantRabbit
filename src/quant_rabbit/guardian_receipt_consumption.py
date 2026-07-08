@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.guardian_receipt_operator_review import (
+    OPERATOR_REVIEW_CLEARS_RECEIPT,
+    OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT,
     OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
     load_guardian_receipt_operator_review,
     operator_review_clearance_status,
+    operator_review_durable_clearance_status,
     operator_review_subjects_from_artifacts,
     receipt_requires_operator_review,
 )
@@ -36,6 +39,10 @@ ACKNOWLEDGED_CLASSIFICATIONS = {
 }
 CLASSIFICATIONS = ACKNOWLEDGED_CLASSIFICATIONS | {NEEDS_OPERATOR_REVIEW}
 PRESERVABLE_REVIEW_LIFECYCLES = {"EXPIRED", "STALE", "REJECTED", "HISTORICAL_ONLY"}
+DURABLE_OPERATOR_REVIEW_CLEARANCE_STATUSES = {
+    OPERATOR_REVIEW_CLEARS_RECEIPT,
+    OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT,
+}
 
 
 def load_guardian_receipt_consumption(path: Path) -> dict[str, Any]:
@@ -245,6 +252,15 @@ def guardian_receipt_new_entry_blockers(
     broker_snapshot = broker_snapshot_payload if isinstance(broker_snapshot_payload, dict) else {}
     blockers: list[dict[str, str]] = []
     for issue in operator_review_subjects_from_artifacts(watchdog, consumption):
+        acknowledgement = acknowledgement_for_receipt(
+            consumption,
+            issue_code=_issue_code(issue),
+            receipt_event_id=_issue_event_id(issue),
+            receipt_action=_issue_action(issue),
+            receipt_lifecycle=_issue_lifecycle(issue),
+        )
+        if _acknowledgement_allows_review_required_routing(acknowledgement):
+            continue
         status = operator_review_clearance_status(
             issue,
             operator_review,
@@ -369,7 +385,7 @@ def _classification_from_issue(
 ) -> dict[str, Any]:
     review_required = receipt_requires_operator_review(issue)
     review_status = (
-        operator_review_clearance_status(
+        _operator_review_consumption_status(
             issue,
             operator_review,
             watchdog_payload=watchdog_payload,
@@ -451,6 +467,45 @@ def _automatic_classification(issue: dict[str, Any]) -> str:
     return NEEDS_OPERATOR_REVIEW
 
 
+def _operator_review_consumption_status(
+    issue: dict[str, Any],
+    operator_review: dict[str, Any] | None,
+    *,
+    watchdog_payload: dict[str, Any],
+    broker_snapshot_payload: dict[str, Any] | None,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    fresh_status = operator_review_clearance_status(
+        issue,
+        operator_review,
+        watchdog_payload=watchdog_payload,
+        broker_snapshot_payload=broker_snapshot_payload,
+        now_utc=now_utc,
+    )
+    if fresh_status.get("normal_routing_allowed") is True:
+        return fresh_status
+    durable_status = operator_review_durable_clearance_status(
+        issue,
+        operator_review,
+        broker_snapshot_payload=broker_snapshot_payload,
+    )
+    if durable_status.get("normal_routing_allowed") is True:
+        return durable_status
+    return fresh_status
+
+
+def _acknowledgement_allows_review_required_routing(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict) or row.get("normal_routing_allowed") is not True:
+        return False
+    classification = str(row.get("classification") or "").upper()
+    if classification not in ACKNOWLEDGED_CLASSIFICATIONS:
+        return False
+    if not receipt_requires_operator_review(row):
+        return True
+    review_status = str(row.get("operator_review_status") or "").upper()
+    return review_status in DURABLE_OPERATOR_REVIEW_CLEARANCE_STATUSES
+
+
 def _classification_reason(
     issue: dict[str, Any],
     classification: str,
@@ -460,6 +515,11 @@ def _classification_reason(
     lifecycle = _issue_lifecycle(issue) or "UNKNOWN"
     action = _issue_action(issue) or "UNKNOWN"
     event_id = _issue_event_id(issue) or "UNKNOWN"
+    if classification in ACKNOWLEDGED_CLASSIFICATIONS and isinstance(review_status, dict):
+        return (
+            f"Receipt event {event_id} {action} is acknowledged through operator review; "
+            f"operator_review_status={review_status.get('status')}, reason={review_status.get('reason')}."
+        )
     if classification == CONSUMED:
         return f"Receipt event {event_id} {action} is already marked consumed_by_trader=true."
     if classification == HISTORICAL_ONLY:
