@@ -61,6 +61,8 @@ from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, Orde
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
     ROOT,
+    DEFAULT_ACTIVE_TRADER_CONTRACT,
+    DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
     DEFAULT_ADVERSE_PARTIAL_CLOSE,
     DEFAULT_ADVERSE_PARTIAL_CLOSE_REPORT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -1486,6 +1488,8 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "as-live-ready-evidence-loop",
         "as-4x-proof-path",
         "trader-repair-orchestrator",
+        "trader-goal-loop-orchestrator",
+        "active-trader-contract",
     }
 )
 
@@ -2301,6 +2305,10 @@ def _trader_goal_loop_orchestrator_step() -> dict[str, Any]:
     return {"argv": ["trader-goal-loop-orchestrator"], "required": True}
 
 
+def _active_trader_contract_step() -> dict[str, Any]:
+    return {"argv": ["active-trader-contract"], "required": True}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2406,6 +2414,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
+        _active_trader_contract_step(),
     ]
 
 
@@ -2466,6 +2475,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
+        _active_trader_contract_step(),
     ]
 
 
@@ -2503,6 +2513,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
+        _active_trader_contract_step(),
     ]
 
 
@@ -2540,6 +2551,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         _as_4x_proof_path_step(),
         {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
+        _active_trader_contract_step(),
     ]
 
 
@@ -3977,6 +3989,53 @@ def main(argv: list[str] | None = None) -> int:
     p_goal_loop.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_goal_loop.add_argument("--output", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
     p_goal_loop.add_argument("--report", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT)
+
+    p_active_contract = sub.add_parser(
+        "active-trader-contract",
+        help="Write the read-only 4x Active Trader Contract and active-path/no-action gate.",
+    )
+    p_active_contract.add_argument("--trader-goal-loop", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
+    p_active_contract.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_active_contract.add_argument(
+        "--harvest-live-grade-path",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "harvest_live_grade_path.json",
+    )
+    p_active_contract.add_argument(
+        "--scout-plan",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_scout_plan.json",
+    )
+    p_active_contract.add_argument(
+        "--as-proof-pack-queue",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "as_proof_pack_queue.json",
+    )
+    p_active_contract.add_argument(
+        "--as-lane-candidate-board",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "as_lane_candidate_board.json",
+    )
+    p_active_contract.add_argument(
+        "--portfolio-4x-path-planner",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "portfolio_4x_path_planner.json",
+    )
+    p_active_contract.add_argument("--live-order-request", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_active_contract.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_active_contract.add_argument("--daily-target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_active_contract.add_argument(
+        "--proof-floor-update",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_proof_floor_update.json",
+    )
+    p_active_contract.add_argument(
+        "--limit-s5-bidask-replay",
+        type=Path,
+        default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+    )
+    p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -6708,6 +6767,44 @@ def main(argv: list[str] | None = None) -> int:
                     "report_path": str(summary.report_path),
                     "current_phase": summary.current_phase,
                     "selected_next_work_type": summary.selected_next_work_type,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "active-trader-contract":
+        try:
+            from quant_rabbit.active_trader_contract import ActiveTraderContract
+
+            summary = ActiveTraderContract(
+                trader_goal_loop_path=args.trader_goal_loop,
+                payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
+                harvest_live_grade_path=args.harvest_live_grade_path,
+                scout_plan_path=args.scout_plan,
+                proof_pack_queue_path=args.as_proof_pack_queue,
+                lane_candidate_board_path=args.as_lane_candidate_board,
+                portfolio_4x_path_planner_path=args.portfolio_4x_path_planner,
+                live_order_request_path=args.live_order_request,
+                broker_snapshot_path=args.broker_snapshot,
+                daily_target_state_path=args.daily_target_state,
+                proof_floor_update_path=args.proof_floor_update,
+                limit_s5_bidask_replay_path=args.limit_s5_bidask_replay,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "selected_active_path": summary.selected_active_path,
                     "live_permission_allowed": summary.live_permission_allowed,
                 },
                 ensure_ascii=False,

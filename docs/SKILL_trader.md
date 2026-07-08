@@ -329,7 +329,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
-# trader-repair-orchestrator → trader-goal-loop-orchestrator) in one
+# trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -557,7 +557,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
-# `trader-repair-orchestrator` and `trader-goal-loop-orchestrator`. It preserves the original
+# `trader-repair-orchestrator` → `trader-goal-loop-orchestrator` →
+# `active-trader-contract`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -584,6 +585,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → as-live-ready-evidence-loop → as-4x-proof-path
 #   → trader-repair-orchestrator → trader-goal-loop-orchestrator
+#   → active-trader-contract
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -689,6 +691,16 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   `EDGE_IMPROVEMENT_EXPERIMENT` design. It never grants live permission,
 #   treats `proof_queue_count=0` as a blocker, and does not call model APIs from
 #   QuantRabbit code.
+# - active-trader-contract is read-only and runs after
+#   trader-goal-loop-orchestrator. It writes `data/active_trader_contract.json`
+#   and `docs/active_trader_contract.md`, selects exactly one active path
+#   (`HARVEST_READY_CHECK`, `SCOUT_READY_CHECK`, `EVIDENCE_ACQUISITION`,
+#   `EDGE_IMPROVEMENT_EXPERIMENT`, `OPERATOR_REVIEW_REPORT`,
+#   `LIVE_PERMISSION_READY_CHECK`, or `NO_TRADE_WITH_CAUSE`), and emits the
+#   machine-readable NO_ACTION contract. It keeps exact LIMIT S5 bid/ask replay,
+#   proof queue, negative expectancy, month-scale replay, guardian, and gateway
+#   blockers visible with `live_permission_allowed=false` and
+#   `live_side_effects=[]`.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

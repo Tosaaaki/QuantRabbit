@@ -1,0 +1,69 @@
+# Active Trader Contract
+
+- Status: `ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED`
+- Contract goal: `monthly_funding_adjusted_equity_4x`
+- Target shape: `EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST`
+- Selected active path: `EVIDENCE_ACQUISITION`
+- Live permission allowed: `False`
+- Read-only: `True`
+
+## 4x Progress
+
+EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST can move the 4x loop forward only as read-only HARVEST evidence: broad TP proof material shows 20/0, exact LIMIT S5 replay shows 4/0 with expectancy 813.7734 JPY/trade, while proof queue, guardian, negative expectancy, and live gateway blockers remain visible.
+
+- Root improvement target: Make the EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST vehicle live-grade evidence by canonical replay/proof import, not by mixing MARKET/STOP samples or relaxing gates.
+- Expected edge improvement: Expected improvement is evidence quality, not live permission: exact LIMIT replay and proof-floor reconciliation can separate TP-positive HARVEST (20/0 material; harvest artifact currently 17/0) from market-close leakage.
+- Next trade-enabling action: Canonicalize the exact LIMIT S5 bid/ask replay, reconcile legacy rows, and mine more exact LIMIT/HARVEST samples.
+
+## No Action Contract
+
+- No action allowed: `False`
+- Reason: NO_ACTION is forbidden because at least one profit, proof, or evidence-acquisition path is visible.
+- Next unlock action: Preserve S5 fill/touch lag and reconcile legacy LIMIT rows before proof import.
+- Why no scout: SCOUT is blocked by operator/guardian review; classify as SCOUT_BLOCKED_OPERATOR_REVIEW, not NO_ACTION.
+- Why no harvest: HARVEST candidate is not live-grade because exact LIMIT S5 replay/proof queue blockers remain.
+
+## Exact LIMIT S5 Replay
+
+- Replay status: `LIMIT_S5_BIDASK_REPLAY_PASSED_STILL_BLOCKED`
+- S5 bid/ask status: `PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED`
+- Samples: `4`
+- Wins/losses: `4` / `0`
+- Net expectancy after bid/ask: `813.7734`
+- Live-grade candidate: `False`
+
+## Remaining Blockers
+
+- `FORECAST_ADVERSE_PATH_BLOCK`: BLOCKING_LIVE_PERMISSION
+- `GUARDIAN_OPERATOR_REVIEW_BLOCK`: BLOCKING_ROUTING_OR_REVIEW
+- `MARKET_CLOSE_LEAK_PRESENT`: BLOCKING_LIVE_PERMISSION
+- `NOT_IN_PROOF_QUEUE`: BLOCKING_LIVE_PERMISSION
+- `SAMPLE_GAP`: BLOCKING_LIVE_PERMISSION
+- `NEGATIVE_EXPECTANCY_ACTIVE`: VISIBLE_PROFITABILITY_BLOCKER
+- `PROFITABILITY_ACCEPTANCE_BLOCKED`: BLOCKING_LIVE_PERMISSION
+- `MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE`: VISIBLE_PROFITABILITY_BLOCKER
+- `MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE`: BLOCKING_LIVE_PERMISSION
+- `PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION`: BLOCKING_LIVE_PERMISSION
+- `NO_LIVE_READY_PORTFOLIO`: BLOCKING_LIVE_PERMISSION
+- `GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED`: BLOCKING_ROUTING_OR_REVIEW
+- `CURRENT_LANE_BLOCKERS`: BLOCKING_LIVE_PERMISSION
+- `POSITIVE_SPREAD_SLIPPAGE_PROOF_MISSING`: BLOCKING_LIVE_PERMISSION
+- `NO_FRESH_GATEWAY_PERMISSION`: BLOCKING_LIVE_PERMISSION
+- `MARKET_CLOSE_LEAK_FAMILY_BLOCKED`: BLOCKING_LIVE_PERMISSION
+- `SELF_IMPROVEMENT_P0_PRESENT`: BLOCKING_LIVE_PERMISSION
+- `TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE`: BLOCKING_LIVE_PERMISSION
+- `MEMORY_HEALTH_BLOCKED`: BLOCKING_LIVE_PERMISSION
+- `LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY`: BLOCKING_PROOF_QUEUE_PROMOTION
+- `S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION`: BLOCKING_PROOF_QUEUE_PROMOTION
+- `MARKET_CLOSE_LEAK_PRESENT_EXCLUDED`: BLOCKING_LIVE_PERMISSION
+- `LEGACY_LIMIT_ROWS_NOT_CANONICAL_EXECUTION_LEDGER_PROOF`: BLOCKING_LIVE_PERMISSION
+- `CURRENT_LANE_BLOCKERS_STILL_ACTIVE`: BLOCKING_LIVE_PERMISSION
+- `SPREAD_SLIPPAGE_PROOF_MISSING`: BLOCKING_LIVE_PERMISSION
+- `PROOF_QUEUE_COUNT_ZERO_NOT_PERMISSION`: BLOCKING_LIVE_PERMISSION
+- `LIMIT_S5_REPLAY_NOT_LIVE_GRADE`: BLOCKING_LIVE_PERMISSION
+- `PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION`: BLOCKING_LIVE_PERMISSION
+- `NO_LIVE_ORDER_REQUEST`: BLOCKING_LIVE_PERMISSION
+
+## Safety
+
+This artifact does not authorize live order entry, SCOUT execution, gateway routing, cancellation, close, TP/SL modification, launchd load/reload, gate relaxation, 4x deficit lot backsolve, or operator-decision inference.
