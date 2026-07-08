@@ -1713,12 +1713,56 @@ def _category_freshness(category: dict[str, Any], current_state: dict[str, Any])
         generated_at = None
         source = category.get("evidence_ref")
         required_reference_keys = ("broker_snapshot", "trader_support_bot")
-    return _freshness_for_generated_at(
+    freshness = _freshness_for_generated_at(
         generated_at,
         current_state=current_state,
         source=str(source or ""),
         required_reference_keys=required_reference_keys,
     )
+    if (
+        name == "gateway_issue"
+        and freshness.get("status") == "CONTRADICTED"
+        and _no_send_gateway_is_aligned_with_current_upstream_blocks(current_state)
+    ):
+        freshness = {
+            **freshness,
+            "status": "FRESH",
+            "freshness_reason": (
+                "no-send gateway status is aligned with current proof/portfolio blockers; "
+                "it need not postdate downstream read-only evidence while no proof-ready "
+                "or live-permission-capable lane exists"
+            ),
+            "dependency_lag_exempted": True,
+        }
+    return freshness
+
+
+def _no_send_gateway_is_aligned_with_current_upstream_blocks(current_state: dict[str, Any]) -> bool:
+    gateway_status = str(current_state.get("gateway_status") or "").upper()
+    if gateway_status not in {
+        "NO_ACTION",
+        "NO_LIVE_READY_INTENT",
+        "GPT_WAIT",
+        "GPT_REQUEST_EVIDENCE",
+        "ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY",
+        "STALE_ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY",
+    }:
+        return False
+    if _optional_positive(current_state.get("proof_ready_count")):
+        return False
+    if _optional_positive(current_state.get("can_create_live_permission_count")):
+        return False
+    if _optional_positive(current_state.get("portfolio_standalone_live_ready_candidates")):
+        return False
+    if _optional_positive(current_state.get("portfolio_standalone_math_candidates_meeting_required_return")):
+        return False
+    if _truthy(current_state.get("portfolio_can_create_live_permission")):
+        return False
+    if _truthy(current_state.get("portfolio_can_reach_4x_now")):
+        return False
+    if _truthy(current_state.get("as_live_ready_path_exists")):
+        return False
+    return True
 
 
 def _primary_empty_reason_category(categories: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2598,6 +2642,15 @@ def _optional_positive(value: Any) -> bool:
         return float(value) > 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "y", "on"}
 
 
 def _automation_rank(value: Any) -> int:

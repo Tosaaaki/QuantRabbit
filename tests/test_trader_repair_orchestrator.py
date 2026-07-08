@@ -716,6 +716,107 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 by_category["lane_board"]["freshness"]["freshness_reason"],
             )
 
+    def test_no_send_gateway_older_than_blocked_proof_packet_is_not_contradicted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            broker = root / "broker_snapshot.json"
+            base = datetime(2026, 7, 7, 2, 0, tzinfo=timezone.utc)
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+                generated_at_utc=(base + timedelta(seconds=300)).isoformat(),
+            )
+            broker.write_text(
+                json.dumps({"fetched_at_utc": (base + timedelta(seconds=240)).isoformat()}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _write_as_proof_artifacts(
+                root,
+                proof_generated_at_utc=(base + timedelta(seconds=300)).isoformat(),
+                board_generated_at_utc=(base + timedelta(seconds=305)).isoformat(),
+                planner_generated_at_utc=(base + timedelta(seconds=310)).isoformat(),
+                live_order_generated_at_utc=(base + timedelta(seconds=10)).isoformat(),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                broker_snapshot_path=broker,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            reason = payload["proof_queue_empty_reason"]
+            by_category = {item["category"]: item for item in reason["categories"]}
+            gateway_freshness = by_category["gateway_issue"]["freshness"]
+            self.assertEqual(gateway_freshness["status"], "FRESH")
+            self.assertTrue(gateway_freshness["dependency_lag_exempted"])
+            self.assertIn("no-send gateway status is aligned", gateway_freshness["freshness_reason"])
+
+    def test_no_send_gateway_still_contradicted_when_proof_ready_candidate_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            broker = root / "broker_snapshot.json"
+            base = datetime(2026, 7, 7, 3, 0, tzinfo=timezone.utc)
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+                generated_at_utc=(base + timedelta(seconds=300)).isoformat(),
+            )
+            broker.write_text(
+                json.dumps({"fetched_at_utc": (base + timedelta(seconds=240)).isoformat()}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _write_as_proof_artifacts(
+                root,
+                proof_generated_at_utc=(base + timedelta(seconds=300)).isoformat(),
+                board_generated_at_utc=(base + timedelta(seconds=305)).isoformat(),
+                planner_generated_at_utc=(base + timedelta(seconds=310)).isoformat(),
+                live_order_generated_at_utc=(base + timedelta(seconds=10)).isoformat(),
+            )
+            proof_path = root / "as_proof_pack_queue.json"
+            proof = json.loads(proof_path.read_text())
+            proof["summary"]["queue_count"] = 1
+            proof["summary"]["proof_ready_count"] = 1
+            proof["queue"] = [{"lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION"}]
+            proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            planner_path = root / "portfolio_4x_path_planner.json"
+            planner = json.loads(planner_path.read_text())
+            planner["summary"]["proof_ready_candidates"] = 1
+            planner_path.write_text(json.dumps(planner, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                broker_snapshot_path=broker,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            reason = payload["proof_queue_empty_reason"]
+            by_category = {item["category"]: item for item in reason["categories"]}
+            gateway_freshness = by_category["gateway_issue"]["freshness"]
+            self.assertEqual(gateway_freshness["status"], "CONTRADICTED")
+            self.assertNotIn("dependency_lag_exempted", gateway_freshness)
+
     def test_temp_orchestrator_without_as_artifacts_does_not_read_repo_runtime_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
