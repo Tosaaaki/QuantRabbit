@@ -358,6 +358,84 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["lane_id"], close_lane)
         self.assertEqual(payload["top_lane"]["blockers"], ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"])
 
+    def test_stale_bidask_negative_evidence_becomes_evidence_acquisition(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            lane_id,
+                            "EUR_USD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                            metadata={
+                                "forecast_direction": "RANGE",
+                                "bidask_replay_precision_negative": {
+                                    "name": "EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "direction": "UP",
+                                    "granularity": "S5",
+                                    "samples": 1383,
+                                    "active_days": 32,
+                                    "last_day": "2026-07-03",
+                                    "directional_hit_rate": 0.29,
+                                    "avg_final_pips": -2.8936,
+                                    "avg_mae_pips": 7.6197,
+                                    "positive_day_rate": 0.0,
+                                    "audit_report": "logs/reports/forecast_improvement/missing_bidask_report.json",
+                                    "rule_set_generated_at_utc": "2026-07-03T14:52:18.653002Z",
+                                },
+                            },
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["top_lane"]["replay_status"], "NEGATIVE_EVIDENCE_REFRESH_REQUIRED")
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", payload["top_lane"]["blockers"])
+        self.assertIn("BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED", payload["top_lane"]["blockers"])
+        self.assertIn("BIDASK_REPLAY_AUDIT_REPORT_MISSING", payload["top_lane"]["evidence_refresh_reasons"])
+        self.assertIn("Refresh exact S5 bid/ask replay evidence", payload["top_lane"]["next_action"])
+        self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 1)
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_stale_harvest_grade_blockers_do_not_override_fresh_order_intent(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -871,8 +949,19 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
     return paths
 
 
-def _intent_row(lane_id: str, pair: str, side: str, order_type: str, blockers: list[str] | None = None) -> dict[str, Any]:
+def _intent_row(
+    lane_id: str,
+    pair: str,
+    side: str,
+    order_type: str,
+    blockers: list[str] | None = None,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     blockers = blockers or []
+    intent_metadata = {"opportunity_mode": "HARVEST"}
+    if metadata:
+        intent_metadata.update(metadata)
     return {
         "lane_id": lane_id,
         "status": "DRY_RUN_BLOCKED",
@@ -886,6 +975,6 @@ def _intent_row(lane_id: str, pair: str, side: str, order_type: str, blockers: l
             "side": side,
             "order_type": order_type,
             "units": 1000,
-            "metadata": {"opportunity_mode": "HARVEST"},
+            "metadata": intent_metadata,
         },
     }

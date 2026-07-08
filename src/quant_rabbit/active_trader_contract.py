@@ -50,6 +50,7 @@ FAILED_EXACT_REPLAY_MARKERS = (
     "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
     "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
 )
+BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
 NEGATIVE_BLOCKER_MARKERS = (
     "NEGATIVE_EXPECTANCY",
     "REPLAY_NEGATIVE",
@@ -689,6 +690,8 @@ def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
         return "NO_TRADE_WITH_CAUSE"
     if any(any(marker in blocker for marker in GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS) for blocker in blockers):
         return "OPERATOR_REVIEW_REQUIRED"
+    if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER in blockers:
+        return raw
     if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
     if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
@@ -1009,6 +1012,8 @@ def _normalize_stale_blocker_codes(
 def _blocker_status(code: str) -> str:
     if any(marker in code for marker in FAILED_EXACT_REPLAY_MARKERS):
         return "FAILED_REPLAY_CONSUMED_BLOCKS_SCOUT"
+    if code == BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER:
+        return "BLOCKING_EVIDENCE_REFRESH"
     if code in {"NEGATIVE_EXPECTANCY_ACTIVE", "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"}:
         return "VISIBLE_PROFITABILITY_BLOCKER"
     if code in {

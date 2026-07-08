@@ -734,7 +734,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   outrank manual/operator-overlap review. Manual overlap blockers such as
 #   `OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED` are live blockers but are not
 #   `OPERATOR_REVIEW_REQUIRED` unless an explicit guardian/operator-review code
-#   is also present. `NO_TRADE_WITH_CAUSE` must carry a concrete
+#   is also present. Exception: if a current `BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE`
+#   blocker is backed only by stale packaged evidence or a missing audit report,
+#   keep the negative blocker visible, add `BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED`,
+#   and route the lane to `EVIDENCE_ACQUISITION` for a fresh exact S5 bid/ask
+#   replay/rule-package refresh rather than permanent no-trade. `NO_TRADE_WITH_CAUSE` must carry a concrete
 #   machine-readable blocker, not an empty cause set.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.

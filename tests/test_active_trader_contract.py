@@ -568,6 +568,92 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertNotIn("PORTFOLIO_PLANNER_CANNOT_CREATE_LIVE_PERMISSION", blocker_codes)
         self.assertNotIn("NO_LIVE_ORDER_REQUEST", blocker_codes)
 
+    def test_active_board_bidask_refresh_path_is_evidence_acquisition_not_no_trade(self) -> None:
+        now = datetime(2026, 7, 8, 11, 55, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 142,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "no_trade_count": 141,
+                        "pairs_scanned": ["EUR_USD", "USD_CHF"],
+                        "vehicles_scanned": ["LIMIT", "STOP", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "replay_status": "NEGATIVE_EVIDENCE_REFRESH_REQUIRED",
+                        "next_action": (
+                            "Refresh exact S5 bid/ask replay evidence for "
+                            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT."
+                        ),
+                        "blockers": [
+                            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                            "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT "
+                        "is the closest read-only path."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertIn(
+            "top lane failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT is EVIDENCE_ACQUISITION",
+            payload["selected_active_path_reason"],
+        )
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blocker_codes)
+        self.assertIn("BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED", blocker_codes)
+        refresh = next(
+            row
+            for row in payload["remaining_blockers"]
+            if row["code"] == "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
+        )
+        self.assertEqual(refresh["status"], "BLOCKING_EVIDENCE_REFRESH")
+        self.assertIn("Refresh exact S5 bid/ask replay evidence", payload["next_trade_enabling_action"])
+
     def test_board_all_no_trade_with_guardian_clear_overrides_stale_single_lane_evidence(self) -> None:
         now = datetime(2026, 7, 8, 10, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

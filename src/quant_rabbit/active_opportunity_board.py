@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +101,10 @@ FAILED_EXACT_REPLAY_MARKERS = (
     "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
     "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
 )
+BIDASK_REPLAY_NEGATIVE_BLOCKER = "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"
+BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
+BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
+BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS = 3
 
 
 @dataclass(frozen=True)
@@ -207,6 +211,7 @@ class ActiveOpportunityBoard:
                 lane,
                 guardian_routing_clear=guardian_routing_clear,
                 guardian_intent_blockers_stale=guardian_intent_blockers_stale,
+                now_utc=self.now_utc,
             )
 
         ranked_lanes = sorted(
@@ -357,6 +362,7 @@ def _add_order_intent_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str
         lane["order_intent_blockers"].extend(strategy_issue_codes)
         lane["strategy_issue_codes"].extend(strategy_issue_codes)
         lane["risk_issue_codes"].extend(risk_issue_codes)
+        _attach_bidask_negative_evidence(lane, intent, intent_blockers)
 
 
 def _add_proof_queue_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
@@ -749,6 +755,7 @@ def _finalize_lane(
     *,
     guardian_routing_clear: bool,
     guardian_intent_blockers_stale: bool,
+    now_utc: datetime,
 ) -> None:
     lane["blockers"] = _unique(_string_list(lane.get("blockers")))
     lane["source_refs"] = _unique(_string_list(lane.get("source_refs")))
@@ -761,6 +768,7 @@ def _finalize_lane(
         guardian_intent_blockers_stale=guardian_intent_blockers_stale,
     )
     _suppress_stale_current_intent_owned_blockers(lane)
+    _mark_bidask_negative_evidence_refresh(lane, now_utc=now_utc)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
     lane["guardian_status"] = _marker_status(lane["blockers"], GUARDIAN_MARKERS, "BLOCKED", "NOT_BLOCKED")
@@ -824,6 +832,108 @@ def _suppress_stale_current_intent_owned_blockers(lane: dict[str, Any]) -> None:
     lane["stale_source_blockers"] = _unique(_string_list(lane.get("stale_source_blockers")) + stale_codes)
 
 
+def _attach_bidask_negative_evidence(
+    lane: dict[str, Any],
+    intent: dict[str, Any],
+    intent_blockers: list[str],
+) -> None:
+    if BIDASK_REPLAY_NEGATIVE_BLOCKER not in intent_blockers:
+        return
+    evidence = _metadata(intent).get("bidask_replay_precision_negative")
+    if not isinstance(evidence, dict):
+        return
+    audit_report = _first_str(evidence.get("audit_report"))
+    audit_path = _resolve_artifact_path(audit_report) if audit_report else None
+    payload: dict[str, Any] = {}
+    for key in (
+        "name",
+        "pair",
+        "side",
+        "direction",
+        "granularity",
+        "samples",
+        "active_days",
+        "first_day",
+        "last_day",
+        "directional_hit_rate",
+        "avg_final_pips",
+        "median_final_pips",
+        "avg_mae_pips",
+        "avg_mfe_pips",
+        "positive_days",
+        "negative_days",
+        "positive_day_rate",
+        "avg_daily_realized_pips",
+        "daily_stability_status",
+        "audit_report",
+        "rule_set_generated_at_utc",
+        "rule_set_source",
+    ):
+        if key in evidence:
+            payload[key] = evidence[key]
+    if audit_report:
+        payload["audit_report_exists"] = bool(audit_path and audit_path.exists())
+        payload["audit_report_resolved_path"] = str(audit_path) if audit_path else ""
+    lane["bidask_negative_evidence"] = payload
+
+
+def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: datetime) -> None:
+    blockers = _string_list(lane.get("blockers"))
+    if BIDASK_REPLAY_NEGATIVE_BLOCKER not in blockers:
+        return
+    evidence = lane.get("bidask_negative_evidence")
+    if not isinstance(evidence, dict) or not evidence:
+        return
+
+    reasons: list[str] = []
+    audit_report = _first_str(evidence.get("audit_report"))
+    if audit_report and evidence.get("audit_report_exists") is False:
+        reasons.append("BIDASK_REPLAY_AUDIT_REPORT_MISSING")
+    if not audit_report:
+        reasons.append("BIDASK_REPLAY_AUDIT_REPORT_NOT_DECLARED")
+
+    generated_at = _parse_utc(evidence.get("rule_set_generated_at_utc"))
+    if generated_at is None:
+        reasons.append("BIDASK_REPLAY_RULE_SET_TIMESTAMP_MISSING")
+    elif now_utc - generated_at > timedelta(hours=BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS):
+        reasons.append("BIDASK_REPLAY_RULE_SET_STALE")
+
+    last_day = _parse_utc(evidence.get("last_day"))
+    if last_day is None:
+        reasons.append("BIDASK_REPLAY_LAST_DAY_MISSING")
+    elif (now_utc.date() - last_day.date()).days > BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS:
+        reasons.append("BIDASK_REPLAY_LAST_DAY_STALE")
+
+    if not reasons:
+        evidence["refresh_required"] = False
+        evidence["refresh_status"] = "CURRENT"
+        return
+
+    evidence["refresh_required"] = True
+    evidence["refresh_status"] = "REQUIRED"
+    evidence["refresh_max_age_hours"] = BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS
+    evidence["refresh_last_day_max_age_days"] = BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS
+    lane["evidence_refresh_reasons"] = _unique(_string_list(lane.get("evidence_refresh_reasons")) + reasons)
+    if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER not in blockers:
+        lane["blockers"] = blockers + [BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER]
+
+
+def _bidask_negative_evidence_refresh_required(lane: dict[str, Any]) -> bool:
+    if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER in _string_list(lane.get("blockers")):
+        return True
+    evidence = lane.get("bidask_negative_evidence")
+    return isinstance(evidence, dict) and evidence.get("refresh_required") is True
+
+
+def _resolve_artifact_path(path_text: str) -> Path | None:
+    if not path_text:
+        return None
+    path = Path(path_text).expanduser()
+    if path.is_absolute():
+        return path
+    return ROOT / path
+
+
 def _classify_lane(lane: dict[str, Any]) -> str:
     blockers = lane.get("blockers") or []
     has_negative = _has_marker(blockers, NEGATIVE_BLOCKER_MARKERS)
@@ -834,6 +944,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "NO_TRADE_WITH_CAUSE"
     if _has_marker(blockers, GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS):
         return "OPERATOR_REVIEW_REQUIRED"
+    if has_negative and _bidask_negative_evidence_refresh_required(lane):
+        return "EVIDENCE_ACQUISITION"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
     if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
@@ -962,6 +1074,8 @@ def _computed_proof_status(lane: dict[str, Any]) -> str:
 def _computed_replay_status(lane: dict[str, Any]) -> str:
     status = str(lane.get("replay_status") or "UNKNOWN")
     blockers = lane.get("blockers") or []
+    if _bidask_negative_evidence_refresh_required(lane):
+        return "NEGATIVE_EVIDENCE_REFRESH_REQUIRED"
     if _has_marker(blockers, ("BIDASK_REPLAY_NEGATIVE",)):
         return "NEGATIVE"
     return status
@@ -978,6 +1092,13 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     if status == "LIVE_READY":
         return f"Keep {lane_key} visible for verifier/gateway checks only; this board grants no live permission."
     if status == "EVIDENCE_ACQUISITION":
+        if _bidask_negative_evidence_refresh_required(lane):
+            reasons = ", ".join(_string_list(lane.get("evidence_refresh_reasons"))[:3])
+            suffix = f" ({reasons})" if reasons else ""
+            return (
+                f"Refresh exact S5 bid/ask replay evidence for {lane_key}{suffix}; "
+                "keep the negative blocker visible, rebuild/package bidask replay precision rules, and do not send."
+            )
         return f"Acquire or canonicalize proof/replay evidence for {lane_key}; do not send or mix vehicles."
     if status == "SCOUT_READY":
         return f"Prepare read-only SCOUT judgement material for {lane_key}; gateway permission remains false."
@@ -1013,6 +1134,10 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
         "rank_score": _json_number_or_none(lane.get("_rank_score")),
         "source_refs": _unique(_string_list(lane.get("source_refs"))),
     }
+    if lane.get("evidence_refresh_reasons"):
+        public["evidence_refresh_reasons"] = _unique(_string_list(lane.get("evidence_refresh_reasons")))
+    if isinstance(lane.get("bidask_negative_evidence"), dict):
+        public["bidask_negative_evidence"] = lane["bidask_negative_evidence"]
     if public["status"] not in LANE_STATUSES:
         raise ValueError(f"unknown lane status: {public['status']}")
     return public
