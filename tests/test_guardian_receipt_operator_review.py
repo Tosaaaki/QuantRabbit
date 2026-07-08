@@ -144,6 +144,53 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         )
         self.assertEqual({item["code"] for item in blockers}, {WATCHDOG_BLOCK_NEW_ENTRY_CODE})
 
+    def test_disappeared_current_guardian_p0_is_not_preserved_from_existing_consumption(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        active_historical_review_issue = _consumption_row(
+            classification="NEEDS_OPERATOR_REVIEW",
+            receipt_event_id="receipt-reduce",
+            receipt_action="REDUCE",
+        )
+        stale_current_p0 = {
+            "issue_code": "CURRENT_GUARDIAN_P0_UNKNOWN_EXPOSURE",
+            "severity": "P0",
+            "receipt_event_id": "aud-current-p0",
+            "receipt_action": "REDUCE",
+            "receipt_lifecycle": "CURRENT_GUARDIAN_EVENT",
+            "classification": "NEEDS_OPERATOR_REVIEW",
+            "normal_routing_allowed": False,
+            "consumed_by_trader": False,
+            "reason": "stale current exposure from a prior watchdog snapshot",
+        }
+        current_issue = {
+            "code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+            "severity": "P0",
+            "receipt_event_id": "receipt-reduce",
+            "receipt_action": "REDUCE",
+            "receipt_lifecycle": "EXPIRED",
+            "consumed_by_trader": False,
+        }
+        watchdog = {
+            "status": "BLOCKED",
+            "issue_status": "P0",
+            "severity": "P0",
+            "issues": [current_issue],
+            "guardian_receipt": {"issues": [current_issue]},
+        }
+
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={"classifications": [active_historical_review_issue, stale_current_p0]},
+            operator_review={},
+            broker_snapshot={"positions": [], "orders": []},
+            now_utc=now,
+        )
+
+        by_event = {row["receipt_event_id"]: row for row in consumption["classifications"]}
+        self.assertEqual(set(by_event), {"receipt-reduce"})
+        self.assertNotIn("aud-current-p0", by_event)
+        self.assertEqual(consumption["unresolved_issue_count"], 1)
+
     def test_stale_operator_review_keeps_blocker_active(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)
         issue = _issue()

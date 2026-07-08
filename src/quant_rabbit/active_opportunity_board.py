@@ -84,6 +84,9 @@ RISK_BLOCKER_MARKERS = (
 OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
 GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS = ("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",)
 GUARDIAN_MARKERS = ("GUARDIAN",)
+CURRENT_INTENT_OWNED_BLOCKERS = (
+    "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+)
 FAILED_EXACT_REPLAY_MARKERS = (
     "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
     "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
@@ -205,6 +208,7 @@ class ActiveOpportunityBoard:
         strategy_family_coverage = _coverage_by(public_lanes, "strategy_family")
         vehicle_coverage = _coverage_by(public_lanes, "vehicle")
         no_trade_reasons = _no_trade_reasons(public_lanes)
+        stale_source_reasons = _stale_source_reasons(public_lanes)
         artifact_index = _artifact_index(artifacts, replay_artifacts, self.execution_ledger_db_path)
         active_contract = artifacts["active_trader_contract"]
         goal_loop = artifacts["trader_goal_loop_orchestrator"]
@@ -223,6 +227,7 @@ class ActiveOpportunityBoard:
             "strategy_family_coverage": strategy_family_coverage,
             "vehicle_coverage": vehicle_coverage,
             "no_trade_reasons": no_trade_reasons,
+            "stale_source_reasons": stale_source_reasons,
             "next_active_path": _next_active_path(top_lane, active_contract),
             "four_x_progress_hypothesis": _four_x_progress_hypothesis(
                 top_lane,
@@ -712,6 +717,7 @@ def _finalize_lane(lane: dict[str, Any], *, guardian_routing_clear: bool) -> Non
     lane["strategy_issue_codes"] = _unique(_string_list(lane.get("strategy_issue_codes")))
     lane["order_intent_blockers"] = _unique(_string_list(lane.get("order_intent_blockers")))
     _suppress_stale_guardian_receipt_blockers(lane, guardian_routing_clear=guardian_routing_clear)
+    _suppress_stale_current_intent_owned_blockers(lane)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
     lane["guardian_status"] = _marker_status(lane["blockers"], GUARDIAN_MARKERS, "BLOCKED", "NOT_BLOCKED")
@@ -744,6 +750,20 @@ def _suppress_stale_guardian_receipt_blockers(lane: dict[str, Any], *, guardian_
     lane["stale_source_blockers"] = _unique(
         _string_list(lane.get("stale_source_blockers")) + ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"]
     )
+
+
+def _suppress_stale_current_intent_owned_blockers(lane: dict[str, Any]) -> None:
+    current_intent_blockers = set(_string_list(lane.get("order_intent_blockers")))
+    blockers = _string_list(lane.get("blockers"))
+    stale_codes = [
+        code
+        for code in CURRENT_INTENT_OWNED_BLOCKERS
+        if code in blockers and code not in current_intent_blockers
+    ]
+    if not stale_codes:
+        return
+    lane["blockers"] = [code for code in blockers if code not in stale_codes]
+    lane["stale_source_blockers"] = _unique(_string_list(lane.get("stale_source_blockers")) + stale_codes)
 
 
 def _classify_lane(lane: dict[str, Any]) -> str:
@@ -974,6 +994,17 @@ def _no_trade_reasons(lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         blockers = lane.get("blockers") or ["UNSPECIFIED_NO_TRADE_CAUSE"]
         for blocker in blockers:
+            row = counts.setdefault(str(blocker), {"code": str(blocker), "count": 0, "example_lane_ids": []})
+            row["count"] += 1
+            if len(row["example_lane_ids"]) < 5:
+                row["example_lane_ids"].append(lane["lane_id"])
+    return sorted(counts.values(), key=lambda row: (-row["count"], row["code"]))
+
+
+def _stale_source_reasons(lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, Any]] = {}
+    for lane in lanes:
+        for blocker in lane.get("stale_source_blockers") or []:
             row = counts.setdefault(str(blocker), {"code": str(blocker), "count": 0, "example_lane_ids": []})
             row["count"] += 1
             if len(row["example_lane_ids"]) < 5:
@@ -1237,6 +1268,8 @@ def _issue_codes(value: Any) -> list[str]:
     codes: list[str] = []
     for item in _list(value):
         if isinstance(item, dict):
+            if str(item.get("severity") or "").upper() != "BLOCK":
+                continue
             code = item.get("code") or item.get("check_name")
             if code:
                 codes.append(str(code))

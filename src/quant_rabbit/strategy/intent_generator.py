@@ -9204,12 +9204,8 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, Any] 
     from advertising LIVE_READY lanes while the audit says close discipline is
     still system-negative.
     """
-    path = data_root / "self_improvement_audit.json"
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
+    payload = _load_json_dict(data_root / "self_improvement_audit.json")
+    if not payload:
         return None
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -9917,12 +9913,8 @@ def _self_improvement_intent_matches_pending_churn_group(
 
 
 def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, str] | None:
-    path = data_root / "self_improvement_audit.json"
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
+    payload = _fresh_self_improvement_audit_payload(data_root)
+    if payload is None:
         return None
     blocker = forecast_adverse_path_new_risk_blocker(payload)
     if blocker is None:
@@ -9973,12 +9965,8 @@ def _self_improvement_forecast_adverse_path_repair_issue(
 
 
 def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict[str, Any] | None:
-    path = data_root / "self_improvement_audit.json"
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
+    payload = _fresh_self_improvement_audit_payload(data_root)
+    if payload is None:
         return None
     blocker = pending_execution_lifecycle_new_risk_blocker(payload)
     if blocker is None:
@@ -9992,12 +9980,8 @@ def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict
 
 
 def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str, str] | None:
-    path = data_root / "self_improvement_audit.json"
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
+    payload = _fresh_self_improvement_audit_payload(data_root)
+    if payload is None:
         return None
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -10038,6 +10022,25 @@ def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str
             "severity": "BLOCK",
         }
     return None
+
+
+def _fresh_self_improvement_audit_payload(data_root: Path) -> dict[str, Any] | None:
+    payload = _load_json_dict(data_root / "self_improvement_audit.json")
+    if not payload:
+        return None
+    generated_at = _parse_telemetry_time(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return None
+    for artifact_name in (
+        "memory_health.json",
+        "capture_economics.json",
+        "profitability_acceptance.json",
+    ):
+        dependency = _load_json_dict(data_root / artifact_name)
+        dependency_generated_at = _parse_telemetry_time(dependency.get("generated_at_utc"))
+        if dependency_generated_at is not None and generated_at < dependency_generated_at:
+            return None
+    return payload
 
 
 def _current_position_guardian_status(data_root: Path) -> dict[str, Any]:

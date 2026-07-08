@@ -60,6 +60,15 @@ NEGATIVE_BLOCKER_MARKERS = (
 )
 OPERATOR_REVIEW_MARKERS = ("OPERATOR", "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
 GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS = ("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",)
+GUARDIAN_RECEIPT_ROUTING_CLEAR_STALE_CODES = {
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+    "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+    "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+    "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+}
+ACTIVE_BOARD_STALE_SOURCE_SUPPRESSED_CODES = GUARDIAN_RECEIPT_ROUTING_CLEAR_STALE_CODES | {
+    "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+}
 
 
 @dataclass(frozen=True)
@@ -560,7 +569,19 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
     summary = artifact.get("coverage_summary") if isinstance(artifact.get("coverage_summary"), dict) else {}
     global_safety = artifact.get("global_safety") if isinstance(artifact.get("global_safety"), dict) else {}
     top_lane = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+    guardian_routing_clear = global_safety.get("guardian_receipt_normal_routing_allowed") is True
     lanes = artifact.get("ranked_active_lanes") if isinstance(artifact.get("ranked_active_lanes"), list) else []
+    stale_source_reasons = artifact.get("stale_source_reasons") if isinstance(artifact.get("stale_source_reasons"), list) else []
+    stale_source_blocker_codes = _unique(
+        _codes_from_blockers(stale_source_reasons)
+        + _string_list(top_lane.get("stale_source_blockers"))
+        + [
+            code
+            for lane in lanes
+            if isinstance(lane, dict)
+            for code in _string_list(lane.get("stale_source_blockers"))
+        ]
+    )
     consumed: list[dict[str, Any]] = []
     blocker_codes: list[str] = []
     for lane in lanes:
@@ -602,8 +623,9 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
         "pairs_scanned_count": len(_string_list(summary.get("pairs_scanned"))),
         "vehicles_scanned": _string_list(summary.get("vehicles_scanned")),
         "next_active_path": artifact.get("next_active_path"),
-        "top_lane": _contract_lane_summary(top_lane),
-        "guardian_receipt_normal_routing_allowed": global_safety.get("guardian_receipt_normal_routing_allowed") is True,
+        "top_lane": _contract_lane_summary(top_lane, guardian_routing_clear=guardian_routing_clear),
+        "stale_source_blocker_codes": stale_source_blocker_codes,
+        "guardian_receipt_normal_routing_allowed": guardian_routing_clear,
         "failed_exact_replay_consumed_count": len(consumed),
         "consumed_failed_replay_lanes": consumed[:10],
         "consumed_failed_replay_blocker_codes": _unique(blocker_codes),
@@ -618,10 +640,20 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
     }
 
 
-def _contract_lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
+def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool = False) -> dict[str, Any]:
     if not lane:
         return {}
     blockers = _string_list(lane.get("blockers"))
+    stale_source_blockers = _string_list(lane.get("stale_source_blockers"))
+    if guardian_routing_clear:
+        stale_guardian_codes = [
+            code
+            for code in blockers
+            if code in GUARDIAN_RECEIPT_ROUTING_CLEAR_STALE_CODES
+        ]
+        if stale_guardian_codes:
+            blockers = [code for code in blockers if code not in stale_guardian_codes]
+            stale_source_blockers = _unique(stale_source_blockers + stale_guardian_codes)
     return {
         "lane_id": lane.get("lane_id"),
         "pair": lane.get("pair"),
@@ -637,7 +669,7 @@ def _contract_lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
         "expected_edge_jpy": lane.get("expected_edge_jpy"),
         "next_action": lane.get("next_action"),
         "blockers": blockers[:24],
-        "stale_source_blockers": _string_list(lane.get("stale_source_blockers"))[:12],
+        "stale_source_blockers": stale_source_blockers[:12],
     }
 
 
@@ -865,12 +897,14 @@ def _remaining_blockers(
     if broad_tp_proof_reached:
         codes = [code for code in codes if code != "SAMPLE_GAP"]
     if active_opportunity_board.get("guardian_receipt_normal_routing_allowed") is True:
-        stale_guardian_receipt_codes = {
-            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-            "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
-            "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
-        }
-        codes = [code for code in codes if code not in stale_guardian_receipt_codes]
+        codes = [code for code in codes if code not in GUARDIAN_RECEIPT_ROUTING_CLEAR_STALE_CODES]
+    active_board_stale_codes = set(
+        _string_list(active_board_top.get("stale_source_blockers"))
+        + _string_list(active_opportunity_board.get("stale_source_blocker_codes"))
+    )
+    if active_board_stale_codes:
+        suppress_from_board_truth = active_board_stale_codes & ACTIVE_BOARD_STALE_SOURCE_SUPPRESSED_CODES
+        codes = [code for code in codes if code not in suppress_from_board_truth]
     replay_expectancy = _first_float(replay.get("net_expectancy_after_bidask"))
     if replay.get("passed") and (replay_expectancy is None or replay_expectancy >= 0):
         stale_spread_codes = {

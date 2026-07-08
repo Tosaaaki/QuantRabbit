@@ -307,6 +307,11 @@ class ActiveTraderContractTest(unittest.TestCase):
         now = datetime(2026, 7, 8, 9, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             paths = _write_base_artifacts(Path(tmp), now=now)
+            board = json.loads(paths["board"].read_text())
+            board["exact_blocker_preventing_live_ready"]["global_blockers"].append(
+                "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+            )
+            _write_json(paths["board"], board)
             _write_json(
                 paths["active_board"],
                 {
@@ -523,11 +528,22 @@ class ActiveTraderContractTest(unittest.TestCase):
                         "status": "NO_TRADE_WITH_CAUSE",
                         "next_action": "No trade for USD_CHF|LONG|TREND_CONTINUATION|STOP; preserve blocker cause.",
                         "blockers": [
+                            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+                            "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
                             "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
                             "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
                         ],
-                        "stale_source_blockers": ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"],
+                        "stale_source_blockers": [
+                            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                        ],
                     },
+                    "stale_source_reasons": [
+                        {
+                            "code": "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+                            "count": 30,
+                            "example_lane_ids": ["failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"],
+                        }
+                    ],
                     "ranked_active_lanes": [],
                     "next_active_path": "NO_TRADE_WITH_CAUSE: all lanes blocked by current profitability/replay causes.",
                 },
@@ -559,7 +575,17 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("all lanes as NO_TRADE_WITH_CAUSE", payload["selected_active_path_reason"])
         self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", blocker_codes)
         self.assertNotIn("GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertNotIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", blocker_codes)
         self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
+        self.assertNotIn(
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+            payload["current_state"]["active_opportunity_board"]["top_lane"]["blockers"],
+        )
+        self.assertIn(
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+            payload["current_state"]["active_opportunity_board"]["top_lane"]["stale_source_blockers"],
+        )
 
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:

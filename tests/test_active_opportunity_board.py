@@ -142,6 +142,96 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", lane["blockers"])
         self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", lane["stale_source_blockers"])
 
+    def test_current_intent_owned_self_improvement_blocker_is_stale_when_absent_from_current_intents(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            portfolio = json.loads(paths["portfolio"].read_text())
+            portfolio["candidate_rankings"][0]["current_blockers"] = [
+                "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+                "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+            ]
+            _write_json(paths["portfolio"], portfolio)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = next(
+            row
+            for row in payload["ranked_active_lanes"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertEqual(lane["status"], "EVIDENCE_ACQUISITION")
+        self.assertNotIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", lane["blockers"])
+        self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", lane["stale_source_blockers"])
+        self.assertIn("S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION", lane["blockers"])
+        stale_reasons = {row["code"]: row for row in payload["stale_source_reasons"]}
+        self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", stale_reasons)
+
+    def test_order_intent_warn_issues_do_not_become_board_blockers(self) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            order_intents = json.loads(paths["order_intents"].read_text())
+            order_intents["results"][0]["risk_issues"].append(
+                {
+                    "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE",
+                    "message": "repair marker is diagnostic and must not block board ranking",
+                    "severity": "WARN",
+                }
+            )
+            _write_json(paths["order_intents"], order_intents)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = next(
+            row
+            for row in payload["ranked_active_lanes"]
+            if row["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        )
+        self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", lane["blockers"])
+
     def test_negative_replay_lane_is_no_trade_with_cause(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

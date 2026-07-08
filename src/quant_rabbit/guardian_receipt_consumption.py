@@ -35,6 +35,7 @@ ACKNOWLEDGED_CLASSIFICATIONS = {
     HISTORICAL_ONLY,
 }
 CLASSIFICATIONS = ACKNOWLEDGED_CLASSIFICATIONS | {NEEDS_OPERATOR_REVIEW}
+PRESERVABLE_REVIEW_LIFECYCLES = {"EXPIRED", "STALE", "REJECTED", "HISTORICAL_ONLY"}
 
 
 def load_guardian_receipt_consumption(path: Path) -> dict[str, Any]:
@@ -580,7 +581,10 @@ def _preserved_existing_issues(
         if not _has_receipt_key(key) or key in seen_issue_keys:
             continue
         classification = str(row.get("classification") or "").upper()
-        if receipt_requires_operator_review(row) or (
+        if (
+            receipt_requires_operator_review(row)
+            and _issue_lifecycle(row) in PRESERVABLE_REVIEW_LIFECYCLES
+        ) or (
             row.get("normal_routing_allowed") is True
             and classification in ACKNOWLEDGED_CLASSIFICATIONS
         ):
