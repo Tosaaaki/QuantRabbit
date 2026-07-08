@@ -858,6 +858,91 @@ class ActiveTraderContractTest(unittest.TestCase):
         )
         self.assertNotIn("NO_TRADE_WITH_CAUSE", payload["next_trade_enabling_action"])
 
+    def test_edge_improvement_board_lane_preserves_evidence_status_despite_negative_blockers(self) -> None:
+        now = datetime(2026, 7, 8, 17, 20, tzinfo=timezone.utc)
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 118,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "pairs_scanned": ["EUR_USD", "EUR_JPY"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "edge_improvement_candidate": True,
+                        "edge_improvement_target": "EUR_USD|SHORT|BREAKOUT_FAILURE",
+                        "next_action": (
+                            "Run read-only EDGE_IMPROVEMENT_EXPERIMENT for "
+                            "EUR_USD|SHORT|BREAKOUT_FAILURE; preserve negative/month-scale "
+                            "blockers, canonicalize proof/replay/sample gaps, rerank, and do not send."
+                        ),
+                        "blockers": [
+                            "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+                            "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+                            "NEGATIVE_EXPECTANCY_ACTIVE",
+                            "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                            "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+                        ],
+                        "stale_source_blockers": ["NOT_IN_PROOF_QUEUE"],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT "
+                        "is the closest read-only path."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top_lane = payload["current_state"]["active_opportunity_board"]["top_lane"]
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(top_lane["status"], "EVIDENCE_ACQUISITION")
+        self.assertTrue(top_lane["edge_improvement_candidate"])
+        self.assertIn("top lane failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT is EVIDENCE_ACQUISITION", payload["selected_active_path_reason"])
+        self.assertIn("(LIMIT, EVIDENCE_ACQUISITION)", payload["next_trade_enabling_action"])
+        self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", payload["next_trade_enabling_action"])
+        self.assertNotIn("(LIMIT, NO_TRADE_WITH_CAUSE)", payload["next_trade_enabling_action"])
+
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
     paths = {

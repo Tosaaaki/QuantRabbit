@@ -676,7 +676,11 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
         "direction": lane.get("direction"),
         "strategy_family": lane.get("strategy_family"),
         "vehicle": lane.get("vehicle"),
-        "status": _normalized_board_lane_status(lane.get("status"), blockers),
+        "status": _normalized_board_lane_status(
+            lane.get("status"),
+            blockers,
+            edge_improvement_candidate=lane.get("edge_improvement_candidate") is True,
+        ),
         "replay_status": lane.get("replay_status"),
         "proof_status": lane.get("proof_status"),
         "risk_status": lane.get("risk_status"),
@@ -691,10 +695,17 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
         ),
         "blockers": blockers[:24],
         "stale_source_blockers": stale_source_blockers[:12],
+        "edge_improvement_candidate": lane.get("edge_improvement_candidate") is True,
+        "edge_improvement_target": lane.get("edge_improvement_target"),
     }
 
 
-def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
+def _normalized_board_lane_status(
+    status: Any,
+    blockers: list[str],
+    *,
+    edge_improvement_candidate: bool = False,
+) -> str:
     raw = str(status or "NO_TRADE_WITH_CAUSE")
     if any(any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
@@ -703,6 +714,8 @@ def _normalized_board_lane_status(status: Any, blockers: list[str]) -> str:
     if BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER in blockers:
         return raw
     if raw == "EVIDENCE_ACQUISITION" and blockers == [TP_PROVEN_ROTATION_BLOCKER]:
+        return raw
+    if raw == "EVIDENCE_ACQUISITION" and edge_improvement_candidate:
         return raw
     if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
