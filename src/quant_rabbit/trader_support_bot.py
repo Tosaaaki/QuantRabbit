@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -180,6 +181,18 @@ REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS = [
     "direct_launchd_mutation",
     "model_api_call_from_quantrabbit_code",
 ]
+RUNTIME_DISK_PRESSURE_BLOCKER = "RUNTIME_DISK_PRESSURE"
+RUNTIME_DISK_ENOSPC_BLOCKER = "RUNTIME_DISK_ENOSPC_RECENT"
+RUNTIME_DISK_P0_FREE_BYTES = 2 * 1024 * 1024 * 1024
+RUNTIME_DISK_P1_FREE_BYTES = 5 * 1024 * 1024 * 1024
+RUNTIME_DISK_P1_FREE_FRACTION = 0.01
+RUNTIME_DISK_ENOSPC_LOOKBACK_SECONDS = 24 * 60 * 60
+RUNTIME_DISK_ENOSPC_LOGS = (
+    "logs/guardian_wake_dispatcher.launchd.err",
+    "logs/guardian_wake_dispatcher.log",
+    "logs/qr_trader_run_watchdog.launchd.err",
+    "logs/qr_trader_run_watchdog.log",
+)
 
 
 @dataclass(frozen=True)
@@ -238,6 +251,7 @@ class TraderSupportBot:
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
         oanda_history_root: Path | None = None,
+        runtime_root: Path | None = None,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -315,6 +329,8 @@ class TraderSupportBot:
                 ],
             )
         )
+        self._runtime_disk_check_enabled = runtime_root is not None or output_path == DEFAULT_TRADER_SUPPORT_BOT
+        self.runtime_root = runtime_root or _project_root_from_artifact_path(output_path) or ROOT
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -372,6 +388,11 @@ class TraderSupportBot:
             _read_bidask_replay_validation(self.bidask_replay_validation_path)
             if self._read_bidask_replay_validation
             else {"_missing": True, "_path": str(self.bidask_replay_validation_path)}
+        )
+        runtime_disk = (
+            _runtime_disk_health(self.runtime_root, now_utc=self.now_utc)
+            if self._runtime_disk_check_enabled
+            else _runtime_disk_health_disabled(self.runtime_root)
         )
 
         guardian = _guardian_status(
@@ -439,6 +460,7 @@ class TraderSupportBot:
             qr_trader_run_watchdog=qr_trader_run_watchdog,
             guardian_receipt_consumption=guardian_receipt_consumption,
             guardian_receipt_operator_review=guardian_receipt_operator_review,
+            runtime_disk=runtime_disk,
         )
         status = STATUS_BLOCKED if blockers else STATUS_READY
         actions = _operator_actions(
@@ -453,6 +475,7 @@ class TraderSupportBot:
             qr_trader_run_watchdog=qr_trader_run_watchdog,
             guardian_receipt_consumption=guardian_receipt_consumption,
             guardian_receipt_operator_review=guardian_receipt_operator_review,
+            runtime_disk=runtime_disk,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -463,6 +486,7 @@ class TraderSupportBot:
             broker=broker_summary,
             target=target_summary,
             oanda_history_coverage=oanda_history_coverage,
+            runtime_disk=runtime_disk,
         )
         send_allowed = (
             status == STATUS_READY
@@ -639,6 +663,15 @@ class TraderSupportBot:
                 for item in qr_trader_run_watchdog.get("guardian_receipt_issues", [])
                 if isinstance(item, dict)
             ],
+            "runtime_disk_status": runtime_disk.get("status"),
+            "runtime_disk_severity": runtime_disk.get("severity"),
+            "runtime_disk_free_bytes": runtime_disk.get("free_bytes"),
+            "runtime_disk_free_fraction": runtime_disk.get("free_fraction"),
+            "runtime_disk_recent_enospc_count": len(
+                runtime_disk.get("recent_enospc_errors", [])
+                if isinstance(runtime_disk.get("recent_enospc_errors"), list)
+                else []
+            ),
             "guardian_receipt_consumption_status": guardian_receipt_consumption.get("status"),
             "guardian_receipt_consumption_normal_routing_allowed": guardian_receipt_consumption.get(
                 "normal_routing_allowed"
@@ -714,6 +747,7 @@ class TraderSupportBot:
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
                 "bidask_replay_validation": str(self.bidask_replay_validation_path),
                 "oanda_history_root": str(self.oanda_history_root),
+                "runtime_root": str(self.runtime_root),
             },
             "generated_at_utc": generated,
             "status": status,
@@ -726,6 +760,7 @@ class TraderSupportBot:
             "target": target_summary,
             "profit_capture": profit_capture,
             "qr_trader_run_watchdog": qr_trader_run_watchdog,
+            "runtime_disk": runtime_disk,
             "guardian_receipt_consumption": guardian_receipt_consumption,
             "guardian_receipt_operator_review": guardian_receipt_operator_review,
             "current_profit_capture": current_profit_capture,
@@ -751,6 +786,149 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
+    root = Path(root).expanduser()
+    usage_base = _nearest_existing_parent(root)
+    try:
+        usage = shutil.disk_usage(usage_base)
+    except OSError as exc:
+        return {
+            "status": "UNKNOWN",
+            "severity": "P1",
+            "blocking": True,
+            "blocker_code": RUNTIME_DISK_PRESSURE_BLOCKER,
+            "root": str(root),
+            "usage_base": str(usage_base),
+            "message": f"runtime disk usage could not be checked: {type(exc).__name__}: {exc}",
+            "recent_enospc_errors": [],
+        }
+
+    free_fraction = (usage.free / usage.total) if usage.total else 0.0
+    recent_enospc = _recent_enospc_errors(root, now_utc=now_utc)
+    base = {
+        "root": str(root),
+        "usage_base": str(usage_base),
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "free_fraction": round(free_fraction, 6),
+        "free_pct": round(free_fraction * 100.0, 3),
+        "p0_free_bytes_threshold": RUNTIME_DISK_P0_FREE_BYTES,
+        "p1_free_bytes_threshold": RUNTIME_DISK_P1_FREE_BYTES,
+        "p1_free_fraction_threshold": RUNTIME_DISK_P1_FREE_FRACTION,
+        "recent_enospc_errors": recent_enospc,
+    }
+    if recent_enospc:
+        return {
+            **base,
+            "status": "ENOSPC_RECENT",
+            "severity": "P0",
+            "blocking": True,
+            "blocker_code": RUNTIME_DISK_ENOSPC_BLOCKER,
+            "message": (
+                "recent runtime logs contain ENOSPC/write failures; artifact writes and guardian "
+                "wake reviews may be incomplete until disk pressure is cleared"
+            ),
+        }
+    if usage.free < RUNTIME_DISK_P0_FREE_BYTES:
+        return {
+            **base,
+            "status": "CRITICAL",
+            "severity": "P0",
+            "blocking": True,
+            "blocker_code": RUNTIME_DISK_PRESSURE_BLOCKER,
+            "message": (
+                f"runtime filesystem has only {usage.free} free bytes; artifact writes are unsafe"
+            ),
+        }
+    if usage.free < RUNTIME_DISK_P1_FREE_BYTES or free_fraction < RUNTIME_DISK_P1_FREE_FRACTION:
+        return {
+            **base,
+            "status": "PRESSURE",
+            "severity": "P1",
+            "blocking": True,
+            "blocker_code": RUNTIME_DISK_PRESSURE_BLOCKER,
+            "message": (
+                f"runtime filesystem free space is low: free_bytes={usage.free}, "
+                f"free_pct={free_fraction * 100.0:.3f}"
+            ),
+        }
+    return {
+        **base,
+        "status": "OK",
+        "severity": "OK",
+        "blocking": False,
+        "blocker_code": None,
+        "message": "runtime filesystem has enough free space for artifact writes",
+    }
+
+
+def _runtime_disk_health_disabled(root: Path) -> dict[str, Any]:
+    return {
+        "status": "DISABLED_FOR_NON_DEFAULT_OUTPUT",
+        "severity": "OK",
+        "blocking": False,
+        "blocker_code": None,
+        "root": str(root),
+        "usage_base": str(root),
+        "message": "runtime disk check is disabled for non-default support-bot outputs",
+        "recent_enospc_errors": [],
+    }
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    return candidate
+
+
+def _recent_enospc_errors(root: Path, *, now_utc: datetime) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    now_utc = now_utc.astimezone(timezone.utc)
+    for rel in RUNTIME_DISK_ENOSPC_LOGS:
+        path = root / rel
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        mtime = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+        age_seconds = (now_utc - mtime).total_seconds()
+        if age_seconds > RUNTIME_DISK_ENOSPC_LOOKBACK_SECONDS:
+            continue
+        try:
+            tail = _read_file_tail(path, max_bytes=200_000)
+        except OSError:
+            continue
+        matches = [
+            token
+            for token in ("No space left on device", "Errno 28", "ENOSPC")
+            if token in tail
+        ]
+        if not matches:
+            continue
+        errors.append(
+            {
+                "path": str(path),
+                "mtime_utc": mtime.isoformat(),
+                "age_seconds": round(max(0.0, age_seconds), 3),
+                "matched_tokens": matches,
+            }
+        )
+    return errors
+
+
+def _read_file_tail(path: Path, *, max_bytes: int) -> str:
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        if size > max_bytes:
+            fh.seek(-max_bytes, os.SEEK_END)
+        data = fh.read(max_bytes)
+    return data.decode("utf-8", errors="replace")
 
 
 def _watchdog_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -3949,8 +4127,17 @@ def _build_blockers(
     qr_trader_run_watchdog: dict[str, Any],
     guardian_receipt_consumption: dict[str, Any],
     guardian_receipt_operator_review: dict[str, Any],
+    runtime_disk: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
+    if runtime_disk.get("blocking"):
+        blockers.append(
+            {
+                "code": str(runtime_disk.get("blocker_code") or RUNTIME_DISK_PRESSURE_BLOCKER),
+                "severity": str(runtime_disk.get("severity") or "P1"),
+                "message": str(runtime_disk.get("message") or "runtime disk pressure is active"),
+            }
+        )
     if _watchdog_counts_as_support_blocker(qr_trader_run_watchdog):
         status = qr_trader_run_watchdog.get("status")
         severity = "P0" if status in {"BROKEN", "STALE"} else "P1"
@@ -4424,6 +4611,7 @@ def _operator_actions(
     qr_trader_run_watchdog: dict[str, Any] | None = None,
     guardian_receipt_consumption: dict[str, Any] | None = None,
     guardian_receipt_operator_review: dict[str, Any] | None = None,
+    runtime_disk: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     qr_trader_run_watchdog = (
@@ -4435,6 +4623,7 @@ def _operator_actions(
     guardian_receipt_operator_review = (
         guardian_receipt_operator_review if isinstance(guardian_receipt_operator_review, dict) else {}
     )
+    runtime_disk = runtime_disk if isinstance(runtime_disk, dict) else {}
     actions: list[dict[str, Any]] = [
         {
             "code": "REFRESH_SUPPORT_PANEL",
@@ -4457,6 +4646,28 @@ def _operator_actions(
                 ),
             }
         )
+    if runtime_disk.get("blocking"):
+        root = str(runtime_disk.get("root") or "/Users/tossaki/App/QuantRabbit-live")
+        actions.append(
+            {
+                "code": "RUN_QUANTRABBIT_DISK_MAINTENANCE",
+                "command": f"python3 scripts/qr_disk_maintenance.py --root {root} --apply",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "runtime disk pressure can make guardian/trader artifact writes fail; run the "
+                    "read-only-safe QuantRabbit maintenance pass before trusting wake/review artifacts"
+                ),
+            }
+        )
+        if runtime_disk.get("recent_enospc_errors"):
+            actions.append(
+                {
+                    "code": "READ_RUNTIME_ENOSPC_LOGS",
+                    "command": "tail -n 160 logs/guardian_wake_dispatcher.launchd.err",
+                    "requires_explicit_operator_approval": False,
+                    "reason": "recent guardian wake logs contain ENOSPC/write failure evidence",
+                }
+            )
     if (
         qr_trader_run_watchdog.get("guardian_receipt_issues")
         and guardian_receipt_consumption.get("normal_routing_allowed") is not True
@@ -5125,10 +5336,12 @@ def _build_repair_requests(
     broker: dict[str, Any] | None = None,
     target: dict[str, Any] | None = None,
     oanda_history_coverage: dict[str, Any] | None = None,
+    runtime_disk: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
     p0_findings = p0_findings if isinstance(p0_findings, list) else []
+    runtime_disk = runtime_disk if isinstance(runtime_disk, dict) else {}
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
     items = [item for item in raw_items if isinstance(item, dict)]
@@ -5140,6 +5353,66 @@ def _build_repair_requests(
     )
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
+
+    if runtime_disk.get("blocking"):
+        blocker_code = str(runtime_disk.get("blocker_code") or RUNTIME_DISK_PRESSURE_BLOCKER)
+        requests.append(
+            _repair_request(
+                code="REPAIR_RUNTIME_DISK_PRESSURE",
+                priority=str(runtime_disk.get("severity") or "P1"),
+                status=(
+                    "RECENT_ENOSPC_ARTIFACT_WRITE_FAILURE"
+                    if blocker_code == RUNTIME_DISK_ENOSPC_BLOCKER
+                    else "HOST_DISK_PRESSURE_ACTIVE"
+                ),
+                source_findings=[blocker_code],
+                problem=(
+                    "Runtime artifact writes can fail under disk pressure. Guardian wake reviews, "
+                    "support reports, and trader sidecars must not be treated as complete when the "
+                    "filesystem has recently returned ENOSPC or is below the operating free-space floor."
+                ),
+                why_now=(
+                    "The autonomous loop depends on bot-written artifacts waking and informing the "
+                    "hourly trader. If those artifacts cannot be written, the system can silently stop "
+                    "advancing even though launchd labels remain loaded."
+                ),
+                evidence_summary=runtime_disk,
+                clearance_conditions=[
+                    (
+                        "Run QuantRabbit disk maintenance and verify the runtime filesystem is above "
+                        "the P1 floor: free_bytes >= "
+                        f"{RUNTIME_DISK_P1_FREE_BYTES} and free_fraction >= "
+                        f"{RUNTIME_DISK_P1_FREE_FRACTION}."
+                    ),
+                    (
+                        "After cleanup, rerun guardian-event-router, guardian wake dispatcher/status, "
+                        "trader-support-bot, and trader-repair-orchestrator; no recent ENOSPC evidence "
+                        "should remain in runtime logs."
+                    ),
+                    (
+                        "Do not delete unrelated user files from a repair request. If host-wide cleanup "
+                        "outside QuantRabbit is required, surface it as operator-owned disk cleanup."
+                    ),
+                ],
+                verification_commands=[
+                    "df -h /Users/tossaki/App/QuantRabbit-live",
+                    "python3 scripts/qr_disk_maintenance.py --root /Users/tossaki/App/QuantRabbit-live --apply",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+                suggested_files=[
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "scripts/qr_disk_maintenance.py",
+                    "tests/test_trader_support_bot.py",
+                    "tests/test_qr_disk_maintenance.py",
+                ],
+                required_tests=[
+                    "Regression: recent ENOSPC in guardian wake logs becomes a support blocker and repair request.",
+                    "Positive path: healthy disk usage leaves support readiness unchanged.",
+                    "Safety path: the repair request allows only QuantRabbit maintenance/read-only checks and does not authorize deleting unrelated user files.",
+                ],
+            )
+        )
 
     unknown_positions = (
         broker.get("unknown_owner_position_examples")
@@ -6279,6 +6552,9 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         if isinstance(payload.get("oanda_history_coverage"), dict)
         else None
     )
+    runtime_disk = (
+        payload.get("runtime_disk") if isinstance(payload.get("runtime_disk"), dict) else None
+    )
     if not any((guardian, profit_capture, entry, acceptance, broker, target)):
         return []
     return _build_repair_requests(
@@ -6290,6 +6566,7 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         broker=broker,
         target=target,
         oanda_history_coverage=oanda_history_coverage,
+        runtime_disk=runtime_disk,
     )
 
 
@@ -6314,6 +6591,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         if isinstance(payload.get("qr_trader_run_watchdog"), dict)
         else {}
     )
+    runtime_disk = payload.get("runtime_disk") if isinstance(payload.get("runtime_disk"), dict) else {}
     consumption = (
         payload.get("guardian_receipt_consumption")
         if isinstance(payload.get("guardian_receipt_consumption"), dict)
@@ -6347,6 +6625,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian active | `{guardian['active']}` source=`{guardian['active_source']}` |",
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| qr-trader scheduled-run watchdog | `{watchdog.get('status')}` severity=`{watchdog.get('severity')}` minutes_since=`{watchdog.get('minutes_since_last_run')}` |",
+        f"| Runtime disk | `{runtime_disk.get('status')}` severity=`{runtime_disk.get('severity')}` free=`{runtime_disk.get('free_bytes')}` bytes pct=`{runtime_disk.get('free_pct')}` |",
         f"| Guardian receipt consumption | `{consumption.get('status')}` normal_routing_allowed=`{consumption.get('normal_routing_allowed')}` unresolved=`{consumption.get('unresolved_issue_count')}` |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Near-ready diagnostic lanes | `{entry.get('near_ready_lane_count')}` |",
@@ -6487,6 +6766,29 @@ def _render_report(payload: dict[str, Any]) -> str:
                 )
     else:
         lines.append("- Guardian receipt issues: none")
+    lines.extend(["", "## Runtime Disk", ""])
+    lines.extend(
+        [
+            f"- Status: `{runtime_disk.get('status')}` severity=`{runtime_disk.get('severity')}` blocking=`{runtime_disk.get('blocking')}`",
+            f"- Root: `{runtime_disk.get('root')}` usage_base=`{runtime_disk.get('usage_base')}`",
+            f"- Free: `{runtime_disk.get('free_bytes')}` bytes / `{runtime_disk.get('free_pct')}`%",
+            f"- Message: {runtime_disk.get('message') or 'none'}",
+        ]
+    )
+    enospc = (
+        runtime_disk.get("recent_enospc_errors")
+        if isinstance(runtime_disk.get("recent_enospc_errors"), list)
+        else []
+    )
+    if enospc:
+        lines.append("- Recent ENOSPC evidence:")
+        for item in enospc[:5]:
+            if isinstance(item, dict):
+                lines.append(
+                    f"  - `{item.get('path')}` mtime=`{item.get('mtime_utc')}` tokens=`{', '.join(item.get('matched_tokens') or [])}`"
+                )
+    else:
+        lines.append("- Recent ENOSPC evidence: none")
     lines.extend(["", "## Operator Manual Positions", ""])
     operator_packets = (
         broker.get("operator_manual_position_packets")

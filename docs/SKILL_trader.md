@@ -686,14 +686,17 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   heartbeat freshness, qr-trader scheduled-run watchdog status, unresolved
 #   guardian receipt issues, latest guardian receipt consumption/operator-review
 #   status, whether normal routing is allowed, current profit-capture gate state, TP-progress
-#   profit-capture misses, fresh-entry send allowed flag, repair-frontier lanes,
-#   explicit operator actions, and the latest active contract/board/frontier
+#   profit-capture misses, runtime disk pressure / recent ENOSPC artifact-write
+#   failures, fresh-entry send allowed flag, repair-frontier lanes, explicit
+#   operator actions, and the latest active contract/board/frontier
 #   lane so support visibility cannot fall back to a legacy EUR/USD diagnostic
 #   when the terminal active path selected a non-EUR lane. Its next-action text
 #   must prefer terminal active_trader_contract.next_trade_enabling_action /
 #   next_prompt over older embedded board-lane next_action so already-consumed
 #   entry-frequency or forecast-refresh work does not reappear after
-#   range-rail geometry repair has advanced the contract. It never loads launchd,
+#   range-rail geometry repair has advanced the contract. Runtime disk repair
+#   requests may run QuantRabbit disk maintenance/read-only checks, but never
+#   delete unrelated user files without operator-owned cleanup. It never loads launchd,
 #   sends orders, closes positions, cancels entries, or wakes the trader.
 # - as-live-ready-evidence-loop and as-4x-proof-path are read-only artifact
 #   builders that run after trader-support-bot. They refresh

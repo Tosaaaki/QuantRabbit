@@ -189,6 +189,57 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("WAIT_FOR_POST_REPAIR_TP_PROGRESS_SAMPLE", action_codes)
             self.assertNotIn("RECHECK_TIMING_CAPTURE_MISSES", action_codes)
 
+    def test_recent_runtime_enospc_blocks_support_and_emits_repair_request(self) -> None:
+        now = datetime(2026, 7, 9, 20, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            log_path = root / "logs" / "guardian_wake_dispatcher.launchd.err"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(
+                "OSError: [Errno 28] No space left on device: "
+                "'/Users/tossaki/App/QuantRabbit-live/docs/.guardian_action_review.md.tmp'\n",
+                encoding="utf-8",
+            )
+            os.utime(log_path, (now.timestamp(), now.timestamp()))
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    runtime_root=root,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            request_by_code = {item["code"]: item for item in payload["repair_requests"]}
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(payload["runtime_disk"]["status"], "ENOSPC_RECENT")
+            self.assertIn("RUNTIME_DISK_ENOSPC_RECENT", blocker_codes)
+            self.assertIn("RUN_QUANTRABBIT_DISK_MAINTENANCE", action_codes)
+            self.assertIn("READ_RUNTIME_ENOSPC_LOGS", action_codes)
+            self.assertIn("REPAIR_RUNTIME_DISK_PRESSURE", request_by_code)
+            self.assertEqual(request_by_code["REPAIR_RUNTIME_DISK_PRESSURE"]["priority"], "P0")
+            self.assertEqual(
+                request_by_code["REPAIR_RUNTIME_DISK_PRESSURE"]["status"],
+                "RECENT_ENOSPC_ARTIFACT_WRITE_FAILURE",
+            )
+            self.assertIn("Runtime Disk", files["report"].read_text(encoding="utf-8"))
+
     def test_post_repair_replay_trigger_remains_support_p0_blocker(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
