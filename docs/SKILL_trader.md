@@ -25,7 +25,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
 - Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
 - The `com.quantrabbit.guardian-wake-dispatcher` LaunchAgent may wake GPT-5.5 with read-only `codex exec`; its live default must keep `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` and `QR_GUARDIAN_ACTION_EXECUTE=0`, so wake output is review/receipt only unless a separate explicit gateway path is enabled.
-- Read `docs/guardian_event_report.md`, `data/guardian_events.json`, `data/guardian_escalation.json`, `docs/guardian_action_review.md`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, `data/guardian_trigger_contract.json`, `docs/guardian_trigger_contract_report.md`, `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, `data/guardian_receipt_consumption.json`, `docs/guardian_receipt_consumption_report.md`, `data/guardian_receipt_operator_review.json`, and `docs/guardian_receipt_operator_review_report.md` every cycle before normal new-entry routing. Treat `docs/guardian_action_review.md` as two facts: latest dispatcher pass status and latest accepted receipt status/lifecycle. Treat `data/qr_trader_run_watchdog.json` as the local scheduled-run evidence: `BROKEN` / `STALE` is P0 operational evidence, `last_trader_run_at` must come only from trader journal/memory/decision evidence, and active or expired current/archive guardian receipts flagged as `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER` must be classified before ordinary entries.
+- Read `docs/guardian_event_report.md`, `data/guardian_events.json`, `data/guardian_escalation.json`, `docs/guardian_action_review.md`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, `data/guardian_trigger_contract.json`, `docs/guardian_trigger_contract_report.md`, `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, `data/guardian_receipt_consumption.json`, `docs/guardian_receipt_consumption_report.md`, `data/guardian_receipt_operator_review.json`, `docs/guardian_receipt_operator_review_report.md`, `data/operator_review_report.json`, and `docs/operator_review_report.md` every cycle before normal new-entry routing. Treat `docs/guardian_action_review.md` as two facts: latest dispatcher pass status and latest accepted receipt status/lifecycle. Treat `data/qr_trader_run_watchdog.json` as the local scheduled-run evidence: `BROKEN` / `STALE` is P0 operational evidence, `last_trader_run_at` must come only from trader journal/memory/decision evidence, and active or expired current/archive guardian receipts flagged as `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER` must be classified before ordinary entries.
 - `data/guardian_receipt_consumption.json` is the qr-trader durable acknowledgement record for watchdog guardian receipt issues. For each issue, write `issue_code`, `receipt_event_id`, `receipt_action`, `receipt_lifecycle`, `consumed_by_trader`, `classification`, `reason`, `normal_routing_allowed`, `generated_by`, and `generated_at_utc`. Allowed classifications are `CONSUMED`, `EXPIRED_ACKNOWLEDGED`, `STALE_ACKNOWLEDGED`, `REJECTED_ACKNOWLEDGED`, `HISTORICAL_ONLY`, and `NEEDS_OPERATOR_REVIEW`; expired unconsumed `REDUCE`, `HARVEST`, or `CANCEL_PENDING` must remain `NEEDS_OPERATOR_REVIEW` until valid operator review clears them or a previously fresh-cleared review is durably consumed with `operator_review_status=OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT`. `data/guardian_receipt_operator_review.json` rows classify reviewed receipts as `OPERATOR_ACKNOWLEDGED_HISTORICAL`, `OPERATOR_CONFIRMED_NO_ACTION`, `OPERATOR_CONFIRMED_MANUAL_OWNED`, `OPERATOR_REQUESTS_KEEP_BLOCKED`, or `OPERATOR_REQUESTS_FRESH_REVIEW`, include `no_live_side_effects=true`, and expire explicitly. Normal new-entry routing is blocked while watchdog has unclassified `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER`, consumption has `normal_routing_allowed=false`, review is missing/stale and was never previously cleared, review requests keep-blocked/fresh-review, or any separate current P0/P1 watchdog issue remains. Initial clearance needs a fresh explicit operator decision plus broker-truth proof that no active emergency remains for the same event; later cycles may preserve that historical acknowledgement after the review handoff TTL expires only if current broker truth still clears the same reviewed event. Existing exposure may still be managed/protected, pending cleanup may proceed through its approved path, and an operator-requested fresh review may be written; ordinary `TRADE` / `ADD` / `campaign_exposure_recovery` stays blocked unless the durable reviewed-historical consumption row clears the receipt. The verifier, `RiskEngine.validate(..., for_live_send=True)`, and `LiveOrderGateway` must all surface `GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED` for review-required receipts that lack durable clearance instead of letting ordinary fresh entries proceed.
 - Handle guardian wake runtime failures before normal entries: read the selected event, `docs/guardian_event_report.md`, `docs/guardian_action_review.md`, parse/preflight diagnostics, Codex binary path/version, requested model, raw stdout/stderr excerpts, Codex output-last-message / stdout / session JSONL source, and whether the dispatcher queued the event for the active trader; classify the failure (`CODEX_MODEL_UNSUPPORTED`, `CODEX_CLI_VERSION_UNSUPPORTED`, `CODEX_EMPTY_LAST_MESSAGE`, `CODEX_NO_ASSISTANT_MESSAGE`, `CODEX_NO_JSON_RECEIPT`, `CODEX_TIMEOUT`, `CODEX_AUTH_OR_SANDBOX_FAILURE`, or `SCHEMA_INVALID`), then either write a fresh valid receipt through the normal trader flow or record why the wake is stale/rejected.
 - A guardian wake receipt is executable only when its `event_id`, `pair`, compatible side/direction, any included `dedupe_key`, `receipt_status=ACCEPTED`, `receipt_lifecycle=ACTIVE`, and `expires_at_utc` match the selected event and current time. `RECEIPT_EVENT_MISMATCH` means the new wake output was rejected; resolve the queued event from `docs/guardian_action_review.md` before ordinary entries. Do not treat a later `NO_WAKE` or `SUPPRESSED` dispatcher pass as invalidating a prior accepted HOLD / NO_ACTION receipt.
@@ -331,7 +331,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
 # trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract →
 # active-opportunity-board → non-eurusd-proof-lane-mapper →
-# non-eurusd-live-grade-frontier) in one
+# non-eurusd-live-grade-frontier → active-trader-contract →
+# operator-review-report) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -560,7 +561,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator` → `trader-goal-loop-orchestrator` →
-# `active-trader-contract` → `active-opportunity-board`. It preserves the original
+# `active-trader-contract` → `active-opportunity-board` →
+# `non-eurusd-proof-lane-mapper` → `non-eurusd-live-grade-frontier` →
+# `active-trader-contract` → `operator-review-report`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -589,6 +592,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → trader-repair-orchestrator → trader-goal-loop-orchestrator
 #   → active-trader-contract → active-opportunity-board
 #   → non-eurusd-proof-lane-mapper → non-eurusd-live-grade-frontier
+#   → active-trader-contract → operator-review-report
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -762,6 +766,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   NO_TRADE_WITH_CAUSE, but this still never grants live order, cancel/close,
 #   launchd, gate relaxation, lot-backsolve, market-close-loss-as-TP-proof,
 #   secret-disclosure, or inferred approval.
+# - operator-review-report is read-only and runs after the terminal
+#   active-trader-contract. It writes `data/operator_review_report.json` and
+#   `docs/operator_review_report.md` from the current contract, active board,
+#   non-EUR frontier, guardian receipt consumption/operator-review, watchdog,
+#   and broker snapshot. It packages judgement material for the current top
+#   lane only; it never writes `data/guardian_receipt_operator_review.json`,
+#   infers approval, grants live permission, sends/cancels/closes, changes
+#   launchd, relaxes gates, hides negative expectancy, or back-solves lot size.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
@@ -800,4 +812,5 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - qr-trader run watchdog JSON/report: `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`.
 - Guardian receipt consumption JSON/report: `data/guardian_receipt_consumption.json`, `docs/guardian_receipt_consumption_report.md`.
 - Guardian receipt operator review JSON/report: `data/guardian_receipt_operator_review.json`, `docs/guardian_receipt_operator_review_report.md`.
+- Operator review material JSON/report: `data/operator_review_report.json`, `docs/operator_review_report.md`.
 - Trader support JSON/report: `data/trader_support_bot.json`, `docs/trader_support_bot_report.md`.

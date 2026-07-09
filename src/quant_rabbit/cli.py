@@ -136,6 +136,8 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+    DEFAULT_OPERATOR_REVIEW_REPORT,
+    DEFAULT_OPERATOR_REVIEW_REPORT_MD,
     DEFAULT_OPERATOR_MANUAL_POSITIONS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_POSITION_EXECUTION,
@@ -1503,6 +1505,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "active-opportunity-board",
         "non-eurusd-proof-lane-mapper",
         "non-eurusd-live-grade-frontier",
+        "operator-review-report",
     }
 )
 
@@ -2334,18 +2337,25 @@ def _non_eurusd_live_grade_frontier_step() -> dict[str, Any]:
     return {"argv": ["non-eurusd-live-grade-frontier"], "required": True}
 
 
+def _operator_review_report_step() -> dict[str, Any]:
+    return {"argv": ["operator-review-report"], "required": True}
+
+
 def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # The board reads the previous contract for narrative context, while the
     # contract is the artifact the trader loop consumes for the final active
     # path. Run contract -> board -> non-EUR frontier -> contract so the
     # terminal contract always consumes the freshly reranked multi-lane board
-    # while the non-EUR live-grade frontier stays current for repair work.
+    # while the non-EUR live-grade frontier stays current for repair work. Then
+    # package operator-review material from the terminal contract/top board lane
+    # so the next loop does not read stale single-lane review text.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
         _non_eurusd_proof_lane_mapper_step(),
         _non_eurusd_live_grade_frontier_step(),
         _active_trader_contract_step(),
+        _operator_review_report_step(),
     ]
 
 
@@ -4174,6 +4184,41 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_non_eurusd_frontier.add_argument("--output", type=Path, default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER)
     p_non_eurusd_frontier.add_argument("--report", type=Path, default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER_REPORT)
+
+    p_operator_review_report = sub.add_parser(
+        "operator-review-report",
+        help="Write read-only operator review material for the current active board/contract lane.",
+    )
+    p_operator_review_report.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_operator_review_report.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_operator_review_report.add_argument(
+        "--non-eurusd-live-grade-frontier",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    )
+    p_operator_review_report.add_argument(
+        "--non-eurusd-proof-lane-mapper",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER,
+    )
+    p_operator_review_report.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
+    p_operator_review_report.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    )
+    p_operator_review_report.add_argument(
+        "--qr-trader-run-watchdog",
+        type=Path,
+        default=DEFAULT_QR_TRADER_RUN_WATCHDOG,
+    )
+    p_operator_review_report.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_operator_review_report.add_argument("--output", type=Path, default=DEFAULT_OPERATOR_REVIEW_REPORT)
+    p_operator_review_report.add_argument("--report", type=Path, default=DEFAULT_OPERATOR_REVIEW_REPORT_MD)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -7061,6 +7106,42 @@ def main(argv: list[str] | None = None) -> int:
                     "top_lane_id": summary.top_lane_id,
                     "top_non_eurusd_lane_id": summary.top_non_eurusd_lane_id,
                     "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "operator-review-report":
+        try:
+            from quant_rabbit.operator_review_report import OperatorReviewReport
+
+            summary = OperatorReviewReport(
+                active_trader_contract_path=args.active_trader_contract,
+                active_opportunity_board_path=args.active_opportunity_board,
+                non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
+                non_eurusd_proof_lane_mapper_path=args.non_eurusd_proof_lane_mapper,
+                guardian_receipt_consumption_path=args.guardian_receipt_consumption,
+                guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
+                qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                broker_snapshot_path=args.broker_snapshot,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "target_shape": summary.target_shape,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                    "read_only": True,
+                    "live_side_effects": [],
                 },
                 ensure_ascii=False,
                 indent=2,

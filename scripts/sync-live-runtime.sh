@@ -131,6 +131,7 @@ docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
 docs/non_eurusd_live_grade_frontier.md|\
 docs/non_eurusd_proof_lane_mapper.md|\
+docs/operator_review_report.md|\
 docs/portfolio_4x_path_planner.md|\
 docs/post_gate_capture_economics_decomposition.md|\
 docs/post_gate_expectancy_gap_trace.md|\
@@ -162,6 +163,7 @@ data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\
 data/non_eurusd_live_grade_frontier.json|\
 data/non_eurusd_proof_lane_mapper.json|\
+data/operator_review_report.json|\
 data/portfolio_4x_path_planner.json|\
 data/post_gate_capture_economics_decomposition.json|\
 data/post_gate_expectancy_gap_trace.json|\
