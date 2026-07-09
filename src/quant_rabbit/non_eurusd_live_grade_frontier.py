@@ -52,6 +52,13 @@ BIDASK_BLOCKERS = (
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
     "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
 )
+BIDASK_NEGATIVE_BLOCKERS = (
+    "BIDASK_REPLAY_NEGATIVE",
+    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+    "spread_included_bidask_replay_negative_for_exact_lane",
+    "packaged_bidask_rule_live_block_negative_expectancy",
+)
+BIDASK_REFRESH_BLOCKERS = ("BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",)
 SPREAD_BLOCKERS = ("SPREAD_TOO_WIDE", "TARGET_TOO_THIN_FOR_SPREAD")
 FORECAST_BLOCKERS = (
     "FORECAST_WATCH_ONLY",
@@ -729,6 +736,11 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
         return "FRONTIER_DATA_INCOMPLETE"
     lane_id = lane.get("lane_id")
     if status == STATUS_ALL_NEGATIVE:
+        if lane.get("bidask_status") == "NEGATIVE":
+            return (
+                f"BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for {lane_id}; "
+                "repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
+            )
         return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
     if status == STATUS_ALL_SPREAD_OR_FORECAST:
         return f"FORECAST_OR_SPREAD_REFRESH: refresh current forecast/spread packet for {lane_id}; do not ignore blockers."
@@ -791,14 +803,14 @@ def _tp_proof_counts(lane: dict[str, Any]) -> tuple[int | None, int | None]:
 
 def _bidask_status(lane: dict[str, Any], blockers: list[str]) -> str:
     replay_status = str(lane.get("replay_status_board") or "").upper()
-    if "REFRESH" in replay_status:
-        return "REFRESH_REQUIRED"
     if "NEGATIVE" in replay_status:
         return "NEGATIVE"
-    if _has_marker(blockers, ("BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",)):
-        return "REFRESH_REQUIRED"
-    if _has_marker(blockers, BIDASK_BLOCKERS):
+    if _has_marker(blockers, BIDASK_NEGATIVE_BLOCKERS):
         return "NEGATIVE"
+    if "REFRESH" in replay_status:
+        return "REFRESH_REQUIRED"
+    if _has_marker(blockers, BIDASK_REFRESH_BLOCKERS):
+        return "REFRESH_REQUIRED"
     return "PASS" if lane.get("order_intent_status") else "UNKNOWN"
 
 

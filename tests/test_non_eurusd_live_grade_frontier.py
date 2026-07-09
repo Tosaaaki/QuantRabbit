@@ -365,6 +365,50 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertIn("Repair bid/ask-negative pattern", payload["top_non_eurusd_lane"]["next_action"])
         self.assertNotIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
 
+    def test_negative_bidask_replay_takes_priority_over_refresh_gap(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "range_trader:USD_CAD:SHORT:RANGE_ROTATION"
+        blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [_intent(lane_id, "USD_CAD", "SHORT", "RANGE_ROTATION", "LIMIT", blockers)]},
+            )
+            board_lane = _board_lane(lane_id, "USD_CAD", "SHORT", "RANGE_ROTATION", "LIMIT", blockers)
+            board_lane["replay_status"] = "NEGATIVE_EVIDENCE_REFRESH_REQUIRED"
+            _write_json(paths["active_board"], {"ranked_active_lanes": [board_lane]})
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_non_eurusd_lane"]["bidask_status"], "NEGATIVE")
+        self.assertIn("BIDASK_NEGATIVE_PATTERN_REPAIR", payload["next_active_path"])
+        self.assertNotIn("BIDASK_REPLAY_REFRESH", payload["next_active_path"])
+        self.assertIn("Repair bid/ask-negative pattern", payload["top_non_eurusd_lane"]["next_action"])
+        self.assertNotIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
+
     def test_refresh_required_bidask_replay_still_requests_replay_refresh(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
