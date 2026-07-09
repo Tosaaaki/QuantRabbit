@@ -807,6 +807,8 @@ def _normalized_board_lane_status(
         return raw
     if raw == "EVIDENCE_ACQUISITION" and edge_improvement_candidate:
         return raw
+    if raw == "EVIDENCE_ACQUISITION" and "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH" in blockers:
+        return raw
     if any(any(marker in blocker for marker in NEGATIVE_BLOCKER_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
     if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
