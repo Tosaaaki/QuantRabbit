@@ -4075,6 +4075,11 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
     )
     p_active_contract.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_active_contract.add_argument(
+        "--non-eurusd-live-grade-frontier",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    )
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
@@ -6926,6 +6931,7 @@ def main(argv: list[str] | None = None) -> int:
                 proof_floor_update_path=args.proof_floor_update,
                 limit_s5_bidask_replay_path=args.limit_s5_bidask_replay,
                 active_opportunity_board_path=args.active_opportunity_board,
+                non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

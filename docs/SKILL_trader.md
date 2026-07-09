@@ -756,9 +756,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   current lane/vehicle mapping. The frontier ranks the current EUR/USD and
 #   non-EUR/USD order-intent lanes by live-grade proximity, surfaces
 #   USD_CAD LONG BREAKOUT_FAILURE blockers, and keeps proof-floor, bid/ask,
-#   spread, forecast, and loss-budget gaps explicit. They never grant live
-#   order, cancel/close, launchd, gate relaxation, lot-backsolve,
-#   market-close-loss-as-TP-proof, secret-disclosure, or inferred approval.
+#   spread, forecast, and loss-budget gaps explicit. The terminal
+#   active-trader-contract may consume frontier.next_evidence_lane as a
+#   read-only EVIDENCE_ACQUISITION target when the board is otherwise all
+#   NO_TRADE_WITH_CAUSE, but this still never grants live order, cancel/close,
+#   launchd, gate relaxation, lot-backsolve, market-close-loss-as-TP-proof,
+#   secret-disclosure, or inferred approval.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

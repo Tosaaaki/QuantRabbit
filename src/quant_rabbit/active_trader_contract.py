@@ -14,6 +14,7 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LIVE_ORDER_REQUEST,
+    DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
 )
@@ -112,6 +113,7 @@ class ActiveTraderContract:
         limit_s5_bidask_replay_path: Path = DEFAULT_EURUSD_LIMIT_S5_BIDASK_REPLAY,
         limit_sample_mining_path: Path = DEFAULT_EURUSD_LIMIT_SAMPLE_MINING,
         active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+        non_eurusd_live_grade_frontier_path: Path | None = None,
         output_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         report_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
         now_utc: datetime | None = None,
@@ -132,6 +134,8 @@ class ActiveTraderContract:
             "eurusd_short_breakout_failure_limit_sample_mining": limit_sample_mining_path,
             "active_opportunity_board": active_opportunity_board_path,
         }
+        if non_eurusd_live_grade_frontier_path is not None:
+            self.paths["non_eurusd_live_grade_frontier"] = non_eurusd_live_grade_frontier_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -173,6 +177,16 @@ class ActiveTraderContract:
         active_opportunity_board = _active_opportunity_board_contract_state(
             artifacts["active_opportunity_board"]
         )
+        non_eurusd_frontier = _non_eurusd_frontier_contract_state(
+            artifacts.get(
+                "non_eurusd_live_grade_frontier",
+                {
+                    "_artifact_status": "missing",
+                    "_path": str(DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER),
+                    "_sha256": None,
+                },
+            )
+        )
         scout = _normalize_stale_blocker_codes(scout, proof=proof, proof_floor=proof_floor, replay=replay)
         proof_floor = _normalize_stale_blocker_codes(
             proof_floor,
@@ -188,6 +202,7 @@ class ActiveTraderContract:
             portfolio=portfolio,
             replay=replay,
             active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
         )
         no_action = _no_action_contract(
             harvest=harvest,
@@ -197,6 +212,7 @@ class ActiveTraderContract:
             portfolio=portfolio,
             replay=replay,
             active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
             active_deployment_gap=active_deployment_gap,
         )
         selected_active_path, selection_reason = _select_active_path(
@@ -208,6 +224,7 @@ class ActiveTraderContract:
             harvest=harvest,
             proof=proof,
             active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
         )
         remaining_blockers = _remaining_blockers(
             harvest=harvest,
@@ -220,6 +237,7 @@ class ActiveTraderContract:
             proof_floor=proof_floor,
             limit_sample_mining=limit_sample_mining,
             active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -245,6 +263,7 @@ class ActiveTraderContract:
                 replay,
                 limit_sample_mining,
                 active_opportunity_board=active_opportunity_board,
+                non_eurusd_frontier=non_eurusd_frontier,
             ),
             "remaining_blockers": remaining_blockers,
             "current_state": {
@@ -259,12 +278,14 @@ class ActiveTraderContract:
                 "limit_s5_bidask_replay": replay,
                 "limit_sample_mining": limit_sample_mining,
                 "active_opportunity_board": active_opportunity_board,
+                "non_eurusd_live_grade_frontier": non_eurusd_frontier,
             },
             "safety_contract": _safety_contract(),
             "next_prompt": _next_prompt(
                 selected_active_path,
                 remaining_blockers,
                 active_opportunity_board=active_opportunity_board,
+                non_eurusd_frontier=non_eurusd_frontier,
             ),
             "artifact_index": artifact_index,
         }
@@ -656,6 +677,52 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
     }
 
 
+def _non_eurusd_frontier_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "status": "MISSING",
+            "scanned_intents": 0,
+            "scanned_pairs_count": 0,
+            "top_lane": {},
+            "top_non_eurusd_lane": {},
+            "next_evidence_lane": {},
+            "next_active_path": None,
+            "non_eurusd_closer_than_eurusd": False,
+            "spread_too_wide_not_ignored": False,
+            "bidask_negative_not_ignored": False,
+            "usd_cad_long_breakout_failure_count": 0,
+            "live_permission_allowed": False,
+        }
+    checks = artifact.get("required_checks") if isinstance(artifact.get("required_checks"), dict) else {}
+    next_lane = checks.get("next_evidence_lane") if isinstance(checks.get("next_evidence_lane"), dict) else {}
+    top_non = artifact.get("top_non_eurusd_lane") if isinstance(artifact.get("top_non_eurusd_lane"), dict) else {}
+    top_lane = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+    if not next_lane:
+        next_lane = top_non or top_lane
+    return {
+        "artifact_status": "present",
+        "status": artifact.get("status"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "read_only": artifact.get("read_only") is True,
+        "scanned_intents": _first_int(artifact.get("scanned_intents"), 0),
+        "scanned_pairs_count": len(_string_list(artifact.get("scanned_pairs"))),
+        "top_lane": _frontier_lane_summary(top_lane),
+        "top_non_eurusd_lane": _frontier_lane_summary(top_non),
+        "next_evidence_lane": _frontier_lane_summary(next_lane),
+        "next_active_path": artifact.get("next_active_path"),
+        "non_eurusd_closer_than_eurusd": checks.get("non_eurusd_closer_than_eurusd") is True,
+        "spread_too_wide_not_ignored": checks.get("spread_too_wide_not_ignored") is True,
+        "bidask_negative_not_ignored": checks.get("bidask_negative_not_ignored") is True,
+        "usd_cad_long_breakout_failure_count": len(
+            checks.get("usd_cad_long_breakout_failure_blocker_breakdown")
+            if isinstance(checks.get("usd_cad_long_breakout_failure_blocker_breakdown"), list)
+            else []
+        ),
+        "live_permission_allowed": False,
+    }
+
+
 def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool = False) -> dict[str, Any]:
     if not lane:
         return {}
@@ -700,6 +767,29 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
     }
 
 
+def _frontier_lane_summary(lane: dict[str, Any]) -> dict[str, Any]:
+    if not lane:
+        return {}
+    return {
+        "lane_id": lane.get("lane_id"),
+        "pair": lane.get("pair"),
+        "direction": lane.get("direction"),
+        "strategy_family": lane.get("strategy_family"),
+        "vehicle": lane.get("vehicle"),
+        "status": lane.get("status"),
+        "distance_to_live_ready": lane.get("distance_to_live_ready"),
+        "bidask_status": lane.get("bidask_status"),
+        "spread_status": lane.get("spread_status"),
+        "forecast_status": lane.get("forecast_status"),
+        "loss_budget_status": lane.get("loss_budget_status"),
+        "tp_proof_count": lane.get("tp_proof_count"),
+        "tp_proof_floor": lane.get("tp_proof_floor"),
+        "expected_edge_jpy": lane.get("expected_edge_jpy"),
+        "next_action": lane.get("next_action"),
+        "blockers": _string_list(lane.get("blockers"))[:24],
+    }
+
+
 def _normalized_board_lane_status(
     status: Any,
     blockers: list[str],
@@ -733,6 +823,7 @@ def _active_deployment_gap(
     portfolio: dict[str, Any],
     replay: dict[str, Any],
     active_opportunity_board: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
 ) -> dict[str, Any]:
     triggers: list[str] = []
     if harvest.get("candidate_present"):
@@ -753,6 +844,8 @@ def _active_deployment_gap(
         triggers.append("ACTIVE_OPPORTUNITY_BOARD_RERANK_AVAILABLE")
     if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
         triggers.append("FAILED_EXACT_REPLAY_CONSUMED")
+    if _frontier_evidence_action_available(non_eurusd_frontier):
+        triggers.append("NON_EURUSD_LIVE_GRADE_FRONTIER_AVAILABLE")
     status = "ACTIVE_PATH_REQUIRED" if triggers else "NO_ACTIVE_GAP_INPUTS_VISIBLE"
     return {
         "status": status,
@@ -776,6 +869,7 @@ def _no_action_contract(
     portfolio: dict[str, Any],
     replay: dict[str, Any],
     active_opportunity_board: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
     active_deployment_gap: dict[str, Any],
 ) -> dict[str, Any]:
     blocked_by = list(active_deployment_gap.get("active_path_triggers") or [])
@@ -794,7 +888,11 @@ def _no_action_contract(
         "why_no_board_rerank": _why_no_board_rerank(active_opportunity_board),
         "why_no_evidence_action": (
             ""
-            if replay.get("artifact_status") == "missing" or not replay.get("live_grade_candidate")
+            if (
+                replay.get("artifact_status") == "missing"
+                or not replay.get("live_grade_candidate")
+                or _frontier_evidence_action_available(non_eurusd_frontier)
+            )
             else "No evidence-action blocker visible."
         ),
     }
@@ -810,11 +908,20 @@ def _select_active_path(
     harvest: dict[str, Any],
     proof: dict[str, Any],
     active_opportunity_board: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
 ) -> tuple[str, str]:
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     board_status = str(board_top.get("status") or "")
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
     if _active_board_all_no_trade(active_opportunity_board, board_status=board_status):
+        if frontier_lane:
+            return (
+                "EVIDENCE_ACQUISITION",
+                "Latest active opportunity board reranked all lanes as NO_TRADE_WITH_CAUSE, but "
+                "non_eurusd_live_grade_frontier exposes a current read-only evidence action for "
+                f"{frontier_lane.get('lane_id')}; keep blockers visible and do not send.",
+            )
         return (
             "NO_TRADE_WITH_CAUSE",
             "Latest active opportunity board reranked all lanes as NO_TRADE_WITH_CAUSE; do not fall back to stale single-lane evidence work.",
@@ -893,14 +1000,18 @@ def _remaining_blockers(
     proof_floor: dict[str, Any],
     limit_sample_mining: dict[str, Any],
     active_opportunity_board: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
 ) -> list[dict[str, Any]]:
     active_board_top = active_opportunity_board.get("top_lane")
     active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+    frontier_codes = _string_list(frontier_lane.get("blockers")) if frontier_lane else []
     active_board_authoritative = _active_board_authoritative(active_opportunity_board)
     if active_board_authoritative:
         codes = _unique(
             _string_list(active_board_top.get("blockers"))
             + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
+            + frontier_codes
         )
     else:
         codes = _unique(
@@ -912,6 +1023,7 @@ def _remaining_blockers(
             + _string_list(limit_sample_mining.get("blocker_codes"))
             + _string_list(active_board_top.get("blockers"))
             + _string_list(active_opportunity_board.get("consumed_failed_replay_blocker_codes"))
+            + frontier_codes
         )
         proof_queue_count = proof.get("proof_queue_count", 0)
         if proof_queue_count == 0:
@@ -1001,6 +1113,37 @@ def _active_board_all_no_trade(active_opportunity_board: dict[str, Any], *, boar
         )
     )
     return active_counts == 0
+
+
+def _frontier_evidence_action_available(non_eurusd_frontier: dict[str, Any]) -> bool:
+    if non_eurusd_frontier.get("artifact_status") != "present":
+        return False
+    if non_eurusd_frontier.get("live_permission_allowed") is True:
+        return False
+    lane = _frontier_evidence_lane(non_eurusd_frontier)
+    if not lane:
+        return False
+    status = str(non_eurusd_frontier.get("status") or "")
+    return status in {
+        "NON_EURUSD_FRONTIER_FOUND",
+        "ONLY_EURUSD_FRONTIER_FOUND",
+        "ALL_FRONTIER_BLOCKED_BY_NEGATIVE_EXPECTANCY",
+        "ALL_FRONTIER_BLOCKED_BY_SPREAD_OR_FORECAST",
+    }
+
+
+def _frontier_evidence_lane(non_eurusd_frontier: dict[str, Any]) -> dict[str, Any]:
+    lane = non_eurusd_frontier.get("next_evidence_lane")
+    lane = lane if isinstance(lane, dict) else {}
+    if lane.get("lane_id"):
+        return lane
+    top_non = non_eurusd_frontier.get("top_non_eurusd_lane")
+    top_non = top_non if isinstance(top_non, dict) else {}
+    if top_non.get("lane_id"):
+        return top_non
+    top = non_eurusd_frontier.get("top_lane")
+    top = top if isinstance(top, dict) else {}
+    return top if top.get("lane_id") else {}
 
 
 def _normalize_stale_blocker_codes(
@@ -1153,11 +1296,22 @@ def _next_trade_enabling_action(
     limit_sample_mining: dict[str, Any] | None = None,
     *,
     active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
 ) -> str:
     active_opportunity_board = active_opportunity_board or {}
+    non_eurusd_frontier = non_eurusd_frontier or {}
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     if selected_active_path == "EVIDENCE_ACQUISITION":
+        frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+        if _frontier_evidence_action_available(non_eurusd_frontier) and frontier_lane:
+            return (
+                "Use non_eurusd_live_grade_frontier: "
+                f"next evidence lane {frontier_lane.get('lane_id')} "
+                f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
+                f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the next frontier-ranked evidence packet.'} "
+                "Keep negative expectancy, spread, bid/ask, forecast, and loss-budget blockers visible; do not send."
+            )
         if board_top:
             suffix = ""
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
@@ -1225,9 +1379,14 @@ def _next_prompt(
     remaining_blockers: list[dict[str, Any]],
     *,
     active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
 ) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
-    target_shape = _active_board_target_shape(active_opportunity_board) or TARGET_SHAPE
+    target_shape = (
+        _frontier_target_shape(non_eurusd_frontier)
+        or _active_board_target_shape(active_opportunity_board)
+        or TARGET_SHAPE
+    )
     return (
         f"Implement {selected_active_path} for {target_shape} as read-only work. "
         "Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. "
@@ -1247,6 +1406,17 @@ def _active_board_target_shape(active_opportunity_board: dict[str, Any] | None) 
     return "|".join(parts) if len(parts) >= 4 else None
 
 
+def _frontier_target_shape(non_eurusd_frontier: dict[str, Any] | None) -> str | None:
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
+    lane = _frontier_evidence_lane(frontier)
+    pair = str(lane.get("pair") or "").strip().upper()
+    direction = str(lane.get("direction") or lane.get("side") or "").strip().upper()
+    strategy = str(lane.get("strategy_family") or "").strip().upper()
+    vehicle = str(lane.get("vehicle") or "").strip().upper()
+    parts = [part for part in (pair, direction, strategy, vehicle) if part]
+    return "|".join(parts) if len(parts) >= 4 else None
+
+
 def _render_report(payload: dict[str, Any]) -> str:
     blockers = payload.get("remaining_blockers") or []
     current = payload.get("current_state") if isinstance(payload.get("current_state"), dict) else {}
@@ -1257,7 +1427,13 @@ def _render_report(payload: dict[str, Any]) -> str:
         if isinstance(current.get("active_opportunity_board"), dict)
         else {}
     )
+    non_eurusd_frontier = (
+        current.get("non_eurusd_live_grade_frontier")
+        if isinstance(current.get("non_eurusd_live_grade_frontier"), dict)
+        else {}
+    )
     board_top = active_board.get("top_lane") if isinstance(active_board.get("top_lane"), dict) else {}
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
     no_action = payload.get("no_action_contract") if isinstance(payload.get("no_action_contract"), dict) else {}
     lines = [
         "# Active Trader Contract",
@@ -1294,6 +1470,15 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Top lane: `{board_top.get('lane_id')}` / `{board_top.get('status')}`",
         f"- Failed exact replay consumed count: `{active_board.get('failed_exact_replay_consumed_count')}`",
         f"- STOP HARVEST failed replay consumed: `{active_board.get('stop_harvest_failed_replay_consumed')}`",
+        "",
+        "## Non-EUR/USD Frontier",
+        "",
+        f"- Artifact status: `{non_eurusd_frontier.get('artifact_status')}`",
+        f"- Status: `{non_eurusd_frontier.get('status')}`",
+        f"- Scanned intents: `{non_eurusd_frontier.get('scanned_intents')}`",
+        f"- Scanned pairs: `{non_eurusd_frontier.get('scanned_pairs_count')}`",
+        f"- Next evidence lane: `{frontier_lane.get('lane_id')}`",
+        f"- Next frontier path: {non_eurusd_frontier.get('next_active_path')}",
         "",
         "## Exact LIMIT S5 Replay",
         "",
