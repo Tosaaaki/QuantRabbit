@@ -188,6 +188,8 @@ from quant_rabbit.paths import (
     DEFAULT_ENTRY_FREQUENCY_RECOVERY_REPORT,
     DEFAULT_FORECAST_PATTERN_REFRESH,
     DEFAULT_FORECAST_PATTERN_REFRESH_REPORT,
+    DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
+    DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEVELS_REPORT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
@@ -1509,6 +1511,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "active-opportunity-board",
         "entry-frequency-recovery",
         "forecast-pattern-refresh",
+        "range-rail-geometry-repair",
         "non-eurusd-proof-lane-mapper",
         "non-eurusd-live-grade-frontier",
         "operator-review-report",
@@ -2343,6 +2346,10 @@ def _forecast_pattern_refresh_step() -> dict[str, Any]:
     return {"argv": ["forecast-pattern-refresh"], "required": True}
 
 
+def _range_rail_geometry_repair_step() -> dict[str, Any]:
+    return {"argv": ["range-rail-geometry-repair"], "required": True}
+
+
 def _non_eurusd_proof_lane_mapper_step() -> dict[str, Any]:
     return {"argv": ["non-eurusd-proof-lane-mapper"], "required": True}
 
@@ -2375,6 +2382,8 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         _entry_frequency_recovery_step(),
         _active_trader_contract_step(),
         _forecast_pattern_refresh_step(),
+        _active_trader_contract_step(),
+        _range_rail_geometry_repair_step(),
         _active_trader_contract_step(),
         _operator_review_report_step(),
         _trader_goal_loop_orchestrator_step(),
@@ -4115,6 +4124,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_active_contract.add_argument("--entry-frequency-recovery", type=Path, default=DEFAULT_ENTRY_FREQUENCY_RECOVERY)
     p_active_contract.add_argument("--forecast-pattern-refresh", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH)
+    p_active_contract.add_argument(
+        "--range-rail-geometry-repair",
+        type=Path,
+        default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
+    )
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
@@ -4197,6 +4211,24 @@ def main(argv: list[str] | None = None) -> int:
     p_forecast_pattern_refresh.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_forecast_pattern_refresh.add_argument("--output", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH)
     p_forecast_pattern_refresh.add_argument("--report", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH_REPORT)
+
+    p_range_rail_geometry_repair = sub.add_parser(
+        "range-rail-geometry-repair",
+        help="Consume RANGE_RAIL_GEOMETRY_REPAIR into read-only range rail geometry evidence.",
+    )
+    p_range_rail_geometry_repair.add_argument(
+        "--forecast-pattern-refresh",
+        type=Path,
+        default=DEFAULT_FORECAST_PATTERN_REFRESH,
+    )
+    p_range_rail_geometry_repair.add_argument(
+        "--active-opportunity-board",
+        type=Path,
+        default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    )
+    p_range_rail_geometry_repair.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_range_rail_geometry_repair.add_argument("--output", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
+    p_range_rail_geometry_repair.add_argument("--report", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR_REPORT)
 
     p_non_eurusd_mapper = sub.add_parser(
         "non-eurusd-proof-lane-mapper",
@@ -7045,6 +7077,7 @@ def main(argv: list[str] | None = None) -> int:
                 non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
                 entry_frequency_recovery_path=args.entry_frequency_recovery,
                 forecast_pattern_refresh_path=args.forecast_pattern_refresh,
+                range_rail_geometry_repair_path=args.range_rail_geometry_repair,
                 output_path=args.output,
                 report_path=args.report,
             ).run()
@@ -7153,6 +7186,35 @@ def main(argv: list[str] | None = None) -> int:
                 order_intents_path=args.order_intents,
                 forecast_history_path=args.forecast_history,
                 projection_ledger_path=args.projection_ledger,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "target_lane_id": summary.target_lane_id,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "range-rail-geometry-repair":
+        try:
+            from quant_rabbit.range_rail_geometry_repair import RangeRailGeometryRepair
+
+            summary = RangeRailGeometryRepair(
+                forecast_pattern_refresh_path=args.forecast_pattern_refresh,
+                active_opportunity_board_path=args.active_opportunity_board,
+                order_intents_path=args.order_intents,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

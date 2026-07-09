@@ -1460,6 +1460,143 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_range_rail_geometry_repair_artifact_replaces_forecast_pattern_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 2, 45, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            board_top = {
+                "lane_id": lane_id,
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "next_action": "Consume range rail repair before repeating forecast-pattern refresh. Do not send.",
+                "blockers": [
+                    "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                    "SPREAD_TOO_WIDE",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {"evidence_acquisition_count": 1},
+                    "top_lane": board_top,
+                    "ranked_active_lanes": [],
+                },
+            )
+            _write_json(
+                paths["forecast_pattern"],
+                {
+                    "schema_version": "forecast_pattern_refresh_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "FORECAST_PATTERN_REFRESH_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": {
+                        **board_top,
+                        "range_rotation_counterpart": {
+                            "status": "RANGE_ROTATION_COUNTERPART_BLOCKED_BY_RANGE_RAIL"
+                        },
+                        "forecast_range_box": {"status": "RANGE_BOX_NOT_AT_EXECUTABLE_RAIL"},
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "RANGE_RAIL_GEOMETRY_REPAIR",
+                            "description": "Repair rail geometry.",
+                            "preserve_blockers": ["RANGE_FORECAST_REQUIRES_RANGE_ROTATION"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/forecast_pattern_refresh.json for "
+                        f"{lane_id}: next safe action is RANGE_RAIL_GEOMETRY_REPAIR; do not send."
+                    ),
+                },
+            )
+            _write_json(
+                paths["range_rail"],
+                {
+                    "schema_version": "range_rail_geometry_repair_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "RANGE_RAIL_RECHECK_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": {
+                        **board_top,
+                        "range_box": {
+                            "rail_status": "RANGE_RAIL_NOT_REACHED",
+                            "box_position": 0.7601,
+                            "required_zone": "LONG_DISCOUNT_LOWER_RAIL",
+                        },
+                        "counterpart_geometry": {
+                            "status": "COUNTERPART_PRICE_GEOMETRY_INCOMPLETE",
+                            "geometry_ready": False,
+                        },
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "WAIT_FOR_RANGE_RAIL_RECHECK",
+                            "description": "Wait for lower rail.",
+                            "preserve_blockers": ["RANGE_RAIL_NOT_REACHED"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/range_rail_geometry_repair.json for "
+                        f"{lane_id}: next safe action is WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                forecast_pattern_refresh_path=paths["forecast_pattern"],
+                range_rail_geometry_repair_path=paths["range_rail"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        rail_state = payload["current_state"]["range_rail_geometry_repair"]
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(rail_state["artifact_status"], "present")
+        self.assertEqual(rail_state["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(rail_state["top_lane"]["rail_status"], "RANGE_RAIL_NOT_REACHED")
+        self.assertIn("Consume data/range_rail_geometry_repair.json", payload["next_prompt"])
+        self.assertIn("WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
+        self.assertNotIn("Consume data/forecast_pattern_refresh.json", payload["next_prompt"])
+        self.assertIn("range_rail_geometry_repair artifact", payload["next_trade_enabling_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
         now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
         board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
@@ -1739,6 +1876,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "frontier": root / "data" / "non_eurusd_live_grade_frontier.json",
         "entry_recovery": root / "data" / "entry_frequency_recovery.json",
         "forecast_pattern": root / "data" / "forecast_pattern_refresh.json",
+        "range_rail": root / "data" / "range_rail_geometry_repair.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }

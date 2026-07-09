@@ -5855,6 +5855,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         self.assertIn("active-opportunity-board", _LIVE_ARTIFACT_WRITER_COMMANDS)
         self.assertIn("non-eurusd-proof-lane-mapper", _LIVE_ARTIFACT_WRITER_COMMANDS)
         self.assertIn("non-eurusd-live-grade-frontier", _LIVE_ARTIFACT_WRITER_COMMANDS)
+        self.assertIn("range-rail-geometry-repair", _LIVE_ARTIFACT_WRITER_COMMANDS)
         self.assertIn("operator-review-report", _LIVE_ARTIFACT_WRITER_COMMANDS)
 
     def test_gpt_trader_decision_bootstraps_without_qr_live_enabled(self) -> None:
@@ -6533,6 +6534,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh_mapper = refresh.index("non-eurusd-proof-lane-mapper")
         refresh_frontier = refresh.index("non-eurusd-live-grade-frontier")
         last_refresh_contract = max(index for index, step in enumerate(refresh) if step == "active-trader-contract")
+        refresh_range_rail = refresh.index("range-rail-geometry-repair")
         refresh_operator_review = refresh.index("operator-review-report")
         last_refresh_goal_loop = max(
             index for index, step in enumerate(refresh) if step == "trader-goal-loop-orchestrator"
@@ -6542,6 +6544,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh_board, refresh_mapper)
         self.assertLess(refresh_mapper, refresh_frontier)
         self.assertLess(refresh_frontier, last_refresh_contract)
+        self.assertLess(refresh.index("forecast-pattern-refresh"), refresh_range_rail)
+        self.assertLess(refresh_range_rail, last_refresh_contract)
         self.assertLess(last_refresh_contract, refresh_operator_review)
         self.assertLess(refresh_operator_review, last_refresh_goal_loop)
         self.assertEqual(refresh[-1], "trader-goal-loop-orchestrator")
@@ -6568,6 +6572,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertTrue(refresh_by_step["active-opportunity-board"]["required"])
         self.assertTrue(refresh_by_step["non-eurusd-proof-lane-mapper"]["required"])
         self.assertTrue(refresh_by_step["non-eurusd-live-grade-frontier"]["required"])
+        self.assertTrue(refresh_by_step["range-rail-geometry-repair"]["required"])
         self.assertTrue(refresh_by_step["operator-review-report"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
@@ -6660,6 +6665,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         sidecar_mapper = sidecars.index("non-eurusd-proof-lane-mapper")
         sidecar_frontier = sidecars.index("non-eurusd-live-grade-frontier")
         last_sidecar_contract = max(index for index, step in enumerate(sidecars) if step == "active-trader-contract")
+        sidecar_range_rail = sidecars.index("range-rail-geometry-repair")
         sidecar_operator_review = sidecars.index("operator-review-report")
         last_sidecar_goal_loop = max(
             index for index, step in enumerate(sidecars) if step == "trader-goal-loop-orchestrator"
@@ -6669,6 +6675,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecar_board, sidecar_mapper)
         self.assertLess(sidecar_mapper, sidecar_frontier)
         self.assertLess(sidecar_frontier, last_sidecar_contract)
+        self.assertLess(sidecars.index("forecast-pattern-refresh"), sidecar_range_rail)
+        self.assertLess(sidecar_range_rail, last_sidecar_contract)
         self.assertLess(last_sidecar_contract, sidecar_operator_review)
         self.assertLess(sidecar_operator_review, last_sidecar_goal_loop)
         self.assertEqual(sidecars[-1], "trader-goal-loop-orchestrator")
@@ -6695,6 +6703,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertTrue(sidecars_by_step["active-opportunity-board"]["required"])
         self.assertTrue(sidecars_by_step["non-eurusd-proof-lane-mapper"]["required"])
         self.assertTrue(sidecars_by_step["non-eurusd-live-grade-frontier"]["required"])
+        self.assertTrue(sidecars_by_step["range-rail-geometry-repair"]["required"])
         self.assertTrue(sidecars_by_step["operator-review-report"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):

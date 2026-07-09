@@ -119,6 +119,7 @@ docs/active_trader_contract.md|\
 docs/active_opportunity_board.md|\
 docs/entry_frequency_recovery_report.md|\
 docs/forecast_pattern_refresh_report.md|\
+docs/range_rail_geometry_repair_report.md|\
 docs/eurusd_short_breakout_failure_evidence_acquisition_plan.md|\
 docs/eurusd_short_breakout_failure_legacy_sample_search.md|\
 docs/eurusd_short_breakout_failure_limit_s5_bidask_replay.md|\
@@ -152,6 +153,7 @@ data/active_trader_contract.json|\
 data/active_opportunity_board.json|\
 data/entry_frequency_recovery.json|\
 data/forecast_pattern_refresh.json|\
+data/range_rail_geometry_repair.json|\
 data/eurusd_short_breakout_failure_evidence_acquisition_plan.json|\
 data/eurusd_short_breakout_failure_legacy_sample_search.json|\
 data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json|\

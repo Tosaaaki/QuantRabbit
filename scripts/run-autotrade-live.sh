@@ -121,6 +121,7 @@ docs/eurusd_short_breakout_failure_scout_plan.md|\
 docs/eurusd_short_breakout_failure_stop_harvest_replay.md|\
 docs/entry_frequency_recovery_report.md|\
 docs/forecast_pattern_refresh_report.md|\
+docs/range_rail_geometry_repair_report.md|\
 docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
 docs/portfolio_4x_path_planner.md|\
@@ -140,6 +141,7 @@ data/audjpy_short_breakout_failure_repair_proof.json|\
 data/eurusd_short_breakout_failure_stop_harvest_replay.json|\
 data/entry_frequency_recovery.json|\
 data/forecast_pattern_refresh.json|\
+data/range_rail_geometry_repair.json|\
 data/harvest_live_grade_path.json|\
 data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\
