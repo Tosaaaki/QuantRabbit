@@ -214,6 +214,10 @@ from quant_rabbit.paths import (
     DEFAULT_NEWS_FLOW_LOG,
     DEFAULT_NEWS_HEALTH,
     DEFAULT_NEWS_HEALTH_REPORT,
+    DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER_REPORT,
+    DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER,
+    DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER_REPORT,
     DEFAULT_OUTCOME_MART,
     DEFAULT_OUTCOME_MART_REPORT,
     effective_oanda_universal_rotation_path,
@@ -1497,6 +1501,8 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "trader-goal-loop-orchestrator",
         "active-trader-contract",
         "active-opportunity-board",
+        "non-eurusd-proof-lane-mapper",
+        "non-eurusd-live-grade-frontier",
     }
 )
 
@@ -2320,14 +2326,25 @@ def _active_opportunity_board_step() -> dict[str, Any]:
     return {"argv": ["active-opportunity-board"], "required": True}
 
 
+def _non_eurusd_proof_lane_mapper_step() -> dict[str, Any]:
+    return {"argv": ["non-eurusd-proof-lane-mapper"], "required": True}
+
+
+def _non_eurusd_live_grade_frontier_step() -> dict[str, Any]:
+    return {"argv": ["non-eurusd-live-grade-frontier"], "required": True}
+
+
 def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # The board reads the previous contract for narrative context, while the
     # contract is the artifact the trader loop consumes for the final active
-    # path. Run contract -> board -> contract so the terminal contract always
-    # consumes the freshly reranked multi-lane board.
+    # path. Run contract -> board -> non-EUR frontier -> contract so the
+    # terminal contract always consumes the freshly reranked multi-lane board
+    # while the non-EUR live-grade frontier stays current for repair work.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
+        _non_eurusd_proof_lane_mapper_step(),
+        _non_eurusd_live_grade_frontier_step(),
         _active_trader_contract_step(),
     ]
 
@@ -4100,6 +4117,58 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_active_board.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
     p_active_board.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT)
+
+    p_non_eurusd_mapper = sub.add_parser(
+        "non-eurusd-proof-lane-mapper",
+        help="Map non-EUR/USD historical profit evidence to current exact lanes read-only.",
+    )
+    p_non_eurusd_mapper.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_non_eurusd_mapper.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_non_eurusd_mapper.add_argument("--as-proof-pack-queue", type=Path, default=DEFAULT_AS_PROOF_PACK_QUEUE)
+    p_non_eurusd_mapper.add_argument("--as-lane-candidate-board", type=Path, default=DEFAULT_AS_LANE_CANDIDATE_BOARD)
+    p_non_eurusd_mapper.add_argument("--portfolio-4x-path-planner", type=Path, default=DEFAULT_PORTFOLIO_4X_PATH_PLANNER)
+    p_non_eurusd_mapper.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_non_eurusd_mapper.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_non_eurusd_mapper.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_non_eurusd_mapper.add_argument(
+        "--replay-artifact",
+        dest="replay_artifacts",
+        action="append",
+        type=Path,
+        default=None,
+        help="Optional replay/proof artifact path. May be provided multiple times; defaults to data/*replay*.json and data/*proof*.json.",
+    )
+    p_non_eurusd_mapper.add_argument("--output", type=Path, default=DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER)
+    p_non_eurusd_mapper.add_argument("--report", type=Path, default=DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER_REPORT)
+
+    p_non_eurusd_frontier = sub.add_parser(
+        "non-eurusd-live-grade-frontier",
+        help="Rank EUR/USD and non-EUR/USD order-intent lanes by read-only live-grade proximity.",
+    )
+    p_non_eurusd_frontier.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_non_eurusd_frontier.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_non_eurusd_frontier.add_argument(
+        "--non-eurusd-proof-lane-mapper",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER,
+    )
+    p_non_eurusd_frontier.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
+    p_non_eurusd_frontier.add_argument("--as-proof-pack-queue", type=Path, default=DEFAULT_AS_PROOF_PACK_QUEUE)
+    p_non_eurusd_frontier.add_argument("--portfolio-4x-path-planner", type=Path, default=DEFAULT_PORTFOLIO_4X_PATH_PLANNER)
+    p_non_eurusd_frontier.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_non_eurusd_frontier.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_non_eurusd_frontier.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
+    p_non_eurusd_frontier.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_non_eurusd_frontier.add_argument(
+        "--replay-artifact",
+        dest="replay_artifacts",
+        action="append",
+        type=Path,
+        default=None,
+        help="Optional replay/proof artifact path. May be provided multiple times; defaults to data/*bidask*replay*.json, data/*replay*.json, and data/*proof*.json.",
+    )
+    p_non_eurusd_frontier.add_argument("--output", type=Path, default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER)
+    p_non_eurusd_frontier.add_argument("--report", type=Path, default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -6912,6 +6981,79 @@ def main(argv: list[str] | None = None) -> int:
                     "output_path": str(summary.output_path),
                     "report_path": str(summary.report_path),
                     "top_lane_id": summary.top_lane_id,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "non-eurusd-proof-lane-mapper":
+        try:
+            from quant_rabbit.non_eurusd_proof_lane_mapper import NonEurusdProofLaneMapper
+
+            summary = NonEurusdProofLaneMapper(
+                active_opportunity_board_path=args.active_opportunity_board,
+                payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
+                proof_pack_queue_path=args.as_proof_pack_queue,
+                lane_candidate_board_path=args.as_lane_candidate_board,
+                portfolio_4x_path_planner_path=args.portfolio_4x_path_planner,
+                order_intents_path=args.order_intents,
+                verification_ledger_path=args.verification_ledger,
+                execution_ledger_db_path=args.execution_ledger_db,
+                replay_artifact_paths=args.replay_artifacts,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "next_active_path": summary.next_active_path,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "non-eurusd-live-grade-frontier":
+        try:
+            from quant_rabbit.non_eurusd_live_grade_frontier import NonEurusdLiveGradeFrontier
+
+            summary = NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=args.active_opportunity_board,
+                order_intents_path=args.order_intents,
+                non_eurusd_proof_lane_mapper_path=args.non_eurusd_proof_lane_mapper,
+                payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
+                proof_pack_queue_path=args.as_proof_pack_queue,
+                portfolio_4x_path_planner_path=args.portfolio_4x_path_planner,
+                execution_ledger_db_path=args.execution_ledger_db,
+                verification_ledger_path=args.verification_ledger,
+                forecast_history_path=args.forecast_history,
+                projection_ledger_path=args.projection_ledger,
+                replay_artifact_paths=args.replay_artifacts,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "top_lane_id": summary.top_lane_id,
+                    "top_non_eurusd_lane_id": summary.top_non_eurusd_lane_id,
                     "live_permission_allowed": summary.live_permission_allowed,
                 },
                 ensure_ascii=False,

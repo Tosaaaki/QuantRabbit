@@ -129,6 +129,8 @@ docs/eurusd_short_breakout_failure_stop_harvest_replay.md|\
 docs/eurusd_short_breakout_failure_vehicle_split_diagnosis.md|\
 docs/historical_only_to_fresh_proof_replay.md|\
 docs/manual_eurusd_tp_replacement_provenance.md|\
+docs/non_eurusd_live_grade_frontier.md|\
+docs/non_eurusd_proof_lane_mapper.md|\
 docs/portfolio_4x_path_planner.md|\
 docs/post_gate_capture_economics_decomposition.md|\
 docs/post_gate_expectancy_gap_trace.md|\
@@ -158,6 +160,8 @@ data/eurusd_short_breakout_failure_vehicle_split_diagnosis.json|\
 data/harvest_live_grade_path.json|\
 data/historical_only_to_fresh_proof_replay.json|\
 data/manual_eurusd_tp_replacement_provenance.json|\
+data/non_eurusd_live_grade_frontier.json|\
+data/non_eurusd_proof_lane_mapper.json|\
 data/portfolio_4x_path_planner.json|\
 data/post_gate_capture_economics_decomposition.json|\
 data/post_gate_expectancy_gap_trace.json|\

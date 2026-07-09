@@ -330,7 +330,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → as-live-ready-evidence-loop → as-4x-proof-path →
 # trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract →
-# active-opportunity-board) in one
+# active-opportunity-board → non-eurusd-proof-lane-mapper →
+# non-eurusd-live-grade-frontier) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -587,6 +588,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → as-live-ready-evidence-loop → as-4x-proof-path
 #   → trader-repair-orchestrator → trader-goal-loop-orchestrator
 #   → active-trader-contract → active-opportunity-board
+#   → non-eurusd-proof-lane-mapper → non-eurusd-live-grade-frontier
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -748,6 +750,15 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   machine-readable blocker, not an empty cause set.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
+# - non-eurusd-proof-lane-mapper and non-eurusd-live-grade-frontier are
+#   read-only and run after active-opportunity-board. The mapper prevents
+#   historical non-EUR/USD profit evidence from being promoted without exact
+#   current lane/vehicle mapping. The frontier ranks the current EUR/USD and
+#   non-EUR/USD order-intent lanes by live-grade proximity, surfaces
+#   USD_CAD LONG BREAKOUT_FAILURE blockers, and keeps proof-floor, bid/ask,
+#   spread, forecast, and loss-budget gaps explicit. They never grant live
+#   order, cancel/close, launchd, gate relaxation, lot-backsolve,
+#   market-close-loss-as-TP-proof, secret-disclosure, or inferred approval.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
