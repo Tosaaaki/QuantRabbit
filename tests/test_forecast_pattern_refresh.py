@@ -374,6 +374,159 @@ class ForecastPatternRefreshTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_trigger_projection_present_prioritizes_exact_tp_collection_over_preserve_only(self) -> None:
+        now = datetime(2026, 7, 9, 22, 45, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
+        board_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            target_lane = {
+                "lane_id": lane_id,
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "MARKET",
+                "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+                "forecast_audit": {
+                    "status": "SIDE_SUPPORTED_BY_LATEST_FORECAST",
+                    "latest": {
+                        "timestamp_utc": "2026-07-09T22:40:00+00:00",
+                        "direction": "UP",
+                        "confidence": 0.7,
+                        "current_price": 1.4171,
+                        "target_price": 1.419,
+                        "invalidation_price": 1.4152,
+                    },
+                },
+                "tp_proof_audit": {
+                    "status": "TP_PROOF_FLOOR_GAP",
+                    "tp_proof_count": 1,
+                    "tp_proof_floor": 20,
+                    "remaining_samples": 19,
+                },
+            }
+            board_lane = {
+                "lane_id": board_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "blockers": ["ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"],
+            }
+            _write_json(
+                paths["entry_recovery"],
+                {
+                    "schema_version": "entry_frequency_recovery_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": target_lane,
+                    "forecast_pattern_tuning_queue": [
+                        {
+                            "priority": 2,
+                            "lane_id": lane_id,
+                            "action_type": "TRIGGER_PROJECTION_TO_LIMIT_PROOF",
+                            "description": "verify trigger projections before proof collection",
+                            "preserve_blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        }
+                    ],
+                    "next_contract_prompt": f"Consume data/entry_frequency_recovery.json for {lane_id}; do not send.",
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "current_state": {"active_opportunity_board": {"top_lane": board_lane}},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "top_lane": board_lane,
+                    "ranked_active_lanes": [board_lane, target_lane],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent(
+                            "range_trader:USD_CAD:LONG:RANGE_ROTATION",
+                            "LIMIT",
+                            ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        ),
+                        _intent(
+                            "range_trader:USD_CAD:LONG:RANGE_ROTATION:MARKET",
+                            "MARKET",
+                            ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        ),
+                    ],
+                },
+            )
+            _write_jsonl(
+                paths["forecast_history"],
+                [
+                    {
+                        "timestamp_utc": "2026-07-09T22:40:00+00:00",
+                        "pair": "USD_CAD",
+                        "direction": "UP",
+                        "confidence": 0.7,
+                        "current_price": 1.4171,
+                        "target_price": 1.419,
+                        "invalidation_price": 1.4152,
+                    }
+                ],
+            )
+            _write_jsonl(
+                paths["projection_ledger"],
+                [
+                    {
+                        "timestamp_emitted_utc": "2026-07-09T22:35:00+00:00",
+                        "pair": "USD_CAD",
+                        "signal_name": "liquidity_sweep_low",
+                        "direction": "UP",
+                        "confidence": 0.88,
+                        "resolution_window_min": 30,
+                        "resolution_status": "HIT",
+                    }
+                ],
+            )
+
+            ForecastPatternRefresh(
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                active_trader_contract_path=paths["active_contract"],
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        action_types = [row["action_type"] for row in payload["next_actions"]]
+        self.assertEqual(action_types[0], "EXACT_TP_PROOF_COLLECTION")
+        self.assertIn("PRESERVE_SPREAD_AND_EXPECTANCY_BLOCKERS", action_types)
+        self.assertIn("next safe action is EXACT_TP_PROOF_COLLECTION", payload["next_contract_prompt"])
+        self.assertIn(lane_id, payload["next_contract_prompt"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_no_current_target_is_read_only_noop(self) -> None:
         now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

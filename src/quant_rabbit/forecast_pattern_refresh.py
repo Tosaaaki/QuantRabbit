@@ -483,6 +483,17 @@ def _next_actions(target_lane: dict[str, Any]) -> list[dict[str, Any]]:
                 priority=2,
             )
         )
+    tp = target_lane.get("tp_proof_audit") if isinstance(target_lane.get("tp_proof_audit"), dict) else {}
+    if tp.get("status") in {"TP_PROOF_FLOOR_GAP", "TP_PROOF_MISSING", "TP_PROOF_COLLECTION_REQUIRED"}:
+        actions.append(
+            _action(
+                lane_id,
+                "EXACT_TP_PROOF_COLLECTION",
+                "collect exact attached TAKE_PROFIT_ORDER proof for the selected pair/side/method/vehicle; do not mix market-close losses",
+                blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
+                priority=3,
+            )
+        )
     if counterpart.get("status") in {
         "RANGE_ROTATION_COUNTERPART_BLOCKED_BY_SPREAD",
         "RANGE_ROTATION_COUNTERPART_PROOF_BLOCKED",
@@ -494,18 +505,7 @@ def _next_actions(target_lane: dict[str, Any]) -> list[dict[str, Any]]:
                 "PRESERVE_SPREAD_AND_EXPECTANCY_BLOCKERS",
                 "keep spread, bid/ask, and negative-expectancy blockers visible while collecting lane-local proof",
                 blockers=["SPREAD_TOO_WIDE", "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", NEGATIVE_EXPECTANCY_BLOCKER],
-                priority=3,
-            )
-        )
-    tp = target_lane.get("tp_proof_audit") if isinstance(target_lane.get("tp_proof_audit"), dict) else {}
-    if tp.get("status") in {"TP_PROOF_FLOOR_GAP", "TP_PROOF_MISSING", "TP_PROOF_COLLECTION_REQUIRED"}:
-        actions.append(
-            _action(
-                lane_id,
-                "EXACT_TP_PROOF_COLLECTION",
-                "collect exact attached TAKE_PROFIT_ORDER proof for the selected pair/side/method/vehicle; do not mix market-close losses",
-                blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
-                priority=4,
+                priority=8,
             )
         )
     if not actions:
