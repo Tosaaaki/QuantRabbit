@@ -489,6 +489,59 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
                 "receipt expiry timestamp is not trader-run evidence",
             )
 
+    def test_automation_memory_timestamp_heading_accepts_section_run_marker(self) -> None:
+        now = _dt("2026-07-09T16:51:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "## 2026-07-09T16:16:30Z\n\n"
+                "- Ran one deeper hourly QR vNext trader cycle from `/Users/tossaki/App/QuantRabbit-live`.\n"
+                "- Latest guardian receipt expires `2026-07-09T17:02:13.015955+00:00`.\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["status"], "OK")
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T16:16:30+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
+            memory_rejections = [
+                item
+                for item in payload["rejected_timestamp_candidates"]
+                if item["source"] == "qr_trader_automation_memory.timestamp"
+            ]
+            self.assertEqual(len(memory_rejections), 1)
+            self.assertEqual(
+                memory_rejections[0]["rejected_reason"],
+                "receipt expiry timestamp is not trader-run evidence",
+            )
+
+    def test_automation_memory_timestamp_heading_without_run_marker_is_rejected(self) -> None:
+        now = _dt("2026-07-09T16:51:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "## 2026-07-09T16:16:30Z\n\n"
+                "- Guardian receipt was reviewed; no trader cycle marker is present.\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            memory_rejections = [
+                item
+                for item in payload["rejected_timestamp_candidates"]
+                if item["source"] == "qr_trader_automation_memory.timestamp"
+            ]
+            self.assertEqual(len(memory_rejections), 1)
+            self.assertEqual(
+                memory_rejections[0]["rejected_reason"],
+                "automation memory timestamp is not attached to a qr-trader run marker",
+            )
+
     def test_decision_artifact_generated_at_requires_trader_decision_shape(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
         with tempfile.TemporaryDirectory() as tmp:

@@ -757,7 +757,8 @@ def _memory_timestamp_candidates(text: str, path: Path) -> tuple[list[dict[str, 
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     in_code_block = False
-    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+    lines = text.splitlines()
+    for line_number, raw_line in enumerate(lines, start=1):
         stripped = raw_line.strip()
         fence_line = stripped.startswith("```")
         matches = _timestamp_matches_from_text(raw_line)
@@ -766,7 +767,11 @@ def _memory_timestamp_candidates(text: str, path: Path) -> tuple[list[dict[str, 
                 raw_line,
                 in_code_block=in_code_block or fence_line,
             )
-            if rejected_reason is None and not _memory_line_is_run_marker(raw_line):
+            if (
+                rejected_reason is None
+                and not _memory_line_is_run_marker(raw_line)
+                and not _memory_section_has_run_marker(lines, line_number - 1)
+            ):
                 rejected_reason = "automation memory timestamp is not attached to a qr-trader run marker"
             for timestamp in matches:
                 if rejected_reason:
@@ -825,6 +830,10 @@ def _memory_line_is_run_marker(line: str) -> bool:
     heading = lower.lstrip("#").strip() != lower
     if starts_with_timestamp and "hourly trader cycle" in lower:
         return True
+    if "trader cycle" in lower and ("ran one" in lower or "completed" in lower) and (
+        "hourly" in lower or "qr-trader" in lower or "qr vnext" in lower
+    ):
+        return True
     if heading and ("qr-trader" in lower or "hourly trader cycle" in lower) and (
         "run" in lower or "cycle" in lower or "completed" in lower
     ):
@@ -848,6 +857,24 @@ def _memory_line_is_run_marker(line: str) -> bool:
     ) and ("qr-trader" in lower or "trader run" in lower or "automation memory" in lower):
         return True
     return False
+
+
+def _memory_section_has_run_marker(lines: list[str], timestamp_index: int) -> bool:
+    if timestamp_index < 0 or timestamp_index >= len(lines):
+        return False
+    if not _memory_line_is_timestamp_heading(lines[timestamp_index]):
+        return False
+    for raw_line in lines[timestamp_index + 1 :]:
+        stripped = raw_line.strip()
+        if stripped.startswith("#") and _timestamp_matches_from_text(stripped):
+            return False
+        if _memory_line_is_run_marker(raw_line):
+            return True
+    return False
+
+
+def _memory_line_is_timestamp_heading(line: str) -> bool:
+    return line.strip().startswith("#") and _memory_line_starts_with_timestamp(line)
 
 
 def _memory_line_starts_with_timestamp(line: str) -> bool:
