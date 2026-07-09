@@ -1496,17 +1496,30 @@ def _frontier_blocker_fragment(lane: dict[str, Any], *, label: str = "Frontier b
     return f"{label}: {', '.join(blockers)}. "
 
 
-def _frontier_evidence_prompt(non_eurusd_frontier: dict[str, Any]) -> str:
+def _frontier_evidence_prompt(
+    non_eurusd_frontier: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> str:
     lane = _frontier_evidence_lane(non_eurusd_frontier)
     if not lane:
         return "Use non_eurusd_live_grade_frontier: acquire the next frontier-ranked evidence packet."
     shape = _lane_target_shape(lane)
     shape_text = f" ({shape})" if shape else ""
+    next_action = _frontier_next_action_text(
+        lane,
+        non_eurusd_frontier,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
     return (
         "Use non_eurusd_live_grade_frontier: "
         f"next evidence lane {lane.get('lane_id')}{shape_text} "
         f"({lane.get('vehicle')}, {lane.get('distance_to_live_ready')}). "
-        f"{lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the next frontier-ranked evidence packet.'} "
+        f"{next_action} "
         f"{_frontier_blocker_fragment(lane)}"
         "Keep negative expectancy, spread, bid/ask, forecast, and loss-budget blockers visible; do not send."
     )
@@ -2054,7 +2067,12 @@ def _next_trade_enabling_action(
             and _frontier_evidence_action_available(non_eurusd_frontier)
             and frontier_lane
         ):
-            return _frontier_evidence_prompt(non_eurusd_frontier)
+            return _frontier_evidence_prompt(
+                non_eurusd_frontier,
+                entry_frequency_recovery=entry_frequency_recovery,
+                forecast_pattern_refresh=forecast_pattern_refresh,
+                range_rail_geometry_repair=range_rail_geometry_repair,
+            )
         if board_top:
             suffix = ""
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
@@ -2083,12 +2101,18 @@ def _next_trade_enabling_action(
                 and _frontier_evidence_action_available(non_eurusd_frontier)
                 and frontier_lane
             ):
+                frontier_prompt = _frontier_evidence_prompt(
+                    non_eurusd_frontier,
+                    entry_frequency_recovery=entry_frequency_recovery,
+                    forecast_pattern_refresh=forecast_pattern_refresh,
+                    range_rail_geometry_repair=range_rail_geometry_repair,
+                )
                 return (
                     "Use the latest active_opportunity_board rerank: "
                     f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}) "
                     "has consumed range_rail_geometry_repair, but the latest forecast is no longer RANGE. "
                     "Do not repeat range-box refresh for that invalidated range-rail path. "
-                    f"{_frontier_evidence_prompt(non_eurusd_frontier)}"
+                    f"{frontier_prompt}"
                     f"{suffix}"
                 )
             consumed_prompt = _consumed_lane_prompt(
@@ -2359,8 +2383,14 @@ def _next_prompt(
         and _active_board_all_no_trade(active_opportunity_board or {})
         and _frontier_evidence_action_available(non_eurusd_frontier or {})
     ):
+        frontier_prompt = _frontier_evidence_prompt(
+            non_eurusd_frontier or {},
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
         return (
-            f"{_frontier_evidence_prompt(non_eurusd_frontier or {})} "
+            f"{frontier_prompt} "
             f"Keep blockers visible: {blocker_codes}. "
             "This is read-only evidence/tuning work, not live permission."
         )
@@ -2375,10 +2405,16 @@ def _next_prompt(
         and _range_rail_latest_forecast_not_range(range_rail_geometry_repair or {}, board_top)
         and _frontier_evidence_action_available(non_eurusd_frontier or {})
     ):
+        frontier_prompt = _frontier_evidence_prompt(
+            non_eurusd_frontier or {},
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
         return (
             "The board-selected range-rail path has been consumed, but the latest forecast is no longer RANGE; "
             "do not repeat range-box refresh for that invalidated lane. "
-            f"{_frontier_evidence_prompt(non_eurusd_frontier or {})} "
+            f"{frontier_prompt} "
             f"Keep board blockers visible: {blocker_codes}. "
             "This is read-only evidence/tuning work, not live permission."
         )
