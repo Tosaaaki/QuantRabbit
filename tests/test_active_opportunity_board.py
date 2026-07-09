@@ -1544,14 +1544,255 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(top["status"], "EVIDENCE_ACQUISITION")
         self.assertTrue(top["entry_recovery_candidate"])
         self.assertIn("ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH", top["blockers"])
+        self.assertIn("ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING", top["blockers"])
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", top["blockers"])
-        self.assertIn("entry-frequency recovery", top["next_action"])
+        self.assertIn("Map historical pair/side recovery profit", top["next_action"])
         self.assertEqual(top["entry_recovery_history"]["accepted_before_recent"], 3)
         self.assertEqual(top["entry_recovery_history"]["closed_pl_jpy"], 1500)
         self.assertEqual(top["entry_recovery_history"]["profit_source"], "pair_side_fallback")
         self.assertEqual(payload["coverage_summary"]["entry_recovery_candidate_count"], 1)
         self.assertEqual(payload["entry_recovery_summary"]["candidate_count"], 1)
         self.assertFalse(payload["live_permission_allowed"])
+
+    def test_exact_entry_recovery_ranks_ahead_of_pair_side_fallback_profit(self) -> None:
+        now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
+        exact_lane = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        fallback_lane = "range_trader:USD_JPY:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            fallback_lane,
+                            "USD_JPY",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                        ),
+                        _intent_row(
+                            exact_lane,
+                            "GBP_USD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-11T00:10:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": fallback_lane,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:20:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": fallback_lane,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:30:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": fallback_lane,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:40:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": fallback_lane,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:50:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 1500.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:10:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": exact_lane,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:20:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": exact_lane,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:30:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": exact_lane,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:40:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": exact_lane,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:50:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": exact_lane,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 120.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                ],
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], exact_lane)
+        self.assertEqual(top["entry_recovery_history"]["profit_source"], "exact_lane")
+        fallback = next(row for row in payload["ranked_active_lanes"] if row["lane_id"] == fallback_lane)
+        self.assertEqual(fallback["entry_recovery_history"]["profit_source"], "pair_side_fallback")
+        self.assertIn("ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING", fallback["blockers"])
+
+    def test_pair_side_fallback_without_current_intent_is_not_active_evidence_path(self) -> None:
+        now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(paths["order_intents"], {"generated_at_utc": now.isoformat(), "results": []})
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-11T00:10:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:20:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:30:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:40:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:50:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "realized_pl_jpy": 1200.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                ],
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], "entry_recovery:USD_JPY:LONG:UNKNOWN:MARKET")
+        self.assertEqual(top["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(top["entry_recovery_history"]["profit_source"], "pair_side_fallback")
+        self.assertIn("ENTRY_DROUGHT_RECOVERY_REQUIRES_CURRENT_INTENT", top["blockers"])
+        self.assertIn("ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING", top["blockers"])
 
 
 def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False) -> dict[str, Path]:

@@ -110,6 +110,7 @@ BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRE
 TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 ENTRY_DROUGHT_RECOVERY_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
 ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_CURRENT_INTENT"
+ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_BLOCKER = "ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING"
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
 STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
@@ -755,6 +756,8 @@ def _add_execution_recovery_lanes(
         lane["entry_recovery_history"] = history
         lane["source_refs"].append("data/execution_ledger.db:entry_recovery")
         recovery_blockers = [ENTRY_DROUGHT_RECOVERY_BLOCKER]
+        if history.get("profit_source") == "pair_side_fallback":
+            recovery_blockers.append(ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_BLOCKER)
         if not lane.get("order_intent_status"):
             recovery_blockers.append(ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER)
         lane["blockers"].extend(recovery_blockers)
@@ -1529,6 +1532,8 @@ def _entry_drought_recovery_required(lane: dict[str, Any]) -> bool:
     closed_pl = _float(history.get("closed_pl_jpy")) or 0.0
     recent_accepted = _first_int(history.get("recent_accepted"), 0)
     recent_fills = _first_int(history.get("recent_fills"), 0)
+    if history.get("profit_source") == "pair_side_fallback" and not lane.get("order_intent_status"):
+        return False
     if accepted < ENTRY_DROUGHT_MIN_ACCEPTED and fills < ENTRY_DROUGHT_MIN_FILLS:
         return False
     if closed_pl <= 0:
@@ -1566,8 +1571,12 @@ def _rank_score(lane: dict[str, Any]) -> float:
         score += 25.0
     if lane.get("entry_recovery_candidate") is True:
         history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
-        score += min((_float(history.get("closed_pl_jpy")) or 0.0) / 250.0, 35.0)
-        score += min((_float(history.get("accepted_before_recent")) or 0.0) * 2.0, 20.0)
+        profit_source = str(history.get("profit_source") or "")
+        if profit_source == "exact_lane":
+            score += min((_float(history.get("closed_pl_jpy")) or 0.0) / 250.0, 35.0)
+            score += min((_float(history.get("accepted_before_recent")) or 0.0) * 2.0, 20.0)
+        else:
+            score += min((_float(history.get("accepted_before_recent")) or 0.0), 8.0)
     if lane.get("vehicle") == "LIMIT" and "LIMIT" in str(lane.get("replay_status")):
         score += 15.0
     if lane.get("vehicle") == "UNKNOWN":
@@ -1585,6 +1594,7 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
     return (
         -float(STATUS_PRIORITY.get(str(lane.get("status")), 0)),
         _current_intent_sort_bucket(lane),
+        _entry_recovery_sort_bucket(lane),
         _live_unlock_blocker_sort_bucket(lane),
         len(blockers),
         -float(lane.get("_rank_score") or 0.0),
@@ -1593,6 +1603,17 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
         str(lane.get("strategy_family")),
         str(lane.get("vehicle")),
     )
+
+
+def _entry_recovery_sort_bucket(lane: dict[str, Any]) -> int:
+    if lane.get("entry_recovery_candidate") is not True:
+        return 0
+    history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
+    if history.get("profit_source") == "exact_lane":
+        return 0
+    if not lane.get("order_intent_status"):
+        return 4
+    return 2
 
 
 def _live_unlock_blocker_sort_bucket(lane: dict[str, Any]) -> int:
@@ -1674,6 +1695,13 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
             fills = history.get("fills_before_recent")
             pl = history.get("closed_pl_jpy")
             source = history.get("profit_source") or "execution_ledger"
+            if source == "pair_side_fallback":
+                return (
+                    f"Map historical pair/side recovery profit back to an exact lane for {lane_key}; historical "
+                    f"accepted={accepted}, fills={fills}, pair_side_closed_pl_jpy={pl}, but the profitable closes "
+                    "were not attributed to this lane. Keep every current blocker visible, mine the tagless/manual "
+                    "winner pattern, rebuild exact proof/replay for the mapped lane, and do not send."
+                )
             return (
                 f"Run entry-frequency recovery analysis for {lane_key}; historical accepted={accepted}, "
                 f"fills={fills}, closed_pl_jpy={pl} ({source}) but recent entries are zero. Re-tune forecast/pattern "
