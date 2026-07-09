@@ -108,12 +108,18 @@ FAILED_EXACT_REPLAY_MARKERS = (
 BIDASK_REPLAY_NEGATIVE_BLOCKER = "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"
 BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
 TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+ENTRY_DROUGHT_RECOVERY_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
+ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_CURRENT_INTENT"
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
 STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
 TP_PROOF_COLLECTION_MIN_TRADES = 5
 BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
 BIDASK_REPLAY_NEGATIVE_LAST_DAY_MAX_AGE_DAYS = 3
+ENTRY_DROUGHT_LOOKBACK_DAYS = 45
+ENTRY_DROUGHT_RECENT_DAYS = 3
+ENTRY_DROUGHT_MIN_ACCEPTED = 3
+ENTRY_DROUGHT_MIN_FILLS = 2
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,11 @@ class ActiveOpportunityBoard:
         _attach_strategy_profile(lanes, artifacts["strategy_profile"])
         _attach_verification_ledger(lanes, artifacts["verification_ledger"])
         _attach_goal_loop_edge_improvement_context(lanes, artifacts["trader_goal_loop_orchestrator"])
+        _add_execution_recovery_lanes(
+            lanes,
+            self.execution_ledger_db_path,
+            now_utc=self.now_utc,
+        )
 
         execution_ledger_summary = _execution_ledger_summary(self.execution_ledger_db_path)
         guardian_routing_clear = _guardian_routing_clear(
@@ -258,6 +269,7 @@ class ActiveOpportunityBoard:
             "vehicle_coverage": vehicle_coverage,
             "no_trade_reasons": no_trade_reasons,
             "stale_source_reasons": stale_source_reasons,
+            "entry_recovery_summary": _entry_recovery_summary(public_lanes),
             "next_active_path": _next_active_path(top_lane, active_contract),
             "four_x_progress_hypothesis": _four_x_progress_hypothesis(
                 top_lane,
@@ -706,6 +718,193 @@ def _attach_goal_loop_edge_improvement_context(lanes: dict[str, dict[str, Any]],
             lane["edge_improvement_target"] = _shape_from_target(target)
             lane["source_refs"].append("data/trader_goal_loop_orchestrator.json:edge_improvement_state")
             break
+
+
+def _add_execution_recovery_lanes(
+    lanes: dict[str, dict[str, Any]],
+    execution_ledger_db_path: Path,
+    *,
+    now_utc: datetime,
+) -> None:
+    candidates = _execution_entry_recovery_candidates(execution_ledger_db_path, now_utc=now_utc)
+    for candidate in candidates:
+        lane_id = str(candidate.get("lane_id") or "")
+        pair = str(candidate.get("pair") or "UNKNOWN")
+        direction = str(candidate.get("direction") or "UNKNOWN")
+        strategy = str(candidate.get("strategy_family") or "UNKNOWN")
+        vehicle = _normalize_vehicle(candidate.get("vehicle") or "UNKNOWN")
+        target_lane_id = lane_id or _synthetic_lane_id("entry_recovery", pair, direction, strategy, vehicle)
+        lane = _ensure_lane(lanes, target_lane_id, pair, direction, strategy, vehicle)
+        history = {
+            "lookback_days": ENTRY_DROUGHT_LOOKBACK_DAYS,
+            "recent_days": ENTRY_DROUGHT_RECENT_DAYS,
+            "accepted_before_recent": candidate.get("accepted_before_recent"),
+            "fills_before_recent": candidate.get("fills_before_recent"),
+            "recent_accepted": candidate.get("recent_accepted"),
+            "recent_fills": candidate.get("recent_fills"),
+            "closed_trades": candidate.get("closed_trades"),
+            "closed_pl_jpy": candidate.get("closed_pl_jpy"),
+            "win_rate": candidate.get("win_rate"),
+            "profit_source": candidate.get("profit_source"),
+            "first_entry_ts_utc": candidate.get("first_entry_ts_utc"),
+            "last_entry_ts_utc": candidate.get("last_entry_ts_utc"),
+            "last_closed_ts_utc": candidate.get("last_closed_ts_utc"),
+            "historical_lane_id": lane_id,
+        }
+        lane["entry_recovery_candidate"] = True
+        lane["entry_recovery_history"] = history
+        lane["source_refs"].append("data/execution_ledger.db:entry_recovery")
+        recovery_blockers = [ENTRY_DROUGHT_RECOVERY_BLOCKER]
+        if not lane.get("order_intent_status"):
+            recovery_blockers.append(ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER)
+        lane["blockers"].extend(recovery_blockers)
+
+
+def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    history_start = now_utc - timedelta(days=ENTRY_DROUGHT_LOOKBACK_DAYS)
+    recent_start = now_utc - timedelta(days=ENTRY_DROUGHT_RECENT_DAYS)
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute(
+                """
+                select ts_utc,event_type,lane_id,pair,side,realized_pl_jpy,raw_json
+                from execution_events
+                where ts_utc >= ?
+                  and event_type in ('ORDER_ACCEPTED','ORDER_FILLED','TRADE_CLOSED')
+                order by ts_utc asc
+                """,
+                (history_start.isoformat(),),
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+
+    entries: dict[tuple[str, str, str], dict[str, Any]] = {}
+    pair_side_pnl: dict[tuple[str, str], dict[str, Any]] = {}
+    exact_pnl: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        ts = _parse_utc(row["ts_utc"])
+        if ts is None:
+            continue
+        pair = str(row["pair"] or "UNKNOWN")
+        side = str(row["side"] or "UNKNOWN")
+        lane_id = str(row["lane_id"] or "")
+        event_type = str(row["event_type"] or "")
+        key = (lane_id, pair, side)
+        if event_type in {"ORDER_ACCEPTED", "ORDER_FILLED"}:
+            parsed = _parse_lane_id(lane_id)
+            group = entries.setdefault(
+                key,
+                {
+                    "lane_id": lane_id,
+                    "pair": pair,
+                    "direction": side,
+                    "strategy_family": parsed.get("strategy_family") or "UNKNOWN",
+                    "vehicle_counts": {},
+                    "accepted_before_recent": 0,
+                    "fills_before_recent": 0,
+                    "recent_accepted": 0,
+                    "recent_fills": 0,
+                    "first_entry_ts_utc": None,
+                    "last_entry_ts_utc": None,
+                },
+            )
+            vehicle = _vehicle_from_execution_raw(row["raw_json"])
+            if vehicle:
+                group["vehicle_counts"][vehicle] = int(group["vehicle_counts"].get(vehicle, 0)) + 1
+            group["first_entry_ts_utc"] = group["first_entry_ts_utc"] or ts.isoformat()
+            group["last_entry_ts_utc"] = ts.isoformat()
+            if ts >= recent_start:
+                if event_type == "ORDER_ACCEPTED":
+                    group["recent_accepted"] += 1
+                elif event_type == "ORDER_FILLED":
+                    group["recent_fills"] += 1
+            else:
+                if event_type == "ORDER_ACCEPTED":
+                    group["accepted_before_recent"] += 1
+                elif event_type == "ORDER_FILLED":
+                    group["fills_before_recent"] += 1
+            continue
+
+        if event_type == "TRADE_CLOSED" and ts < recent_start:
+            pl = _float(row["realized_pl_jpy"]) or 0.0
+            _accumulate_closed_pnl(pair_side_pnl.setdefault((pair, side), {}), pl, ts)
+            if lane_id:
+                _accumulate_closed_pnl(exact_pnl.setdefault(key, {}), pl, ts)
+
+    candidates: list[dict[str, Any]] = []
+    for key, group in entries.items():
+        accepted = int(group["accepted_before_recent"])
+        fills = int(group["fills_before_recent"])
+        if accepted < ENTRY_DROUGHT_MIN_ACCEPTED and fills < ENTRY_DROUGHT_MIN_FILLS:
+            continue
+        if int(group["recent_accepted"]) > 0 or int(group["recent_fills"]) > 0:
+            continue
+        lane_id, pair, side = key
+        pnl = exact_pnl.get(key) or pair_side_pnl.get((pair, side)) or {}
+        closed_pl = _float(pnl.get("closed_pl_jpy")) or 0.0
+        closed_trades = int(pnl.get("closed_trades") or 0)
+        if closed_trades <= 0 or closed_pl <= 0:
+            continue
+        vehicle = _dominant_vehicle(group.get("vehicle_counts"))
+        candidate = {
+            **{k: v for k, v in group.items() if k != "vehicle_counts"},
+            "vehicle": vehicle or _parse_lane_id(lane_id).get("vehicle") or "UNKNOWN",
+            "closed_trades": closed_trades,
+            "closed_pl_jpy": round(closed_pl, 4),
+            "win_rate": _json_number_or_none(pnl.get("win_rate")),
+            "profit_source": "exact_lane" if key in exact_pnl else "pair_side_fallback",
+            "last_closed_ts_utc": pnl.get("last_closed_ts_utc"),
+        }
+        candidates.append(candidate)
+    return sorted(
+        candidates,
+        key=lambda row: (
+            -float(row.get("closed_pl_jpy") or 0.0),
+            -int(row.get("accepted_before_recent") or 0),
+            str(row.get("pair") or ""),
+            str(row.get("direction") or ""),
+        ),
+    )
+
+
+def _accumulate_closed_pnl(bucket: dict[str, Any], pl: float, ts: datetime) -> None:
+    bucket["closed_trades"] = int(bucket.get("closed_trades") or 0) + 1
+    bucket["closed_pl_jpy"] = float(bucket.get("closed_pl_jpy") or 0.0) + pl
+    if pl > 0:
+        bucket["winning_trades"] = int(bucket.get("winning_trades") or 0) + 1
+    wins = int(bucket.get("winning_trades") or 0)
+    trades = int(bucket.get("closed_trades") or 0)
+    bucket["win_rate"] = wins / trades if trades else None
+    bucket["last_closed_ts_utc"] = ts.isoformat()
+
+
+def _vehicle_from_execution_raw(raw_json: Any) -> str:
+    if not raw_json:
+        return ""
+    try:
+        payload = json.loads(str(raw_json))
+    except json.JSONDecodeError:
+        return ""
+    order_type = str(payload.get("type") or "").upper()
+    if order_type == "LIMIT_ORDER":
+        return "LIMIT"
+    if order_type == "STOP_ORDER":
+        return "STOP"
+    if order_type == "MARKET_ORDER":
+        return "MARKET"
+    return ""
+
+
+def _dominant_vehicle(counts: Any) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return ""
+    return sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0])))[0][0]
 
 
 def _goal_loop_edge_targets(state: dict[str, Any]) -> list[dict[str, str]]:
@@ -1220,6 +1419,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "EVIDENCE_ACQUISITION"
     if has_negative and _edge_improvement_evidence_required(lane):
         return "EVIDENCE_ACQUISITION"
+    if _entry_drought_recovery_required(lane):
+        return "EVIDENCE_ACQUISITION"
     if has_negative:
         return "NO_TRADE_WITH_CAUSE"
     if _has_marker(blockers, OPERATOR_REVIEW_MARKERS):
@@ -1317,6 +1518,24 @@ def _has_positive_harvest_or_edge_evidence(lane: dict[str, Any]) -> bool:
     return edge is not None and edge > 0
 
 
+def _entry_drought_recovery_required(lane: dict[str, Any]) -> bool:
+    if lane.get("entry_recovery_candidate") is not True:
+        return False
+    history = lane.get("entry_recovery_history")
+    if not isinstance(history, dict):
+        return False
+    accepted = _first_int(history.get("accepted_before_recent"), 0)
+    fills = _first_int(history.get("fills_before_recent"), 0)
+    closed_pl = _float(history.get("closed_pl_jpy")) or 0.0
+    recent_accepted = _first_int(history.get("recent_accepted"), 0)
+    recent_fills = _first_int(history.get("recent_fills"), 0)
+    if accepted < ENTRY_DROUGHT_MIN_ACCEPTED and fills < ENTRY_DROUGHT_MIN_FILLS:
+        return False
+    if closed_pl <= 0:
+        return False
+    return recent_accepted == 0 and recent_fills == 0
+
+
 def _is_scout_ready_candidate(lane: dict[str, Any]) -> bool:
     blockers = lane.get("blockers") or []
     if blockers:
@@ -1345,6 +1564,10 @@ def _rank_score(lane: dict[str, Any]) -> float:
         score += max(0.0, 30.0 - proof_gap)
     if lane.get("can_enter_proof_pack"):
         score += 25.0
+    if lane.get("entry_recovery_candidate") is True:
+        history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
+        score += min((_float(history.get("closed_pl_jpy")) or 0.0) / 250.0, 35.0)
+        score += min((_float(history.get("accepted_before_recent")) or 0.0) * 2.0, 20.0)
     if lane.get("vehicle") == "LIMIT" and "LIMIT" in str(lane.get("replay_status")):
         score += 15.0
     if lane.get("vehicle") == "UNKNOWN":
@@ -1445,6 +1668,17 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     if status == "LIVE_READY":
         return f"Keep {lane_key} visible for verifier/gateway checks only; this board grants no live permission."
     if status == "EVIDENCE_ACQUISITION":
+        if lane.get("entry_recovery_candidate") is True:
+            history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
+            accepted = history.get("accepted_before_recent")
+            fills = history.get("fills_before_recent")
+            pl = history.get("closed_pl_jpy")
+            source = history.get("profit_source") or "execution_ledger"
+            return (
+                f"Run entry-frequency recovery analysis for {lane_key}; historical accepted={accepted}, "
+                f"fills={fills}, closed_pl_jpy={pl} ({source}) but recent entries are zero. Re-tune forecast/pattern "
+                "selection and bid/ask or local-TP proof for this lane while preserving every current blocker. Do not send."
+            )
         if _bidask_negative_evidence_refresh_required(lane):
             reasons = ", ".join(_string_list(lane.get("evidence_refresh_reasons"))[:3])
             suffix = f" ({reasons})" if reasons else ""
@@ -1524,6 +1758,10 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
     if lane.get("edge_improvement_candidate") is True:
         public["edge_improvement_candidate"] = True
         public["edge_improvement_target"] = str(lane.get("edge_improvement_target") or "")
+    if lane.get("entry_recovery_candidate") is True:
+        public["entry_recovery_candidate"] = True
+        if isinstance(lane.get("entry_recovery_history"), dict):
+            public["entry_recovery_history"] = lane["entry_recovery_history"]
     if public["status"] not in LANE_STATUSES:
         raise ValueError(f"unknown lane status: {public['status']}")
     return public
@@ -1543,6 +1781,7 @@ def _coverage_summary(lanes: list[dict[str, Any]]) -> dict[str, Any]:
         "evidence_acquisition_count": _count_status(lanes, "EVIDENCE_ACQUISITION"),
         "operator_review_required_count": _count_status(lanes, "OPERATOR_REVIEW_REQUIRED"),
         "no_trade_count": _count_status(lanes, "NO_TRADE_WITH_CAUSE"),
+        "entry_recovery_candidate_count": sum(1 for lane in lanes if lane.get("entry_recovery_candidate") is True),
     }
 
 
@@ -1604,6 +1843,34 @@ def _stale_source_reasons(lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if len(row["example_lane_ids"]) < 5:
                 row["example_lane_ids"].append(lane["lane_id"])
     return sorted(counts.values(), key=lambda row: (-row["count"], row["code"]))
+
+
+def _entry_recovery_summary(lanes: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [lane for lane in lanes if lane.get("entry_recovery_candidate") is True]
+    ranked = sorted(
+        candidates,
+        key=lambda lane: (
+            -float(((lane.get("entry_recovery_history") or {}).get("closed_pl_jpy") or 0.0)),
+            -float(((lane.get("entry_recovery_history") or {}).get("accepted_before_recent") or 0.0)),
+            str(lane.get("lane_id") or ""),
+        ),
+    )
+    return {
+        "candidate_count": len(candidates),
+        "top_candidates": [
+            {
+                "lane_id": lane.get("lane_id"),
+                "pair": lane.get("pair"),
+                "direction": lane.get("direction"),
+                "strategy_family": lane.get("strategy_family"),
+                "vehicle": lane.get("vehicle"),
+                "status": lane.get("status"),
+                "blockers": lane.get("blockers", [])[:8],
+                "history": lane.get("entry_recovery_history") or {},
+            }
+            for lane in ranked[:8]
+        ],
+    }
 
 
 def _board_status(lanes: list[dict[str, Any]]) -> str:
@@ -1704,6 +1971,7 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- EVIDENCE_ACQUISITION count: `{summary.get('evidence_acquisition_count')}`",
             f"- OPERATOR_REVIEW_REQUIRED count: `{summary.get('operator_review_required_count')}`",
             f"- NO_TRADE count: `{summary.get('no_trade_count')}`",
+            f"- Entry recovery candidates: `{summary.get('entry_recovery_candidate_count')}`",
             "",
             "## Active Path",
             "",
@@ -1720,6 +1988,16 @@ def _render_report(payload: dict[str, Any]) -> str:
     )
     for reason in (payload.get("no_trade_reasons") or [])[:12]:
         lines.append(f"- `{reason.get('code')}`: {reason.get('count')}")
+    entry_recovery = payload.get("entry_recovery_summary") if isinstance(payload.get("entry_recovery_summary"), dict) else {}
+    if entry_recovery.get("candidate_count"):
+        lines.extend(["", "## Entry Recovery", ""])
+        for lane in (entry_recovery.get("top_candidates") or [])[:5]:
+            history = lane.get("history") if isinstance(lane.get("history"), dict) else {}
+            lines.append(
+                f"- `{lane.get('lane_id')}`: accepted `{history.get('accepted_before_recent')}`, "
+                f"fills `{history.get('fills_before_recent')}`, closed_pl_jpy `{history.get('closed_pl_jpy')}`, "
+                f"blockers `{', '.join(lane.get('blockers') or [])}`"
+            )
     lines.extend(
         [
             "",
