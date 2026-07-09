@@ -259,7 +259,15 @@ class TraderSupportBotTest(unittest.TestCase):
             recovered_at = now - timedelta(minutes=5)
             os.utime(review_path, (recovered_at.timestamp(), recovered_at.timestamp()))
             env = _guardian_env(root, active="1")
-            with mock.patch.dict(os.environ, env, clear=False):
+            usage = mock.Mock(
+                total=100 * 1024 * 1024 * 1024,
+                used=20 * 1024 * 1024 * 1024,
+                free=80 * 1024 * 1024 * 1024,
+            )
+            with (
+                mock.patch.dict(os.environ, env, clear=False),
+                mock.patch.object(trader_support_bot_module.shutil, "disk_usage", return_value=usage),
+            ):
                 summary = TraderSupportBot(
                     broker_snapshot_path=files["broker"],
                     order_intents_path=files["intents"],

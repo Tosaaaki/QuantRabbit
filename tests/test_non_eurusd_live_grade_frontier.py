@@ -148,6 +148,7 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], STATUS_NON_EURUSD_FOUND)
         self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], aud_jpy)
+        self.assertEqual(payload["next_evidence_lane"]["lane_id"], aud_jpy)
         self.assertTrue(payload["required_checks"]["non_eurusd_closer_than_eurusd"])
         self.assertTrue(payload["required_checks"]["spread_too_wide_not_ignored"])
         self.assertTrue(payload["required_checks"]["bidask_negative_not_ignored"])

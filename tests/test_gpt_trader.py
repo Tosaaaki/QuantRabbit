@@ -317,6 +317,104 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn(usd_cad_lane_id, " ".join(decision["risk_notes"]))
             self.assertIsNone(decision["specialist_reviews"][0]["lane_id"])
 
+    def test_draft_focuses_parallel_non_eurusd_frontier_when_board_top_is_eurusd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            eur_lane = _result(
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                method="BREAKOUT_FAILURE",
+                pair="EUR_USD",
+                side="LONG",
+            )
+            eur_lane["status"] = "DRY_RUN_BLOCKED"
+            eur_lane["live_blockers"] = ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"]
+            files["intents"].write_text(json.dumps({"results": [eur_lane]}))
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["AUD_CAD"] = {
+                "bid": 0.8891,
+                "ask": 0.8893,
+                "timestamp_utc": snapshot["fetched_at_utc"],
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            board_lane = {
+                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                "next_action": "Collect exact local TAKE_PROFIT_ORDER proof for EUR_USD LONG LIMIT.",
+            }
+            frontier_lane = {
+                "lane_id": "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                "pair": "AUD_CAD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "bidask_status": "NEGATIVE",
+                "blockers": [
+                    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                    "LOCAL_TP_PROOF_ZERO_TRADES",
+                ],
+                "next_action": "Repair bid/ask-negative pattern before rerunning replay.",
+            }
+            files["active_opportunity_board"].write_text(
+                json.dumps(
+                    {
+                        "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                        "live_permission_allowed": False,
+                        "top_lane": board_lane,
+                        "next_active_path": "EVIDENCE_ACQUISITION: EUR_USD proof collection.",
+                    }
+                )
+            )
+            files["non_eurusd_frontier"].write_text(
+                json.dumps(
+                    {
+                        "status": "NON_EURUSD_FRONTIER_FOUND",
+                        "live_permission_allowed": False,
+                        "top_lane": board_lane,
+                        "top_non_eurusd_lane": frontier_lane,
+                        "next_evidence_lane": frontier_lane,
+                        "next_active_path": "BIDASK_NEGATIVE_PATTERN_REPAIR: AUD_CAD.",
+                    }
+                )
+            )
+            files["active_trader_contract"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                        "selected_active_path": "EVIDENCE_ACQUISITION",
+                        "live_permission_allowed": False,
+                        "next_trade_enabling_action": (
+                            "Use active board top lane EUR_USD, and parallel "
+                            "non_eurusd_live_grade_frontier evidence lane "
+                            "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; keep blockers visible."
+                        ),
+                        "current_state": {
+                            "active_opportunity_board": {"top_lane": board_lane},
+                            "non_eurusd_live_grade_frontier": {
+                                "top_non_eurusd_lane": frontier_lane,
+                                "next_evidence_lane": frontier_lane,
+                            },
+                        },
+                    }
+                )
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.action, "REQUEST_EVIDENCE")
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertEqual(decision["market_read_first"]["best_trade_if_forced"]["pair"], "AUD_CAD")
+            self.assertEqual(decision["market_read_first"]["best_trade_if_forced"]["direction"], "SHORT")
+            self.assertIn("active:lane:range_trader:AUD_CAD:SHORT:RANGE_ROTATION", decision["evidence_refs"])
+            self.assertIn("range_trader:AUD_CAD:SHORT:RANGE_ROTATION", " ".join(decision["risk_notes"]))
+            self.assertEqual(len(decision["specialist_reviews"]), 2)
+
     def test_draft_ignores_operator_manual_position_for_scheduled_trader(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

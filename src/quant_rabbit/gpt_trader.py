@@ -4734,17 +4734,41 @@ def _active_path_packet(
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
     rail = range_rail_geometry_repair if isinstance(range_rail_geometry_repair, dict) else {}
-    top_lane = _first_active_lane(
+    contract_state = contract.get("current_state") if isinstance(contract.get("current_state"), dict) else {}
+    contract_board = (
+        contract_state.get("active_opportunity_board")
+        if isinstance(contract_state.get("active_opportunity_board"), dict)
+        else {}
+    )
+    contract_frontier = (
+        contract_state.get("non_eurusd_live_grade_frontier")
+        if isinstance(contract_state.get("non_eurusd_live_grade_frontier"), dict)
+        else {}
+    )
+    board_lane = _first_active_lane(
+        contract_board.get("top_lane"),
         board.get("top_lane"),
-        frontier.get("top_non_eurusd_lane"),
-        frontier.get("top_lane"),
         contract.get("top_lane"),
     )
+    frontier_lane = _frontier_evidence_lane_from_active_path(
+        contract_frontier,
+        frontier,
+    )
+    top_lane = _first_active_lane(
+        contract.get("top_lane"),
+        board_lane,
+        frontier_lane,
+    )
     next_action = _first_text(
-        board.get("next_action"),
-        board.get("next_active_path"),
         contract.get("next_trade_enabling_action"),
         contract.get("next_active_path"),
+        board.get("next_action"),
+        board.get("next_active_path"),
+        frontier.get("next_active_path"),
+    )
+    frontier_action = _first_text(
+        frontier_lane.get("next_action"),
+        contract_frontier.get("next_active_path"),
         frontier.get("next_active_path"),
     )
     rail_action = _first_text(
@@ -4764,10 +4788,31 @@ def _active_path_packet(
             or frontier.get("live_permission_allowed")
         ),
         "top_lane": top_lane,
+        "active_board_lane": board_lane,
+        "frontier_evidence_lane": frontier_lane,
         "next_trade_enabling_action": next_action,
+        "frontier_evidence_action": frontier_action,
         "range_rail_action": rail_action,
         "range_rail_status": rail.get("rail_status"),
     }
+
+
+def _frontier_evidence_lane_from_active_path(
+    *artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        checks = artifact.get("required_checks") if isinstance(artifact.get("required_checks"), dict) else {}
+        lane = _first_active_lane(
+            artifact.get("next_evidence_lane"),
+            checks.get("next_evidence_lane"),
+            artifact.get("top_non_eurusd_lane"),
+            artifact.get("top_lane"),
+        )
+        if lane:
+            return lane
+    return {}
 
 
 def _first_active_lane(*candidates: Any) -> dict[str, Any]:
@@ -4781,10 +4826,72 @@ def _active_path_evidence_refs(active_path: dict[str, Any]) -> list[str]:
     if not isinstance(active_path, dict) or not active_path:
         return []
     refs = ["active:contract", "active:board", "active:non_eurusd_frontier", "active:range_rail"]
-    lane_id = str((active_path.get("top_lane") or {}).get("lane_id") or "").strip()
-    if lane_id:
-        refs.append(f"active:lane:{lane_id}")
+    lane_ids: list[str] = []
+    for lane in _active_path_candidate_lanes(active_path):
+        lane_id = str(lane.get("lane_id") or "").strip()
+        if lane_id and lane_id not in lane_ids:
+            lane_ids.append(lane_id)
+    refs.extend(f"active:lane:{lane_id}" for lane_id in lane_ids)
     return refs
+
+
+def _active_path_candidate_lanes(active_path: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(active_path, dict):
+        return []
+    candidates = [
+        active_path.get("top_lane"),
+        active_path.get("active_board_lane"),
+        active_path.get("frontier_evidence_lane"),
+    ]
+    lanes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        lane_id = str(candidate.get("lane_id") or "").strip()
+        if not lane_id or lane_id in seen:
+            continue
+        lanes.append(dict(candidate))
+        seen.add(lane_id)
+    return lanes
+
+
+def _active_path_ordered_fallback_lanes(active_path: dict[str, Any]) -> list[dict[str, Any]]:
+    lanes = _active_path_candidate_lanes(active_path)
+    if not lanes or not _active_path_should_focus_frontier(active_path):
+        return lanes
+    frontier_lane_id = str(
+        (active_path.get("frontier_evidence_lane") or {}).get("lane_id") or ""
+    ).strip()
+    if not frontier_lane_id:
+        return lanes
+    return sorted(lanes, key=lambda lane: 0 if lane.get("lane_id") == frontier_lane_id else 1)
+
+
+def _active_path_should_focus_frontier(active_path: dict[str, Any]) -> bool:
+    if not isinstance(active_path, dict):
+        return False
+    frontier = active_path.get("frontier_evidence_lane")
+    board = active_path.get("active_board_lane") or active_path.get("top_lane")
+    if not isinstance(frontier, dict) or not isinstance(board, dict):
+        return False
+    frontier_pair = str(frontier.get("pair") or "").upper()
+    board_pair = str(board.get("pair") or "").upper()
+    if not frontier_pair or frontier_pair == "EUR_USD" or board_pair != "EUR_USD":
+        return False
+    frontier_lane_id = str(frontier.get("lane_id") or "").strip()
+    action_text = " ".join(
+        str(active_path.get(key) or "")
+        for key in ("next_trade_enabling_action", "frontier_evidence_action")
+    )
+    return bool(
+        frontier_lane_id and (
+            frontier_lane_id in action_text
+            or "non_eurusd_live_grade_frontier" in action_text
+            or "frontier evidence" in action_text
+            or "Non-EUR frontier" in action_text
+        )
+    )
 
 
 def _active_path_primary_lane(packet: dict[str, Any]) -> dict[str, Any]:
@@ -4842,13 +4949,19 @@ def _draft_active_fallback_lane_ids(
     packet: dict[str, Any],
     lanes_by_id: dict[str, dict[str, Any]],
 ) -> tuple[str, ...]:
-    lane_id = _active_path_lane_id(packet)
-    if not lane_id:
+    active_path = packet.get("active_path")
+    if not isinstance(active_path, dict):
         return ()
-    if lane_id not in lanes_by_id:
-        active_lane = _active_path_primary_lane(packet)
-        lanes_by_id[lane_id] = _active_path_lane_for_market_read(active_lane)
-    return (lane_id,)
+    ordered_lane_ids: list[str] = []
+    for active_lane in _active_path_ordered_fallback_lanes(active_path):
+        lane_id = str(active_lane.get("lane_id") or "").strip()
+        if not lane_id:
+            continue
+        if lane_id not in lanes_by_id:
+            lanes_by_id[lane_id] = _active_path_lane_for_market_read(active_lane)
+        if lane_id not in ordered_lane_ids:
+            ordered_lane_ids.append(lane_id)
+    return tuple(ordered_lane_ids)
 
 
 def _active_path_blocker_summary(packet: dict[str, Any]) -> str:
@@ -4858,12 +4971,23 @@ def _active_path_blocker_summary(packet: dict[str, Any]) -> str:
     lane = active_path.get("top_lane") if isinstance(active_path.get("top_lane"), dict) else {}
     lane_id = str(lane.get("lane_id") or "").strip()
     next_action = str(active_path.get("next_trade_enabling_action") or "").strip()
+    frontier_lane = (
+        active_path.get("frontier_evidence_lane")
+        if isinstance(active_path.get("frontier_evidence_lane"), dict)
+        else {}
+    )
+    frontier_lane_id = str(frontier_lane.get("lane_id") or "").strip()
+    frontier_action = str(active_path.get("frontier_evidence_action") or "").strip()
     rail_action = str(active_path.get("range_rail_action") or "").strip()
     parts: list[str] = []
     if lane_id:
         parts.append(f"ACTIVE_PATH_LANE {lane_id}")
     if next_action:
         parts.append(f"NEXT_ACTIVE_ACTION {next_action}")
+    if frontier_lane_id and frontier_lane_id != lane_id:
+        parts.append(f"FRONTIER_LANE {frontier_lane_id}")
+    if frontier_action:
+        parts.append(f"FRONTIER_ACTION {frontier_action}")
     if rail_action:
         parts.append(f"RANGE_RAIL_ACTION {rail_action}")
     return "; ".join(parts)
@@ -5653,9 +5777,8 @@ def _draft_active_path_reviews(packet: dict[str, Any]) -> list[dict[str, Any]]:
     active_path = packet.get("active_path")
     if not isinstance(active_path, dict):
         return []
-    lane = active_path.get("top_lane") if isinstance(active_path.get("top_lane"), dict) else {}
-    lane_id = str(lane.get("lane_id") or "").strip()
-    if not lane_id:
+    lanes = _active_path_ordered_fallback_lanes(active_path)
+    if not lanes:
         return []
     packet_lane_ids = {
         str(item.get("lane_id") or "")
@@ -5663,9 +5786,13 @@ def _draft_active_path_reviews(packet: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(item, dict)
     }
     summary = _active_path_blocker_summary(packet)
-    hard_codes = [str(code) for code in lane.get("blockers", []) or [] if str(code or "").strip()]
-    return [
-        {
+    reviews: list[dict[str, Any]] = []
+    for lane in lanes:
+        lane_id = str(lane.get("lane_id") or "").strip()
+        if not lane_id:
+            continue
+        hard_codes = [str(code) for code in lane.get("blockers", []) or [] if str(code or "").strip()]
+        reviews.append({
             "role": "portfolio_context",
             "lane_id": lane_id if lane_id in packet_lane_ids else None,
             "method": str(lane.get("strategy_family") or ""),
@@ -5675,8 +5802,8 @@ def _draft_active_path_reviews(packet: dict[str, Any]) -> list[dict[str, Any]]:
             "hard_gate_codes": hard_codes[:12],
             "read_only": True,
             "live_permission": False,
-        }
-    ]
+        })
+    return reviews
 
 
 def _draft_pair_refs(pair: str, side: str) -> list[str]:

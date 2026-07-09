@@ -228,6 +228,7 @@ class NonEurusdLiveGradeFrontier:
             "ranked_frontier_lanes": [_public_frontier_lane(lane) for lane in top_lanes],
             "top_lane": _public_frontier_lane(top_lane) if top_lane else {},
             "top_non_eurusd_lane": _public_frontier_lane(top_non) if top_non else {},
+            "next_evidence_lane": _public_frontier_lane(top_non or top_lane) if (top_non or top_lane) else {},
             "proof_floor_gaps": gaps["proof_floor_gaps"],
             "bidask_replay_gaps": gaps["bidask_replay_gaps"],
             "spread_gaps": gaps["spread_gaps"],
