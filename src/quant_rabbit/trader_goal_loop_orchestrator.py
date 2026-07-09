@@ -207,13 +207,28 @@ class TraderGoalLoopOrchestrator:
         )
         success_condition_evaluation = _evaluate_success_condition(success_condition, current_state)
         next_allowed_commands = _next_allowed_commands(selected_next_work_type)
+        four_x_progress_hypothesis = _four_x_progress_hypothesis(
+            edge_improvement_state,
+            scout_state,
+            active_contract_state=active_contract_state,
+        )
+        root_improvement_target = _root_improvement_target(
+            edge_improvement_state,
+            scout_state,
+            active_contract_state=active_contract_state,
+        )
+        expected_edge_improvement = _expected_edge_improvement(
+            edge_improvement_state,
+            scout_state,
+            active_contract_state=active_contract_state,
+        )
         selected_next_prompt = _selected_next_prompt(
             selected_next_work_type=selected_next_work_type,
             current_phase=current_phase,
             selection_reason=selection_reason,
-            four_x_progress_hypothesis=_four_x_progress_hypothesis(edge_improvement_state, scout_state),
-            root_improvement_target=_root_improvement_target(edge_improvement_state, scout_state),
-            expected_edge_improvement=_expected_edge_improvement(edge_improvement_state, scout_state),
+            four_x_progress_hypothesis=four_x_progress_hypothesis,
+            root_improvement_target=root_improvement_target,
+            expected_edge_improvement=expected_edge_improvement,
             success_condition=success_condition,
             next_allowed_commands=next_allowed_commands,
             active_contract_state=active_contract_state,
@@ -228,9 +243,9 @@ class TraderGoalLoopOrchestrator:
             "selected_next_work_type": selected_next_work_type,
             "selected_next_prompt": selected_next_prompt,
             "selection_reason": selection_reason,
-            "four_x_progress_hypothesis": _four_x_progress_hypothesis(edge_improvement_state, scout_state),
-            "root_improvement_target": _root_improvement_target(edge_improvement_state, scout_state),
-            "expected_edge_improvement": _expected_edge_improvement(edge_improvement_state, scout_state),
+            "four_x_progress_hypothesis": four_x_progress_hypothesis,
+            "root_improvement_target": root_improvement_target,
+            "expected_edge_improvement": expected_edge_improvement,
             "proof_state": proof_state,
             "payoff_state": payoff_state,
             "harvest_state": harvest_state,
@@ -367,6 +382,10 @@ def _active_contract_state(artifacts: dict[str, dict[str, Any]], now_utc: dateti
         "next_prompt": next_prompt or None,
         "next_trade_enabling_action": next_action or None,
         "selected_active_path_reason": artifact.get("selected_active_path_reason"),
+        "target_shape": artifact.get("target_shape"),
+        "four_x_progress_hypothesis": artifact.get("four_x_progress_hypothesis"),
+        "root_improvement_target": artifact.get("root_improvement_target"),
+        "expected_edge_improvement": artifact.get("expected_edge_improvement"),
         "top_lane_id": board_top.get("lane_id"),
         "top_lane_status": board_top.get("status"),
         "top_lane_vehicle": board_top.get("vehicle"),
@@ -1400,7 +1419,23 @@ success condition:
 """
 
 
-def _four_x_progress_hypothesis(edge_state: dict[str, Any], scout_state: dict[str, Any]) -> str:
+def _active_contract_text(active_contract_state: dict[str, Any] | None, key: str) -> str | None:
+    state = active_contract_state if isinstance(active_contract_state, dict) else {}
+    if not state.get("active_prompt_available"):
+        return None
+    value = state.get(key)
+    return str(value).strip() if isinstance(value, str) and value.strip() else None
+
+
+def _four_x_progress_hypothesis(
+    edge_state: dict[str, Any],
+    scout_state: dict[str, Any],
+    *,
+    active_contract_state: dict[str, Any] | None = None,
+) -> str:
+    active_text = _active_contract_text(active_contract_state, "four_x_progress_hypothesis")
+    if active_text:
+        return active_text
     target = edge_state.get("target_shape") or scout_state.get("target_shape") or "closest HARVEST candidate"
     proof_gap = edge_state.get("proof_gap_trades")
     if proof_gap is not None:
@@ -1415,14 +1450,30 @@ def _four_x_progress_hypothesis(edge_state: dict[str, Any], scout_state: dict[st
     )
 
 
-def _root_improvement_target(edge_state: dict[str, Any], scout_state: dict[str, Any]) -> str:
+def _root_improvement_target(
+    edge_state: dict[str, Any],
+    scout_state: dict[str, Any],
+    *,
+    active_contract_state: dict[str, Any] | None = None,
+) -> str:
+    active_text = _active_contract_text(active_contract_state, "root_improvement_target")
+    if active_text:
+        return active_text
     target = edge_state.get("target_shape") or scout_state.get("target_shape") or "HARVEST candidate"
     return (
         f"{target} を、発注許可ではなく read-only の SCOUT 判断材料と期待値改善実験で live-grade HARVEST 候補へ近づける。"
     )
 
 
-def _expected_edge_improvement(edge_state: dict[str, Any], scout_state: dict[str, Any]) -> str:
+def _expected_edge_improvement(
+    edge_state: dict[str, Any],
+    scout_state: dict[str, Any],
+    *,
+    active_contract_state: dict[str, Any] | None = None,
+) -> str:
+    active_text = _active_contract_text(active_contract_state, "expected_edge_improvement")
+    if active_text:
+        return active_text
     wins = edge_state.get("take_profit_trades")
     losses = edge_state.get("take_profit_losses")
     expectancy = edge_state.get("take_profit_expectancy_jpy")

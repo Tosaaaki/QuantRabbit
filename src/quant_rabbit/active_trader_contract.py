@@ -281,6 +281,10 @@ class ActiveTraderContract:
             active_opportunity_board=active_opportunity_board,
             non_eurusd_frontier=non_eurusd_frontier,
         )
+        target_shape = _contract_target_shape(
+            active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
+        )
         payload = {
             "contract_version": CONTRACT_VERSION,
             "status": _status(selected_active_path, replay, remaining_blockers),
@@ -293,8 +297,16 @@ class ActiveTraderContract:
             "selected_active_path": selected_active_path,
             "selected_active_path_reason": selection_reason,
             "allowed_active_paths": sorted(ALLOWED_ACTIVE_PATHS),
-            "target_shape": TARGET_SHAPE,
-            "four_x_progress_hypothesis": _four_x_progress_hypothesis(replay, proof_floor, harvest),
+            "target_shape": target_shape,
+            "four_x_progress_hypothesis": _four_x_progress_hypothesis(
+                replay,
+                proof_floor,
+                harvest,
+                active_opportunity_board=active_opportunity_board,
+                entry_frequency_recovery=entry_frequency_recovery,
+                forecast_pattern_refresh=forecast_pattern_refresh,
+                range_rail_geometry_repair=range_rail_geometry_repair,
+            ),
             "root_improvement_target": _root_improvement_target(
                 replay,
                 active_opportunity_board=active_opportunity_board,
@@ -1526,7 +1538,39 @@ def _four_x_progress_hypothesis(
     replay: dict[str, Any],
     proof_floor: dict[str, Any],
     harvest: dict[str, Any],
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
 ) -> str:
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    active_shape = _active_board_target_shape(board)
+    consumed_prompt = _consumed_lane_prompt(
+        board_top,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
+    if active_shape and consumed_prompt:
+        source, _prompt = consumed_prompt
+        blockers = ", ".join(_string_list(board_top.get("blockers"))[:6])
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        return (
+            f"{active_shape} is the current multi-pair active path.{edge_text} It can move the 4x loop "
+            f"forward only as read-only lane-local evidence by consuming {source} and then advancing "
+            f"the next proof/reprice action. Remaining blockers stay visible: {blockers or 'none'}."
+        )
+    if active_shape:
+        blockers = ", ".join(_string_list(board_top.get("blockers"))[:6])
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        return (
+            f"{active_shape} is the current multi-pair active path.{edge_text} It can move the 4x loop "
+            f"forward only by preserving and reducing concrete lane blockers: {blockers or 'none'}."
+        )
     wins = replay.get("replay_wins")
     losses = replay.get("replay_losses")
     proof_wins = proof_floor.get("wins")
@@ -1919,6 +1963,14 @@ def _frontier_target_shape(non_eurusd_frontier: dict[str, Any] | None) -> str | 
     vehicle = str(lane.get("vehicle") or "").strip().upper()
     parts = [part for part in (pair, direction, strategy, vehicle) if part]
     return "|".join(parts) if len(parts) >= 4 else None
+
+
+def _contract_target_shape(
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
+) -> str:
+    return _active_board_target_shape(active_opportunity_board) or _frontier_target_shape(non_eurusd_frontier) or TARGET_SHAPE
 
 
 def _render_report(payload: dict[str, Any]) -> str:

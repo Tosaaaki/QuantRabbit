@@ -262,6 +262,13 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
                     "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
                     "selected_active_path": "EVIDENCE_ACQUISITION",
                     "selected_active_path_reason": "board top plus non-EUR frontier identify the shortest read-only evidence path.",
+                    "target_shape": "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET",
+                    "four_x_progress_hypothesis": (
+                        "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET is the current active path; "
+                        "advance lane-local evidence instead of legacy EUR_USD work."
+                    ),
+                    "root_improvement_target": "Advance USD_CAD|LONG|BREAKOUT_FAILURE|MARKET from the active board.",
+                    "expected_edge_improvement": "Expected improvement is USD_CAD active-path proof collection.",
                     "next_prompt": (
                         "Implement EVIDENCE_ACQUISITION for "
                         "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET plus frontier evidence "
@@ -339,6 +346,10 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["selected_next_prompt"])
         self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["selected_next_prompt"])
         self.assertIn("同じ unblock plan", payload["selected_next_prompt"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["four_x_progress_hypothesis"])
+        self.assertIn("Advance USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["root_improvement_target"])
+        self.assertIn("USD_CAD active-path proof collection", payload["expected_edge_improvement"])
+        self.assertNotIn("EUR_USD|SHORT|BREAKOUT_FAILURE", payload["four_x_progress_hypothesis"])
         self.assertIn("ACTIVE_CONTRACT:EVIDENCE_ACQUISITION", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
         self.assertIn("Active contract prompt available: `True`", report_text)
 

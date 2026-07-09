@@ -1588,9 +1588,14 @@ class ActiveTraderContractTest(unittest.TestCase):
                 now_utc=now,
             ).run()
             payload = json.loads(paths["output"].read_text())
+            report = paths["report"].read_text()
 
         rail_state = payload["current_state"]["range_rail_geometry_repair"]
         self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["target_shape"], "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT")
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["four_x_progress_hypothesis"])
+        self.assertNotIn("EUR_USD|SHORT|BREAKOUT_FAILURE", payload["four_x_progress_hypothesis"])
+        self.assertIn("Target shape: `USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT`", report)
         self.assertEqual(rail_state["artifact_status"], "present")
         self.assertEqual(rail_state["top_lane"]["lane_id"], lane_id)
         self.assertEqual(rail_state["top_lane"]["rail_status"], "RANGE_RAIL_NOT_REACHED")
