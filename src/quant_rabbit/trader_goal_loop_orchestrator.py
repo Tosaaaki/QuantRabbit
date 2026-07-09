@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_ACTIVE_TRADER_CONTRACT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -30,9 +31,11 @@ WORK_TYPES = {
     "CODE_REPAIR",
     "LIVE_PERMISSION_READY_CHECK",
     "EDGE_IMPROVEMENT_EXPERIMENT",
+    "ACTIVE_TRADER_CONTRACT_EVIDENCE",
 }
 INPUT_ARTIFACT_NAMES = (
     "trader_repair_orchestrator",
+    "active_trader_contract",
     "payoff_shape_diagnosis",
     "harvest_live_grade_path",
     "eurusd_short_breakout_failure_scout_plan",
@@ -73,6 +76,7 @@ class TraderGoalLoopOrchestrator:
         self,
         *,
         trader_repair_orchestrator_path: Path = DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
+        active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         payoff_shape_diagnosis_path: Path = DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
         harvest_live_grade_path: Path = DEFAULT_HARVEST_LIVE_GRADE_PATH,
         scout_plan_path: Path = DEFAULT_EURUSD_SHORT_BREAKOUT_FAILURE_SCOUT_PLAN,
@@ -89,6 +93,7 @@ class TraderGoalLoopOrchestrator:
     ) -> None:
         self.paths = {
             "trader_repair_orchestrator": trader_repair_orchestrator_path,
+            "active_trader_contract": active_trader_contract_path,
             "payoff_shape_diagnosis": payoff_shape_diagnosis_path,
             "harvest_live_grade_path": harvest_live_grade_path,
             "eurusd_short_breakout_failure_scout_plan": scout_plan_path,
@@ -123,6 +128,7 @@ class TraderGoalLoopOrchestrator:
         artifacts = {name: _load_artifact(path) for name, path in self.paths.items()}
         artifact_index = _artifact_index(artifacts)
         proof_state = _proof_state(artifacts)
+        active_contract_state = _active_contract_state(artifacts, self.now_utc)
         payoff_state = _payoff_state(artifacts, self.now_utc)
         harvest_state = _harvest_state(artifacts)
         scout_state = _scout_state(artifacts)
@@ -151,6 +157,7 @@ class TraderGoalLoopOrchestrator:
             artifact_health=artifact_health,
             schema_state=schema_state,
             live_ready_state=live_ready_state,
+            active_contract_state=active_contract_state,
         )
         key_blocker = _key_blocker(
             selected_next_work_type=candidate_work_type,
@@ -161,6 +168,7 @@ class TraderGoalLoopOrchestrator:
             operator_review_state=operator_review_state,
             artifact_health=artifact_health,
             schema_state=schema_state,
+            active_contract_state=active_contract_state,
         )
         repeat_loop_guard = _repeat_loop_guard(
             output_path=self.output_path,
@@ -182,6 +190,7 @@ class TraderGoalLoopOrchestrator:
             scout_state=scout_state,
             operator_review_state=operator_review_state,
             edge_improvement_state=edge_improvement_state,
+            active_contract_state=active_contract_state,
         )
         success_condition = _success_condition(selected_next_work_type)
         current_state = _current_state_for_evaluation(
@@ -194,6 +203,7 @@ class TraderGoalLoopOrchestrator:
             artifact_health=artifact_health,
             schema_state=schema_state,
             live_ready_state=live_ready_state,
+            active_contract_state=active_contract_state,
         )
         success_condition_evaluation = _evaluate_success_condition(success_condition, current_state)
         next_allowed_commands = _next_allowed_commands(selected_next_work_type)
@@ -206,6 +216,7 @@ class TraderGoalLoopOrchestrator:
             expected_edge_improvement=_expected_edge_improvement(edge_improvement_state, scout_state),
             success_condition=success_condition,
             next_allowed_commands=next_allowed_commands,
+            active_contract_state=active_contract_state,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -226,6 +237,7 @@ class TraderGoalLoopOrchestrator:
             "scout_state": scout_state,
             "operator_review_state": operator_review_state,
             "edge_improvement_state": edge_improvement_state,
+            "active_contract_state": active_contract_state,
             "repeat_loop_guard": repeat_loop_guard,
             "success_condition": success_condition,
             "success_condition_evaluation": success_condition_evaluation,
@@ -291,6 +303,82 @@ def _artifact_generated_at(artifact: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _active_contract_state(artifacts: dict[str, dict[str, Any]], now_utc: datetime) -> dict[str, Any]:
+    artifact = artifacts["active_trader_contract"]
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "path": artifact.get("_path"),
+            "active_prompt_available": False,
+            "selected_active_path": None,
+            "next_prompt": None,
+            "next_trade_enabling_action": None,
+            "stale": True,
+            "live_permission_allowed": False,
+        }
+    generated_at = _parse_dt(artifact.get("generated_at_utc"))
+    age_seconds = (now_utc - generated_at).total_seconds() if generated_at else None
+    current = artifact.get("current_state") if isinstance(artifact.get("current_state"), dict) else {}
+    board = current.get("active_opportunity_board") if isinstance(current.get("active_opportunity_board"), dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    frontier = (
+        current.get("non_eurusd_live_grade_frontier")
+        if isinstance(current.get("non_eurusd_live_grade_frontier"), dict)
+        else {}
+    )
+    frontier_lane = (
+        frontier.get("next_evidence_lane")
+        if isinstance(frontier.get("next_evidence_lane"), dict)
+        else {}
+    )
+    selected_path = str(artifact.get("selected_active_path") or "")
+    next_prompt = artifact.get("next_prompt") if isinstance(artifact.get("next_prompt"), str) else ""
+    next_action = (
+        artifact.get("next_trade_enabling_action")
+        if isinstance(artifact.get("next_trade_enabling_action"), str)
+        else ""
+    )
+    stale = (
+        generated_at is None
+        or age_seconds is None
+        or age_seconds > PAYOFF_STALE_AFTER_SECONDS
+        or _explicit_artifact_issue(artifact) in {"STALE", "CONTRADICTED"}
+    )
+    active_prompt_available = bool(
+        not stale
+        and selected_path
+        and selected_path != "NO_TRADE_WITH_CAUSE"
+        and next_prompt
+        and next_action
+        and artifact.get("live_permission_allowed") is False
+        and artifact.get("live_side_effects", []) == []
+    )
+    return {
+        "artifact_status": "present",
+        "path": artifact.get("_path"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "age_seconds": _round(age_seconds),
+        "stale": bool(stale),
+        "status": artifact.get("status"),
+        "selected_active_path": selected_path or None,
+        "active_prompt_available": active_prompt_available,
+        "next_prompt": next_prompt or None,
+        "next_trade_enabling_action": next_action or None,
+        "selected_active_path_reason": artifact.get("selected_active_path_reason"),
+        "top_lane_id": board_top.get("lane_id"),
+        "top_lane_status": board_top.get("status"),
+        "top_lane_vehicle": board_top.get("vehicle"),
+        "frontier_lane_id": frontier_lane.get("lane_id"),
+        "frontier_lane_vehicle": frontier_lane.get("vehicle"),
+        "remaining_blockers": [
+            row.get("code")
+            for row in artifact.get("remaining_blockers", [])
+            if isinstance(row, dict) and row.get("code")
+        ],
+        "live_permission_allowed": False,
+    }
 
 
 def _payoff_state(artifacts: dict[str, dict[str, Any]], now_utc: datetime) -> dict[str, Any]:
@@ -783,7 +871,13 @@ def _select_work_type(
     artifact_health: dict[str, Any],
     schema_state: dict[str, Any],
     live_ready_state: dict[str, Any],
+    active_contract_state: dict[str, Any],
 ) -> tuple[str, str]:
+    if active_contract_state.get("active_prompt_available"):
+        return (
+            "ACTIVE_TRADER_CONTRACT_EVIDENCE",
+            "active_trader_contract has the freshest concrete active path and next_prompt; dispatch that lane-specific read-only evidence work before generic payoff refresh.",
+        )
     if payoff_state.get("artifact_status") == "missing" or payoff_state.get("stale"):
         return (
             "PAYOFF_SHAPE_DIAGNOSIS",
@@ -845,7 +939,10 @@ def _key_blocker(
     operator_review_state: dict[str, Any],
     artifact_health: dict[str, Any],
     schema_state: dict[str, Any],
+    active_contract_state: dict[str, Any],
 ) -> str:
+    if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE":
+        return f"ACTIVE_CONTRACT:{active_contract_state.get('selected_active_path')}:{active_contract_state.get('top_lane_id')}:{active_contract_state.get('frontier_lane_id')}"
     if selected_next_work_type == "PAYOFF_SHAPE_DIAGNOSIS":
         return "PAYOFF_SHAPE_DIAGNOSIS_MISSING_OR_STALE"
     if selected_next_work_type == "HARVEST_PROOF_PATH":
@@ -931,7 +1028,10 @@ def _current_phase(
     scout_state: dict[str, Any],
     operator_review_state: dict[str, Any],
     edge_improvement_state: dict[str, Any],
+    active_contract_state: dict[str, Any],
 ) -> str:
+    if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE":
+        return f"ACTIVE_CONTRACT_{active_contract_state.get('selected_active_path') or 'EVIDENCE'}"
     if selected_next_work_type == "PAYOFF_SHAPE_DIAGNOSIS":
         return "PAYOFF_SHAPE_DIAGNOSIS_REFRESH_REQUIRED"
     if selected_next_work_type == "HARVEST_PROOF_PATH":
@@ -1035,6 +1135,16 @@ def _success_condition(work_type: str) -> dict[str, Any]:
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
             ],
         ),
+        "ACTIVE_TRADER_CONTRACT_EVIDENCE": (
+            "all",
+            "active_trader_contract exposes a concrete lane-specific read-only evidence action.",
+            [
+                {"field": "active_contract_prompt_available", "operator": "eq", "value": True},
+                {"field": "active_contract_stale", "operator": "eq", "value": False},
+                {"field": "active_contract_live_permission_allowed", "operator": "eq", "value": False},
+                {"field": "live_permission_allowed", "operator": "eq", "value": False},
+            ],
+        ),
         "NO_ACTION_WAIT": (
             "all",
             "no repeated work is requested until input artifacts or key blocker change.",
@@ -1065,6 +1175,7 @@ def _current_state_for_evaluation(
     artifact_health: dict[str, Any],
     schema_state: dict[str, Any],
     live_ready_state: dict[str, Any],
+    active_contract_state: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "payoff_artifact_status": payoff_state.get("artifact_status"),
@@ -1089,6 +1200,9 @@ def _current_state_for_evaluation(
         "proof_queue_count": proof_state.get("proof_queue_count"),
         "can_create_live_permission_count": proof_state.get("can_create_live_permission_count"),
         "broker_truth_fresh": (live_ready_state.get("checks") or {}).get("broker_truth_fresh"),
+        "active_contract_prompt_available": active_contract_state.get("active_prompt_available"),
+        "active_contract_stale": active_contract_state.get("stale"),
+        "active_contract_live_permission_allowed": active_contract_state.get("live_permission_allowed"),
         "repeat_allowed": True,
         "live_permission_allowed": False,
     }
@@ -1157,6 +1271,11 @@ def _next_allowed_commands(work_type: str) -> list[str]:
             "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
             "PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator -v",
         ],
+        "ACTIVE_TRADER_CONTRACT_EVIDENCE": [
+            "python3 -m json.tool data/active_trader_contract.json >/dev/null",
+            "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
+            "PYTHONPATH=src python3 -m unittest tests.test_trader_goal_loop_orchestrator tests.test_active_trader_contract -v",
+        ],
         "NO_ACTION_WAIT": [
             "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
         ],
@@ -1174,10 +1293,59 @@ def _selected_next_prompt(
     expected_edge_improvement: str,
     success_condition: dict[str, Any],
     next_allowed_commands: list[str],
+    active_contract_state: dict[str, Any],
 ) -> str:
     input_artifacts = "\n".join(f"- data/{_artifact_filename(name)}" for name in INPUT_ARTIFACT_NAMES)
     commands = "\n".join(f"- `{command}`" for command in next_allowed_commands)
     success = json.dumps(success_condition, ensure_ascii=False, indent=2, sort_keys=True)
+    if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE" and active_contract_state.get("next_prompt"):
+        active_prompt = str(active_contract_state.get("next_prompt"))
+        action = str(active_contract_state.get("next_trade_enabling_action") or "")
+        blockers = ", ".join(_string_list(active_contract_state.get("remaining_blockers"))[:12])
+        return f"""QuantRabbit の 4x改善ループで `ACTIVE_TRADER_CONTRACT_EVIDENCE` を実施してください。
+
+目的:
+active_trader_contract が選んだ現在の lane-specific evidence work を read-only で進める。これは live permission ではありません。発注許可、cancel/close 許可、launchd 操作許可を作らず、改善ループの次アクションだけを扱ってください。
+
+active_trader_contract next_prompt:
+{active_prompt}
+
+active_trader_contract next_trade_enabling_action:
+{action}
+
+保持する blocker:
+{blockers}
+
+入力 artifact:
+{input_artifacts}
+
+存在しない artifact は `missing` として扱い、推測で補完しないでください。
+
+絶対禁止:
+- live order / cancel / close / launchd load/reload を行わない
+- gate を緩めない
+- negative expectancy / month-scale replay negative を隠さない
+- proof_queue_count=0 を live permission と誤認しない
+- 4x未達額から lot を逆算しない
+- secret / token を出さない
+- QuantRabbit code から model API を呼ばない
+
+出力:
+- read-only の JSON または Markdown report を作る場合は `live_side_effects=[]` と `live_permission_allowed=false` を明記する
+- 既存 artifact の blocker を消したように見せない
+- active contract の board lane と frontier evidence lane を同じ unblock plan として扱い、どちらか片方だけに戻さない
+
+success condition:
+```json
+{success}
+```
+
+検証コマンド:
+{commands}
+
+注意:
+この作業は live permission ready check であっても発注許可ではありません。最終送信は既存 gateway、fresh broker truth、risk/gpt verifier、guardian/operator review clearance、明示 live flag が別途そろうまで禁止です。
+"""
     return f"""QuantRabbit の 4x改善ループで `{selected_next_work_type}` を実施してください。
 
 目的:
@@ -1273,6 +1441,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     harvest = payload.get("harvest_state", {})
     scout = payload.get("scout_state", {})
     operator = payload.get("operator_review_state", {})
+    active_contract = payload.get("active_contract_state", {})
     review_required = bool(payload.get("requires_operator_review_before_scout_or_routing"))
     approval_boundary_note = (
         "- このreport生成自体は承認不要。ただしSCOUT/normal routing前にはoperator review必須。"
@@ -1305,6 +1474,10 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Can create live permission count: `{proof.get('can_create_live_permission_count')}`",
         f"- Normal routing allowed: `{operator.get('normal_routing_allowed')}`",
         f"- Guardian clear: `{operator.get('guardian_clear')}`",
+        f"- Active contract selected path: `{active_contract.get('selected_active_path')}`",
+        f"- Active contract top lane: `{active_contract.get('top_lane_id')}`",
+        f"- Active contract frontier lane: `{active_contract.get('frontier_lane_id')}`",
+        f"- Active contract prompt available: `{active_contract.get('active_prompt_available')}`",
         "",
         "## Approval Boundary",
         "",
@@ -1515,6 +1688,7 @@ def _codes_from_blockers(value: Any) -> list[str]:
 def _artifact_filename(name: str) -> str:
     return {
         "trader_repair_orchestrator": "trader_repair_orchestrator.json",
+        "active_trader_contract": "active_trader_contract.json",
         "payoff_shape_diagnosis": "payoff_shape_diagnosis.json",
         "harvest_live_grade_path": "harvest_live_grade_path.json",
         "eurusd_short_breakout_failure_scout_plan": "eurusd_short_breakout_failure_scout_plan.json",

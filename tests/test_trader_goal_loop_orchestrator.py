@@ -23,6 +23,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_BLOCKED_OPERATOR_REVIEW")
             summary = TraderGoalLoopOrchestrator(
                 trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
                 payoff_shape_diagnosis_path=paths["payoff"],
                 harvest_live_grade_path=paths["harvest"],
                 scout_plan_path=paths["scout"],
@@ -103,6 +104,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             )
             summary = TraderGoalLoopOrchestrator(
                 trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
                 payoff_shape_diagnosis_path=paths["payoff"],
                 harvest_live_grade_path=paths["harvest"],
                 scout_plan_path=paths["scout"],
@@ -169,6 +171,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             )
             summary = TraderGoalLoopOrchestrator(
                 trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
                 payoff_shape_diagnosis_path=paths["payoff"],
                 harvest_live_grade_path=paths["harvest"],
                 scout_plan_path=paths["scout"],
@@ -219,6 +222,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             )
             summary = TraderGoalLoopOrchestrator(
                 trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
                 payoff_shape_diagnosis_path=paths["payoff"],
                 harvest_live_grade_path=paths["harvest"],
                 scout_plan_path=paths["scout"],
@@ -246,6 +250,98 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             payload["operator_review_state"]["stale_guardian_blocker_codes_suppressed"],
         )
 
+    def test_active_contract_evidence_prompt_overrides_generic_payoff_work(self) -> None:
+        now = datetime(2026, 7, 9, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "selected_active_path_reason": "board top plus non-EUR frontier identify the shortest read-only evidence path.",
+                    "next_prompt": (
+                        "Implement EVIDENCE_ACQUISITION for "
+                        "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET plus frontier evidence "
+                        "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT as read-only work."
+                    ),
+                    "next_trade_enabling_action": (
+                        "Use the latest board top lane and frontier evidence lane as one "
+                        "USD_CAD unblock plan without sending an order."
+                    ),
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "top_lane": {
+                                "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET",
+                                "pair": "USD_CAD",
+                                "direction": "LONG",
+                                "strategy_family": "BREAKOUT_FAILURE",
+                                "vehicle": "MARKET",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        },
+                        "non_eurusd_live_grade_frontier": {
+                            "next_evidence_lane": {
+                                "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                "pair": "USD_CAD",
+                                "direction": "LONG",
+                                "strategy_family": "BREAKOUT_FAILURE",
+                                "vehicle": "LIMIT",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        },
+                    },
+                    "remaining_blockers": [
+                        {"code": "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"},
+                        {"code": "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"},
+                    ],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+            report_text = paths["report"].read_text()
+
+        self.assertEqual(summary.selected_next_work_type, "ACTIVE_TRADER_CONTRACT_EVIDENCE")
+        self.assertEqual(payload["selected_next_work_type"], "ACTIVE_TRADER_CONTRACT_EVIDENCE")
+        self.assertEqual(payload["current_phase"], "ACTIVE_CONTRACT_EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["success_condition_evaluation"]["status"], "MET")
+        self.assertTrue(payload["active_contract_state"]["active_prompt_available"])
+        self.assertEqual(
+            payload["active_contract_state"]["top_lane_id"],
+            "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET",
+        )
+        self.assertEqual(
+            payload["active_contract_state"]["frontier_lane_id"],
+            "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+        )
+        self.assertIn("active_trader_contract next_prompt", payload["selected_next_prompt"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["selected_next_prompt"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["selected_next_prompt"])
+        self.assertIn("同じ unblock plan", payload["selected_next_prompt"])
+        self.assertIn("ACTIVE_CONTRACT:EVIDENCE_ACQUISITION", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
+        self.assertIn("Active contract prompt available: `True`", report_text)
+
     def test_repeat_guard_does_not_override_scout_blocked_classification(self) -> None:
         now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,6 +349,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_BLOCKED_OPERATOR_REVIEW")
             kwargs = {
                 "trader_repair_orchestrator_path": paths["repair"],
+                "active_trader_contract_path": paths["active_contract"],
                 "payoff_shape_diagnosis_path": paths["payoff"],
                 "harvest_live_grade_path": paths["harvest"],
                 "scout_plan_path": paths["scout"],
@@ -279,6 +376,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
 def _write_base_artifacts(root: Path, *, now: datetime, scout_status: str) -> dict[str, Path]:
     paths = {
         "repair": root / "data" / "trader_repair_orchestrator.json",
+        "active_contract": root / "data" / "active_trader_contract.json",
         "payoff": root / "data" / "payoff_shape_diagnosis.json",
         "harvest": root / "data" / "harvest_live_grade_path.json",
         "scout": root / "data" / "eurusd_short_breakout_failure_scout_plan.json",
@@ -313,6 +411,20 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_status: str) -> di
                     },
                 }
             ],
+        },
+    )
+    _write_json(
+        paths["active_contract"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+            "selected_active_path": "NO_TRADE_WITH_CAUSE",
+            "next_prompt": "",
+            "next_trade_enabling_action": "",
+            "current_state": {},
+            "remaining_blockers": [],
+            "live_permission_allowed": False,
+            "live_side_effects": [],
         },
     )
     _write_json(

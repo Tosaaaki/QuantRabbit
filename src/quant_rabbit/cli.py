@@ -2348,7 +2348,8 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # terminal contract always consumes the freshly reranked multi-lane board
     # while the non-EUR live-grade frontier stays current for repair work. Then
     # package operator-review material from the terminal contract/top board lane
-    # so the next loop does not read stale single-lane review text.
+    # and rebuild the goal-loop work order from that terminal contract so the
+    # next Codex run does not fall back to stale generic payoff work.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
@@ -2356,6 +2357,7 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         _non_eurusd_live_grade_frontier_step(),
         _active_trader_contract_step(),
         _operator_review_report_step(),
+        _trader_goal_loop_orchestrator_step(),
     ]
 
 
@@ -4009,6 +4011,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Select the next read-only Codex work type for the 4x improvement loop.",
     )
     p_goal_loop.add_argument("--trader-repair-orchestrator", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
+    p_goal_loop.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_goal_loop.add_argument("--payoff-shape-diagnosis", type=Path, default=DEFAULT_PAYOFF_SHAPE_DIAGNOSIS)
     p_goal_loop.add_argument(
         "--harvest-live-grade-path",
@@ -6928,6 +6931,7 @@ def main(argv: list[str] | None = None) -> int:
 
             summary = TraderGoalLoopOrchestrator(
                 trader_repair_orchestrator_path=args.trader_repair_orchestrator,
+                active_trader_contract_path=args.active_trader_contract,
                 payoff_shape_diagnosis_path=args.payoff_shape_diagnosis,
                 harvest_live_grade_path=args.harvest_live_grade_path,
                 scout_plan_path=args.scout_plan,

@@ -332,7 +332,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # trader-repair-orchestrator → trader-goal-loop-orchestrator → active-trader-contract →
 # active-opportunity-board → non-eurusd-proof-lane-mapper →
 # non-eurusd-live-grade-frontier → active-trader-contract →
-# operator-review-report) in one
+# operator-review-report → trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -563,7 +563,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `trader-repair-orchestrator` → `trader-goal-loop-orchestrator` →
 # `active-trader-contract` → `active-opportunity-board` →
 # `non-eurusd-proof-lane-mapper` → `non-eurusd-live-grade-frontier` →
-# `active-trader-contract` → `operator-review-report`. It preserves the original
+# `active-trader-contract` → `operator-review-report` →
+# `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -593,6 +594,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → active-trader-contract → active-opportunity-board
 #   → non-eurusd-proof-lane-mapper → non-eurusd-live-grade-frontier
 #   → active-trader-contract → operator-review-report
+#   → trader-goal-loop-orchestrator
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -687,16 +689,22 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   `NO_REPAIR_REQUESTS`. It grants no live permission and does not call model
 #   APIs from QuantRabbit code.
 # - trader-goal-loop-orchestrator is read-only and runs after
-#   trader-repair-orchestrator. It reads the current repair/payoff/HARVEST/SCOUT/
-#   proof queue/lane board/portfolio/live-order/broker artifacts, then writes
+#   trader-repair-orchestrator. It reads the current repair/active-contract/
+#   payoff/HARVEST/SCOUT/proof queue/lane board/portfolio/live-order/broker artifacts, then writes
 #   `data/trader_goal_loop_orchestrator.json` and
 #   `docs/trader_goal_loop_orchestrator_report.md` with the next Codex work type
-#   and a complete Japanese prompt. It prioritizes evidence growth and
-#   expectancy improvement toward rolling 30d funding-adjusted equity 4x:
+#   and a complete Japanese prompt. The terminal board/contract sync reruns it
+#   after `operator-review-report` so the final prompt consumes the latest
+#   `active_trader_contract` lane-specific work order instead of stale generic
+#   payoff work. It prioritizes evidence growth and expectancy improvement
+#   toward rolling 30d funding-adjusted equity 4x:
 #   operator-review SCOUT judgement material first when
 #   `SCOUT_BLOCKED_OPERATOR_REVIEW` is active, otherwise live-grade HARVEST proof
 #   path, SCOUT evidence, NO_TRADE exclusion, or read-only
-#   `EDGE_IMPROVEMENT_EXPERIMENT` design. It never grants live permission,
+#   `EDGE_IMPROVEMENT_EXPERIMENT` design, or
+#   `ACTIVE_TRADER_CONTRACT_EVIDENCE` when the terminal active contract exposes
+#   a current read-only lane-specific `next_prompt`. It never grants live
+#   permission,
 #   treats `proof_queue_count=0` as a blocker, and does not call model APIs from
 #   QuantRabbit code.
 # - active-trader-contract is read-only and runs after
@@ -718,7 +726,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   cleared by the board's current guardian artifacts must not remain in
 #   `remaining_blockers`. If the selected path comes from the board top lane,
 #   `next_prompt` must name that current lane shape rather than the legacy fixed
-#   EUR_USD target.
+#   EUR_USD target. The board/contract sync then reruns
+#   trader-goal-loop-orchestrator so this terminal `next_prompt` becomes the
+#   visible next Codex work order in the same cycle.
 # - active-opportunity-board is read-only and runs after active-trader-contract.
 #   It writes `data/active_opportunity_board.json` and
 #   `docs/active_opportunity_board.md`, compares all visible pairs, directions,
