@@ -1063,6 +1063,10 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
             actions_by_code = {item["code"]: item["command"] for item in payload["operator_actions"]}
+            self.assertEqual(
+                actions_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request frontier",
+            )
             for action_code in (
                 "RECHECK_TIMING_CAPTURE_MISSES",
                 "RECHECK_LOSS_CLOSE_LEAK_WINDOW",
@@ -1519,6 +1523,14 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(active_path["target_shape"], "GBP_USD|LONG|RANGE_ROTATION|LIMIT")
             self.assertNotEqual(active_path["target_shape"], "EUR_USD|SHORT|RANGE_ROTATION|LIMIT")
             self.assertIn("WAIT_FOR_RANGE_RAIL_RECHECK", shortest["first_next_step"])
+            actions_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            active_action = actions_by_code["WORK_ACTIVE_TRADER_CONTRACT_NEXT_ACTION"]
+            self.assertEqual(
+                active_action["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+            )
+            self.assertIn(gbp_lane_id, active_action["reason"])
+            self.assertNotIn("trader-support-bot", active_action["command"])
 
     def test_parallel_frontier_range_rail_prompt_does_not_become_primary_active_path(self) -> None:
         now = datetime(2026, 7, 10, 7, 30, tzinfo=timezone.utc)
@@ -2022,6 +2034,14 @@ class TraderSupportBotTest(unittest.TestCase):
                 payload["entry_readiness"]["active_path"]["next_action"],
                 terminal_contract_action,
             )
+            actions_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            active_action = actions_by_code["WORK_ACTIVE_TRADER_CONTRACT_NEXT_ACTION"]
+            self.assertEqual(
+                active_action["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+            )
+            self.assertIn(lane_id, active_action["reason"])
+            self.assertNotIn("entry-frequency", active_action["reason"])
 
     def test_profitability_acceptance_stale_against_newer_capture_economics_blocks_support(self) -> None:
         now = datetime(2026, 7, 3, 20, 45, tzinfo=timezone.utc)
@@ -3090,6 +3110,15 @@ class TraderSupportBotTest(unittest.TestCase):
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
             )
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+            )
+            self.assertNotEqual(
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            )
 
     def test_forecast_confidence_frontier_with_no_current_projection_waits_for_evidence(self) -> None:
         now = datetime(2026, 6, 23, 14, 5, tzinfo=timezone.utc)
@@ -3176,6 +3205,15 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn(
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
+            )
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+            )
+            self.assertNotEqual(
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
             )
 
     def test_unclear_forecast_frontier_live_precision_for_non_executable_shape_waits(self) -> None:
