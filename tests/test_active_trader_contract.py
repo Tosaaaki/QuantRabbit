@@ -616,6 +616,50 @@ class ActiveTraderContractTest(unittest.TestCase):
                     ),
                 },
             )
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ALL_FRONTIER_BLOCKED_BY_NEGATIVE_EXPECTANCY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "USD_CAD"],
+                    "scanned_intents": 2,
+                    "top_lane": {},
+                    "top_non_eurusd_lane": {
+                        "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "NO_TRADE_WITH_CAUSE",
+                        "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_SPREAD_FORECAST",
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "SPREAD_TOO_WIDE",
+                        ],
+                        "next_action": "Do not override the active board evidence lane.",
+                    },
+                    "required_checks": {
+                        "next_evidence_lane": {
+                            "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "pair": "USD_CAD",
+                            "direction": "LONG",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "status": "NO_TRADE_WITH_CAUSE",
+                            "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_SPREAD_FORECAST",
+                            "blockers": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "SPREAD_TOO_WIDE",
+                            ],
+                        }
+                    },
+                    "next_active_path": "EVIDENCE_ACQUISITION: USD_CAD read-only frontier.",
+                },
+            )
 
             ActiveTraderContract(
                 trader_goal_loop_path=paths["goal_loop"],
@@ -632,6 +676,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 limit_s5_bidask_replay_path=paths["replay"],
                 limit_sample_mining_path=paths["mining"],
                 active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -657,6 +702,9 @@ class ActiveTraderContractTest(unittest.TestCase):
             "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
             payload["next_prompt"],
         )
+        self.assertNotIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
+        self.assertNotIn("Use non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
+        self.assertNotIn("SPREAD_TOO_WIDE", blocker_codes)
         self.assertNotIn(
             "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
             payload["next_prompt"],

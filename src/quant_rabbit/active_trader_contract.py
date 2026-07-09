@@ -1005,7 +1005,8 @@ def _remaining_blockers(
     active_board_top = active_opportunity_board.get("top_lane")
     active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
-    frontier_codes = _string_list(frontier_lane.get("blockers")) if frontier_lane else []
+    use_frontier_lane = _active_board_all_no_trade(active_opportunity_board) and frontier_lane
+    frontier_codes = _string_list(frontier_lane.get("blockers")) if use_frontier_lane else []
     active_board_authoritative = _active_board_authoritative(active_opportunity_board)
     if active_board_authoritative:
         codes = _unique(
@@ -1304,7 +1305,11 @@ def _next_trade_enabling_action(
     board_top = board_top if isinstance(board_top, dict) else {}
     if selected_active_path == "EVIDENCE_ACQUISITION":
         frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
-        if _frontier_evidence_action_available(non_eurusd_frontier) and frontier_lane:
+        if (
+            _active_board_all_no_trade(active_opportunity_board)
+            and _frontier_evidence_action_available(non_eurusd_frontier)
+            and frontier_lane
+        ):
             return (
                 "Use non_eurusd_live_grade_frontier: "
                 f"next evidence lane {frontier_lane.get('lane_id')} "
@@ -1382,8 +1387,9 @@ def _next_prompt(
     non_eurusd_frontier: dict[str, Any] | None = None,
 ) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
+    use_frontier_target = _active_board_all_no_trade(active_opportunity_board or {})
     target_shape = (
-        _frontier_target_shape(non_eurusd_frontier)
+        (_frontier_target_shape(non_eurusd_frontier) if use_frontier_target else None)
         or _active_board_target_shape(active_opportunity_board)
         or TARGET_SHAPE
     )
