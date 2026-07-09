@@ -27,6 +27,18 @@ DESK_METHODS: dict[str, TradeMethod] = {
     "position_manager": TradeMethod.POSITION_MANAGEMENT,
 }
 
+PROFILE_DIRECT_METHODS: tuple[TradeMethod, ...] = (
+    TradeMethod.RANGE_ROTATION,
+    TradeMethod.BREAKOUT_FAILURE,
+    TradeMethod.TREND_CONTINUATION,
+)
+
+PROFILE_DIRECT_ATTEMPT_STATUSES = {
+    "CANDIDATE",
+    "RISK_REPAIR_CANDIDATE",
+    "MINE_MISSED_EDGE",
+}
+
 
 @dataclass(frozen=True)
 class StrategyEvidence:
@@ -194,6 +206,7 @@ class CampaignPlanner:
                 start_balance_jpy=start_balance_jpy,
             )
         )
+        emitted_strategy_keys: set[tuple[str, str, str]] = set()
         for desk, method in DESK_METHODS.items():
             for pair, story in sorted(stories.items()):
                 method_count = story.methods.get(method.value, 0)
@@ -204,6 +217,25 @@ class CampaignPlanner:
                     continue
                 for strategy in strategies.get(pair, []):
                     lanes.append(_strategy_lane(desk, method, story, strategy, loss_cap_jpy=loss_cap_jpy))
+                    emitted_strategy_keys.add((strategy.pair, strategy.direction, method.value))
+        for pair, pair_strategies in sorted(strategies.items()):
+            for strategy in pair_strategies:
+                if not _profile_direct_strategy_can_attempt(strategy):
+                    continue
+                for method in PROFILE_DIRECT_METHODS:
+                    key = (strategy.pair, strategy.direction, method.value)
+                    if key in emitted_strategy_keys:
+                        continue
+                    lanes.append(
+                        _strategy_lane(
+                            _desk_for_method(method),
+                            method,
+                            _profile_direct_story(strategy, method),
+                            strategy,
+                            loss_cap_jpy=loss_cap_jpy,
+                        )
+                    )
+                    emitted_strategy_keys.add(key)
         return sorted(lanes, key=_lane_sort_key)
 
     def _write_plan(self, plan: DailyCampaignPlan) -> None:
@@ -318,6 +350,22 @@ def _overlay_lane(desk: str, pair: str, method: TradeMethod, story: MarketStoryE
         required_receipt="Any other desk must name how this overlay changes size, timing, stop, or pass decision.",
         target_reward_risk=1.0,
         story_examples=story.examples[:2],
+    )
+
+
+def _profile_direct_strategy_can_attempt(strategy: StrategyEvidence) -> bool:
+    return str(strategy.status or "").upper() in PROFILE_DIRECT_ATTEMPT_STATUSES
+
+
+def _profile_direct_story(strategy: StrategyEvidence, method: TradeMethod) -> MarketStoryEvidence:
+    return MarketStoryEvidence(
+        pair=strategy.pair,
+        methods={method.value: 1},
+        themes={"strategy_profile_direct": 1},
+        examples=(
+            f"strategy_profile direct {strategy.pair} {strategy.direction} "
+            f"status={strategy.status}: {strategy.required_fix}",
+        ),
     )
 
 

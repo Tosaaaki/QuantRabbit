@@ -204,6 +204,57 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertEqual(first["seat_missed"], 94)
             self.assertGreater(first["missed_reward_pressure_jpy"], 114000)
 
+    def test_strategy_profile_candidate_without_market_story_still_builds_order_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            story = root / "story.json"
+            plan_path = root / "campaign.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "AUD_CAD",
+                                "direction": "LONG",
+                                "status": "CANDIDATE",
+                                "required_fix": "current execution ledger is positive",
+                                "live_net_jpy": 1104.4,
+                                "positive_best_jpy": 535.2,
+                                "positive_tail_jpy": 535.2,
+                            },
+                            {
+                                "pair": "NZD_CHF",
+                                "direction": "LONG",
+                                "status": "WATCH_ONLY",
+                                "required_fix": "mixed evidence",
+                            },
+                        ]
+                    }
+                )
+            )
+            story.write_text(json.dumps({"pair_profiles": []}))
+
+            summary = CampaignPlanner(
+                strategy_profile=strategy,
+                market_story_profile=story,
+                report_path=root / "campaign.md",
+                plan_path=plan_path,
+            ).run(start_balance_jpy=200_000)
+
+            payload = json.loads(plan_path.read_text())
+            aud_lanes = [lane for lane in payload["lanes"] if lane["pair"] == "AUD_CAD"]
+            self.assertEqual(summary.actionable_lanes, 3)
+            self.assertEqual({lane["adoption"] for lane in aud_lanes}, {"ORDER_INTENT_REQUIRED"})
+            self.assertEqual(
+                {lane["method"] for lane in aud_lanes},
+                {"RANGE_ROTATION", "BREAKOUT_FAILURE", "TREND_CONTINUATION"},
+            )
+            self.assertTrue(
+                all("strategy_profile direct AUD_CAD LONG" in lane["story_examples"][0] for lane in aud_lanes)
+            )
+            self.assertFalse(any(lane["pair"] == "NZD_CHF" for lane in payload["lanes"]))
+
     def test_seeds_verified_oanda_firepower_lanes_ahead_of_story_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
