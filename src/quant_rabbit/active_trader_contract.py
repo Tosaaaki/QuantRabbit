@@ -321,6 +321,7 @@ class ActiveTraderContract:
                 proof_floor,
                 harvest,
                 active_opportunity_board=active_opportunity_board,
+                non_eurusd_frontier=non_eurusd_frontier,
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
@@ -329,6 +330,7 @@ class ActiveTraderContract:
             "root_improvement_target": _root_improvement_target(
                 replay,
                 active_opportunity_board=active_opportunity_board,
+                non_eurusd_frontier=non_eurusd_frontier,
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
@@ -339,6 +341,7 @@ class ActiveTraderContract:
                 proof_floor,
                 harvest,
                 active_opportunity_board=active_opportunity_board,
+                non_eurusd_frontier=non_eurusd_frontier,
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
@@ -1338,6 +1341,7 @@ def _remaining_blockers(
     use_frontier_lane = (
         _active_board_all_no_trade(active_opportunity_board)
         or _frontier_supplements_board_evidence(active_board_top, non_eurusd_frontier)
+        or _frontier_parallel_board_evidence(active_board_top, non_eurusd_frontier)
     ) and frontier_lane
     frontier_codes = _string_list(frontier_lane.get("blockers")) if use_frontier_lane else []
     active_board_authoritative = _active_board_authoritative(active_opportunity_board)
@@ -1842,6 +1846,7 @@ def _four_x_progress_hypothesis(
     harvest: dict[str, Any],
     *,
     active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
@@ -1849,7 +1854,9 @@ def _four_x_progress_hypothesis(
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
     active_shape = _active_board_target_shape(board)
+    frontier_shape = _frontier_target_shape(frontier)
     consumed_prompt = _consumed_lane_prompt(
         board_top,
         entry_frequency_recovery=entry_frequency_recovery,
@@ -1857,6 +1864,19 @@ def _four_x_progress_hypothesis(
         range_rail_geometry_repair=range_rail_geometry_repair,
         guardian_events=guardian_events,
     )
+    if active_shape and frontier_shape and _frontier_parallel_board_evidence(board_top, frontier):
+        board_blockers = ", ".join(_string_list(board_top.get("blockers"))[:5])
+        frontier_lane = _frontier_evidence_lane(frontier)
+        frontier_blockers = ", ".join(_string_list(frontier_lane.get("blockers"))[:5])
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" board expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        return (
+            f"{active_shape} is the active board path, and {frontier_shape} is the parallel "
+            f"non-EUR/USD frontier evidence lane.{edge_text} The 4x loop moves forward only if both "
+            "lanes keep their blockers visible and the next cycle consumes the non-EUR frontier action "
+            f"instead of reverting to an EUR/USD-only loop. Board blockers: {board_blockers or 'none'}. "
+            f"Frontier blockers: {frontier_blockers or 'none'}."
+        )
     if active_shape and consumed_prompt:
         source, _prompt = consumed_prompt
         blockers = ", ".join(_string_list(board_top.get("blockers"))[:6])
@@ -1892,6 +1912,7 @@ def _root_improvement_target(
     replay: dict[str, Any],
     *,
     active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
@@ -1899,7 +1920,9 @@ def _root_improvement_target(
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
     active_shape = _active_board_target_shape(board)
+    frontier_shape = _frontier_target_shape(frontier)
     consumed_prompt = _consumed_lane_prompt(
         board_top,
         entry_frequency_recovery=entry_frequency_recovery,
@@ -1907,6 +1930,12 @@ def _root_improvement_target(
         range_rail_geometry_repair=range_rail_geometry_repair,
         guardian_events=guardian_events,
     )
+    if active_shape and frontier_shape and _frontier_parallel_board_evidence(board_top, frontier):
+        return (
+            f"Advance {active_shape} and the parallel non-EUR/USD frontier lane {frontier_shape} as "
+            "one blocker-preserving evidence plan; do not let the EUR/USD board lane hide the "
+            "frontier bid/ask, spread, forecast, TP-proof, or expectancy gaps."
+        )
     if active_shape and consumed_prompt:
         return (
             f"Advance {active_shape} by consuming the latest lane-local evidence artifact "
@@ -1931,6 +1960,7 @@ def _expected_edge_improvement(
     harvest: dict[str, Any],
     *,
     active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_frontier: dict[str, Any] | None = None,
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
@@ -1938,7 +1968,9 @@ def _expected_edge_improvement(
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
     active_shape = _active_board_target_shape(board)
+    frontier_shape = _frontier_target_shape(frontier)
     consumed_prompt = _consumed_lane_prompt(
         board_top,
         entry_frequency_recovery=entry_frequency_recovery,
@@ -1946,6 +1978,20 @@ def _expected_edge_improvement(
         range_rail_geometry_repair=range_rail_geometry_repair,
         guardian_events=guardian_events,
     )
+    if active_shape and frontier_shape and _frontier_parallel_board_evidence(board_top, frontier):
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" board expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        frontier_lane = _frontier_evidence_lane(frontier)
+        frontier_edge = frontier_lane.get("expected_edge_jpy")
+        frontier_edge_text = (
+            f" frontier expected_edge_jpy={frontier_edge};" if frontier_edge is not None else ""
+        )
+        return (
+            f"Expected improvement is broader executable evidence coverage: {active_shape} remains the "
+            f"board lane,{edge_text} while {frontier_shape} supplies the non-EUR/USD repair surface,"
+            f"{frontier_edge_text} with its blocker set carried into remaining_blockers. Live permission "
+            "remains false until both lane-local gates and gateway checks pass."
+        )
     if active_shape and consumed_prompt:
         expected_edge = board_top.get("expected_edge_jpy")
         edge_text = f" current board expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
@@ -2515,7 +2561,13 @@ def _contract_target_shape(
         range_rail_geometry_repair=range_rail_geometry_repair,
     ):
         return frontier_shape
-    return _active_board_target_shape(active_opportunity_board) or frontier_shape or TARGET_SHAPE
+    active_shape = _active_board_target_shape(active_opportunity_board)
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    if active_shape and frontier_shape and _frontier_parallel_board_evidence(board_top, frontier):
+        return f"{active_shape} plus frontier evidence {frontier_shape}"
+    return active_shape or frontier_shape or TARGET_SHAPE
 
 
 def _frontier_overrides_board_target_shape(

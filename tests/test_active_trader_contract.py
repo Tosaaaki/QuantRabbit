@@ -948,7 +948,11 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("Non-EUR frontier blockers", payload["next_trade_enabling_action"])
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", payload["next_trade_enabling_action"])
         self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
-        self.assertNotIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blocker_codes)
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blocker_codes)
+        self.assertEqual(
+            payload["target_shape"],
+            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT plus frontier evidence AUD_CAD|SHORT|RANGE_ROTATION|LIMIT",
+        )
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
@@ -2687,6 +2691,142 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
         self.assertIn("frontier evidence USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
         self.assertIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", blocker_codes)
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
+    def test_parallel_non_eurusd_frontier_is_not_hidden_behind_eurusd_board_lane(self) -> None:
+        now = datetime(2026, 7, 10, 5, 30, tzinfo=timezone.utc)
+        board_lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        frontier_lane_id = "range_trader:AUD_CAD:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            board_top = {
+                "lane_id": board_lane_id,
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "expected_edge_jpy": 1146.7898,
+                "next_action": (
+                    "Collect exact local TAKE_PROFIT_ORDER proof for "
+                    "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER; do not send."
+                ),
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ],
+            }
+            frontier_lane = {
+                "lane_id": frontier_lane_id,
+                "pair": "AUD_CAD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_BIDASK_REPLAY_TP_PROOF_FLOOR",
+                "expected_edge_jpy": 0,
+                "bidask_status": "NEGATIVE",
+                "spread_status": "PASS",
+                "forecast_status": "PASS",
+                "loss_budget_status": "PASS",
+                "tp_proof_count": 0,
+                "tp_proof_floor": 20,
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                    "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
+                    "LOCAL_TP_PROOF_ZERO_TRADES",
+                ],
+                "next_action": (
+                    "Repair bid/ask-negative pattern or vehicle shape for "
+                    "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; do not repeat replay until inputs change."
+                ),
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 127,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 21,
+                        "pairs_scanned": ["EUR_USD", "AUD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": board_top,
+                    "ranked_active_lanes": [board_top],
+                },
+            )
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NON_EURUSD_FRONTIER_FOUND",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "AUD_CAD"],
+                    "scanned_intents": 113,
+                    "top_lane": board_top,
+                    "top_non_eurusd_lane": frontier_lane,
+                    "required_checks": {
+                        "non_eurusd_closer_than_eurusd": False,
+                        "spread_too_wide_not_ignored": True,
+                        "bidask_negative_not_ignored": True,
+                        "next_evidence_lane": frontier_lane,
+                    },
+                    "next_active_path": (
+                        "BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative "
+                        "for range_trader:AUD_CAD:SHORT:RANGE_ROTATION; do not send."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(
+            payload["target_shape"],
+            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT plus frontier evidence AUD_CAD|SHORT|RANGE_ROTATION|LIMIT",
+        )
+        self.assertIn("EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT", payload["four_x_progress_hypothesis"])
+        self.assertIn("AUD_CAD|SHORT|RANGE_ROTATION|LIMIT", payload["four_x_progress_hypothesis"])
+        self.assertIn("AUD_CAD|SHORT|RANGE_ROTATION|LIMIT", payload["root_improvement_target"])
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blocker_codes)
+        self.assertIn("LOCAL_TP_PROOF_ZERO_TRADES", blocker_codes)
+        self.assertIn(frontier_lane_id, payload["next_trade_enabling_action"])
+        self.assertIn("Parallel non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
