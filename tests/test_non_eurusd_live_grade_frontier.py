@@ -160,6 +160,121 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_frontier_prefers_mapper_exact_tp_count_over_broad_intent_method_count(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        usd_cad = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            **_intent(
+                                usd_cad,
+                                "USD_CAD",
+                                "LONG",
+                                "BREAKOUT_FAILURE",
+                                "LIMIT",
+                                ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            ),
+                            "intent": {
+                                **_intent(
+                                    usd_cad,
+                                    "USD_CAD",
+                                    "LONG",
+                                    "BREAKOUT_FAILURE",
+                                    "LIMIT",
+                                    ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                                )["intent"],
+                                "metadata": {
+                                    "capture_take_profit_trades": 1,
+                                    "capture_take_profit_wins": 1,
+                                    "capture_take_profit_losses": 0,
+                                    "capture_take_profit_expectancy_jpy": 658.9,
+                                    "capture_take_profit_proof_floor": 20,
+                                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                                    "capture_take_profit_scope_key": "USD_CAD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "status": "BOARD_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "ranked_active_lanes": [
+                        _board_lane(
+                            usd_cad,
+                            "USD_CAD",
+                            "LONG",
+                            "BREAKOUT_FAILURE",
+                            "LIMIT",
+                            ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        )
+                    ],
+                },
+            )
+            _write_json(
+                paths["mapper"],
+                {
+                    "status": "NON_EURUSD_EVIDENCE_PATH_FOUND",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "mapped_lanes": [
+                        {
+                            "lane_id": usd_cad,
+                            "pair": "USD_CAD",
+                            "side": "LONG",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "promotion_assessment": "MAPPING_GAPS_REMAIN",
+                            "mapping_gaps": ["BROAD_TP_PROOF_NOT_EXACT_VEHICLE"],
+                            "proof_floor": {
+                                "current_tp_trades": 0,
+                                "required_tp_trades": 20,
+                                "remaining_tp_trades": 20,
+                                "met": False,
+                                "broad_method_tp_trades": 1,
+                                "broad_method_not_used_as_exact_vehicle_proof": True,
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_non_eurusd_lane"]
+        self.assertEqual(top["lane_id"], usd_cad)
+        self.assertEqual(top["tp_proof_count"], 0)
+        self.assertEqual(top["tp_proof_floor"], 20)
+        self.assertIn("BROAD_TP_PROOF_NOT_EXACT_VEHICLE", top["blockers"])
+
     def test_reports_non_eurusd_found_even_when_eurusd_is_closer(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         eur_usd = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"

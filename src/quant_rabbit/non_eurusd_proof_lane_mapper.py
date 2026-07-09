@@ -41,6 +41,8 @@ NEGATIVE_MARKERS = (
     "BIDASK_REPLAY_NEGATIVE",
 )
 PROOF_FLOOR_DEFAULT = 20
+BROAD_TP_PROOF_NOT_EXACT_VEHICLE = "BROAD_TP_PROOF_NOT_EXACT_VEHICLE"
+EXACT_TP_MAPPING_SCOPES = {"EXACT_LANE_ID", "EXACT_FIELDS"}
 
 
 @dataclass(frozen=True)
@@ -643,12 +645,24 @@ def _map_evidence_to_current_lanes(
             if field_gaps:
                 gaps.append(_gap("LANE_ID_FIELD_CONFLICT", item, lane, missing_fields=field_gaps))
                 continue
+            scope_gaps = _local_tp_scope_gaps(item)
+            if scope_gaps:
+                partial = {**item, "mapping_scope": "PAIR_SIDE_STRATEGY_ONLY", "missing_exact_fields": scope_gaps}
+                partials[str(lane["lane_id"])].append(partial)
+                gaps.append(_gap("SOURCE_MISSING_EXACT_VEHICLE_OR_ENTRY_TYPE", item, lane, missing_fields=scope_gaps))
+                continue
             mappings[str(lane["lane_id"])].append({**item, "mapping_scope": "EXACT_LANE_ID"})
             continue
 
         item_exact_key = _exact_lane_key(item)
         if _is_exact_key(item_exact_key) and item_exact_key in lanes_by_exact:
             lane = lanes_by_exact[item_exact_key]
+            scope_gaps = _local_tp_scope_gaps(item)
+            if scope_gaps:
+                partial = {**item, "mapping_scope": "PAIR_SIDE_STRATEGY_ONLY", "missing_exact_fields": scope_gaps}
+                partials[str(lane["lane_id"])].append(partial)
+                gaps.append(_gap("SOURCE_MISSING_EXACT_VEHICLE_OR_ENTRY_TYPE", item, lane, missing_fields=scope_gaps))
+                continue
             mappings[str(lane["lane_id"])].append({**item, "mapping_scope": "EXACT_FIELDS"})
             continue
 
@@ -684,7 +698,6 @@ def _build_mapped_lanes(
             continue
         positive_exact = [row for row in exact_evidence if row.get("positive") is True]
         positive_partial = [row for row in partial_evidence if row.get("positive") is True]
-        proof_floor = _lane_proof_floor(lane, exact_evidence + partial_evidence)
         blockers = _string_list(lane.get("blockers"))
         spread_blocked = _spread_blocked(lane)
         bidask_negative = _bidask_negative(lane)
@@ -695,6 +708,9 @@ def _build_mapped_lanes(
             mapping_gaps.append("POSITIVE_EVIDENCE_PAIR_SIDE_STRATEGY_ONLY")
         if not lane.get("order_intent_status") and "data/order_intents.json" not in _string_list(lane.get("source_refs")):
             mapping_gaps.append("CURRENT_EXECUTABLE_INTENT_MISSING")
+        proof_floor = _lane_proof_floor(lane, exact_evidence + partial_evidence)
+        if proof_floor.get("broad_method_tp_trades") and not proof_floor.get("exact_vehicle_tp_trades"):
+            mapping_gaps.append(BROAD_TP_PROOF_NOT_EXACT_VEHICLE)
         assessment = _promotion_assessment(
             lane,
             positive_exact=positive_exact,
@@ -769,22 +785,44 @@ def _promotion_assessment(
 
 def _lane_proof_floor(lane: dict[str, Any], evidence: list[dict[str, Any]]) -> dict[str, Any]:
     proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
-    current = _first_int(proof.get("capture_take_profit_trades"), None)
     floor = _first_int(proof.get("capture_take_profit_proof_floor"), None)
+    broad_current = _broad_method_tp_trades(proof)
+    exact_current = 0
     for row in evidence:
-        current = _first_int(current, row.get("trades"), 0)
+        if row.get("mapping_scope") in EXACT_TP_MAPPING_SCOPES:
+            exact_current += int(_first_int(row.get("trades"), 0) or 0)
         floor = _first_int(floor, row.get("proof_floor"), PROOF_FLOOR_DEFAULT)
-    if current is None:
-        current = 0
     if floor is None:
         floor = PROOF_FLOOR_DEFAULT
+    current = exact_current
     gap = max(floor - current, 0)
-    return {
+    result = {
         "current_tp_trades": current,
         "required_tp_trades": floor,
         "remaining_tp_trades": gap,
         "met": current >= floor,
+        "exact_vehicle_tp_trades": exact_current,
+        "proof_scope_status": "EXACT_VEHICLE" if exact_current > 0 else "NO_EXACT_VEHICLE_PROOF",
     }
+    if broad_current is not None:
+        result.update(
+            {
+                "broad_method_tp_trades": broad_current,
+                "broad_method_scope": proof.get("capture_take_profit_scope"),
+                "broad_method_scope_key": proof.get("capture_take_profit_scope_key"),
+                "broad_method_not_used_as_exact_vehicle_proof": bool(
+                    broad_current > exact_current
+                    and str(proof.get("capture_take_profit_scope") or "").upper() == "PAIR_SIDE_METHOD"
+                ),
+            }
+        )
+    return result
+
+
+def _broad_method_tp_trades(proof: dict[str, Any]) -> int | None:
+    if str(proof.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return None
+    return _first_int(proof.get("capture_take_profit_trades"), None)
 
 
 def _top_non_eurusd_candidates(
@@ -1165,6 +1203,21 @@ def _missing_exact_fields(item: dict[str, Any]) -> list[str]:
     if _entry_type_from_vehicle(item.get("entry_type") or item.get("vehicle")) == "UNKNOWN":
         missing.append("entry_type")
     return missing or ["vehicle_or_entry_type"]
+
+
+def _local_tp_scope_gaps(item: dict[str, Any]) -> list[str]:
+    if item.get("source_kind") not in {"active_board_local_tp", "order_intent_local_tp"}:
+        return []
+    if str(item.get("evidence_type") or "").upper() != "TP_PROOF":
+        return []
+    scope = str(item.get("scope") or "").upper()
+    if scope in {"PAIR_SIDE_METHOD_VEHICLE", "EXACT_VEHICLE", "EXACT_LANE"}:
+        return []
+    if scope == "PAIR_SIDE_METHOD":
+        return ["vehicle_scope_missing"]
+    if not scope or scope.startswith("MISSING"):
+        return ["exact_tp_scope_missing"]
+    return [f"unsupported_tp_scope:{scope}"]
 
 
 def _exact_field_gaps(lane: dict[str, Any], item: dict[str, Any]) -> list[str]:

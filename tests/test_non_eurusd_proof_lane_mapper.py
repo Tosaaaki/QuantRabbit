@@ -61,6 +61,60 @@ def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 class NonEurusdProofLaneMapperTests(unittest.TestCase):
+    def test_method_scope_tp_does_not_count_as_exact_vehicle_proof(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _base_paths(Path(tmp))
+            _write_base_json(
+                paths,
+                lanes=[
+                    _lane(
+                        lane_id,
+                        blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        local_tp_trades=1,
+                        local_tp_expectancy=658.9,
+                    )
+                ],
+            )
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-15T00:58:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 658.9,
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                    }
+                ],
+            )
+
+            NonEurusdProofLaneMapper(
+                active_opportunity_board_path=paths["active_board"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                lane_candidate_board_path=paths["lane_board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        mapped = payload["mapped_lanes"][0]
+        self.assertEqual(mapped["lane_id"], lane_id)
+        self.assertEqual(mapped["proof_floor"]["current_tp_trades"], 0)
+        self.assertEqual(mapped["proof_floor"]["broad_method_tp_trades"], 1)
+        self.assertTrue(mapped["proof_floor"]["broad_method_not_used_as_exact_vehicle_proof"])
+        self.assertIn("BROAD_TP_PROOF_NOT_EXACT_VEHICLE", mapped["mapping_gaps"])
+
     def test_pair_side_only_take_profit_stays_unmapped_not_exact_proof(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,7 +180,21 @@ class NonEurusdProofLaneMapperTests(unittest.TestCase):
             )
             lane["replay_status"] = "NEGATIVE_EVIDENCE_REFRESH_REQUIRED"
             _write_base_json(paths, lanes=[lane])
-            _write_execution_db(paths["execution_db"], [])
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": f"2026-07-0{idx + 1}T00:00:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": lane_id,
+                        "pair": "AUD_JPY",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 992.7,
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                    }
+                    for idx in range(6)
+                ],
+            )
 
             NonEurusdProofLaneMapper(
                 active_opportunity_board_path=paths["active_board"],
@@ -163,12 +231,24 @@ class NonEurusdProofLaneMapperTests(unittest.TestCase):
                 lane_id,
                 status="LIVE_READY",
                 blockers=["SPREAD_TOO_WIDE"],
-                local_tp_trades=20,
-                local_tp_expectancy=523.3,
             )
             lane["spread_status"] = "BLOCKED"
             _write_base_json(paths, lanes=[lane])
-            _write_execution_db(paths["execution_db"], [])
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": f"2026-07-{idx + 1:02d}T00:00:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": lane_id,
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 523.3,
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                    }
+                    for idx in range(20)
+                ],
+            )
 
             NonEurusdProofLaneMapper(
                 active_opportunity_board_path=paths["active_board"],

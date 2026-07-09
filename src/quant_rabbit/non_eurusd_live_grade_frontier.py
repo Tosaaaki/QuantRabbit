@@ -443,6 +443,7 @@ def _merge_mapper_lane(lane: dict[str, Any], row: dict[str, Any]) -> None:
     if isinstance(row.get("proof_floor"), dict):
         lane["proof_floor"] = row["proof_floor"]
     lane["blockers"].extend(_string_list(row.get("blockers")))
+    lane["blockers"].extend(_string_list(row.get("mapping_gaps")))
     lane["source_refs"].append("data/non_eurusd_proof_lane_mapper.json")
 
 
@@ -772,13 +773,16 @@ def _next_action(lane: dict[str, Any]) -> str:
 def _tp_proof_counts(lane: dict[str, Any]) -> tuple[int | None, int | None]:
     proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
     mapper_floor = lane.get("proof_floor") if isinstance(lane.get("proof_floor"), dict) else {}
+    if mapper_floor:
+        count = _first_int(mapper_floor.get("current_tp_trades"), None)
+        floor = _first_int(mapper_floor.get("required_tp_trades"), None)
+        if count is not None or floor is not None:
+            return int(count or 0), int(floor or DEFAULT_TP_PROOF_FLOOR)
     count = _first_int(
         proof.get("capture_take_profit_trades"),
-        mapper_floor.get("current_tp_trades"),
     )
     floor = _first_int(
         proof.get("capture_take_profit_proof_floor"),
-        mapper_floor.get("required_tp_trades"),
     )
     if count is None and floor is None:
         return None, None
