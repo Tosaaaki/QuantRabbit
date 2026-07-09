@@ -1063,6 +1063,10 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
             actions_by_code = {item["code"]: item["command"] for item in payload["operator_actions"]}
+            self.assertEqual(
+                actions_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request frontier",
+            )
             for action_code in (
                 "RECHECK_TIMING_CAPTURE_MISSES",
                 "RECHECK_LOSS_CLOSE_LEAK_WINDOW",
@@ -3090,6 +3094,15 @@ class TraderSupportBotTest(unittest.TestCase):
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
             )
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+            )
+            self.assertNotEqual(
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            )
 
     def test_forecast_confidence_frontier_with_no_current_projection_waits_for_evidence(self) -> None:
         now = datetime(2026, 6, 23, 14, 5, tzinfo=timezone.utc)
@@ -3176,6 +3189,15 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn(
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
+            )
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+            )
+            self.assertNotEqual(
+                action_by_code["WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"]["command"],
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
             )
 
     def test_unclear_forecast_frontier_live_precision_for_non_executable_shape_waits(self) -> None:

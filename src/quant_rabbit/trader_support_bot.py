@@ -5095,15 +5095,13 @@ def _operator_actions(
         )
     if entry.get("repair_frontier_remaining_blockers"):
         top = entry["repair_frontier_remaining_blockers"][0]
+        frontier_action = _frontier_remaining_blocker_operator_action(top, entry)
         actions.append(
             {
                 "code": "WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS",
-                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "command": frontier_action["command"],
                 "requires_explicit_operator_approval": False,
-                "reason": (
-                    "guardian/global repairs are not enough; top remaining repair-frontier blocker is "
-                    f"{top.get('code')} across {top.get('count')} lane(s)"
-                ),
+                "reason": frontier_action["reason"],
             }
         )
     if entry.get("oanda_audit_only_local_tp_proof_required"):
@@ -5232,6 +5230,76 @@ def _operator_actions(
         seen.add(code)
         unique.append(action)
     return unique
+
+
+def _frontier_remaining_blocker_operator_action(
+    top: dict[str, Any],
+    entry: dict[str, Any],
+) -> dict[str, str]:
+    code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
+    count = top.get("count")
+    prefix = (
+        "guardian/global repairs are not enough; top remaining repair-frontier blocker is "
+        f"{code} across {count} lane(s). "
+    )
+    artifact_freshness = (
+        entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+    )
+    if artifact_freshness.get("order_intents_stale_against_broker_snapshot"):
+        return {
+            "command": (
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents "
+                "--snapshot data/broker_snapshot.json --reuse-market-artifacts"
+            ),
+            "reason": prefix + "Regenerate intents from current broker truth before repairing stale blocker evidence.",
+        }
+    if _frontier_blocker_waits_for_quote_refresh(top):
+        return {
+            "command": "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+            "reason": prefix + "Refresh broker quotes first; quote freshness is runtime evidence, not a code gate.",
+        }
+    if _frontier_blocker_waits_for_live_precision_evidence(top):
+        return {
+            "command": (
+                "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                "--forecast-history data/forecast_history.jsonl --granularity S5 --auto-history-min-days 30"
+            ),
+            "reason": (
+                prefix
+                + "Collect spread-included bid/ask replay evidence for forecast precision instead of rerunning the support panel."
+            ),
+        }
+    if _frontier_blocker_waits_for_strategy_profile_evidence(top):
+        return {
+            "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            "reason": (
+                prefix
+                + "Rebuild intents after new strategy/profile evidence; do not relax BLOCK_UNTIL_NEW_EVIDENCE."
+            ),
+        }
+    if _frontier_blocker_waits_for_margin_capacity(top):
+        return {
+            "command": (
+                "PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state "
+                "--snapshot data/broker_snapshot.json --daily-risk-pct 10"
+            ),
+            "reason": (
+                prefix
+                + "Recompute equity-derived risk capacity before treating min-lot or margin blockers as repairable."
+            ),
+        }
+    if _frontier_blocker_is_protective_guardrail(top):
+        return {
+            "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            "reason": (
+                prefix
+                + "Refresh current market shape and wait for a valid replacement lane; protective guardrails stay intact."
+            ),
+        }
+    return {
+        "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request frontier",
+        "reason": prefix + "Hand off the lane-local blocker to the repair orchestrator instead of looping on support refresh.",
+    }
 
 
 def _guardian_receipt_consumption_next_action(
