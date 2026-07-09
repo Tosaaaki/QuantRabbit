@@ -353,7 +353,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("ACTIVE_CONTRACT:EVIDENCE_ACQUISITION", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
         self.assertIn("Active contract prompt available: `True`", report_text)
 
-    def test_repair_orchestrator_waiting_evidence_prevents_repeating_active_contract_prompt(self) -> None:
+    def test_repair_orchestrator_waiting_evidence_waits_when_artifacts_are_current(self) -> None:
         now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -437,17 +437,83 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             ).run()
             payload = json.loads(paths["output"].read_text())
 
-        self.assertEqual(summary.selected_next_work_type, "READ_ONLY_EVIDENCE_REFRESH")
-        self.assertEqual(payload["selected_next_work_type"], "READ_ONLY_EVIDENCE_REFRESH")
+        self.assertEqual(summary.selected_next_work_type, "NO_ACTION_WAIT")
+        self.assertEqual(payload["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertEqual(payload["current_phase"], "WAITING_FOR_EVIDENCE_OR_MARKET_TRIGGER")
         self.assertTrue(payload["active_contract_state"]["active_prompt_available"])
         self.assertTrue(payload["repair_loop_state"]["waiting_for_evidence"])
         self.assertEqual(payload["repair_loop_state"]["actionable_request_count"], 0)
         self.assertEqual(payload["repair_loop_state"]["waiting_request_count"], 4)
         self.assertIn("trader_repair_orchestrator reports ORCHESTRATOR_BLOCKED", payload["selection_reason"])
-        self.assertIn(
+        self.assertIn("artifact health is already clear", payload["selection_reason"])
+        self.assertNotIn(
             "REPAIR_ORCHESTRATOR_WAITING_FOR_EVIDENCE",
             payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
         )
+        self.assertNotIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_repair_orchestrator_waiting_evidence_refreshes_stale_artifacts_once(self) -> None:
+        now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ORCHESTRATOR_BLOCKED",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 2,
+                    "repair_request_count": 2,
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "next_evidence_actions": [
+                        {
+                            "action_id": "refresh_lane_board_after_input_evidence_changes",
+                            "read_only": True,
+                            "live_side_effects": [],
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["board"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "CONTRADICTED",
+                    "normal_routing_status": "BLOCKED",
+                    "routing_allowed": False,
+                    "as_live_ready_path_exists": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "READ_ONLY_EVIDENCE_REFRESH")
+        self.assertEqual(payload["selected_next_work_type"], "READ_ONLY_EVIDENCE_REFRESH")
+        self.assertTrue(payload["artifact_health"]["has_stale_or_contradicted_artifact"])
+        self.assertIn("stale or contradicted", payload["selection_reason"])
         self.assertIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
         self.assertFalse(payload["live_permission_allowed"])
 

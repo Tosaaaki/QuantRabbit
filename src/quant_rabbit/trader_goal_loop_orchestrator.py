@@ -194,6 +194,7 @@ class TraderGoalLoopOrchestrator:
             operator_review_state=operator_review_state,
             edge_improvement_state=edge_improvement_state,
             active_contract_state=active_contract_state,
+            repair_loop_state=repair_loop_state,
         )
         success_condition = _success_condition(selected_next_work_type)
         current_state = _current_state_for_evaluation(
@@ -955,9 +956,14 @@ def _select_work_type(
             "active_trader_contract was refreshed after trader_repair_orchestrator's waiting-evidence state and carries the concrete lane-specific next_prompt; dispatch that work instead of looping on already-satisfied generic artifact refresh.",
         )
     if repair_loop_state.get("waiting_for_evidence"):
+        if artifact_health.get("has_stale_or_contradicted_artifact"):
+            return (
+                "READ_ONLY_EVIDENCE_REFRESH",
+                "trader_repair_orchestrator is waiting for evidence and current artifacts are stale or contradicted; run one read-only evidence refresh before waiting for changed market/proof inputs.",
+            )
         return (
-            "READ_ONLY_EVIDENCE_REFRESH",
-            "trader_repair_orchestrator reports ORCHESTRATOR_BLOCKED with no actionable Codex repair and waiting evidence actions; run read-only evidence refresh instead of repeating active_trader_contract evidence work.",
+            "NO_ACTION_WAIT",
+            "trader_repair_orchestrator reports ORCHESTRATOR_BLOCKED with no actionable Codex repair and waiting evidence actions, and artifact health is already clear; do not rerun the same read-only refresh until market/proof inputs, guardian triggers, or blocker state change.",
         )
     if active_contract_state.get("active_prompt_available"):
         return (
@@ -1130,6 +1136,7 @@ def _current_phase(
     operator_review_state: dict[str, Any],
     edge_improvement_state: dict[str, Any],
     active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
 ) -> str:
     if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE":
         return f"ACTIVE_CONTRACT_{active_contract_state.get('selected_active_path') or 'EVIDENCE'}"
@@ -1149,6 +1156,8 @@ def _current_phase(
         return "LIVE_PERMISSION_READY_CHECK_ONLY"
     if selected_next_work_type == "EDGE_IMPROVEMENT_EXPERIMENT":
         return "HARVEST_EDGE_IMPROVEMENT_EXPERIMENT"
+    if selected_next_work_type == "NO_ACTION_WAIT" and repair_loop_state.get("waiting_for_evidence"):
+        return "WAITING_FOR_EVIDENCE_OR_MARKET_TRIGGER"
     return _first_str(
         scout_state.get("status"),
         harvest_state.get("status"),
