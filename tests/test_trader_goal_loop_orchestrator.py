@@ -353,6 +353,104 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("ACTIVE_CONTRACT:EVIDENCE_ACQUISITION", payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"])
         self.assertIn("Active contract prompt available: `True`", report_text)
 
+    def test_repair_orchestrator_waiting_evidence_prevents_repeating_active_contract_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ORCHESTRATOR_BLOCKED",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 4,
+                    "repair_request_count": 4,
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "next_evidence_actions": [
+                        {
+                            "action_id": "refresh_lane_board_after_input_evidence_changes",
+                            "read_only": True,
+                            "live_side_effects": [],
+                            "success_condition": {
+                                "schema_version": "success_condition_v1",
+                                "mode": "all",
+                                "checks": [
+                                    {"field": "proof_normal_routing_status", "operator": "neq", "value": "BLOCKED"},
+                                    {"field": "can_create_live_permission_count", "operator": "gt", "value": 0},
+                                ],
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "selected_active_path_reason": "active board still has a lane-specific evidence prompt.",
+                    "target_shape": "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
+                    "four_x_progress_hypothesis": "Active contract evidence remains available but is not the next loop action.",
+                    "root_improvement_target": "Do not repeat active contract while repair orchestrator is waiting for evidence.",
+                    "expected_edge_improvement": "Read-only evidence refresh must change the proof state first.",
+                    "next_prompt": "Repeat active contract evidence for EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT.",
+                    "next_trade_enabling_action": "Collect exact local TP proof; do not send.",
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "top_lane": {
+                                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "strategy_family": "BREAKOUT_FAILURE",
+                                "vehicle": "LIMIT",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        }
+                    },
+                    "remaining_blockers": [{"code": "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"}],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "READ_ONLY_EVIDENCE_REFRESH")
+        self.assertEqual(payload["selected_next_work_type"], "READ_ONLY_EVIDENCE_REFRESH")
+        self.assertTrue(payload["active_contract_state"]["active_prompt_available"])
+        self.assertTrue(payload["repair_loop_state"]["waiting_for_evidence"])
+        self.assertEqual(payload["repair_loop_state"]["actionable_request_count"], 0)
+        self.assertEqual(payload["repair_loop_state"]["waiting_request_count"], 4)
+        self.assertIn("trader_repair_orchestrator reports ORCHESTRATOR_BLOCKED", payload["selection_reason"])
+        self.assertIn(
+            "REPAIR_ORCHESTRATOR_WAITING_FOR_EVIDENCE",
+            payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
+        )
+        self.assertIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_repeat_guard_does_not_override_scout_blocked_classification(self) -> None:
         now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

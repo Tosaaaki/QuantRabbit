@@ -128,6 +128,7 @@ class TraderGoalLoopOrchestrator:
         artifacts = {name: _load_artifact(path) for name, path in self.paths.items()}
         artifact_index = _artifact_index(artifacts)
         proof_state = _proof_state(artifacts)
+        repair_loop_state = _repair_loop_state(artifacts)
         active_contract_state = _active_contract_state(artifacts, self.now_utc)
         payoff_state = _payoff_state(artifacts, self.now_utc)
         harvest_state = _harvest_state(artifacts)
@@ -158,6 +159,7 @@ class TraderGoalLoopOrchestrator:
             schema_state=schema_state,
             live_ready_state=live_ready_state,
             active_contract_state=active_contract_state,
+            repair_loop_state=repair_loop_state,
         )
         key_blocker = _key_blocker(
             selected_next_work_type=candidate_work_type,
@@ -169,6 +171,7 @@ class TraderGoalLoopOrchestrator:
             artifact_health=artifact_health,
             schema_state=schema_state,
             active_contract_state=active_contract_state,
+            repair_loop_state=repair_loop_state,
         )
         repeat_loop_guard = _repeat_loop_guard(
             output_path=self.output_path,
@@ -204,6 +207,7 @@ class TraderGoalLoopOrchestrator:
             schema_state=schema_state,
             live_ready_state=live_ready_state,
             active_contract_state=active_contract_state,
+            repair_loop_state=repair_loop_state,
         )
         success_condition_evaluation = _evaluate_success_condition(success_condition, current_state)
         next_allowed_commands = _next_allowed_commands(selected_next_work_type)
@@ -247,6 +251,7 @@ class TraderGoalLoopOrchestrator:
             "root_improvement_target": root_improvement_target,
             "expected_edge_improvement": expected_edge_improvement,
             "proof_state": proof_state,
+            "repair_loop_state": repair_loop_state,
             "payoff_state": payoff_state,
             "harvest_state": harvest_state,
             "scout_state": scout_state,
@@ -607,6 +612,53 @@ def _proof_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    repair = artifacts["trader_repair_orchestrator"]
+    if repair.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "status": None,
+            "actionable_request_count": 0,
+            "approval_required_request_count": 0,
+            "waiting_request_count": 0,
+            "repair_request_count": 0,
+            "selected_request_code": None,
+            "next_evidence_action_count": 0,
+            "waiting_for_evidence": False,
+        }
+    actions = repair.get("next_evidence_actions") if isinstance(repair.get("next_evidence_actions"), list) else []
+    waiting_count = _first_int(repair.get("waiting_request_count"))
+    actionable_count = _first_int(repair.get("actionable_request_count"))
+    approval_count = _first_int(repair.get("approval_required_request_count"))
+    selected_code = repair.get("selected_request_code") if isinstance(repair.get("selected_request_code"), str) else None
+    waiting_for_evidence = bool(
+        str(repair.get("status") or "") == "ORCHESTRATOR_BLOCKED"
+        and actionable_count == 0
+        and approval_count == 0
+        and waiting_count > 0
+        and not selected_code
+        and actions
+    )
+    return {
+        "artifact_status": "present",
+        "status": repair.get("status"),
+        "generated_at_utc": repair.get("generated_at_utc"),
+        "actionable_request_count": actionable_count,
+        "approval_required_request_count": approval_count,
+        "waiting_request_count": waiting_count,
+        "repair_request_count": _first_int(repair.get("repair_request_count")),
+        "selected_request_code": selected_code,
+        "next_evidence_action_count": len(actions),
+        "waiting_for_evidence": waiting_for_evidence,
+        "waiting_request_codes": _string_list(repair.get("waiting_request_codes")),
+        "next_evidence_action_ids": [
+            str(action.get("action_id"))
+            for action in actions
+            if isinstance(action, dict) and action.get("action_id")
+        ],
+    }
+
+
 def _operator_review_state(
     artifacts: dict[str, dict[str, Any]],
     proof_state: dict[str, Any],
@@ -891,7 +943,13 @@ def _select_work_type(
     schema_state: dict[str, Any],
     live_ready_state: dict[str, Any],
     active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
 ) -> tuple[str, str]:
+    if repair_loop_state.get("waiting_for_evidence"):
+        return (
+            "READ_ONLY_EVIDENCE_REFRESH",
+            "trader_repair_orchestrator reports ORCHESTRATOR_BLOCKED with no actionable Codex repair and waiting evidence actions; run read-only evidence refresh instead of repeating active_trader_contract evidence work.",
+        )
     if active_contract_state.get("active_prompt_available"):
         return (
             "ACTIVE_TRADER_CONTRACT_EVIDENCE",
@@ -959,7 +1017,11 @@ def _key_blocker(
     artifact_health: dict[str, Any],
     schema_state: dict[str, Any],
     active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
 ) -> str:
+    if selected_next_work_type == "READ_ONLY_EVIDENCE_REFRESH" and repair_loop_state.get("waiting_for_evidence"):
+        ids = ",".join(_string_list(repair_loop_state.get("next_evidence_action_ids")))
+        return f"REPAIR_ORCHESTRATOR_WAITING_FOR_EVIDENCE:{ids or 'NO_ACTION_IDS'}"
     if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE":
         return f"ACTIVE_CONTRACT:{active_contract_state.get('selected_active_path')}:{active_contract_state.get('top_lane_id')}:{active_contract_state.get('frontier_lane_id')}"
     if selected_next_work_type == "PAYOFF_SHAPE_DIAGNOSIS":
@@ -1195,6 +1257,7 @@ def _current_state_for_evaluation(
     schema_state: dict[str, Any],
     live_ready_state: dict[str, Any],
     active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "payoff_artifact_status": payoff_state.get("artifact_status"),
@@ -1222,6 +1285,10 @@ def _current_state_for_evaluation(
         "active_contract_prompt_available": active_contract_state.get("active_prompt_available"),
         "active_contract_stale": active_contract_state.get("stale"),
         "active_contract_live_permission_allowed": active_contract_state.get("live_permission_allowed"),
+        "repair_orchestrator_waiting_for_evidence": repair_loop_state.get("waiting_for_evidence"),
+        "repair_orchestrator_actionable_request_count": repair_loop_state.get("actionable_request_count"),
+        "repair_orchestrator_waiting_request_count": repair_loop_state.get("waiting_request_count"),
+        "repair_orchestrator_next_evidence_action_count": repair_loop_state.get("next_evidence_action_count"),
         "repeat_allowed": True,
         "live_permission_allowed": False,
     }
@@ -1493,6 +1560,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     scout = payload.get("scout_state", {})
     operator = payload.get("operator_review_state", {})
     active_contract = payload.get("active_contract_state", {})
+    repair_loop = payload.get("repair_loop_state", {})
     review_required = bool(payload.get("requires_operator_review_before_scout_or_routing"))
     approval_boundary_note = (
         "- このreport生成自体は承認不要。ただしSCOUT/normal routing前にはoperator review必須。"
@@ -1529,6 +1597,9 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Active contract top lane: `{active_contract.get('top_lane_id')}`",
         f"- Active contract frontier lane: `{active_contract.get('frontier_lane_id')}`",
         f"- Active contract prompt available: `{active_contract.get('active_prompt_available')}`",
+        f"- Repair orchestrator status: `{repair_loop.get('status')}`",
+        f"- Repair orchestrator actionable/waiting: `{repair_loop.get('actionable_request_count')}` / `{repair_loop.get('waiting_request_count')}`",
+        f"- Repair orchestrator waiting for evidence: `{repair_loop.get('waiting_for_evidence')}`",
         "",
         "## Approval Boundary",
         "",
