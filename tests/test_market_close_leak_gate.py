@@ -84,6 +84,38 @@ class MarketCloseLeakGateTest(unittest.TestCase):
 
         self.assertIsNone(issue)
 
+    def test_payload_allows_tp_proven_harvest_exception_from_lane_packet(self) -> None:
+        issue = market_close_leak_family_payload_issue(
+            {
+                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                "method": "BREAKOUT_FAILURE",
+                "intent": {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "owner": "trader",
+                    "market_context": {"method": "BREAKOUT_FAILURE"},
+                    "metadata": {},
+                },
+                "opportunity": {
+                    "opportunity_mode": "HARVEST",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                },
+                "self_improvement": {
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                },
+            }
+        )
+
+        self.assertIsNone(issue)
+
     def test_tp_proven_harvest_still_requires_close_and_timing_for_market_close_exit(self) -> None:
         issue = market_close_leak_family_block_issue(
             _family_intent(

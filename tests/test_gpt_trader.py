@@ -1262,6 +1262,44 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
 
+    def test_accepts_eurusd_breakout_failure_tp_proven_harvest_exception_from_lane_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            result = _result(
+                lane_id=lane_id,
+                method="BREAKOUT_FAILURE",
+                metadata={
+                    "opportunity_mode": "HARVEST",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_pessimistic_expectancy_jpy": 332.5961,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": (
+                        "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+                    ),
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            )
+            result["intent"]["order_type"] = "LIMIT"
+            files["intents"].write_text(json.dumps({"results": [result]}))
+            decision = _trade_decision(lane_id=lane_id, method="BREAKOUT_FAILURE")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, codes)
+
     def test_rejects_live_ready_lane_with_month_scale_residual_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

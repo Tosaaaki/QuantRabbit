@@ -252,6 +252,10 @@ def _payload_metadata(payload: dict[str, Any], intent: dict[str, Any]) -> dict[s
     metadata: dict[str, Any] = {}
     if isinstance(intent.get("metadata"), dict):
         metadata.update(intent["metadata"])
+    if isinstance(payload.get("opportunity"), dict):
+        metadata.update(payload["opportunity"])
+    if isinstance(payload.get("self_improvement"), dict):
+        metadata.update(payload["self_improvement"])
     if isinstance(payload.get("market_close_leak_family"), dict):
         metadata.update(payload["market_close_leak_family"])
     return metadata
