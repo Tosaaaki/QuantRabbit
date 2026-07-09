@@ -200,6 +200,19 @@ RUNTIME_DISK_RECOVERY_MARKERS = (
     "docs/trader_support_bot_report.md",
     "logs/disk_maintenance_report.json",
 )
+RANGE_RAIL_RECHECK_MONITOR_COMMAND = (
+    "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-trigger-contract && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-event-router && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract"
+)
+RANGE_ROTATION_REPRICE_COMMAND = (
+    "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier && "
+    "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract"
+)
 
 
 @dataclass(frozen=True)
@@ -5268,10 +5281,19 @@ def _active_path_operator_action(active_path: Any) -> dict[str, str] | None:
 def _active_path_next_action_command(next_action: str) -> str:
     text = next_action.lower()
     if (
-        "range_rail_geometry_repair" in text
-        or "wait_for_range_rail_recheck" in text
+        "reprice_range_rotation_counterpart" in text
+        or "reprice the range_rotation counterpart" in text
+        or "reprice range_rotation counterpart" in text
+    ):
+        return RANGE_ROTATION_REPRICE_COMMAND
+    if (
+        "wait_for_range_rail_recheck" in text
+        or "rail_status=range_rail_not_reached" in text
+        or "range_rail_not_reached" in text
         or "rail recheck" in text
     ):
+        return RANGE_RAIL_RECHECK_MONITOR_COMMAND
+    if "range_rail_geometry_repair" in text or "range rail geometry repair" in text:
         return "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair"
     if "forecast_pattern_refresh" in text or "pattern refresh" in text:
         return "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh"

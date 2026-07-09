@@ -1527,9 +1527,12 @@ class TraderSupportBotTest(unittest.TestCase):
             active_action = actions_by_code["WORK_ACTIVE_TRADER_CONTRACT_NEXT_ACTION"]
             self.assertEqual(
                 active_action["command"],
-                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+                trader_support_bot_module.RANGE_RAIL_RECHECK_MONITOR_COMMAND,
             )
             self.assertIn(gbp_lane_id, active_action["reason"])
+            self.assertIn("guardian-event-router", active_action["command"])
+            self.assertIn("active-trader-contract", active_action["command"])
+            self.assertNotIn("range-rail-geometry-repair", active_action["command"])
             self.assertNotIn("trader-support-bot", active_action["command"])
 
     def test_parallel_frontier_range_rail_prompt_does_not_become_primary_active_path(self) -> None:
@@ -2038,10 +2041,32 @@ class TraderSupportBotTest(unittest.TestCase):
             active_action = actions_by_code["WORK_ACTIVE_TRADER_CONTRACT_NEXT_ACTION"]
             self.assertEqual(
                 active_action["command"],
-                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+                trader_support_bot_module.RANGE_RAIL_RECHECK_MONITOR_COMMAND,
             )
             self.assertIn(lane_id, active_action["reason"])
             self.assertNotIn("entry-frequency", active_action["reason"])
+
+    def test_active_contract_range_rail_command_mapping_distinguishes_repair_wait_and_reprice(self) -> None:
+        self.assertEqual(
+            trader_support_bot_module._active_path_next_action_command(
+                "Consume data/forecast_pattern_refresh.json and run RANGE_RAIL_GEOMETRY_REPAIR."
+            ),
+            "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+        )
+        self.assertEqual(
+            trader_support_bot_module._active_path_next_action_command(
+                "Consume data/range_rail_geometry_repair.json: next safe action is "
+                "WAIT_FOR_RANGE_RAIL_RECHECK; rail_status=RANGE_RAIL_NOT_REACHED."
+            ),
+            trader_support_bot_module.RANGE_RAIL_RECHECK_MONITOR_COMMAND,
+        )
+        self.assertEqual(
+            trader_support_bot_module._active_path_next_action_command(
+                "CONTRACT_ADD_TRIGGER fired from guardian_events artifact; "
+                "reprice the RANGE_ROTATION counterpart from fresh broker truth."
+            ),
+            trader_support_bot_module.RANGE_ROTATION_REPRICE_COMMAND,
+        )
 
     def test_profitability_acceptance_stale_against_newer_capture_economics_blocks_support(self) -> None:
         now = datetime(2026, 7, 3, 20, 45, tzinfo=timezone.utc)
