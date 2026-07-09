@@ -853,7 +853,7 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
                 "wake reviews may be incomplete until disk pressure is cleared"
             ),
         }
-    if usage.free < RUNTIME_DISK_P1_FREE_BYTES or free_fraction < RUNTIME_DISK_P1_FREE_FRACTION:
+    if usage.free < RUNTIME_DISK_P1_FREE_BYTES:
         return {
             **base,
             "status": "PRESSURE",
@@ -875,6 +875,19 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
             "message": (
                 "recent ENOSPC evidence is present, but later runtime artifact writes succeeded "
                 "and current free space is above the operating floor"
+            ),
+        }
+    if free_fraction < RUNTIME_DISK_P1_FREE_FRACTION:
+        return {
+            **base,
+            "status": "LOW_FREE_FRACTION_WARN",
+            "severity": "WARN",
+            "blocking": False,
+            "blocker_code": None,
+            "message": (
+                f"runtime filesystem free percentage is low at {free_fraction * 100.0:.3f}%, "
+                f"but free_bytes={usage.free} remains above the {RUNTIME_DISK_P1_FREE_BYTES} "
+                "artifact-write operating floor"
             ),
         }
     return {
@@ -5436,9 +5449,9 @@ def _build_repair_requests(
                 clearance_conditions=[
                     (
                         "Run QuantRabbit disk maintenance and verify the runtime filesystem is above "
-                        "the P1 floor: free_bytes >= "
-                        f"{RUNTIME_DISK_P1_FREE_BYTES} and free_fraction >= "
-                        f"{RUNTIME_DISK_P1_FREE_FRACTION}."
+                        "the P1 artifact-write floor: free_bytes >= "
+                        f"{RUNTIME_DISK_P1_FREE_BYTES}. A lower free_fraction on a large filesystem "
+                        "is reported as a warning only when absolute free space is above this floor."
                     ),
                     (
                         "After cleanup, rerun guardian-event-router, guardian wake dispatcher/status, "

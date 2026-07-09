@@ -298,6 +298,111 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertNotIn("REPAIR_RUNTIME_DISK_PRESSURE", request_codes)
             self.assertTrue(payload["runtime_disk"]["enospc_recovery_markers"])
 
+    def test_large_runtime_filesystem_low_free_fraction_warns_without_blocking(self) -> None:
+        now = datetime(2026, 7, 10, 1, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            env = _guardian_env(root, active="1")
+            usage = mock.Mock(
+                total=1024 * 1024 * 1024 * 1024,
+                used=1018 * 1024 * 1024 * 1024,
+                free=6 * 1024 * 1024 * 1024,
+            )
+            with (
+                mock.patch.dict(os.environ, env, clear=False),
+                mock.patch.object(trader_support_bot_module.shutil, "disk_usage", return_value=usage),
+            ):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    runtime_root=root,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            request_codes = {item["code"] for item in payload["repair_requests"]}
+            self.assertEqual(summary.status, STATUS_READY)
+            self.assertEqual(payload["runtime_disk"]["status"], "LOW_FREE_FRACTION_WARN")
+            self.assertFalse(payload["runtime_disk"]["blocking"])
+            self.assertLess(payload["runtime_disk"]["free_fraction"], 0.01)
+            self.assertGreaterEqual(
+                payload["runtime_disk"]["free_bytes"],
+                trader_support_bot_module.RUNTIME_DISK_P1_FREE_BYTES,
+            )
+            self.assertNotIn("RUNTIME_DISK_PRESSURE", blocker_codes)
+            self.assertNotIn("RUN_QUANTRABBIT_DISK_MAINTENANCE", action_codes)
+            self.assertNotIn("REPAIR_RUNTIME_DISK_PRESSURE", request_codes)
+
+    def test_low_runtime_free_bytes_still_blocks_even_when_fraction_is_above_floor(self) -> None:
+        now = datetime(2026, 7, 10, 1, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            env = _guardian_env(root, active="1")
+            usage = mock.Mock(
+                total=100 * 1024 * 1024 * 1024,
+                used=96 * 1024 * 1024 * 1024,
+                free=4 * 1024 * 1024 * 1024,
+            )
+            with (
+                mock.patch.dict(os.environ, env, clear=False),
+                mock.patch.object(trader_support_bot_module.shutil, "disk_usage", return_value=usage),
+            ):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    runtime_root=root,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            request_by_code = {item["code"]: item for item in payload["repair_requests"]}
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(payload["runtime_disk"]["status"], "PRESSURE")
+            self.assertTrue(payload["runtime_disk"]["blocking"])
+            self.assertGreaterEqual(payload["runtime_disk"]["free_fraction"], 0.01)
+            self.assertLess(
+                payload["runtime_disk"]["free_bytes"],
+                trader_support_bot_module.RUNTIME_DISK_P1_FREE_BYTES,
+            )
+            self.assertIn("RUNTIME_DISK_PRESSURE", blocker_codes)
+            self.assertIn("RUN_QUANTRABBIT_DISK_MAINTENANCE", action_codes)
+            self.assertIn("REPAIR_RUNTIME_DISK_PRESSURE", request_by_code)
+            self.assertEqual(request_by_code["REPAIR_RUNTIME_DISK_PRESSURE"]["priority"], "P1")
+            self.assertEqual(
+                request_by_code["REPAIR_RUNTIME_DISK_PRESSURE"]["status"],
+                "HOST_DISK_PRESSURE_ACTIVE",
+            )
+
     def test_post_repair_replay_trigger_remains_support_p0_blocker(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
