@@ -446,6 +446,73 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertIn("BIDASK_REPLAY_REFRESH", payload["next_active_path"])
         self.assertIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
 
+    def test_entry_drought_frontier_preserves_board_recovery_action(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+            "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+        ]
+        board_next_action = (
+            "Run entry-frequency recovery analysis for GBP_USD|LONG|RANGE_ROTATION|LIMIT; "
+            "historical accepted=3, fills=2, closed_pl_jpy=992.6099 (exact_lane) but recent entries are zero. "
+            "Re-tune forecast/pattern selection and bid/ask or local-TP proof for this lane while preserving every current blocker. "
+            "Do not send."
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [_intent(lane_id, "GBP_USD", "LONG", "RANGE_ROTATION", "LIMIT", blockers)],
+                },
+            )
+            board_lane = _board_lane(lane_id, "GBP_USD", "LONG", "RANGE_ROTATION", "LIMIT", blockers)
+            board_lane["status"] = "EVIDENCE_ACQUISITION"
+            board_lane["replay_status"] = "UNKNOWN"
+            board_lane["entry_recovery_candidate"] = True
+            board_lane["entry_recovery_history"] = {
+                "accepted_before_recent": 3,
+                "fills_before_recent": 2,
+                "closed_pl_jpy": 992.6099,
+                "profit_source": "exact_lane",
+                "recent_accepted": 0,
+                "recent_fills": 0,
+            }
+            board_lane["next_action"] = board_next_action
+            _write_json(paths["active_board"], {"ranked_active_lanes": [board_lane]})
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["status"], STATUS_NON_EURUSD_FOUND)
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], lane_id)
+        self.assertEqual(payload["top_non_eurusd_lane"]["next_action"], board_next_action)
+        self.assertIn("ENTRY_FREQUENCY_RECOVERY", payload["next_active_path"])
+        self.assertIn("negative expectancy", payload["next_active_path"])
+        self.assertNotIn("Build exact TP-proven rotation proof", payload["top_non_eurusd_lane"]["next_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_frontier_does_not_reactivate_active_board_stale_guardian_blocker(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT"

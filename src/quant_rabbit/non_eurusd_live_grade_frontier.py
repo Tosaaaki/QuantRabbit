@@ -47,6 +47,7 @@ NEGATIVE_BLOCKERS = (
     "MARKET_CLOSE_LEAK",
     "REPLAY_NEGATIVE",
 )
+ENTRY_DROUGHT_RECOVERY_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
 BIDASK_BLOCKERS = (
     "BIDASK_REPLAY_NEGATIVE",
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
@@ -430,6 +431,12 @@ def _merge_board_lane(lane: dict[str, Any], row: dict[str, Any], index: int) -> 
     lane["replay_status_board"] = row.get("replay_status")
     lane["risk_status_board"] = row.get("risk_status")
     lane["proof_status_board"] = row.get("proof_status")
+    if not lane.get("active_board_next_action") and row.get("next_action") not in (None, ""):
+        lane["active_board_next_action"] = str(row.get("next_action"))
+    if row.get("entry_recovery_candidate") is not None:
+        lane["entry_recovery_candidate"] = bool(row.get("entry_recovery_candidate"))
+    if isinstance(row.get("entry_recovery_history"), dict):
+        lane["entry_recovery_history"] = dict(row["entry_recovery_history"])
     if isinstance(row.get("local_tp_proof"), dict):
         lane["local_tp_proof"] = {**(lane.get("local_tp_proof") or {}), **row["local_tp_proof"]}
     lane["blockers"].extend(_string_list(row.get("blockers")))
@@ -751,6 +758,11 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
             f"BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for {lane_id}; "
             "repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
         )
+    if _has_entry_drought_recovery(lane):
+        return (
+            f"ENTRY_FREQUENCY_RECOVERY: {_entry_drought_recovery_action(lane)} "
+            "Preserve negative expectancy, spread, bid/ask, forecast, proof-floor, and loss-budget blockers."
+        )
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
         return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
     if lane.get("tp_proof_remaining"):
@@ -771,6 +783,8 @@ def _next_action(lane: dict[str, Any]) -> str:
             f"Repair bid/ask-negative pattern or vehicle shape for {lane_id}; "
             "do not repeat replay until the lane inputs change."
         )
+    if _has_entry_drought_recovery(lane):
+        return _entry_drought_recovery_action(lane)
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
         return f"Build exact TP-proven rotation proof for {lane_id}; do not hide negative expectancy."
     if lane.get("spread_status") == "BLOCKED":
@@ -782,6 +796,39 @@ def _next_action(lane: dict[str, Any]) -> str:
     if lane.get("tp_proof_remaining"):
         return f"Collect {lane.get('tp_proof_remaining')} exact TP proof sample(s) for {lane_id}."
     return f"Keep {lane_id} on verifier/gateway path; frontier grants no live permission."
+
+
+def _has_entry_drought_recovery(lane: dict[str, Any]) -> bool:
+    blockers = _string_list(lane.get("blockers"))
+    if ENTRY_DROUGHT_RECOVERY_BLOCKER not in blockers:
+        return False
+    return bool(lane.get("entry_recovery_candidate") or lane.get("active_board_next_action"))
+
+
+def _entry_drought_recovery_action(lane: dict[str, Any]) -> str:
+    board_action = str(lane.get("active_board_next_action") or "").strip()
+    if board_action:
+        return board_action
+    lane_id = lane.get("lane_id")
+    history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
+    accepted = history.get("accepted_before_recent")
+    fills = history.get("fills_before_recent")
+    closed_pl = history.get("closed_pl_jpy")
+    source = history.get("profit_source")
+    details = []
+    if accepted is not None:
+        details.append(f"historical accepted={accepted}")
+    if fills is not None:
+        details.append(f"fills={fills}")
+    if closed_pl is not None:
+        details.append(f"closed_pl_jpy={closed_pl}")
+    if source:
+        details.append(f"source={source}")
+    suffix = "; " + ", ".join(details) if details else ""
+    return (
+        f"Run entry-frequency recovery analysis for {lane_id}{suffix}; "
+        "retune forecast/pattern selection and lane-local bid/ask or TP proof while preserving current blockers. Do not send."
+    )
 
 
 def _tp_proof_counts(lane: dict[str, Any]) -> tuple[int | None, int | None]:
