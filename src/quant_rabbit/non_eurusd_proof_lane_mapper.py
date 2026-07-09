@@ -787,13 +787,17 @@ def _lane_proof_floor(lane: dict[str, Any], evidence: list[dict[str, Any]]) -> d
     proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
     floor = _first_int(proof.get("capture_take_profit_proof_floor"), None)
     broad_current = _broad_method_tp_trades(proof)
-    exact_current = 0
+    exact_counts_by_scope: dict[tuple[str, ...], int] = {}
     for row in evidence:
         if row.get("mapping_scope") in EXACT_TP_MAPPING_SCOPES:
-            exact_current += int(_first_int(row.get("trades"), 0) or 0)
+            trades = int(_first_int(row.get("trades"), 0) or 0)
+            if trades > 0:
+                scope = _exact_tp_count_scope(row)
+                exact_counts_by_scope[scope] = max(exact_counts_by_scope.get(scope, 0), trades)
         floor = _first_int(floor, row.get("proof_floor"), PROOF_FLOOR_DEFAULT)
     if floor is None:
         floor = PROOF_FLOOR_DEFAULT
+    exact_current = sum(exact_counts_by_scope.values())
     current = exact_current
     gap = max(floor - current, 0)
     result = {
@@ -822,6 +826,24 @@ def _lane_proof_floor(lane: dict[str, Any], evidence: list[dict[str, Any]]) -> d
             }
         )
     return result
+
+
+def _exact_tp_count_scope(row: dict[str, Any]) -> tuple[str, ...]:
+    """Collapse duplicate summaries of the same exact TP sample set.
+
+    active_opportunity_board and order_intents both carry local TP summaries
+    derived from the same underlying execution ledger. Treating those summaries
+    as independent samples overstates proof-floor progress.
+    """
+
+    return (
+        str(row.get("pair") or "").upper(),
+        str(row.get("side") or row.get("direction") or "").upper(),
+        str(row.get("strategy_family") or "").upper(),
+        str(row.get("vehicle") or "").upper(),
+        str(row.get("entry_type") or "").upper(),
+        str(row.get("exit_reason") or "TAKE_PROFIT_ORDER").upper(),
+    )
 
 
 def _broad_method_tp_trades(proof: dict[str, Any]) -> int | None:

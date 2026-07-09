@@ -61,6 +61,76 @@ def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 class NonEurusdProofLaneMapperTests(unittest.TestCase):
+    def test_duplicate_exact_local_tp_summaries_do_not_inflate_proof_floor(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _base_paths(Path(tmp))
+            lane = _lane(
+                lane_id,
+                blockers=["LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"],
+                local_tp_trades=2,
+                local_tp_expectancy=148.5,
+            )
+            lane["local_tp_proof"].update(
+                {
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                    "capture_take_profit_scope_key": "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER",
+                }
+            )
+            _write_base_json(paths, lanes=[lane])
+            _write_json(
+                paths["order_intents"],
+                {
+                    "results": [
+                        {
+                            "lane_id": lane_id,
+                            "live_blocker_codes": ["LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"],
+                            "intent": {
+                                "pair": "USD_CAD",
+                                "side": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "order_type": "LIMIT",
+                                "metadata": {
+                                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                                    "capture_take_profit_scope_key": (
+                                        "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER"
+                                    ),
+                                    "capture_take_profit_trades": 2,
+                                    "capture_take_profit_wins": 2,
+                                    "capture_take_profit_losses": 0,
+                                    "capture_take_profit_expectancy_jpy": 148.5,
+                                },
+                            },
+                        }
+                    ]
+                },
+            )
+
+            NonEurusdProofLaneMapper(
+                active_opportunity_board_path=paths["active_board"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                lane_candidate_board_path=paths["lane_board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                order_intents_path=paths["order_intents"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        mapped = payload["mapped_lanes"][0]
+        self.assertEqual(mapped["lane_id"], lane_id)
+        self.assertEqual(len(mapped["mapped_profit_evidence"]), 2)
+        self.assertEqual(mapped["proof_floor"]["current_tp_trades"], 2)
+        self.assertEqual(mapped["proof_floor"]["remaining_tp_trades"], 18)
+        self.assertEqual(payload["proof_floor_gaps"][0]["remaining_tp_trades"], 18)
+        self.assertIn("Collect 18 more exact TP proof sample", mapped["next_action"])
+
     def test_method_scope_tp_does_not_count_as_exact_vehicle_proof(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
