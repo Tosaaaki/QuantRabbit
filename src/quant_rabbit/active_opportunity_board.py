@@ -776,7 +776,7 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
         try:
             rows = con.execute(
                 """
-                select ts_utc,event_type,lane_id,pair,side,realized_pl_jpy,raw_json
+                select ts_utc,event_type,lane_id,pair,side,trade_id,realized_pl_jpy,raw_json
                 from execution_events
                 where ts_utc >= ?
                   and event_type in ('ORDER_ACCEPTED','ORDER_FILLED','TRADE_CLOSED')
@@ -792,6 +792,17 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
     entries: dict[tuple[str, str, str], dict[str, Any]] = {}
     pair_side_pnl: dict[tuple[str, str], dict[str, Any]] = {}
     exact_pnl: dict[tuple[str, str, str], dict[str, Any]] = {}
+    trade_open_lanes: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        if str(row["event_type"] or "") != "ORDER_FILLED":
+            continue
+        lane_id = str(row["lane_id"] or "")
+        trade_id = str(row["trade_id"] or "")
+        pair = str(row["pair"] or "UNKNOWN")
+        side = str(row["side"] or "UNKNOWN")
+        if lane_id and trade_id:
+            trade_open_lanes.setdefault(trade_id, (lane_id, pair, side))
+
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None:
@@ -799,6 +810,7 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
         pair = str(row["pair"] or "UNKNOWN")
         side = str(row["side"] or "UNKNOWN")
         lane_id = str(row["lane_id"] or "")
+        trade_id = str(row["trade_id"] or "")
         event_type = str(row["event_type"] or "")
         key = (lane_id, pair, side)
         if event_type in {"ORDER_ACCEPTED", "ORDER_FILLED"}:
@@ -839,8 +851,9 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
         if event_type == "TRADE_CLOSED" and ts < recent_start:
             pl = _float(row["realized_pl_jpy"]) or 0.0
             _accumulate_closed_pnl(pair_side_pnl.setdefault((pair, side), {}), pl, ts)
-            if lane_id:
-                _accumulate_closed_pnl(exact_pnl.setdefault(key, {}), pl, ts)
+            close_key = key if lane_id else trade_open_lanes.get(trade_id)
+            if close_key:
+                _accumulate_closed_pnl(exact_pnl.setdefault(close_key, {}), pl, ts)
 
     candidates: list[dict[str, Any]] = []
     for key, group in entries.items():

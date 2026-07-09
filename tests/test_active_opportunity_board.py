@@ -27,6 +27,7 @@ def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
                 ts_utc text,
                 event_type text,
                 lane_id text,
+                trade_id text,
                 pair text,
                 side text,
                 realized_pl_jpy real,
@@ -40,13 +41,14 @@ def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
             con.execute(
                 """
                 insert into execution_events
-                    (ts_utc,event_type,lane_id,pair,side,realized_pl_jpy,raw_json)
-                values (?,?,?,?,?,?,?)
+                    (ts_utc,event_type,lane_id,trade_id,pair,side,realized_pl_jpy,raw_json)
+                values (?,?,?,?,?,?,?,?)
                 """,
                 (
                     row.get("ts_utc"),
                     row.get("event_type"),
                     row.get("lane_id", ""),
+                    row.get("trade_id"),
                     row.get("pair"),
                     row.get("side"),
                     row.get("realized_pl_jpy"),
@@ -1775,6 +1777,135 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(top["entry_recovery_history"]["profit_source"], "pair_side_fallback")
         self.assertEqual(payload["coverage_summary"]["entry_recovery_candidate_count"], 1)
         self.assertEqual(payload["entry_recovery_summary"]["candidate_count"], 1)
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_trade_closed_without_lane_uses_filled_trade_lane_for_exact_entry_recovery(self) -> None:
+        now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
+        lane = "range_trader:AUD_CAD:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            lane,
+                            "AUD_CAD",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                        )
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-11T00:10:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane,
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:20:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane,
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:30:00+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane,
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:40:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": lane,
+                        "trade_id": "471883",
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-11T00:50:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "",
+                        "trade_id": "471883",
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 16.6134,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:40:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": lane,
+                        "trade_id": "472667",
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T00:50:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "",
+                        "trade_id": "472667",
+                        "pair": "AUD_CAD",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 81.8009,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                ],
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], lane)
+        self.assertTrue(top["entry_recovery_candidate"])
+        self.assertEqual(top["entry_recovery_history"]["profit_source"], "exact_lane")
+        self.assertEqual(top["entry_recovery_history"]["closed_trades"], 2)
+        self.assertEqual(top["entry_recovery_history"]["closed_pl_jpy"], 98.4143)
+        self.assertIn("ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH", top["blockers"])
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", top["blockers"])
+        self.assertNotIn("ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING", top["blockers"])
+        self.assertNotIn("Map historical pair/side recovery profit", top["next_action"])
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_exact_entry_recovery_ranks_ahead_of_pair_side_fallback_profit(self) -> None:
