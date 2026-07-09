@@ -222,6 +222,48 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         self.assertFalse(status["normal_routing_allowed"])
         self.assertEqual(status["status"], "OPERATOR_REVIEW_STALE")
 
+    def test_legacy_cleared_review_without_row_clearance_status_is_durable_after_current_p0_clears(self) -> None:
+        now = datetime(2026, 7, 9, tzinfo=timezone.utc)
+        watchdog = {
+            "status": "OK",
+            "issue_status": "OK",
+            "guardian_receipt": {"issues": []},
+        }
+        review = {
+            "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+            "normal_routing_allowed": False,
+            "unresolved_review_count": 0,
+            "classifications": [
+                {
+                    "receipt_event_id": "receipt-reduce",
+                    "receipt_action": "REDUCE",
+                    "receipt_lifecycle": "EXPIRED",
+                    "original_issue_code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+                    "operator_decision": OPERATOR_ACKNOWLEDGED_HISTORICAL,
+                    "reason": "operator verified the receipt is historical and no active emergency remains",
+                    "generated_at_utc": (now - timedelta(days=7)).isoformat(),
+                    "expires_at_utc": (now - timedelta(days=6)).isoformat(),
+                    "normal_routing_allowed": True,
+                    "no_live_side_effects": True,
+                }
+            ],
+        }
+
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={"classifications": [_consumption_row(classification="NEEDS_OPERATOR_REVIEW")]},
+            operator_review=review,
+            broker_snapshot={"positions": [], "orders": []},
+            now_utc=now,
+        )
+
+        self.assertEqual(consumption["status"], "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED")
+        self.assertTrue(consumption["normal_routing_allowed"])
+        row = consumption["classifications"][0]
+        self.assertEqual(row["classification"], "HISTORICAL_ONLY")
+        self.assertEqual(row["operator_review_status"], "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT")
+        self.assertTrue(row["normal_routing_allowed"])
+
     def test_previously_cleared_historical_review_is_durable_after_review_expiry(self) -> None:
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)
         issue = _issue()

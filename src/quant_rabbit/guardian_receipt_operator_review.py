@@ -360,7 +360,10 @@ def operator_review_durable_clearance_status(
     if expires_at <= generated_at:
         return _blocked("OPERATOR_REVIEW_NOT_DURABLY_CLEARED", "operator review row expiry is not after generation")
     clearance_status = str(row.get("clearance_status") or "").upper()
-    if row.get("normal_routing_allowed") is not True or clearance_status != OPERATOR_REVIEW_CLEARS_RECEIPT:
+    previously_cleared = clearance_status == OPERATOR_REVIEW_CLEARS_RECEIPT or _legacy_review_payload_previously_cleared(
+        review_payload
+    )
+    if row.get("normal_routing_allowed") is not True or not previously_cleared:
         return _blocked(
             "OPERATOR_REVIEW_NOT_DURABLY_CLEARED",
             "operator review row was not previously generated as a cleared receipt",
@@ -377,6 +380,21 @@ def operator_review_durable_clearance_status(
             "current broker truth still clears the reviewed event"
         ),
     }
+
+
+def _legacy_review_payload_previously_cleared(review_payload: dict[str, Any] | None) -> bool:
+    if not isinstance(review_payload, dict):
+        return False
+    status = str(review_payload.get("status") or "").upper()
+    if status not in {
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED",
+        "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+    }:
+        return False
+    unresolved = review_payload.get("unresolved_review_count")
+    if unresolved not in {None, 0}:
+        return False
+    return True
 
 
 def operator_review_subjects_from_artifacts(
