@@ -2537,6 +2537,24 @@ def _active_path_summary(
         if not lane_id:
             continue
         blockers = [str(code) for code in lane.get("blockers") or [] if str(code).strip()]
+        frontier_source = "non_eurusd_live_grade_frontier" in source
+        if frontier_source:
+            next_action = _frontier_active_path_next_action(
+                active_trader_contract=active_trader_contract,
+                lane=lane,
+                contract_frontier=contract_frontier,
+                non_eurusd_live_grade_frontier=non_eurusd_live_grade_frontier,
+            )
+            target_shape = _lane_target_shape(lane) or active_trader_contract.get("target_shape")
+        else:
+            next_action = (
+                active_trader_contract.get("next_trade_enabling_action")
+                or active_trader_contract.get("next_prompt")
+                or lane.get("next_action")
+                or active_opportunity_board.get("next_active_path")
+                or non_eurusd_live_grade_frontier.get("next_active_path")
+            )
+            target_shape = active_trader_contract.get("target_shape") or _lane_target_shape(lane)
         summary = {
             "status": lane.get("status") or active_trader_contract.get("status"),
             "lane_id": lane_id,
@@ -2549,12 +2567,8 @@ def _active_path_summary(
             "spread_status": lane.get("spread_status"),
             "forecast_status": lane.get("forecast_status"),
             "loss_budget_status": lane.get("loss_budget_status"),
-            "next_action": active_trader_contract.get("next_trade_enabling_action")
-            or active_trader_contract.get("next_prompt")
-            or lane.get("next_action")
-            or active_opportunity_board.get("next_active_path")
-            or non_eurusd_live_grade_frontier.get("next_active_path"),
-            "target_shape": active_trader_contract.get("target_shape"),
+            "next_action": next_action,
+            "target_shape": target_shape,
             "contract_status": active_trader_contract.get("status"),
             "board_status": active_opportunity_board.get("status") or contract_board.get("status"),
             "frontier_status": non_eurusd_live_grade_frontier.get("status") or contract_frontier.get("status"),
@@ -2626,13 +2640,47 @@ def _contract_promotes_non_eurusd_frontier_lane(
     ).lower()
     if lane_id.lower() not in text:
         return False
+    lane_ref = lane_id.lower()
     promotion_markers = (
         "advance non_eurusd_live_grade_frontier",
         "current next action: frontier lane",
-        "consume range_rail_geometry_repair artifact",
-        "consume data/range_rail_geometry_repair.json",
+        f"consume range_rail_geometry_repair artifact for {lane_ref}",
+        f"consume data/range_rail_geometry_repair.json for {lane_ref}",
     )
-    return any(marker in text for marker in promotion_markers)
+    if any(marker in text for marker in promotion_markers):
+        return True
+    return f"frontier lane {lane_ref}" in text and "current next action" in text
+
+
+def _lane_target_shape(lane: dict[str, Any]) -> str | None:
+    pair = str(lane.get("pair") or "").strip().upper()
+    side = str(lane.get("direction") or lane.get("side") or "").strip().upper()
+    method = str(lane.get("strategy_family") or lane.get("method") or "").strip().upper()
+    vehicle = str(lane.get("vehicle") or lane.get("order_type") or "").strip().upper()
+    parts = [part for part in (pair, side, method, vehicle) if part]
+    return "|".join(parts) if len(parts) >= 4 else None
+
+
+def _frontier_active_path_next_action(
+    *,
+    active_trader_contract: dict[str, Any],
+    lane: dict[str, Any],
+    contract_frontier: dict[str, Any],
+    non_eurusd_live_grade_frontier: dict[str, Any],
+) -> str | None:
+    lane_id = str(lane.get("lane_id") or "").strip()
+    contract_action = (
+        active_trader_contract.get("next_trade_enabling_action")
+        or active_trader_contract.get("next_prompt")
+    )
+    if lane_id and _contract_promotes_non_eurusd_frontier_lane(active_trader_contract, lane):
+        return contract_action or lane.get("next_action")
+    return (
+        lane.get("next_action")
+        or contract_frontier.get("next_active_path")
+        or non_eurusd_live_grade_frontier.get("next_active_path")
+        or contract_action
+    )
 
 
 def _active_path_parallel_frontier_evidence_lane(
