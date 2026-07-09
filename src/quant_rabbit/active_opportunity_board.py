@@ -1422,7 +1422,9 @@ def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, 
         pair = str(parsed.get("pair") or row["pair"] or "UNKNOWN").upper()
         direction = str(parsed.get("direction") or row["side"] or "UNKNOWN").upper()
         method = str(parsed.get("strategy_family") or "UNKNOWN").upper()
-        vehicle = _normalize_vehicle(parsed.get("vehicle") or row["entry_reason"] or "UNKNOWN")
+        parsed_vehicle = _normalize_vehicle(parsed.get("vehicle"))
+        entry_vehicle = _normalize_vehicle(row["entry_reason"])
+        vehicle = parsed_vehicle if parsed_vehicle != "UNKNOWN" else entry_vehicle
         if "UNKNOWN" in {pair, direction, method, vehicle}:
             continue
         trades = int(row["trades"] or 0)
@@ -2143,9 +2145,19 @@ def _computed_proof_status(lane: dict[str, Any]) -> str:
     status = str(lane.get("proof_status") or "UNKNOWN")
     if lane.get("can_enter_proof_pack") and status == "UNKNOWN":
         status = "EVIDENCE_GAP"
+    proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+    has_exact_vehicle_proof = False
+    if str(proof.get("capture_take_profit_scope") or "") == "PAIR_SIDE_METHOD_VEHICLE":
+        trades = _first_int(proof.get("capture_take_profit_trades"), None)
+        floor = _first_int(proof.get("capture_take_profit_proof_floor"), TP_PROOF_COLLECTION_MIN_TRADES)
+        if trades is not None and floor is not None:
+            has_exact_vehicle_proof = True
+            exact_gap = max(0, floor - trades)
+            status = f"{status};exact_tp_proof={trades}/{floor};exact_proof_gap={exact_gap}"
     proof_gap = lane.get("proof_gap_trades")
     if proof_gap is not None:
-        status = f"{status};proof_gap={proof_gap}"
+        label = "broad_proof_gap" if has_exact_vehicle_proof else "proof_gap"
+        status = f"{status};{label}={proof_gap}"
     return status
 
 
