@@ -275,12 +275,24 @@ def _tp_proven_harvest_exception_evidence(payload: dict[str, Any]) -> bool:
         return False
     if payload.get("positive_rotation_live_ready") is not True:
         return False
-    if str(payload.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+    scope = str(payload.get("capture_take_profit_scope") or "").upper()
+    if scope == "PAIR_SIDE_METHOD":
+        expected_scope = (
+            f"{MARKET_CLOSE_LEAK_FAMILY_PAIR}|{MARKET_CLOSE_LEAK_FAMILY_SIDE}|"
+            f"{MARKET_CLOSE_LEAK_FAMILY_METHOD}|TAKE_PROFIT_ORDER"
+        )
+    elif scope == "PAIR_SIDE_METHOD_VEHICLE":
+        vehicle = str(payload.get("capture_take_profit_vehicle") or "").upper()
+        if not vehicle:
+            vehicle = _vehicle_from_payload_order_type(payload)
+        if not vehicle:
+            return False
+        expected_scope = (
+            f"{MARKET_CLOSE_LEAK_FAMILY_PAIR}|{MARKET_CLOSE_LEAK_FAMILY_SIDE}|"
+            f"{MARKET_CLOSE_LEAK_FAMILY_METHOD}|{vehicle}|TAKE_PROFIT_ORDER"
+        )
+    else:
         return False
-    expected_scope = (
-        f"{MARKET_CLOSE_LEAK_FAMILY_PAIR}|{MARKET_CLOSE_LEAK_FAMILY_SIDE}|"
-        f"{MARKET_CLOSE_LEAK_FAMILY_METHOD}|TAKE_PROFIT_ORDER"
-    )
     if str(payload.get("capture_take_profit_scope_key") or "").upper() != expected_scope:
         return False
     tp_trades = _to_float(payload.get("capture_take_profit_trades"))
@@ -308,6 +320,17 @@ def _market_close_use_requested(payload: dict[str, Any]) -> bool:
         if _normal(payload.get(key)) == "MARKET_ORDER_TRADE_CLOSE":
             return True
     return False
+
+
+def _vehicle_from_payload_order_type(payload: dict[str, Any]) -> str | None:
+    order_type = str(payload.get("order_type") or "").strip().upper()
+    if order_type == "LIMIT":
+        return "LIMIT"
+    if order_type == "MARKET":
+        return "MARKET"
+    if order_type in {"STOP", "STOP_ENTRY", "STOP-ENTRY"}:
+        return "STOP"
+    return None
 
 
 def _to_float(value: Any) -> float | None:

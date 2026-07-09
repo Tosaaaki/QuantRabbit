@@ -5249,6 +5249,11 @@ class IntentGenerator:
             else None
         )
         loss_asymmetry_guard = _capture_loss_asymmetry_guard(self.data_root) if snapshot is not None else {}
+        exact_vehicle_tp_metrics = (
+            _exact_vehicle_take_profit_metrics(self.data_root / "execution_ledger.db")
+            if snapshot is not None
+            else None
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -5275,6 +5280,7 @@ class IntentGenerator:
                         self_improvement_pending_issue=self_improvement_pending_issue,
                         self_improvement_guardian_issue=self_improvement_guardian_issue,
                         loss_asymmetry_guard=loss_asymmetry_guard,
+                        exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -5313,6 +5319,7 @@ class IntentGenerator:
         self_improvement_pending_issue: dict[str, str] | None = None,
         self_improvement_guardian_issue: dict[str, str] | None = None,
         loss_asymmetry_guard: dict[str, Any] | None = None,
+        exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -5394,6 +5401,7 @@ class IntentGenerator:
             market_context_matrix=market_context_matrix,
             data_root=data_root,
             loss_asymmetry_guard=loss_asymmetry_guard,
+            exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
         )
         risk_policy = RiskPolicy(
             block_new_entries_with_pending_entry_orders=False,
@@ -6132,6 +6140,29 @@ def _variant_lane_id(
     return parent_lane_id
 
 
+def _vehicle_for_order_type(order_type: OrderType | None) -> str:
+    if order_type == OrderType.LIMIT:
+        return "LIMIT"
+    if order_type == OrderType.MARKET:
+        return "MARKET"
+    if order_type == OrderType.STOP_ENTRY:
+        return "STOP"
+    return "UNKNOWN"
+
+
+def _normalize_vehicle(value: Any) -> str:
+    text = str(value or "UNKNOWN").upper()
+    if text in {"STOP-ENTRY", "STOP_ENTRY", "STOP_ORDER"}:
+        return "STOP"
+    if text == "LIMIT_ORDER":
+        return "LIMIT"
+    if text == "MARKET_ORDER":
+        return "MARKET"
+    if text in {"LIMIT", "MARKET", "STOP", "UNKNOWN"}:
+        return text
+    return text
+
+
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
     if lane.get("bidask_replay_precision_limit_only"):
@@ -6289,6 +6320,7 @@ def _loss_asymmetry_sizing_plan(
     position_metadata: dict[str, Any],
     order_type: OrderType,
     tp_execution_metadata: dict[str, Any],
+    exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Cap fresh-entry risk unless this exact exit shape has proved payoff.
 
@@ -6329,13 +6361,28 @@ def _loss_asymmetry_sizing_plan(
     cap = _optional_float(guard.get("loss_cap_jpy"))
     if cap is None or cap <= 0:
         return base_max_loss_jpy, {}
-    scope_metrics, scope_name, scope_key = _capture_scoped_exit_metrics(
+    broad_metrics, broad_scope_name, broad_scope_key = _capture_scoped_exit_metrics(
         guard,
         pair=pair,
         side=side.value,
         method=method.value,
         exit_reason="TAKE_PROFIT_ORDER",
     )
+    vehicle = _vehicle_for_order_type(order_type)
+    exact_vehicle_required = (
+        exact_vehicle_tp_metrics is not None and vehicle not in {"", "UNKNOWN"}
+    )
+    if exact_vehicle_required:
+        scope_metrics = exact_vehicle_tp_metrics.get(
+            (pair.upper(), side.value.upper(), method.value.upper(), vehicle),
+            {},
+        )
+        scope_name = "PAIR_SIDE_METHOD_VEHICLE"
+        scope_key = f"{pair}|{side.value}|{method.value}|{vehicle}|TAKE_PROFIT_ORDER"
+    else:
+        scope_metrics = broad_metrics
+        scope_name = broad_scope_name
+        scope_key = broad_scope_key
     relaxation = _loss_asymmetry_tp_relaxation(
         scope_metrics=scope_metrics,
         scope_name=scope_name,
@@ -6346,6 +6393,7 @@ def _loss_asymmetry_sizing_plan(
     relaxation_reason = relaxation.get("reason") if relaxation else None
     effective = base_max_loss_jpy if relaxation else min(base_max_loss_jpy, cap)
     scoped_tp = relaxation or scope_metrics
+    zero_exact_tp = exact_vehicle_required and not scoped_tp
     metadata = {
         "loss_asymmetry_guard_active": True,
         "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED" if relaxation else "CAP_AVG_WIN",
@@ -6369,15 +6417,41 @@ def _loss_asymmetry_sizing_plan(
         "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
         "capture_take_profit_scope": scope_name,
         "capture_take_profit_scope_key": scope_key,
-        "capture_take_profit_trades": scoped_tp.get("trades"),
-        "capture_take_profit_wins": scoped_tp.get("wins"),
-        "capture_take_profit_expectancy_jpy": scoped_tp.get("expectancy_jpy_per_trade"),
-        "capture_take_profit_avg_win_jpy": scoped_tp.get("avg_win_jpy"),
-        "capture_take_profit_avg_loss_jpy": scoped_tp.get("avg_loss_jpy"),
-        "capture_take_profit_losses": scoped_tp.get("losses"),
+        "capture_take_profit_trades": 0 if zero_exact_tp else scoped_tp.get("trades"),
+        "capture_take_profit_wins": 0 if zero_exact_tp else scoped_tp.get("wins"),
+        "capture_take_profit_expectancy_jpy": (
+            0.0 if zero_exact_tp else scoped_tp.get("expectancy_jpy_per_trade")
+        ),
+        "capture_take_profit_avg_win_jpy": 0.0 if zero_exact_tp else scoped_tp.get("avg_win_jpy"),
+        "capture_take_profit_avg_loss_jpy": 0.0 if zero_exact_tp else scoped_tp.get("avg_loss_jpy"),
+        "capture_take_profit_losses": 0 if zero_exact_tp else scoped_tp.get("losses"),
         "capture_market_close_expectancy_jpy": guard.get("market_close_expectancy_jpy"),
         "capture_economics_source": guard.get("source"),
     }
+    if exact_vehicle_required:
+        metadata["capture_take_profit_exact_vehicle_required"] = True
+        metadata["capture_take_profit_vehicle"] = vehicle
+        metadata["capture_take_profit_metrics_source"] = (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        )
+        metadata["broad_capture_take_profit_scope"] = broad_scope_name
+        metadata["broad_capture_take_profit_scope_key"] = broad_scope_key
+        metadata["broad_capture_take_profit_trades"] = broad_metrics.get("trades")
+        metadata["broad_capture_take_profit_wins"] = broad_metrics.get("wins")
+        metadata["broad_capture_take_profit_expectancy_jpy"] = (
+            broad_metrics.get("expectancy_jpy_per_trade")
+        )
+        metadata["broad_capture_take_profit_avg_win_jpy"] = broad_metrics.get("avg_win_jpy")
+        metadata["broad_capture_take_profit_avg_loss_jpy"] = broad_metrics.get("avg_loss_jpy")
+        metadata["broad_capture_take_profit_losses"] = broad_metrics.get("losses")
+        broad_trades = int(_optional_float(broad_metrics.get("trades")) or 0)
+        exact_trades = int(_optional_float(scope_metrics.get("trades")) or 0)
+        if broad_trades > exact_trades:
+            metadata["broad_capture_take_profit_not_used_as_exact_vehicle_proof"] = True
+        if zero_exact_tp:
+            metadata["capture_take_profit_zero_trade"] = True
+    else:
+        metadata["capture_take_profit_metrics_source"] = "data/capture_economics.json"
     return effective, metadata
 
 
@@ -6722,7 +6796,7 @@ def _loss_asymmetry_tp_relaxation(
         return None
     if str(tp_execution_metadata.get("tp_target_intent") or "").upper() != "HARVEST":
         return None
-    if scope_name not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
+    if scope_name not in {"PAIR_SIDE_METHOD_VEHICLE", "PAIR_SIDE_METHOD", "PAIR_SIDE"}:
         return None
     tp_trades = int(_optional_float(scope_metrics.get("trades")) or 0)
     tp_expectancy = _optional_float(scope_metrics.get("expectancy_jpy_per_trade"))
@@ -6767,6 +6841,161 @@ def _capture_scoped_exit_metrics(
     return {}, "MISSING_SCOPED", f"{pair}|{side}|{method}|{exit_reason}"
 
 
+def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
+    if not path.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            columns = {
+                str(row["name"])
+                for row in con.execute("PRAGMA table_info(execution_events)").fetchall()
+                if "name" in row.keys()
+            }
+            required = {
+                "ts_utc",
+                "event_type",
+                "trade_id",
+                "lane_id",
+                "pair",
+                "side",
+                "realized_pl_jpy",
+                "exit_reason",
+            }
+            if not required.issubset(columns):
+                return None
+            rows = con.execute(
+                """
+                WITH fills AS (
+                    SELECT
+                        trade_id,
+                        MAX(NULLIF(lane_id, '')) AS lane_id,
+                        MAX(NULLIF(pair, '')) AS pair,
+                        MAX(NULLIF(side, '')) AS side,
+                        MAX(NULLIF(exit_reason, '')) AS entry_reason
+                    FROM execution_events
+                    WHERE event_type = 'ORDER_FILLED'
+                      AND COALESCE(trade_id, '') != ''
+                    GROUP BY trade_id
+                ),
+                closes AS (
+                    SELECT
+                        e.trade_id AS trade_id,
+                        MAX(NULLIF(e.lane_id, '')) AS close_lane_id,
+                        MAX(NULLIF(e.pair, '')) AS pair,
+                        MAX(NULLIF(e.side, '')) AS side,
+                        SUM(e.realized_pl_jpy) AS realized_pl_jpy,
+                        (
+                            SELECT e2.exit_reason
+                            FROM execution_events e2
+                            WHERE e2.trade_id = e.trade_id
+                              AND e2.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                              AND e2.realized_pl_jpy IS NOT NULL
+                            ORDER BY e2.ts_utc DESC
+                            LIMIT 1
+                        ) AS final_exit_reason
+                    FROM execution_events e
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND e.realized_pl_jpy IS NOT NULL
+                      AND COALESCE(e.trade_id, '') != ''
+                    GROUP BY e.trade_id
+                )
+                SELECT
+                    COALESCE(f.lane_id, c.close_lane_id, '') AS entry_lane_id,
+                    COALESCE(f.entry_reason, '') AS entry_reason,
+                    COALESCE(f.pair, c.pair, '') AS pair,
+                    COALESCE(f.side, c.side, '') AS side,
+                    COUNT(*) AS trades,
+                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN 1 ELSE 0 END) AS losses,
+                    SUM(c.realized_pl_jpy) AS net_jpy,
+                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN c.realized_pl_jpy ELSE 0 END) AS win_jpy,
+                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN c.realized_pl_jpy ELSE 0 END) AS loss_jpy
+                FROM closes c
+                LEFT JOIN fills f ON f.trade_id = c.trade_id
+                WHERE c.final_exit_reason = 'TAKE_PROFIT_ORDER'
+                  AND COALESCE(f.lane_id, c.close_lane_id, '') != ''
+                GROUP BY 1, 2, 3, 4
+                """
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+
+    accum: dict[tuple[str, str, str, str], dict[str, float]] = {}
+    for row in rows:
+        parsed = _parse_lane_id_parts(str(row["entry_lane_id"] or ""))
+        pair = str(parsed.get("pair") or row["pair"] or "UNKNOWN").upper()
+        direction = str(parsed.get("direction") or row["side"] or "UNKNOWN").upper()
+        method = str(parsed.get("strategy_family") or "UNKNOWN").upper()
+        vehicle = _normalize_vehicle(parsed.get("vehicle") or row["entry_reason"] or "UNKNOWN")
+        if "UNKNOWN" in {pair, direction, method, vehicle}:
+            continue
+        trades = int(row["trades"] or 0)
+        wins = int(row["wins"] or 0)
+        losses = int(row["losses"] or 0)
+        net_jpy = float(row["net_jpy"] or 0.0)
+        win_jpy = float(row["win_jpy"] or 0.0)
+        loss_jpy = float(row["loss_jpy"] or 0.0)
+        key = (pair, direction, method, vehicle)
+        slot = accum.setdefault(
+            key,
+            {
+                "trades": 0.0,
+                "wins": 0.0,
+                "losses": 0.0,
+                "net_jpy": 0.0,
+                "win_jpy": 0.0,
+                "loss_jpy": 0.0,
+            },
+        )
+        slot["trades"] += trades
+        slot["wins"] += wins
+        slot["losses"] += losses
+        slot["net_jpy"] += net_jpy
+        slot["win_jpy"] += win_jpy
+        slot["loss_jpy"] += loss_jpy
+
+    metrics: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for key, slot in accum.items():
+        trades = int(slot["trades"])
+        wins = int(slot["wins"])
+        losses = int(slot["losses"])
+        net_jpy = float(slot["net_jpy"])
+        win_jpy = float(slot["win_jpy"])
+        loss_jpy = float(slot["loss_jpy"])
+        metrics[key] = {
+            "trades": trades,
+            "wins": wins,
+            "losses": losses,
+            "expectancy_jpy_per_trade": round(net_jpy / trades, 4) if trades else 0.0,
+            "avg_win_jpy": round(win_jpy / wins, 4) if wins else 0.0,
+            "avg_loss_jpy": round(abs(loss_jpy) / losses, 4) if losses else 0.0,
+            "net_jpy": round(net_jpy, 4),
+            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        }
+    return metrics
+
+
+def _parse_lane_id_parts(lane_id: str) -> dict[str, str]:
+    parts = [part for part in str(lane_id or "").split(":") if part]
+    out: dict[str, str] = {}
+    if len(parts) >= 4:
+        out.update(
+            {
+                "desk": parts[0],
+                "pair": parts[1],
+                "direction": parts[2],
+                "strategy_family": parts[3],
+            }
+        )
+    if len(parts) >= 5:
+        out["vehicle"] = parts[4]
+    return out
+
+
 def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
     cursor: object = root
     for key in keys:
@@ -6805,7 +7034,12 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
         return False
     if metadata.get("loss_asymmetry_guard_relaxed") is not True:
         return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
+    scope = str(metadata.get("capture_take_profit_scope") or "").upper()
+    exact_vehicle_required = metadata.get("capture_take_profit_exact_vehicle_required") is True
+    if exact_vehicle_required:
+        if scope != "PAIR_SIDE_METHOD_VEHICLE" or not exact_tp_scope:
+            return False
+    elif scope not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
         return False
     tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
     if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
@@ -6923,6 +7157,7 @@ def _capture_take_profit_scope_matches_intent(
         pair=intent.pair,
         side=intent.side,
         method=method,
+        order_type=intent.order_type,
         metadata=metadata,
     )
 
@@ -6932,16 +7167,24 @@ def _capture_take_profit_scope_matches_values(
     pair: str,
     side: Side,
     method: TradeMethod | None,
+    order_type: OrderType | None = None,
     metadata: dict[str, Any],
 ) -> bool:
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
-        return False
+    scope = str(metadata.get("capture_take_profit_scope") or "").upper()
     method_value = str(getattr(method, "value", method) or "").upper()
     if not method_value:
         return False
-    expected_key = (
-        f"{pair}|{side.value}|{method_value}|TAKE_PROFIT_ORDER"
-    ).upper()
+    if scope == "PAIR_SIDE_METHOD":
+        expected_key = f"{pair}|{side.value}|{method_value}|TAKE_PROFIT_ORDER".upper()
+    elif scope == "PAIR_SIDE_METHOD_VEHICLE":
+        vehicle = _vehicle_for_order_type(order_type)
+        if vehicle == "UNKNOWN":
+            return False
+        expected_key = (
+            f"{pair}|{side.value}|{method_value}|{vehicle}|TAKE_PROFIT_ORDER"
+        ).upper()
+    else:
+        return False
     scope_key = str(metadata.get("capture_take_profit_scope_key") or "").upper()
     return scope_key == expected_key
 
@@ -6968,6 +7211,7 @@ def _tp_proof_collection_evidence(
         pair=pair,
         side=side,
         method=method,
+        order_type=order_type,
         metadata=metadata,
     )
     if direction_bias_conflict and not exact_tp_scope:
@@ -6985,7 +7229,9 @@ def _tp_proof_collection_evidence(
         return None
     if metadata.get("loss_asymmetry_guard_relaxed") is True:
         return None
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+    exact_vehicle_required = metadata.get("capture_take_profit_exact_vehicle_required") is True
+    required_scope = "PAIR_SIDE_METHOD_VEHICLE" if exact_vehicle_required else "PAIR_SIDE_METHOD"
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != required_scope:
         return None
     if not exact_tp_scope:
         return None
@@ -8562,6 +8808,7 @@ def _intent_from_lane(
     market_context_matrix: dict[str, Any] | None = None,
     data_root: Path | None = None,
     loss_asymmetry_guard: dict[str, Any] | None = None,
+    exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -8900,6 +9147,7 @@ def _intent_from_lane(
         position_metadata=position_metadata,
         order_type=order_type,
         tp_execution_metadata=tp_execution_metadata,
+        exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
     )
     proof_collection_loss_cap, proof_collection_metadata = _loss_asymmetry_tp_proof_collection_min_lot_plan(
         metadata={**loss_asymmetry_metadata, **tp_execution_metadata},
@@ -11281,6 +11529,7 @@ def _range_forecast_tp_proven_breakout_failure_allowed(
         pair=intent.pair,
         side=intent.side,
         method=method,
+        order_type=intent.order_type,
         metadata=metadata,
     ):
         return False

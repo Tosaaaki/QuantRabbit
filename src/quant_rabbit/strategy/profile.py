@@ -499,7 +499,10 @@ def _tp_proof_collection_new_vehicle_supported(intent: OrderIntent, metadata: di
         return False
     if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
         return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {
+        "PAIR_SIDE_METHOD_VEHICLE",
+        "PAIR_SIDE_METHOD",
+    }:
         return False
     if (_optional_int(metadata.get("capture_take_profit_trades")) or 0) < (
         LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES

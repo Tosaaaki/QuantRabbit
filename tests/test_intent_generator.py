@@ -9834,6 +9834,98 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertEqual(result["live_blockers"], [])
 
+    def test_limit_live_ready_requires_limit_vehicle_tp_proof_when_ledger_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-01T02:30:00+00:00",
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(
+                            method="BREAKOUT_FAILURE",
+                            trades=20,
+                            wins=20,
+                            losses=0,
+                            avg_win_jpy=591.5,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=591.5,
+                        ),
+                    }
+                )
+            )
+            _write_exact_vehicle_take_profit_closes(
+                root,
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:STOP",
+                pair="EUR_USD",
+                side="LONG",
+                entry_reason="STOP_ORDER",
+                count=20,
+                realized_pl_jpy=591.5,
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.70,
+                    short_score=0.30,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertEqual(metadata["capture_take_profit_scope"], "PAIR_SIDE_METHOD_VEHICLE")
+            self.assertEqual(
+                metadata["capture_take_profit_scope_key"],
+                "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER",
+            )
+            self.assertEqual(metadata["capture_take_profit_trades"], 0)
+            self.assertEqual(metadata["broad_capture_take_profit_trades"], 20)
+            self.assertTrue(metadata["broad_capture_take_profit_not_used_as_exact_vehicle_proof"])
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
     def test_month_scale_residual_group_blocks_matching_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -12728,6 +12820,83 @@ def _write_broker_take_profit_close(
                 json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
             ),
         )
+
+
+def _write_exact_vehicle_take_profit_closes(
+    data_root: Path,
+    *,
+    lane_id: str,
+    pair: str,
+    side: str,
+    entry_reason: str,
+    count: int,
+    realized_pl_jpy: float,
+    start_day: str = "2026-07-01",
+) -> None:
+    db = data_root / "execution_ledger.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_events (
+              ts_utc TEXT,
+              event_type TEXT,
+              lane_id TEXT,
+              pair TEXT,
+              side TEXT,
+              units INTEGER,
+              order_id TEXT,
+              trade_id TEXT,
+              exit_reason TEXT,
+              realized_pl_jpy REAL,
+              raw_json TEXT
+            )
+            """
+        )
+        for index in range(count):
+            trade_id = f"exact-vehicle-{index}"
+            conn.execute(
+                """
+                INSERT INTO execution_events (
+                  ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                  exit_reason, realized_pl_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"{start_day}T00:{index % 60:02d}:00+00:00",
+                    "ORDER_FILLED",
+                    lane_id,
+                    pair,
+                    side,
+                    1000,
+                    f"entry-{index}",
+                    trade_id,
+                    entry_reason,
+                    None,
+                    json.dumps({"client_order_id": f"qrv1-exact-{index}"}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO execution_events (
+                  ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                  exit_reason, realized_pl_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"{start_day}T01:{index % 60:02d}:00+00:00",
+                    "TRADE_CLOSED",
+                    "",
+                    pair,
+                    side,
+                    1000,
+                    f"tp-{index}",
+                    trade_id,
+                    "TAKE_PROFIT_ORDER",
+                    realized_pl_jpy,
+                    json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
+                ),
+            )
+        conn.commit()
 
 
 def _write_same_day_lane_outcomes(

@@ -337,9 +337,16 @@ def tp_harvest_forecast_adverse_path_repair_shape(
         return False
     if meta.get("positive_rotation_live_ready") is not True:
         return False
-    if str(meta.get("capture_take_profit_scope") or "").strip().upper() != "PAIR_SIDE_METHOD":
+    scope = str(meta.get("capture_take_profit_scope") or "").strip().upper()
+    if scope == "PAIR_SIDE_METHOD":
+        expected_scope = f"{pair}|{side}|{method}|TAKE_PROFIT_ORDER".upper()
+    elif scope == "PAIR_SIDE_METHOD_VEHICLE":
+        vehicle = _vehicle_from_intent_order_type(intent_payload)
+        if not vehicle:
+            return False
+        expected_scope = f"{pair}|{side}|{method}|{vehicle}|TAKE_PROFIT_ORDER".upper()
+    else:
         return False
-    expected_scope = f"{pair}|{side}|{method}|TAKE_PROFIT_ORDER".upper()
     if str(meta.get("capture_take_profit_scope_key") or "").strip().upper() != expected_scope:
         return False
     tp_trades = _optional_int(meta.get("capture_take_profit_trades")) or 0
@@ -486,6 +493,17 @@ def _intent_or_lane_method(intent_or_lane: dict[str, Any]) -> str:
     if isinstance(context, dict):
         return str(context.get("method") or "").strip().upper()
     return ""
+
+
+def _vehicle_from_intent_order_type(intent_or_lane: dict[str, Any]) -> str | None:
+    order_type = str(_intent_payload(intent_or_lane).get("order_type") or "").strip().upper()
+    if order_type == "LIMIT":
+        return "LIMIT"
+    if order_type == "MARKET":
+        return "MARKET"
+    if order_type in {"STOP", "STOP_ENTRY", "STOP-ENTRY"}:
+        return "STOP"
+    return None
 
 
 def _optional_int(value: Any) -> int | None:

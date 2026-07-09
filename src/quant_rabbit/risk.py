@@ -847,6 +847,16 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
     ]
 
 
+def _tp_harvest_vehicle_for_order_type(order_type: OrderType) -> str | None:
+    if order_type == OrderType.LIMIT:
+        return "LIMIT"
+    if order_type == OrderType.MARKET:
+        return "MARKET"
+    if order_type == OrderType.STOP_ENTRY:
+        return "STOP"
+    return None
+
+
 def _loss_asymmetry_tp_relaxation_shape_allowed(
     intent: OrderIntent,
     metadata: dict,
@@ -861,7 +871,11 @@ def _loss_asymmetry_tp_relaxation_shape_allowed(
         return False
     if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
         return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
+    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {
+        "PAIR_SIDE_METHOD_VEHICLE",
+        "PAIR_SIDE_METHOD",
+        "PAIR_SIDE",
+    }:
         return False
     tp_trades = _to_float(metadata.get("capture_take_profit_trades"))
     tp_expectancy = _to_float(metadata.get("capture_take_profit_expectancy_jpy"))
@@ -894,7 +908,10 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
         return False
     if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
         return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {
+        "PAIR_SIDE_METHOD_VEHICLE",
+        "PAIR_SIDE_METHOD",
+    }:
         return False
     tp_trades = _to_int(metadata.get("capture_take_profit_trades"))
     tp_wins = _to_int(metadata.get("capture_take_profit_wins"))
@@ -2000,11 +2017,20 @@ def _range_forecast_tp_proven_breakout_failure_allowed(
         return False
     if metadata.get("positive_rotation_live_ready") is not True:
         return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+    scope = str(metadata.get("capture_take_profit_scope") or "").upper()
+    if scope == "PAIR_SIDE_METHOD":
+        expected_scope = (
+            f"{intent.pair}|{intent.side.value}|{method.value}|TAKE_PROFIT_ORDER"
+        ).upper()
+    elif scope == "PAIR_SIDE_METHOD_VEHICLE":
+        vehicle = _tp_harvest_vehicle_for_order_type(intent.order_type)
+        if vehicle is None:
+            return False
+        expected_scope = (
+            f"{intent.pair}|{intent.side.value}|{method.value}|{vehicle}|TAKE_PROFIT_ORDER"
+        ).upper()
+    else:
         return False
-    expected_scope = (
-        f"{intent.pair}|{intent.side.value}|{method.value}|TAKE_PROFIT_ORDER"
-    ).upper()
     if str(metadata.get("capture_take_profit_scope_key") or "").upper() != expected_scope:
         return False
     tp_trades = int(_to_float(metadata.get("capture_take_profit_trades")) or 0)
