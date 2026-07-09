@@ -757,7 +757,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   cleared by the board's current guardian artifacts must not remain in
 #   `remaining_blockers`. If the selected path comes from the board top lane,
 #   `next_prompt` must name that current lane shape rather than the legacy fixed
-#   EUR_USD target. The board/contract sync then reruns
+#   EUR_USD target. It also reads `data/guardian_events.json`: when a matching
+#   board-selected range-rail lane has a fired `CONTRACT_ADD_TRIGGER` /
+#   `range_rail_recheck`, consume that fired event and advance to fresh broker
+#   truth repricing / active-board refresh / exact TP-proof collection instead
+#   of repeating `WAIT_FOR_RANGE_RAIL_RECHECK`. This fired event is wake
+#   evidence only, not live permission. The board/contract sync then reruns
 #   trader-goal-loop-orchestrator so this terminal `next_prompt` becomes the
 #   visible next Codex work order in the same cycle.
 # - active-opportunity-board is read-only and runs after active-trader-contract.
@@ -846,7 +851,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   the range box, and emits WAIT_FOR_RANGE_RAIL_RECHECK,
 #   REPRICE_RANGE_ROTATION_COUNTERPART, or
 #   RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED while preserving spread,
-#   bid-ask, negative-expectancy, and range-location blockers. It never grants
+#   bid-ask, negative-expectancy, and range-location blockers. After
+#   guardian-event-router fires the watch-only `CONTRACT_ADD_TRIGGER`, the next
+#   active-trader-contract pass must treat the rail as reached and move to
+#   repricing/proof work rather than another wait-only prompt. It never grants
 #   live order, cancel/close, launchd, gate relaxation, lot-backsolve,
 #   market-close-loss-as-TP-proof, secret-disclosure, model API calls, or
 #   inferred approval.

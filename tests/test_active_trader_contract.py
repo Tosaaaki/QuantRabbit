@@ -1612,6 +1612,144 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_guardian_range_rail_trigger_advances_wait_recheck_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 3, 5, tzinfo=timezone.utc)
+        lane_id = "range_trader:EUR_JPY:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            board_top = {
+                "lane_id": lane_id,
+                "pair": "EUR_JPY",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "next_action": "Build exact TP-proven rotation proof; do not send.",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "FORECAST_WATCH_ONLY",
+                    "LOCAL_TP_PROOF_ZERO_TRADES",
+                ],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {"total_lanes": 93, "evidence_acquisition_count": 1},
+                    "top_lane": board_top,
+                    "ranked_active_lanes": [],
+                },
+            )
+            _write_json(
+                paths["range_rail"],
+                {
+                    "schema_version": "range_rail_geometry_repair_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "RANGE_RAIL_RECHECK_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": {
+                        **board_top,
+                        "range_box": {
+                            "rail_status": "RANGE_RAIL_NOT_REACHED",
+                            "box_position": 0.5707,
+                            "required_zone": "SHORT_PREMIUM_UPPER_RAIL",
+                        },
+                        "counterpart_geometry": {
+                            "status": "COUNTERPART_GEOMETRY_READY",
+                            "geometry_ready": True,
+                        },
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "WAIT_FOR_RANGE_RAIL_RECHECK",
+                            "description": "Wait for upper rail.",
+                            "preserve_blockers": ["RANGE_RAIL_NOT_REACHED"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/range_rail_geometry_repair.json for "
+                        f"{lane_id}: next safe action is WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                    ),
+                },
+            )
+            _write_json(
+                paths["guardian_events"],
+                {
+                    "schema_version": 1,
+                    "generated_at_utc": now.isoformat(),
+                    "events": [
+                        {
+                            "event_id": "evt-range-fired",
+                            "event_type": "CONTRACT_ADD_TRIGGER",
+                            "pair": "EUR_JPY",
+                            "direction": "SHORT",
+                            "thesis": "EUR_JPY short range rail rotation",
+                            "price_zone": "mid >= 185.6567 fired with actual=185.7125",
+                            "severity": "P1",
+                            "recommended_review_type": "ADD_REVIEW",
+                            "dedupe_key": "EUR_JPY|RANGE_RAIL|CONTRACT_ADD_TRIGGER|ADD",
+                            "action_hint": "ADD",
+                            "details": {
+                                "contract_trigger": {
+                                    "kind": "range_rail_recheck",
+                                    "lane_id": lane_id,
+                                    "pair": "EUR_JPY",
+                                    "side": "SHORT",
+                                    "action_hint": "ADD",
+                                    "live_permission_allowed": False,
+                                    "contract_triggers_do_not_execute": True,
+                                    "condition": {"metric": "mid", "operator": ">=", "value": 185.6567},
+                                    "preserve_blockers": [
+                                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "FORECAST_WATCH_ONLY",
+                                    ],
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                range_rail_geometry_repair_path=paths["range_rail"],
+                guardian_events_path=paths["guardian_events"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertIn("CONTRACT_ADD_TRIGGER fired", payload["next_prompt"])
+        self.assertIn("Do not repeat WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
+        self.assertIn("guardian_events artifact", payload["next_trade_enabling_action"])
+        self.assertIn("reprice the RANGE_ROTATION counterpart", payload["next_trade_enabling_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
         now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
         board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
@@ -1892,6 +2030,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "entry_recovery": root / "data" / "entry_frequency_recovery.json",
         "forecast_pattern": root / "data" / "forecast_pattern_refresh.json",
         "range_rail": root / "data" / "range_rail_geometry_repair.json",
+        "guardian_events": root / "data" / "guardian_events.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }

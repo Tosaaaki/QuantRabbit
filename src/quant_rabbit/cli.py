@@ -4132,6 +4132,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
     )
+    p_active_contract.add_argument("--guardian-events", type=Path, default=DEFAULT_GUARDIAN_EVENTS)
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
@@ -7098,6 +7099,7 @@ def main(argv: list[str] | None = None) -> int:
                 entry_frequency_recovery_path=args.entry_frequency_recovery,
                 forecast_pattern_refresh_path=args.forecast_pattern_refresh,
                 range_rail_geometry_repair_path=args.range_rail_geometry_repair,
+                guardian_events_path=args.guardian_events,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

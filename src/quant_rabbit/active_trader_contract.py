@@ -15,6 +15,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ENTRY_FREQUENCY_RECOVERY,
     DEFAULT_FORECAST_PATTERN_REFRESH,
+    DEFAULT_GUARDIAN_EVENTS,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
@@ -120,6 +121,7 @@ class ActiveTraderContract:
         entry_frequency_recovery_path: Path | None = None,
         forecast_pattern_refresh_path: Path | None = None,
         range_rail_geometry_repair_path: Path | None = None,
+        guardian_events_path: Path | None = None,
         output_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         report_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
         now_utc: datetime | None = None,
@@ -148,6 +150,8 @@ class ActiveTraderContract:
             self.paths["forecast_pattern_refresh"] = forecast_pattern_refresh_path
         if range_rail_geometry_repair_path is not None:
             self.paths["range_rail_geometry_repair"] = range_rail_geometry_repair_path
+        if guardian_events_path is not None:
+            self.paths["guardian_events"] = guardian_events_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -229,6 +233,16 @@ class ActiveTraderContract:
                 },
             )
         )
+        guardian_events = _guardian_events_contract_state(
+            artifacts.get(
+                "guardian_events",
+                {
+                    "_artifact_status": "missing",
+                    "_path": str(DEFAULT_GUARDIAN_EVENTS),
+                    "_sha256": None,
+                },
+            )
+        )
         scout = _normalize_stale_blocker_codes(scout, proof=proof, proof_floor=proof_floor, replay=replay)
         proof_floor = _normalize_stale_blocker_codes(
             proof_floor,
@@ -306,6 +320,7 @@ class ActiveTraderContract:
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             ),
             "root_improvement_target": _root_improvement_target(
                 replay,
@@ -313,6 +328,7 @@ class ActiveTraderContract:
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             ),
             "expected_edge_improvement": _expected_edge_improvement(
                 replay,
@@ -322,6 +338,7 @@ class ActiveTraderContract:
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             ),
             "no_action_allowed": bool(no_action["no_action_allowed"]),
             "no_action_contract": no_action,
@@ -335,6 +352,7 @@ class ActiveTraderContract:
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             ),
             "remaining_blockers": remaining_blockers,
             "current_state": {
@@ -353,6 +371,7 @@ class ActiveTraderContract:
                 "entry_frequency_recovery": entry_frequency_recovery,
                 "forecast_pattern_refresh": forecast_pattern_refresh,
                 "range_rail_geometry_repair": range_rail_geometry_repair,
+                "guardian_events": guardian_events,
             },
             "safety_contract": _safety_contract(),
             "next_prompt": _next_prompt(
@@ -363,6 +382,7 @@ class ActiveTraderContract:
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             ),
             "artifact_index": artifact_index,
         }
@@ -959,6 +979,59 @@ def _range_rail_geometry_repair_contract_state(artifact: dict[str, Any]) -> dict
     }
 
 
+def _guardian_events_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "generated_at_utc": None,
+            "range_rail_trigger_count": 0,
+            "range_rail_triggers": [],
+            "live_permission_allowed": False,
+        }
+    events = artifact.get("events") if isinstance(artifact.get("events"), list) else []
+    range_rail_triggers: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("event_type") or "").upper() != "CONTRACT_ADD_TRIGGER":
+            continue
+        details = event.get("details") if isinstance(event.get("details"), dict) else {}
+        trigger = details.get("contract_trigger") if isinstance(details.get("contract_trigger"), dict) else {}
+        if str(trigger.get("kind") or "").upper() != "RANGE_RAIL_RECHECK":
+            continue
+        condition = trigger.get("condition") if isinstance(trigger.get("condition"), dict) else {}
+        rail_condition = (
+            trigger.get("rail_success_condition")
+            if isinstance(trigger.get("rail_success_condition"), dict)
+            else {}
+        )
+        range_rail_triggers.append(
+            {
+                "event_id": event.get("event_id"),
+                "event_type": event.get("event_type"),
+                "lane_id": trigger.get("lane_id"),
+                "pair": event.get("pair") or trigger.get("pair"),
+                "direction": event.get("direction") or trigger.get("side") or rail_condition.get("direction"),
+                "action_hint": event.get("action_hint") or trigger.get("action_hint"),
+                "severity": event.get("severity"),
+                "dedupe_key": event.get("dedupe_key"),
+                "price_zone": event.get("price_zone"),
+                "condition": condition,
+                "rail_success_condition": rail_condition,
+                "preserve_blockers": _string_list(trigger.get("preserve_blockers")),
+                "live_permission_allowed": trigger.get("live_permission_allowed") is True,
+                "contract_triggers_do_not_execute": trigger.get("contract_triggers_do_not_execute") is True,
+            }
+        )
+    return {
+        "artifact_status": "present",
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "range_rail_trigger_count": len(range_rail_triggers),
+        "range_rail_triggers": range_rail_triggers[:12],
+        "live_permission_allowed": False,
+    }
+
+
 def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool = False) -> dict[str, Any]:
     if not lane:
         return {}
@@ -1543,6 +1616,7 @@ def _four_x_progress_hypothesis(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
@@ -1552,6 +1626,7 @@ def _four_x_progress_hypothesis(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     if active_shape and consumed_prompt:
         source, _prompt = consumed_prompt
@@ -1591,6 +1666,7 @@ def _root_improvement_target(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
@@ -1600,6 +1676,7 @@ def _root_improvement_target(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     if active_shape and consumed_prompt:
         return (
@@ -1628,6 +1705,7 @@ def _expected_edge_improvement(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
     board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
@@ -1637,6 +1715,7 @@ def _expected_edge_improvement(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     if active_shape and consumed_prompt:
         expected_edge = board_top.get("expected_edge_jpy")
@@ -1668,7 +1747,11 @@ def _consumed_lane_prompt(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> tuple[str, str] | None:
+    guardian_prompt = _guardian_range_rail_trigger_prompt(guardian_events or {}, board_top)
+    if guardian_prompt:
+        return ("guardian_events", guardian_prompt)
     if _range_rail_geometry_repair_matches_board(range_rail_geometry_repair or {}, board_top):
         prompt = str((range_rail_geometry_repair or {}).get("next_contract_prompt") or "").strip()
         if prompt:
@@ -1684,6 +1767,50 @@ def _consumed_lane_prompt(
     return None
 
 
+def _guardian_range_rail_trigger_prompt(
+    guardian_events: dict[str, Any],
+    board_top: dict[str, Any],
+) -> str | None:
+    trigger = _guardian_range_rail_trigger_for_board(guardian_events, board_top)
+    if not trigger:
+        return None
+    lane_id = trigger.get("lane_id") or board_top.get("lane_id")
+    price_zone = str(trigger.get("price_zone") or "range rail trigger fired").strip()
+    blockers = ", ".join(_string_list(trigger.get("preserve_blockers"))[:8])
+    return (
+        "Consume data/guardian_events.json for "
+        f"{lane_id}: CONTRACT_ADD_TRIGGER fired for the watched range rail ({price_zone}). "
+        "Do not repeat WAIT_FOR_RANGE_RAIL_RECHECK; refresh broker truth and active board, "
+        "then reprice the RANGE_ROTATION counterpart and continue exact TP-proof collection. "
+        f"Preserve blockers: {blockers or 'current board blockers'}. "
+        "This is a read-only wake/next-work transition, not live permission."
+    )
+
+
+def _guardian_range_rail_trigger_for_board(
+    guardian_events: dict[str, Any],
+    board_top: dict[str, Any],
+) -> dict[str, Any]:
+    if not guardian_events or not board_top:
+        return {}
+    if guardian_events.get("artifact_status") != "present":
+        return {}
+    triggers = guardian_events.get("range_rail_triggers")
+    if not isinstance(triggers, list):
+        return {}
+    board_lane_id = str(board_top.get("lane_id") or "").strip()
+    board_shape = _lane_shape(board_top)
+    for trigger in triggers:
+        if not isinstance(trigger, dict):
+            continue
+        lane_id = str(trigger.get("lane_id") or "").strip()
+        if board_lane_id and lane_id == board_lane_id:
+            return trigger
+        if board_shape and _lane_shape(trigger) == board_shape:
+            return trigger
+    return {}
+
+
 def _next_trade_enabling_action(
     selected_active_path: str,
     replay: dict[str, Any],
@@ -1694,12 +1821,14 @@ def _next_trade_enabling_action(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     active_opportunity_board = active_opportunity_board or {}
     non_eurusd_frontier = non_eurusd_frontier or {}
     entry_frequency_recovery = entry_frequency_recovery or {}
     forecast_pattern_refresh = forecast_pattern_refresh or {}
     range_rail_geometry_repair = range_rail_geometry_repair or {}
+    guardian_events = guardian_events or {}
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     if selected_active_path == "EVIDENCE_ACQUISITION":
@@ -1734,6 +1863,7 @@ def _next_trade_enabling_action(
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             )
             if consumed_prompt:
                 artifact_name, artifact_prompt = consumed_prompt
@@ -1881,6 +2011,14 @@ def _range_rail_geometry_repair_matches_board(
     )
 
 
+def _lane_shape(value: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(value.get("pair") or "").strip().upper(),
+        str(value.get("direction") or value.get("side") or "").strip().upper(),
+        str(value.get("strategy_family") or "").strip().upper(),
+    )
+
+
 def _next_prompt(
     selected_active_path: str,
     remaining_blockers: list[dict[str, Any]],
@@ -1890,6 +2028,7 @@ def _next_prompt(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
     active_board_shape = _active_board_target_shape(active_opportunity_board)
@@ -1899,6 +2038,12 @@ def _next_prompt(
         if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
         else {}
     )
+    guardian_prompt = _guardian_range_rail_trigger_prompt(guardian_events or {}, board_top)
+    if selected_active_path == "EVIDENCE_ACQUISITION" and guardian_prompt:
+        return (
+            f"{guardian_prompt} Keep blockers visible: {blocker_codes}. "
+            "This is read-only evidence/tuning work, not live permission."
+        )
     if (
         selected_active_path == "EVIDENCE_ACQUISITION"
         and _range_rail_geometry_repair_matches_board(range_rail_geometry_repair or {}, board_top)
