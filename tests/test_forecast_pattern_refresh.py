@@ -211,6 +211,169 @@ class ForecastPatternRefreshTest(unittest.TestCase):
         self.assertIn("RANGE_RAIL_GEOMETRY_REPAIR", payload["next_contract_prompt"])
         self.assertIn("RANGE_ROTATION_COUNTERPART_BLOCKED_BY_RANGE_RAIL", report)
 
+    def test_trigger_projection_top_lane_overrides_eurusd_active_board_fallback(self) -> None:
+        now = datetime(2026, 7, 9, 12, 15, tzinfo=timezone.utc)
+        gbp_lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        eur_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            gbp_lane = {
+                "lane_id": gbp_lane_id,
+                "pair": "GBP_USD",
+                "direction": "LONG",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                    "EXHAUSTION_RANGE_CHASE",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+                "forecast_audit": {
+                    "status": "SIDE_NOT_SUPPORTED_BY_LATEST_FORECAST",
+                    "latest": {
+                        "timestamp_utc": "2026-07-09T12:10:00+00:00",
+                        "direction": "RANGE",
+                        "confidence": 0.77,
+                        "current_price": 1.34129,
+                        "range_low_price": 1.33870,
+                        "range_high_price": 1.34194,
+                    },
+                },
+                "tp_proof_audit": {
+                    "status": "TP_PROOF_FLOOR_GAP",
+                    "tp_proof_count": 2,
+                    "tp_proof_floor": 20,
+                    "remaining_samples": 18,
+                },
+            }
+            eur_lane = {
+                "lane_id": eur_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "blockers": ["ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"],
+            }
+            _write_json(
+                paths["entry_recovery"],
+                {
+                    "schema_version": "entry_frequency_recovery_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": gbp_lane,
+                    "forecast_pattern_tuning_queue": [
+                        {
+                            "priority": 2,
+                            "lane_id": gbp_lane_id,
+                            "action_type": "TRIGGER_PROJECTION_TO_LIMIT_PROOF",
+                            "description": "directional_forecast is RANGE while side-specific trigger projections exist; recover via trigger proof/LIMIT frontier rather than MARKET execution",
+                            "preserve_blockers": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            ],
+                        }
+                    ],
+                    "next_contract_prompt": "Consume data/entry_frequency_recovery.json for GBP_USD; do not send.",
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "current_state": {"active_opportunity_board": {"top_lane": eur_lane}},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "top_lane": eur_lane,
+                    "ranked_active_lanes": [eur_lane, gbp_lane],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent(
+                            "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                            "LIMIT",
+                            [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                                "EXHAUSTION_RANGE_CHASE",
+                                "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            ],
+                        ),
+                        _intent(
+                            "range_trader:GBP_USD:LONG:RANGE_ROTATION:MARKET",
+                            "MARKET",
+                            ["RANGE_MARKET_NOT_AT_RAIL"],
+                        ),
+                    ],
+                },
+            )
+            _write_jsonl(
+                paths["forecast_history"],
+                [
+                    {
+                        "timestamp_utc": "2026-07-09T12:10:00+00:00",
+                        "pair": "GBP_USD",
+                        "direction": "RANGE",
+                        "confidence": 0.77,
+                        "current_price": 1.34129,
+                        "range_low_price": 1.33870,
+                        "range_high_price": 1.34194,
+                    }
+                ],
+            )
+            _write_jsonl(
+                paths["projection_ledger"],
+                [
+                    {
+                        "timestamp_emitted_utc": "2026-07-09T12:10:00+00:00",
+                        "pair": "GBP_USD",
+                        "signal_name": "liquidity_sweep_low",
+                        "direction": "UP",
+                        "confidence": 0.81,
+                        "resolution_window_min": 30,
+                        "resolution_status": "PENDING",
+                    }
+                ],
+            )
+
+            summary = ForecastPatternRefresh(
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                active_trader_contract_path=paths["active_contract"],
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.target_lane_id, gbp_lane_id)
+        self.assertEqual(payload["top_lane"]["lane_id"], gbp_lane_id)
+        self.assertNotEqual(payload["top_lane"]["lane_id"], eur_lane_id)
+        self.assertEqual(payload["top_lane"]["forecast_range_box"]["status"], "RANGE_BOX_NOT_AT_EXECUTABLE_RAIL")
+        self.assertIn("RANGE_RAIL_GEOMETRY_REPAIR", [row["action_type"] for row in payload["next_actions"]])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_no_current_target_is_read_only_noop(self) -> None:
         now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

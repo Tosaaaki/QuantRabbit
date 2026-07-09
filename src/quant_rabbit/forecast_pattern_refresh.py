@@ -25,6 +25,10 @@ RANGE_FORECAST_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 ENTRY_DROUGHT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
 NEGATIVE_EXPECTANCY_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 TP_PROOF_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+FORECAST_PATTERN_TARGET_ACTIONS = {
+    "FORECAST_PATTERN_REFRESH",
+    "TRIGGER_PROJECTION_TO_LIMIT_PROOF",
+}
 TAIL_MAX_BYTES = 18 * 1024 * 1024
 TAIL_MAX_LINES = 12000
 
@@ -172,7 +176,7 @@ def _has_forecast_refresh_action(entry_frequency_recovery: dict[str, Any], lane_
     for action in _list(entry_frequency_recovery.get("forecast_pattern_tuning_queue")):
         if not isinstance(action, dict):
             continue
-        if action.get("lane_id") == lane_id and action.get("action_type") == "FORECAST_PATTERN_REFRESH":
+        if action.get("lane_id") == lane_id and action.get("action_type") in FORECAST_PATTERN_TARGET_ACTIONS:
             return True
     return False
 

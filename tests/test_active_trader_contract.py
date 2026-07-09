@@ -952,6 +952,169 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_parallel_non_eurusd_frontier_uses_latest_matching_forecast_artifact(self) -> None:
+        now = datetime(2026, 7, 9, 18, 15, tzinfo=timezone.utc)
+        gbp_lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 127,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 2,
+                        "operator_review_required_count": 0,
+                        "no_trade_count": 125,
+                        "pairs_scanned": ["EUR_USD", "GBP_USD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": "Wait for EUR_USD range rail recheck; do not send.",
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": "EVIDENCE_ACQUISITION: EUR_USD range rail.",
+                },
+            )
+            frontier_lane = {
+                "lane_id": gbp_lane_id,
+                "pair": "GBP_USD",
+                "direction": "LONG",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "distance_to_live_ready": "2_CLOSE_BUT_BLOCKED_BY_NEGATIVE_EXPECTANCY_AND_TP_PROOF_FLOOR",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                    "EXHAUSTION_RANGE_CHASE",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+                "next_action": "Run entry-frequency recovery analysis for GBP_USD|LONG|RANGE_ROTATION|LIMIT; do not send.",
+            }
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NON_EURUSD_FRONTIER_FOUND",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "GBP_USD"],
+                    "scanned_intents": 117,
+                    "top_non_eurusd_lane": frontier_lane,
+                    "required_checks": {"next_evidence_lane": frontier_lane},
+                    "next_active_path": "ENTRY_FREQUENCY_RECOVERY: Run entry-frequency recovery analysis for GBP_USD; do not send.",
+                },
+            )
+            _write_json(
+                paths["entry_recovery"],
+                {
+                    "schema_version": "entry_frequency_recovery_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": frontier_lane,
+                    "next_contract_prompt": "Consume data/entry_frequency_recovery.json for range_trader:GBP_USD:LONG:RANGE_ROTATION; do not send.",
+                },
+            )
+            _write_json(
+                paths["forecast_pattern"],
+                {
+                    "schema_version": "forecast_pattern_refresh_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "FORECAST_PATTERN_REFRESH_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": {
+                        **frontier_lane,
+                        "forecast_range_box": {"status": "RANGE_BOX_NOT_AT_EXECUTABLE_RAIL"},
+                        "range_rotation_counterpart": {
+                            "status": "RANGE_ROTATION_COUNTERPART_BLOCKED_BY_RANGE_RAIL"
+                        },
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": gbp_lane_id,
+                            "action_type": "RANGE_RAIL_GEOMETRY_REPAIR",
+                            "description": "wait for broad discount/lower-half rail for LONG; do not chase.",
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/forecast_pattern_refresh.json for "
+                        "range_trader:GBP_USD:LONG:RANGE_ROTATION: next safe action is "
+                        "RANGE_RAIL_GEOMETRY_REPAIR; do not send."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                forecast_pattern_refresh_path=paths["forecast_pattern"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertTrue(
+            payload["next_trade_enabling_action"].startswith(
+                "Advance non_eurusd_live_grade_frontier as the current next action"
+            )
+        )
+        self.assertIn("Consume data/forecast_pattern_refresh.json", payload["next_trade_enabling_action"])
+        self.assertIn(gbp_lane_id, payload["next_trade_enabling_action"])
+        self.assertIn("RANGE_RAIL_GEOMETRY_REPAIR", payload["next_trade_enabling_action"])
+        self.assertNotIn("Consume data/entry_frequency_recovery.json", payload["next_trade_enabling_action"])
+        self.assertIn("Keep active board lane range_trader:EUR_USD:SHORT:RANGE_ROTATION visible", payload["next_trade_enabling_action"])
+        self.assertTrue(
+            payload["next_prompt"].startswith(
+                "Advance non_eurusd_live_grade_frontier evidence as the current next work"
+            )
+        )
+        self.assertIn("Consume data/forecast_pattern_refresh.json", payload["next_prompt"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_board_all_no_trade_with_guardian_clear_overrides_stale_single_lane_evidence(self) -> None:
         now = datetime(2026, 7, 8, 10, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

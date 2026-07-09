@@ -1508,6 +1508,64 @@ def _frontier_evidence_prompt(non_eurusd_frontier: dict[str, Any]) -> str:
     )
 
 
+def _frontier_artifact_prompt(
+    frontier_lane: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> str | None:
+    consumed = _frontier_artifact_consumption(
+        frontier_lane,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
+    return consumed[1] if consumed else None
+
+
+def _frontier_artifact_consumption(
+    frontier_lane: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    for artifact_name, artifact in (
+        ("range_rail_geometry_repair", range_rail_geometry_repair or {}),
+        ("forecast_pattern_refresh", forecast_pattern_refresh or {}),
+        ("entry_frequency_recovery", entry_frequency_recovery or {}),
+    ):
+        if artifact.get("artifact_status") != "present":
+            continue
+        top = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+        prompt = str(artifact.get("next_contract_prompt") or "").strip()
+        if top and prompt and _lane_shape(top) == _lane_shape(frontier_lane):
+            return artifact_name, prompt
+    return None
+
+
+def _frontier_next_action_text(
+    frontier_lane: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> str:
+    return (
+        _frontier_artifact_prompt(
+            frontier_lane,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
+        or frontier_lane.get("next_action")
+        or non_eurusd_frontier.get("next_active_path")
+        or "Acquire the frontier evidence packet."
+    )
+
+
 def _frontier_supplements_board_evidence(
     board_top: dict[str, Any],
     non_eurusd_frontier: dict[str, Any],
@@ -1577,14 +1635,25 @@ def _frontier_parallel_board_evidence(
 def _frontier_supplement_prompt(
     board_top: dict[str, Any],
     non_eurusd_frontier: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
 ) -> str:
     if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
         frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
         frontier_shape = _lane_target_shape(frontier_lane)
         frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
+        next_action = _frontier_next_action_text(
+            frontier_lane,
+            non_eurusd_frontier,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
         return (
             f" Pair this with frontier evidence {frontier_ref}: "
-            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            f"{next_action} "
             f"{_frontier_blocker_fragment(frontier_lane)}"
             "Keep both blocker sets visible; do not send."
         )
@@ -1592,9 +1661,16 @@ def _frontier_supplement_prompt(
         frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
         frontier_shape = _lane_target_shape(frontier_lane)
         frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
+        next_action = _frontier_next_action_text(
+            frontier_lane,
+            non_eurusd_frontier,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
         return (
             f" Parallel non_eurusd_live_grade_frontier evidence {frontier_ref}: "
-            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            f"{next_action} "
             f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
             "Keep the non-EUR blocker set visible; do not send."
         )
@@ -1604,16 +1680,27 @@ def _frontier_supplement_prompt(
 def _frontier_action_suffix(
     board_top: dict[str, Any],
     non_eurusd_frontier: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
 ) -> str:
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
     if not frontier_lane:
         return ""
+    next_action = _frontier_next_action_text(
+        frontier_lane,
+        non_eurusd_frontier,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
     if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
         return (
             " Pair this with non_eurusd_live_grade_frontier evidence lane "
             f"{frontier_lane.get('lane_id')} "
             f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
-            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            f"{next_action} "
             f"{_frontier_blocker_fragment(frontier_lane)}"
             "Keep both blocker sets visible; do not send."
         )
@@ -1622,7 +1709,7 @@ def _frontier_action_suffix(
             " Parallel non_eurusd_live_grade_frontier evidence lane "
             f"{frontier_lane.get('lane_id')} "
             f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
-            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            f"{next_action} "
             f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
             "Keep the non-EUR blocker set visible; do not send."
         )
@@ -1970,7 +2057,23 @@ def _next_trade_enabling_action(
                 suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
             frontier_suffix = ""
             if frontier_lane:
-                frontier_suffix = _frontier_action_suffix(board_top, non_eurusd_frontier)
+                frontier_suffix = _frontier_action_suffix(
+                    board_top,
+                    non_eurusd_frontier,
+                    entry_frequency_recovery=entry_frequency_recovery,
+                    forecast_pattern_refresh=forecast_pattern_refresh,
+                    range_rail_geometry_repair=range_rail_geometry_repair,
+                )
+            frontier_consumption = (
+                _frontier_artifact_consumption(
+                    frontier_lane,
+                    entry_frequency_recovery=entry_frequency_recovery,
+                    forecast_pattern_refresh=forecast_pattern_refresh,
+                    range_rail_geometry_repair=range_rail_geometry_repair,
+                )
+                if frontier_lane
+                else None
+            )
             if (
                 _range_rail_latest_forecast_not_range(range_rail_geometry_repair, board_top)
                 and _frontier_evidence_action_available(non_eurusd_frontier)
@@ -1998,6 +2101,20 @@ def _next_trade_enabling_action(
                     f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
                     f"Consume {artifact_name} artifact as the current next action: {artifact_prompt}"
                     f"{frontier_suffix}"
+                    f"{suffix}"
+                )
+            if frontier_consumption and _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
+                artifact_name, artifact_prompt = frontier_consumption
+                board_blockers = ", ".join(_string_list(board_top.get("blockers"))[:8])
+                return (
+                    "Advance non_eurusd_live_grade_frontier as the current next action: "
+                    f"frontier lane {frontier_lane.get('lane_id')} "
+                    f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
+                    f"Consume {artifact_name} artifact: {artifact_prompt} "
+                    f"Keep active board lane {board_top.get('lane_id')} visible but do not let it hide the frontier artifact; "
+                    f"board blockers: {board_blockers or 'none'}. "
+                    f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
+                    "Do not send, cancel, close, relax gates, or treat frontier artifact consumption as live permission."
                     f"{suffix}"
                 )
             return (
@@ -2215,7 +2332,24 @@ def _next_prompt(
         if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
         else {}
     )
-    frontier_suffix = _frontier_supplement_prompt(board_top, non_eurusd_frontier or {})
+    frontier_suffix = _frontier_supplement_prompt(
+        board_top,
+        non_eurusd_frontier or {},
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier or {})
+    frontier_consumption = (
+        _frontier_artifact_consumption(
+            frontier_lane,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
+        if frontier_lane
+        else None
+    )
     if (
         selected_active_path == "EVIDENCE_ACQUISITION"
         and _active_board_all_no_trade(active_opportunity_board or {})
@@ -2242,6 +2376,19 @@ def _next_prompt(
             "do not repeat range-box refresh for that invalidated lane. "
             f"{_frontier_evidence_prompt(non_eurusd_frontier or {})} "
             f"Keep board blockers visible: {blocker_codes}. "
+            "This is read-only evidence/tuning work, not live permission."
+        )
+    if (
+        selected_active_path == "EVIDENCE_ACQUISITION"
+        and frontier_consumption
+        and _frontier_parallel_board_evidence(board_top, non_eurusd_frontier or {})
+    ):
+        artifact_name, artifact_prompt = frontier_consumption
+        return (
+            "Advance non_eurusd_live_grade_frontier evidence as the current next work. "
+            f"Consume {artifact_name} artifact for {frontier_lane.get('lane_id')}: {artifact_prompt} "
+            f"Keep active board lane {board_top.get('lane_id')} visible with blockers: {blocker_codes}. "
+            f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
             "This is read-only evidence/tuning work, not live permission."
         )
     if (
