@@ -97,6 +97,7 @@ class EntryFrequencyRecovery:
         targets = _collect_entry_recovery_targets(
             active_contract=artifacts["active_trader_contract"],
             active_board=artifacts["active_opportunity_board"],
+            frontier=artifacts["non_eurusd_live_grade_frontier"],
         )
         pairs = sorted({str(lane.get("pair") or "") for lane in targets if lane.get("pair")})
         forecast_rows, forecast_scan = _tail_jsonl_rows(self.forecast_history_path, pairs=pairs)
@@ -167,8 +168,10 @@ def _collect_entry_recovery_targets(
     *,
     active_contract: dict[str, Any],
     active_board: dict[str, Any],
+    frontier: dict[str, Any],
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    preferred_lane_id = _preferred_frontier_entry_recovery_lane_id(frontier)
     current = active_contract.get("current_state") if isinstance(active_contract.get("current_state"), dict) else {}
     contract_board = (
         current.get("active_opportunity_board")
@@ -201,6 +204,7 @@ def _collect_entry_recovery_targets(
     return sorted(
         result,
         key=lambda lane: (
+            0 if preferred_lane_id and lane.get("lane_id") == preferred_lane_id else 1,
             0 if lane.get("lane_id") == _top_lane_id(active_contract) else 1,
             -float(((lane.get("entry_recovery_history") or {}).get("closed_pl_jpy") or 0.0)),
             str(lane.get("lane_id") or ""),
@@ -213,6 +217,22 @@ def _top_lane_id(active_contract: dict[str, Any]) -> str:
     board = current.get("active_opportunity_board") if isinstance(current.get("active_opportunity_board"), dict) else {}
     top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
     return str(top.get("lane_id") or "")
+
+
+def _preferred_frontier_entry_recovery_lane_id(frontier: dict[str, Any]) -> str:
+    if frontier.get("_artifact_status") not in {"present", None}:
+        return ""
+    next_path = str(frontier.get("next_active_path") or "")
+    if "ENTRY_FREQUENCY_RECOVERY" not in next_path:
+        return ""
+    lane = _frontier_evidence_lane(frontier)
+    if not lane:
+        return ""
+    blockers = _string_list(lane.get("blockers"))
+    action = str(lane.get("next_action") or "")
+    if ENTRY_DROUGHT_BLOCKER not in blockers and "entry-frequency recovery" not in action:
+        return ""
+    return str(lane.get("lane_id") or "")
 
 
 def _public_lane_base(lane: dict[str, Any]) -> dict[str, Any]:

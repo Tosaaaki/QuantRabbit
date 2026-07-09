@@ -428,6 +428,177 @@ class EntryFrequencyRecoveryTest(unittest.TestCase):
         self.assertIn("EXACT_TP_PROOF_COLLECTION", prompt)
         self.assertNotIn("retune USD_CAD", prompt)
 
+    def test_frontier_entry_frequency_lane_overrides_eurusd_board_top_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 10, 30, tzinfo=timezone.utc)
+        eur_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        gbp_lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            eur_lane = {
+                "lane_id": eur_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "expected_edge_jpy": 457.9,
+                "entry_recovery_candidate": True,
+                "entry_recovery_history": {
+                    "accepted_before_recent": 26,
+                    "fills_before_recent": 12,
+                    "recent_accepted": 0,
+                    "recent_fills": 0,
+                    "closed_pl_jpy": 1554.3,
+                    "profit_source": "exact_lane",
+                },
+                "local_tp_proof": {
+                    "capture_take_profit_scope_key": "EUR_USD|SHORT|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 8,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 457.9,
+                    "capture_take_profit_proof_floor": 20,
+                },
+                "blockers": [
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+            }
+            gbp_lane = {
+                "lane_id": gbp_lane_id,
+                "pair": "GBP_USD",
+                "direction": "LONG",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "expected_edge_jpy": 148.5,
+                "next_action": "Run entry-frequency recovery analysis for GBP_USD|LONG|RANGE_ROTATION|LIMIT; do not send.",
+                "entry_recovery_candidate": True,
+                "entry_recovery_history": {
+                    "accepted_before_recent": 3,
+                    "fills_before_recent": 2,
+                    "recent_accepted": 0,
+                    "recent_fills": 0,
+                    "closed_pl_jpy": 992.6,
+                    "profit_source": "exact_lane",
+                },
+                "local_tp_proof": {
+                    "capture_take_profit_scope_key": "GBP_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 2,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 148.5,
+                    "capture_take_profit_proof_floor": 20,
+                },
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "top_lane": eur_lane,
+                    "ranked_active_lanes": [eur_lane, gbp_lane],
+                    "entry_recovery_summary": {"top_candidates": [eur_lane, gbp_lane]},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "current_state": {"active_opportunity_board": {"top_lane": eur_lane}},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["frontier"],
+                {
+                    "next_active_path": "ENTRY_FREQUENCY_RECOVERY: Run entry-frequency recovery analysis for GBP_USD|LONG|RANGE_ROTATION|LIMIT; do not send.",
+                    "required_checks": {"next_evidence_lane": gbp_lane},
+                    "top_non_eurusd_lane": gbp_lane,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": eur_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "risk_allowed": False,
+                            "live_blocker_codes": eur_lane["blockers"],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "LIMIT",
+                            },
+                        },
+                        {
+                            "lane_id": gbp_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "risk_allowed": False,
+                            "live_blocker_codes": gbp_lane["blockers"],
+                            "intent": {
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "LIMIT",
+                            },
+                        },
+                    ],
+                },
+            )
+            _write_json(
+                paths["strategy_profile"],
+                {
+                    "profiles": [
+                        {"pair": "EUR_USD", "direction": "SHORT", "method": "RANGE_ROTATION", "status": "CANDIDATE"},
+                        {"pair": "GBP_USD", "direction": "LONG", "method": "RANGE_ROTATION", "status": "CANDIDATE"},
+                    ]
+                },
+            )
+            _append_jsonl(
+                paths["forecast_history"],
+                [
+                    {"timestamp_utc": "2026-07-09T10:14:56.370426Z", "pair": "EUR_USD", "direction": "DOWN"},
+                    {"timestamp_utc": "2026-07-09T10:14:56.370426Z", "pair": "GBP_USD", "direction": "UP"},
+                ],
+            )
+            _append_jsonl(paths["projection_ledger"], [])
+            _write_execution_db(paths["execution_db"])
+
+            EntryFrequencyRecovery(
+                active_trader_contract_path=paths["active_contract"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                order_intents_path=paths["order_intents"],
+                strategy_profile_path=paths["strategy_profile"],
+                execution_ledger_db_path=paths["execution_db"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        prompt = payload["next_contract_prompt"]
+        self.assertEqual(payload["top_lane"]["lane_id"], gbp_lane_id)
+        self.assertEqual(payload["target_lanes"][0]["lane_id"], gbp_lane_id)
+        self.assertIn(gbp_lane_id, prompt)
+        self.assertNotIn(f"for {eur_lane_id}", prompt)
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_no_entry_drought_target_stays_read_only_noop(self) -> None:
         now = datetime(2026, 7, 9, 10, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
