@@ -160,6 +160,57 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_reports_non_eurusd_found_even_when_eurusd_is_closer(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        eur_usd = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        eur_jpy = "range_trader:EUR_JPY:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent(eur_usd, "EUR_USD", "SHORT", "RANGE_ROTATION", "LIMIT", []),
+                        _intent(eur_jpy, "EUR_JPY", "SHORT", "RANGE_ROTATION", "LIMIT", ["FORECAST_WATCH_ONLY"]),
+                    ],
+                },
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "ranked_active_lanes": [
+                        _board_lane(eur_usd, "EUR_USD", "SHORT", "RANGE_ROTATION", "LIMIT", []),
+                        _board_lane(eur_jpy, "EUR_JPY", "SHORT", "RANGE_ROTATION", "LIMIT", ["FORECAST_WATCH_ONLY"]),
+                    ],
+                },
+            )
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["status"], STATUS_NON_EURUSD_FOUND)
+        self.assertEqual(payload["top_lane"]["lane_id"], eur_usd)
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], eur_jpy)
+        self.assertFalse(payload["required_checks"]["non_eurusd_closer_than_eurusd"])
+
     def test_current_negative_bidask_replay_does_not_repeat_refresh_action(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"

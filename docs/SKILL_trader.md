@@ -801,7 +801,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   current lane/vehicle mapping. The frontier ranks the current EUR/USD and
 #   non-EUR/USD order-intent lanes by live-grade proximity, surfaces
 #   USD_CAD LONG BREAKOUT_FAILURE blockers, and keeps proof-floor, bid/ask,
-#   spread, forecast, and loss-budget gaps explicit. The terminal
+#   spread, forecast, and loss-budget gaps explicit. `NON_EURUSD_FRONTIER_FOUND`
+#   means a non-EUR/USD frontier lane exists, even if EUR/USD remains closer;
+#   `required_checks.non_eurusd_closer_than_eurusd` carries the relative
+#   closeness verdict. `ONLY_EURUSD_FRONTIER_FOUND` requires no non-EUR/USD
+#   frontier lane at all. The terminal
 #   active-trader-contract may consume frontier.next_evidence_lane as a
 #   read-only EVIDENCE_ACQUISITION target when the board is otherwise all
 #   NO_TRADE_WITH_CAUSE, but this still never grants live order, cancel/close,

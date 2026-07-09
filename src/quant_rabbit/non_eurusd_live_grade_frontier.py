@@ -645,9 +645,7 @@ def _frontier_status(
     ):
         return STATUS_ALL_SPREAD_OR_FORECAST
     if top_non:
-        top_eur_score = int(top_lane.get("distance_score") or 9999) if top_lane.get("pair") == "EUR_USD" else 9999
-        if top_lane.get("pair") != "EUR_USD" or int(top_non.get("distance_score") or 9999) <= top_eur_score + 8:
-            return STATUS_NON_EURUSD_FOUND
+        return STATUS_NON_EURUSD_FOUND
     if top_lane.get("pair") == "EUR_USD":
         return STATUS_ONLY_EURUSD_FOUND
     return STATUS_NON_EURUSD_FOUND if top_non else STATUS_DATA_INCOMPLETE
