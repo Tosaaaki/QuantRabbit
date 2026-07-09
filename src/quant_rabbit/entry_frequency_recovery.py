@@ -28,6 +28,7 @@ ENTRY_DROUGHT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
 RANGE_FORECAST_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 TP_PROOF_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
 NEGATIVE_EXPECTANCY_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+MARKET_TP_PROOF_ROUTE_BLOCKER = "MARKET_TP_PROOF_COLLECTION_NOT_EXECUTABLE"
 TAIL_MAX_BYTES = 18 * 1024 * 1024
 TAIL_MAX_LINES = 12000
 
@@ -636,15 +637,30 @@ def _lane_actions(
             )
         )
     if tp_proof.get("status") in {"TP_PROOF_FLOOR_GAP", "TP_PROOF_MISSING"}:
-        actions.append(
-            _action(
-                lane_id,
-                "EXACT_TP_PROOF_COLLECTION",
-                tp_proof.get("recommended_action"),
-                blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
-                priority=4,
+        if _is_market_vehicle(lane):
+            actions.append(
+                _action(
+                    lane_id,
+                    "NON_MARKET_TP_PROOF_ROUTE_REQUIRED",
+                    (
+                        "MARKET lanes cannot use the TP-proof-collection live exception; rerank to the same "
+                        "pair/side/method LIMIT or STOP attached-TP proof route, or wait for independent exact "
+                        "MARKET TAKE_PROFIT_ORDER ledger evidence. Do not send."
+                    ),
+                    blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER, MARKET_TP_PROOF_ROUTE_BLOCKER],
+                    priority=4,
+                )
             )
-        )
+        else:
+            actions.append(
+                _action(
+                    lane_id,
+                    "EXACT_TP_PROOF_COLLECTION",
+                    tp_proof.get("recommended_action"),
+                    blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
+                    priority=4,
+                )
+            )
     if not current_order_intent:
         actions.append(
             _action(
@@ -686,6 +702,10 @@ def _action(
         "preserve_blockers": _unique(blockers),
         "live_permission_allowed": False,
     }
+
+
+def _is_market_vehicle(lane: dict[str, Any]) -> bool:
+    return str(lane.get("vehicle") or "").upper() == "MARKET"
 
 
 def _order_intent_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -996,6 +1016,7 @@ def _do_not_do() -> list[str]:
         "do_not_relax_gates",
         "do_not_hide_negative_expectancy_or_bidask_negative",
         "do_not_mix_market_close_losses_into_tp_proof",
+        "do_not_treat_market_lane_as_tp_proof_collection_route",
         "do_not_backsolve_lot_from_4x_deficit",
         "do_not_print_secrets_tokens_credentials",
         "do_not_infer_operator_decision",

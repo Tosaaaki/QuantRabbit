@@ -788,6 +788,8 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
     lane_id = lane.get("lane_id")
     if _is_range_forecast_method_mismatch(lane):
         return "RANGE_FORECAST_COUNTERPART_HANDOFF: " + _range_forecast_handoff_action(lane)
+    if _market_tp_proof_route_required(lane):
+        return "NON_MARKET_TP_PROOF_ROUTE_REQUIRED: " + _market_tp_proof_route_action(lane)
     if status == STATUS_ALL_NEGATIVE:
         if lane.get("bidask_status") == "NEGATIVE":
             return (
@@ -824,6 +826,8 @@ def _next_action(lane: dict[str, Any]) -> str:
     lane_id = lane.get("lane_id")
     if _is_range_forecast_method_mismatch(lane):
         return _range_forecast_handoff_action(lane)
+    if _market_tp_proof_route_required(lane):
+        return _market_tp_proof_route_action(lane)
     if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"Refresh exact S5 bid/ask replay for {lane_id}; keep negative blocker visible."
     if lane.get("bidask_status") == "NEGATIVE":
@@ -879,6 +883,8 @@ def _has_entry_drought_recovery(lane: dict[str, Any]) -> bool:
 
 
 def _entry_drought_recovery_action(lane: dict[str, Any]) -> str:
+    if _market_tp_proof_route_required(lane):
+        return _market_tp_proof_route_action(lane)
     board_action = str(lane.get("active_board_next_action") or "").strip()
     if board_action:
         return board_action
@@ -901,6 +907,25 @@ def _entry_drought_recovery_action(lane: dict[str, Any]) -> str:
     return (
         f"Run entry-frequency recovery analysis for {lane_id}{suffix}; "
         "retune forecast/pattern selection and lane-local bid/ask or TP proof while preserving current blockers. Do not send."
+    )
+
+
+def _market_tp_proof_route_required(lane: dict[str, Any]) -> bool:
+    if str(lane.get("vehicle") or "").upper() != "MARKET":
+        return False
+    remaining = _float(lane.get("tp_proof_remaining"))
+    if remaining is not None and remaining > 0:
+        return True
+    blockers = _string_list(lane.get("blockers"))
+    return "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR" in blockers
+
+
+def _market_tp_proof_route_action(lane: dict[str, Any]) -> str:
+    lane_id = lane.get("lane_id")
+    return (
+        f"{lane_id} is a MARKET lane; MARKET cannot use the TP-proof-collection live exception. "
+        "Rerank to the same pair/side/method LIMIT or STOP attached-TP proof route, or wait for "
+        "independent exact MARKET TAKE_PROFIT_ORDER ledger evidence. Do not send."
     )
 
 

@@ -25,6 +25,7 @@ RANGE_FORECAST_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 ENTRY_DROUGHT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
 NEGATIVE_EXPECTANCY_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 TP_PROOF_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+MARKET_TP_PROOF_ROUTE_BLOCKER = "MARKET_TP_PROOF_COLLECTION_NOT_EXECUTABLE"
 FORECAST_PATTERN_TARGET_ACTIONS = {
     "FORECAST_PATTERN_REFRESH",
     "TRIGGER_PROJECTION_TO_LIMIT_PROOF",
@@ -485,15 +486,30 @@ def _next_actions(target_lane: dict[str, Any]) -> list[dict[str, Any]]:
         )
     tp = target_lane.get("tp_proof_audit") if isinstance(target_lane.get("tp_proof_audit"), dict) else {}
     if tp.get("status") in {"TP_PROOF_FLOOR_GAP", "TP_PROOF_MISSING", "TP_PROOF_COLLECTION_REQUIRED"}:
-        actions.append(
-            _action(
-                lane_id,
-                "EXACT_TP_PROOF_COLLECTION",
-                "collect exact attached TAKE_PROFIT_ORDER proof for the selected pair/side/method/vehicle; do not mix market-close losses",
-                blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
-                priority=3,
+        if _is_market_vehicle(target_lane):
+            actions.append(
+                _action(
+                    lane_id,
+                    "NON_MARKET_TP_PROOF_ROUTE_REQUIRED",
+                    (
+                        "MARKET lanes cannot use the TP-proof-collection live exception; rerank to the same "
+                        "pair/side/method LIMIT or STOP attached-TP proof route, or wait for independent exact "
+                        "MARKET TAKE_PROFIT_ORDER ledger evidence. Do not send."
+                    ),
+                    blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER, MARKET_TP_PROOF_ROUTE_BLOCKER],
+                    priority=3,
+                )
             )
-        )
+        else:
+            actions.append(
+                _action(
+                    lane_id,
+                    "EXACT_TP_PROOF_COLLECTION",
+                    "collect exact attached TAKE_PROFIT_ORDER proof for the selected pair/side/method/vehicle; do not mix market-close losses",
+                    blockers=[TP_PROOF_BLOCKER, NEGATIVE_EXPECTANCY_BLOCKER],
+                    priority=3,
+                )
+            )
     if counterpart.get("status") in {
         "RANGE_ROTATION_COUNTERPART_BLOCKED_BY_SPREAD",
         "RANGE_ROTATION_COUNTERPART_PROOF_BLOCKED",
@@ -537,6 +553,10 @@ def _action(
         "preserve_blockers": _unique(blockers),
         "live_permission_allowed": False,
     }
+
+
+def _is_market_vehicle(lane: dict[str, Any]) -> bool:
+    return str(lane.get("vehicle") or "").upper() == "MARKET"
 
 
 def _next_contract_prompt(target_lane: dict[str, Any], actions: list[dict[str, Any]]) -> str:
@@ -792,6 +812,7 @@ def _do_not_do() -> list[str]:
         "do_not_relax_gates",
         "do_not_hide_negative_expectancy_spread_or_bidask_negative",
         "do_not_mix_market_close_losses_into_tp_proof",
+        "do_not_treat_market_lane_as_tp_proof_collection_route",
         "do_not_backsolve_lot_from_4x_deficit",
         "do_not_print_secrets_tokens_credentials",
         "do_not_infer_operator_decision",

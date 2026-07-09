@@ -240,10 +240,14 @@ class EntryFrequencyRecoveryTest(unittest.TestCase):
         self.assertIn("FORECAST_PATTERN_REFRESH", actions)
         self.assertIn("TRIGGER_PROJECTION_TO_LIMIT_PROOF", actions)
         self.assertIn("METHOD_SCOPED_PROFILE_PROMOTION", actions)
-        self.assertIn("EXACT_TP_PROOF_COLLECTION", actions)
+        self.assertIn("NON_MARKET_TP_PROOF_ROUTE_REQUIRED", actions)
+        self.assertNotIn("EXACT_TP_PROOF_COLLECTION", actions)
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
         self.assertIn("Do not send", payload["next_contract_prompt"])
+        route_action = next(row for row in payload["forecast_pattern_tuning_queue"] if row["action_type"] == "NON_MARKET_TP_PROOF_ROUTE_REQUIRED")
+        self.assertIn("MARKET lanes cannot use the TP-proof-collection live exception", route_action["description"])
+        self.assertIn("do_not_treat_market_lane_as_tp_proof_collection_route", payload["do_not_do"])
         self.assertIn("Entry Frequency Recovery", report)
 
     def test_next_contract_prompt_uses_top_lane_action_not_global_first_action(self) -> None:
