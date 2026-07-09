@@ -1031,18 +1031,23 @@ class ActiveTraderContractTest(unittest.TestCase):
                         ),
                         "local_tp_proof": {
                             "attach_take_profit_on_fill": True,
-                            "capture_take_profit_expectancy_jpy": None,
-                            "capture_take_profit_losses": None,
-                            "capture_take_profit_scope": "MISSING_METHOD_SCOPE",
+                            "capture_take_profit_expectancy_jpy": 658.9,
+                            "capture_take_profit_losses": 0,
+                            "capture_take_profit_scope": "PAIR_SIDE_METHOD",
                             "capture_take_profit_scope_key": (
                                 "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
                             ),
-                            "capture_take_profit_trades": None,
-                            "capture_take_profit_wins": None,
+                            "capture_take_profit_trades": 1,
+                            "capture_take_profit_wins": 1,
                             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                             "tp_target_intent": "HARVEST",
                         },
-                        "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        "blockers": [
+                            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                            "SPREAD_TOO_WIDE",
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                        ],
                     },
                     "ranked_active_lanes": [],
                     "next_active_path": (
@@ -1082,6 +1087,7 @@ class ActiveTraderContractTest(unittest.TestCase):
             "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
         )
         self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
+        self.assertIn("LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR", blocker_codes)
         self.assertIn("(LIMIT, EVIDENCE_ACQUISITION)", payload["next_trade_enabling_action"])
         self.assertIn(
             "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",

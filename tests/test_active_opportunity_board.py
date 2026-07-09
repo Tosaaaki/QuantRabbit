@@ -739,6 +739,84 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(market["status"], "NO_TRADE_WITH_CAUSE")
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_below_floor_positive_local_tp_proof_stays_evidence_acquisition(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "USD_CAD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "USD_CAD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            metadata=metadata,
+                        )
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_json(
+                paths["capture"],
+                _capture_payload(
+                    "USD_CAD",
+                    "LONG",
+                    "BREAKOUT_FAILURE",
+                    trades=1,
+                    wins=1,
+                    losses=0,
+                    expectancy=658.9,
+                    avg_win=658.9,
+                    avg_loss=0.0,
+                ),
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT")
+        self.assertEqual(top["status"], "EVIDENCE_ACQUISITION")
+        self.assertIn("LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR", top["blockers"])
+        self.assertIn("Collect exact local TAKE_PROFIT_ORDER proof", top["next_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_zero_local_tp_proof_is_no_trade_not_evidence_acquisition(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1779,6 +1857,308 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["entry_recovery_summary"]["candidate_count"], 1)
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_tiny_entry_drought_profit_is_not_evidence_path(self) -> None:
+        now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
+        lane_id = "range_trader:EUR_JPY:SHORT:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            lane_id,
+                            "EUR_JPY",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        )
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-25T15:51:14+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane_id,
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-25T15:52:14+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane_id,
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-25T15:53:14+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": lane_id,
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-25T16:01:14+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-1",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-26T16:01:14+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-2",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-27T16:01:14+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-3",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-27T16:20:14+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-1",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 6.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-28T16:20:14+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-2",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "realized_pl_jpy": 5.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-29T16:20:14+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": lane_id,
+                        "trade_id": "thin-3",
+                        "pair": "EUR_JPY",
+                        "side": "SHORT",
+                        "realized_pl_jpy": -1.2,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                ],
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], lane_id)
+        self.assertEqual(top["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertNotIn("ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH", top["blockers"])
+        self.assertFalse(top.get("entry_recovery_candidate", False))
+        self.assertEqual(payload["coverage_summary"]["entry_recovery_candidate_count"], 0)
+
+    def test_entry_recovery_prefers_limit_over_market_for_same_shape(self) -> None:
+        now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
+        limit_lane = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        market_lane = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            market_lane,
+                            "USD_CAD",
+                            "LONG",
+                            "MARKET",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        ),
+                        _intent_row(
+                            limit_lane,
+                            "USD_CAD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_execution_db(
+                paths["execution_db"],
+                [
+                    {
+                        "ts_utc": "2026-06-12T08:15:56+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": limit_lane,
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T08:30:56+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": limit_lane,
+                        "trade_id": "limit-1",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-13T08:30:56+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": limit_lane,
+                        "trade_id": "limit-2",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "LIMIT_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-14T08:30:56+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": limit_lane,
+                        "trade_id": "limit-1",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 330.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-14T09:30:56+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": limit_lane,
+                        "trade_id": "limit-2",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 330.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T09:43:50+00:00",
+                        "event_type": "ORDER_ACCEPTED",
+                        "lane_id": market_lane,
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-12T09:44:50+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": market_lane,
+                        "trade_id": "market-1",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-13T09:44:50+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": market_lane,
+                        "trade_id": "market-2",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "raw_json": {"type": "MARKET_ORDER"},
+                    },
+                    {
+                        "ts_utc": "2026-06-14T10:44:50+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": market_lane,
+                        "trade_id": "market-1",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 330.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                    {
+                        "ts_utc": "2026-06-14T11:44:50+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": market_lane,
+                        "trade_id": "market-2",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 330.0,
+                        "raw_json": {"type": "ORDER_FILL"},
+                    },
+                ],
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], limit_lane)
+        self.assertEqual(payload["top_lane"]["vehicle"], "LIMIT")
+        self.assertTrue(payload["top_lane"]["entry_recovery_candidate"])
+
     def test_trade_closed_without_lane_uses_filled_trade_lane_for_exact_entry_recovery(self) -> None:
         now = datetime(2026, 7, 9, 0, 30, tzinfo=timezone.utc)
         lane = "range_trader:AUD_CAD:SHORT:RANGE_ROTATION"
@@ -1847,7 +2227,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                         "trade_id": "471883",
                         "pair": "AUD_CAD",
                         "side": "SHORT",
-                        "realized_pl_jpy": 16.6134,
+                        "realized_pl_jpy": 160.0,
                         "raw_json": {"type": "ORDER_FILL"},
                     },
                     {
@@ -1866,7 +2246,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                         "trade_id": "472667",
                         "pair": "AUD_CAD",
                         "side": "SHORT",
-                        "realized_pl_jpy": 81.8009,
+                        "realized_pl_jpy": 180.0,
                         "raw_json": {"type": "ORDER_FILL"},
                     },
                 ],
@@ -1901,7 +2281,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertTrue(top["entry_recovery_candidate"])
         self.assertEqual(top["entry_recovery_history"]["profit_source"], "exact_lane")
         self.assertEqual(top["entry_recovery_history"]["closed_trades"], 2)
-        self.assertEqual(top["entry_recovery_history"]["closed_pl_jpy"], 98.4143)
+        self.assertEqual(top["entry_recovery_history"]["closed_pl_jpy"], 340)
         self.assertIn("ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH", top["blockers"])
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", top["blockers"])
         self.assertNotIn("ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING", top["blockers"])
@@ -2023,7 +2403,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                         "lane_id": exact_lane,
                         "pair": "GBP_USD",
                         "side": "LONG",
-                        "realized_pl_jpy": 120.0,
+                        "realized_pl_jpy": 500.0,
                         "raw_json": {"type": "ORDER_FILL"},
                     },
                 ],

@@ -1114,6 +1114,8 @@ def _normalized_board_lane_status(
         return raw
     if raw == "EVIDENCE_ACQUISITION" and blockers == [TP_PROVEN_ROTATION_BLOCKER]:
         return raw
+    if raw == "EVIDENCE_ACQUISITION" and "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR" in blockers:
+        return raw
     if raw == "EVIDENCE_ACQUISITION" and edge_improvement_candidate:
         return raw
     if raw == "EVIDENCE_ACQUISITION" and "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH" in blockers:

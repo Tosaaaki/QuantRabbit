@@ -765,6 +765,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   evidence only, not live permission. The board/contract sync then reruns
 #   trader-goal-loop-orchestrator so this terminal `next_prompt` becomes the
 #   visible next Codex work order in the same cycle.
+#   If the board lane is EVIDENCE_ACQUISITION because positive zero-loss local
+#   TAKE_PROFIT_ORDER proof exists below the collection floor, preserve that
+#   status and blocker instead of normalizing it back to NO_TRADE_WITH_CAUSE;
+#   the next work remains exact TP-proof collection with live permission false.
 # - active-opportunity-board is read-only and runs after active-trader-contract.
 #   It writes `data/active_opportunity_board.json` and
 #   `docs/active_opportunity_board.md`, compares all visible pairs, directions,
@@ -798,6 +802,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   `source_pair_filter`; a targeted refresh must not erase unrelated pair
 #   blockers/support while updating or clearing the refreshed pairs. `NO_TRADE_WITH_CAUSE` must carry a concrete
 #   machine-readable blocker, not an empty cause set.
+#   Entry-drought recovery evidence must be materially profitable; microscopic
+#   positive closed P/L must not promote a lane over a current live-grade
+#   frontier. Positive zero-loss local TAKE_PROFIT_ORDER proof below the floor
+#   is read-only EVIDENCE_ACQUISITION for exact TP-proof collection, while zero
+#   local TP proof remains NO_TRADE_WITH_CAUSE. Under the same live-grade /
+#   evidence proximity with negative expectancy, prefer LIMIT or STOP proof
+#   paths before MARKET without mixing proof between vehicles.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # - non-eurusd-proof-lane-mapper and non-eurusd-live-grade-frontier are

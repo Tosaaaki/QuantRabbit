@@ -122,6 +122,8 @@ ENTRY_DROUGHT_LOOKBACK_DAYS = 45
 ENTRY_DROUGHT_RECENT_DAYS = 3
 ENTRY_DROUGHT_MIN_ACCEPTED = 3
 ENTRY_DROUGHT_MIN_FILLS = 2
+ENTRY_DROUGHT_MIN_CLOSED_PL_JPY = 300.0
+ENTRY_DROUGHT_MIN_EXPECTANCY_JPY = 100.0
 
 
 @dataclass(frozen=True)
@@ -867,7 +869,7 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
         pnl = exact_pnl.get(key) or pair_side_pnl.get((pair, side)) or {}
         closed_pl = _float(pnl.get("closed_pl_jpy")) or 0.0
         closed_trades = int(pnl.get("closed_trades") or 0)
-        if closed_trades <= 0 or closed_pl <= 0:
+        if not _entry_recovery_profit_is_material(closed_pl, closed_trades):
             continue
         vehicle = _dominant_vehicle(group.get("vehicle_counts"))
         candidate = {
@@ -875,6 +877,7 @@ def _execution_entry_recovery_candidates(path: Path, *, now_utc: datetime) -> li
             "vehicle": vehicle or _parse_lane_id(lane_id).get("vehicle") or "UNKNOWN",
             "closed_trades": closed_trades,
             "closed_pl_jpy": round(closed_pl, 4),
+            "closed_expectancy_jpy": round(closed_pl / closed_trades, 4) if closed_trades else None,
             "win_rate": _json_number_or_none(pnl.get("win_rate")),
             "profit_source": "exact_lane" if key in exact_pnl else "pair_side_fallback",
             "last_closed_ts_utc": pnl.get("last_closed_ts_utc"),
@@ -900,6 +903,14 @@ def _accumulate_closed_pnl(bucket: dict[str, Any], pl: float, ts: datetime) -> N
     trades = int(bucket.get("closed_trades") or 0)
     bucket["win_rate"] = wins / trades if trades else None
     bucket["last_closed_ts_utc"] = ts.isoformat()
+
+
+def _entry_recovery_profit_is_material(closed_pl_jpy: float, closed_trades: int) -> bool:
+    if closed_trades <= 0:
+        return False
+    if closed_pl_jpy < ENTRY_DROUGHT_MIN_CLOSED_PL_JPY:
+        return False
+    return (closed_pl_jpy / closed_trades) >= ENTRY_DROUGHT_MIN_EXPECTANCY_JPY
 
 
 def _vehicle_from_execution_raw(raw_json: Any) -> str:
@@ -1625,7 +1636,7 @@ def _has_evidence_path(lane: dict[str, Any]) -> bool:
 
 def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
     blockers = _string_list(lane.get("blockers"))
-    if blockers != [TP_PROVEN_ROTATION_BLOCKER]:
+    if TP_PROVEN_ROTATION_BLOCKER not in blockers:
         return False
     if str(lane.get("vehicle") or "").upper() == "MARKET":
         return False
@@ -1640,7 +1651,7 @@ def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
         return False
     trades = _float(proof.get("capture_take_profit_trades"))
     if trades is not None:
-        if trades < TP_PROOF_COLLECTION_MIN_TRADES:
+        if trades <= 0:
             return False
         losses = _float(proof.get("capture_take_profit_losses"))
         expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
@@ -1698,13 +1709,14 @@ def _entry_drought_recovery_required(lane: dict[str, Any]) -> bool:
     accepted = _first_int(history.get("accepted_before_recent"), 0)
     fills = _first_int(history.get("fills_before_recent"), 0)
     closed_pl = _float(history.get("closed_pl_jpy")) or 0.0
+    closed_trades = _first_int(history.get("closed_trades"), 0)
     recent_accepted = _first_int(history.get("recent_accepted"), 0)
     recent_fills = _first_int(history.get("recent_fills"), 0)
     if history.get("profit_source") == "pair_side_fallback" and not lane.get("order_intent_status"):
         return False
     if accepted < ENTRY_DROUGHT_MIN_ACCEPTED and fills < ENTRY_DROUGHT_MIN_FILLS:
         return False
-    if closed_pl <= 0:
+    if not _entry_recovery_profit_is_material(closed_pl, closed_trades):
         return False
     return recent_accepted == 0 and recent_fills == 0
 
@@ -1763,6 +1775,7 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
         -float(STATUS_PRIORITY.get(str(lane.get("status")), 0)),
         _current_intent_sort_bucket(lane),
         _entry_recovery_sort_bucket(lane),
+        _vehicle_sort_bucket(lane),
         _live_unlock_blocker_sort_bucket(lane),
         len(blockers),
         -float(lane.get("_rank_score") or 0.0),
@@ -1787,12 +1800,25 @@ def _entry_recovery_sort_bucket(lane: dict[str, Any]) -> int:
 def _live_unlock_blocker_sort_bucket(lane: dict[str, Any]) -> int:
     blockers = lane.get("blockers") or []
     if _has_marker(blockers, FAILED_EXACT_REPLAY_MARKERS):
+        return 4
+    if LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER in blockers:
         return 3
     if _has_marker(blockers, NEGATIVE_BLOCKER_MARKERS):
         return 2
     if lane.get("vehicle") == "UNKNOWN" or "NO_CURRENT_EXECUTABLE_INTENT" in blockers:
-        return 4
+        return 5
     return 0
+
+
+def _vehicle_sort_bucket(lane: dict[str, Any]) -> int:
+    vehicle = str(lane.get("vehicle") or "").upper()
+    if vehicle == "LIMIT":
+        return 0
+    if vehicle in {"STOP", "STOP-ENTRY", "STOP_ENTRY"}:
+        return 1
+    if vehicle == "MARKET":
+        return 2
+    return 3
 
 
 def _current_intent_sort_bucket(lane: dict[str, Any]) -> int:
