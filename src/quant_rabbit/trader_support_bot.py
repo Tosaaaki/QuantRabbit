@@ -2644,10 +2644,13 @@ def _contract_promotes_non_eurusd_frontier_lane(
     promotion_markers = (
         "advance non_eurusd_live_grade_frontier",
         "current next action: frontier lane",
+        f"use non_eurusd_live_grade_frontier: next evidence lane {lane_ref}",
         f"consume range_rail_geometry_repair artifact for {lane_ref}",
         f"consume data/range_rail_geometry_repair.json for {lane_ref}",
     )
     if any(marker in text for marker in promotion_markers):
+        return True
+    if f"next evidence lane {lane_ref}" in text and "latest forecast is no longer range" in text:
         return True
     return f"frontier lane {lane_ref}" in text and "current next action" in text
 

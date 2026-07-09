@@ -2188,6 +2188,7 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload = json.loads(paths["output"].read_text())
 
         self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["target_shape"], "GBP_USD|LONG|RANGE_ROTATION|LIMIT")
         self.assertIn("latest forecast is no longer RANGE", payload["next_trade_enabling_action"])
         self.assertIn("Use non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
         self.assertIn(frontier_lane_id, payload["next_trade_enabling_action"])

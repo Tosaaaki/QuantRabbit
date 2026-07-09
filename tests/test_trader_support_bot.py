@@ -1672,6 +1672,158 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("range_rail_geometry_repair", active_path["next_action"])
             self.assertNotEqual(active_path["lane_id"], aud_lane_id)
 
+    def test_latest_not_range_frontier_prompt_promotes_non_eurusd_active_path(self) -> None:
+        now = datetime(2026, 7, 10, 7, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            eur_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            aud_lane_id = "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION"
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": eur_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "SPREAD_TOO_WIDE",
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "RANGE_RAIL_NOT_REACHED",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                            },
+                        },
+                        {
+                            "lane_id": aud_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "SPREAD_TOO_WIDE",
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            ],
+                            "intent": {
+                                "pair": "AUD_JPY",
+                                "side": "SHORT",
+                                "order_type": "STOP",
+                                "market_context": {"method": "TREND_CONTINUATION"},
+                            },
+                        },
+                    ],
+                },
+            )
+            eur_lane = {
+                "lane_id": eur_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "blockers": [
+                    "SPREAD_TOO_WIDE",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "RANGE_RAIL_NOT_REACHED",
+                ],
+                "next_action": "WAIT_FOR_RANGE_RAIL_RECHECK",
+            }
+            aud_lane = {
+                "lane_id": aud_lane_id,
+                "pair": "AUD_JPY",
+                "direction": "SHORT",
+                "strategy_family": "TREND_CONTINUATION",
+                "vehicle": "STOP",
+                "status": "EVIDENCE_ACQUISITION",
+                "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_SPREAD_FORECAST",
+                "blockers": [
+                    "SPREAD_TOO_WIDE",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ],
+                "next_action": "Build exact TP-proven rotation proof for AUD_JPY SHORT TREND_CONTINUATION.",
+            }
+            terminal_action = (
+                f"Use the latest active_opportunity_board rerank: top lane {eur_lane_id} "
+                "(LIMIT, EVIDENCE_ACQUISITION) has consumed range_rail_geometry_repair, "
+                "but the latest forecast is no longer RANGE. Do not repeat range-box refresh for "
+                "that invalidated range-rail path. Use non_eurusd_live_grade_frontier: "
+                f"next evidence lane {aud_lane_id} (AUD_JPY|SHORT|TREND_CONTINUATION|STOP) "
+                "(STOP, 3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_SPREAD_FORECAST). "
+                "Build exact TP-proven rotation proof for trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION; "
+                "do not hide negative expectancy."
+            )
+            _write_json(
+                root / "data" / "active_trader_contract.json",
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "target_shape": "EUR_USD|SHORT|RANGE_ROTATION|LIMIT",
+                    "next_trade_enabling_action": terminal_action,
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                            "top_lane": eur_lane,
+                        },
+                        "non_eurusd_live_grade_frontier": {
+                            "status": "NON_EURUSD_FRONTIER_FOUND",
+                            "top_non_eurusd_lane": aud_lane,
+                        },
+                    },
+                    "live_permission_allowed": False,
+                },
+            )
+            _write_json(
+                root / "data" / "active_opportunity_board.json",
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "top_lane": eur_lane,
+                    "live_permission_allowed": False,
+                },
+            )
+            _write_json(
+                root / "data" / "non_eurusd_live_grade_frontier.json",
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NON_EURUSD_FRONTIER_FOUND",
+                    "top_non_eurusd_lane": aud_lane,
+                    "live_permission_allowed": False,
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            active_path = payload["entry_readiness"]["active_path"]
+            shortest = payload["entry_readiness"]["shortest_live_ready_path"]
+            self.assertEqual(active_path["lane_id"], aud_lane_id)
+            self.assertEqual(active_path["target_shape"], "AUD_JPY|SHORT|TREND_CONTINUATION|STOP")
+            self.assertEqual(shortest["lane_id"], aud_lane_id)
+            self.assertEqual(payload["metrics"]["active_path_lane_id"], aud_lane_id)
+            self.assertEqual(payload["metrics"]["shortest_live_ready_path_lane_id"], aud_lane_id)
+            self.assertNotEqual(active_path["lane_id"], eur_lane_id)
+            self.assertIn("latest forecast is no longer RANGE", active_path["next_action"])
+
     def test_active_contract_target_shape_overrides_legacy_shortest_path(self) -> None:
         now = datetime(2026, 7, 9, 13, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

@@ -296,8 +296,12 @@ class ActiveTraderContract:
             non_eurusd_frontier=non_eurusd_frontier,
         )
         target_shape = _contract_target_shape(
+            selected_active_path=selected_active_path,
             active_opportunity_board=active_opportunity_board,
             non_eurusd_frontier=non_eurusd_frontier,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -2458,10 +2462,57 @@ def _frontier_target_shape(non_eurusd_frontier: dict[str, Any] | None) -> str | 
 
 def _contract_target_shape(
     *,
+    selected_active_path: str | None = None,
     active_opportunity_board: dict[str, Any] | None = None,
     non_eurusd_frontier: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
 ) -> str:
-    return _active_board_target_shape(active_opportunity_board) or _frontier_target_shape(non_eurusd_frontier) or TARGET_SHAPE
+    frontier_shape = _frontier_target_shape(non_eurusd_frontier)
+    if frontier_shape and _frontier_overrides_board_target_shape(
+        selected_active_path=selected_active_path,
+        active_opportunity_board=active_opportunity_board,
+        non_eurusd_frontier=non_eurusd_frontier,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    ):
+        return frontier_shape
+    return _active_board_target_shape(active_opportunity_board) or frontier_shape or TARGET_SHAPE
+
+
+def _frontier_overrides_board_target_shape(
+    *,
+    selected_active_path: str | None,
+    active_opportunity_board: dict[str, Any] | None,
+    non_eurusd_frontier: dict[str, Any] | None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> bool:
+    if selected_active_path != "EVIDENCE_ACQUISITION":
+        return False
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
+    if not _frontier_evidence_action_available(frontier):
+        return False
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    if _active_board_all_no_trade(board):
+        return True
+    if _range_rail_latest_forecast_not_range(range_rail_geometry_repair or {}, board_top):
+        return True
+    frontier_lane = _frontier_evidence_lane(frontier)
+    return bool(
+        frontier_lane
+        and _frontier_parallel_board_evidence(board_top, frontier)
+        and _frontier_artifact_consumption(
+            frontier_lane,
+            entry_frequency_recovery=entry_frequency_recovery,
+            forecast_pattern_refresh=forecast_pattern_refresh,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
+    )
 
 
 def _render_report(payload: dict[str, Any]) -> str:
