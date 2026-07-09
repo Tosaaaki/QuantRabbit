@@ -41,6 +41,12 @@ class RangeRailGeometryRepairTest(unittest.TestCase):
         self.assertFalse(summary.live_permission_allowed)
         self.assertEqual(payload["live_side_effects"], [])
         self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["target_lane_id"], lane_id)
+        self.assertEqual(payload["next_safe_action"], "WAIT_FOR_RANGE_RAIL_RECHECK")
+        self.assertEqual(payload["rail_status"], "RANGE_RAIL_NOT_REACHED")
+        self.assertAlmostEqual(payload["box_position"], 0.7601)
+        self.assertEqual(payload["counterpart_geometry_status"], "COUNTERPART_PRICE_GEOMETRY_INCOMPLETE")
+        self.assertFalse(payload["counterpart_geometry_ready"])
         top = payload["top_lane"]
         self.assertEqual(top["range_box"]["rail_status"], "RANGE_RAIL_NOT_REACHED")
         self.assertAlmostEqual(top["range_box"]["box_position"], 0.7601)
@@ -77,6 +83,11 @@ class RangeRailGeometryRepairTest(unittest.TestCase):
             payload = json.loads(paths["output"].read_text())
 
         self.assertEqual(summary.status, "RANGE_RAIL_GEOMETRY_READY_PROOF_BLOCKED")
+        self.assertEqual(payload["target_lane_id"], lane_id)
+        self.assertEqual(payload["next_safe_action"], "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED")
+        self.assertEqual(payload["rail_status"], "RANGE_RAIL_REACHED")
+        self.assertEqual(payload["counterpart_geometry_status"], "COUNTERPART_GEOMETRY_READY")
+        self.assertTrue(payload["counterpart_geometry_ready"])
         top = payload["top_lane"]
         self.assertEqual(top["range_box"]["rail_status"], "RANGE_RAIL_REACHED")
         self.assertEqual(top["counterpart_geometry"]["status"], "COUNTERPART_GEOMETRY_READY")

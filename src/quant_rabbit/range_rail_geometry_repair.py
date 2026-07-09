@@ -81,6 +81,13 @@ class RangeRailGeometryRepair:
         )
         target_lane = _analyze_target(target, order_intents=order_intents)
         actions = _next_actions(target_lane)
+        range_box = target_lane.get("range_box") if isinstance(target_lane.get("range_box"), dict) else {}
+        geometry = (
+            target_lane.get("counterpart_geometry")
+            if isinstance(target_lane.get("counterpart_geometry"), dict)
+            else {}
+        )
+        first_action = actions[0] if actions else {}
         payload = {
             "schema_version": SCHEMA_VERSION,
             "status": _status(target_lane),
@@ -88,6 +95,12 @@ class RangeRailGeometryRepair:
             "read_only": True,
             "live_side_effects": [],
             "live_permission_allowed": False,
+            "target_lane_id": target_lane.get("lane_id") if target_lane else None,
+            "next_safe_action": first_action.get("action_type") if isinstance(first_action, dict) else None,
+            "rail_status": range_box.get("rail_status"),
+            "box_position": range_box.get("box_position"),
+            "counterpart_geometry_status": geometry.get("status"),
+            "counterpart_geometry_ready": bool(geometry.get("geometry_ready")),
             "top_lane": target_lane,
             "target_lane": target_lane,
             "next_actions": actions,

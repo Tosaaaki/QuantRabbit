@@ -518,6 +518,11 @@ REGIME_MAX_STOP_WIDEN = 1.5  # ceiling — never widen more than 1.5× ATR floor
 # cost is the immediate market reality around a limit fill.
 RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT = 0.5
 RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT = 0.5
+# If current spread is wider than the active RANGE box, a spread-multiple
+# buffer can push the pending LIMIT outside the box. Cap rail entry displacement
+# by a box-derived fraction so geometry stays at the executable rail while the
+# spread/risk gates keep stressed markets blocked.
+RANGE_RAIL_ENTRY_BUFFER_BOX_MAX_FRACTION = 0.25
 # Range-rail TP must clear the RiskEngine spread floor again at broker-send
 # time, after quote refresh. The floor therefore needs a generator-side cushion
 # for ordinary spread flicker; the live RiskEngine gate remains the authority.
@@ -14132,7 +14137,14 @@ def _range_geometry(
         return None
 
     spread_buffer = spread_pips * RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT * pip
-    pending_offset = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT * pip
+    rail_entry_buffer = _range_rail_entry_buffer(
+        support=support,
+        resistance=resistance,
+        spread_buffer=spread_buffer,
+        pip=pip,
+    )
+    if rail_entry_buffer is None:
+        return None
     spread_floor = spread_pips * GEOMETRY_SPREAD_FLOOR_MULT
     stop_pips = max((atr_pips or 0.0) * GEOMETRY_ATR_MULT, spread_floor)
     # Regime-aware stop widening keeps SL outside wick noise; floor at spread.
@@ -14152,10 +14164,10 @@ def _range_geometry(
                     atr_pips=atr_pips,
                     spread_pips=spread_pips,
                     chart_context=chart_context,
-                )
+            )
             entry = quote.ask
         else:
-            entry = min(support + spread_buffer, quote.ask - pending_offset)
+            entry = support + rail_entry_buffer
         sl = min(entry - (stop_pips * pip), support - spread_buffer)
         loss_pips = abs(entry - sl) * pip_factor
         resistance = _target_resistance(entry, loss_pips, spread_pips, resistance_levels, pip)
@@ -14178,10 +14190,10 @@ def _range_geometry(
                     atr_pips=atr_pips,
                     spread_pips=spread_pips,
                     chart_context=chart_context,
-                )
+            )
             entry = quote.bid
         else:
-            entry = max(resistance - spread_buffer, quote.bid + pending_offset)
+            entry = resistance - rail_entry_buffer
         sl = max(entry + (stop_pips * pip), resistance + spread_buffer)
         loss_pips = abs(entry - sl) * pip_factor
         support = _target_support(entry, loss_pips, spread_pips, support_levels, pip)
@@ -14193,6 +14205,21 @@ def _range_geometry(
         if tp >= entry:
             return None
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _range_rail_entry_buffer(
+    *,
+    support: float,
+    resistance: float,
+    spread_buffer: float,
+    pip: float,
+) -> float | None:
+    box_width = resistance - support
+    min_buffer = pip / 10.0
+    if box_width <= min_buffer * 2:
+        return None
+    max_box_buffer = box_width * RANGE_RAIL_ENTRY_BUFFER_BOX_MAX_FRACTION
+    return max(min_buffer, min(spread_buffer, max_box_buffer))
 
 
 def _directional_range_market_geometry(

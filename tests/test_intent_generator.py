@@ -9097,6 +9097,37 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLess(intent["sl"], metadata["range_support"])
             self.assertTrue(metadata["range_tp_is_inside_box"])
 
+    def test_range_rotation_limit_entry_stays_inside_box_when_spread_offset_is_wide(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root, eur_bid=1.17115, eur_ask=1.17300))
+
+            result = json.loads(output.read_text())["results"][0]
+            intent = result["intent"]
+            metadata = intent["metadata"]
+            support = metadata["range_support"]
+            resistance = metadata["range_resistance"]
+            entry_position = (intent["entry"] - support) / (resistance - support)
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(intent["order_type"], "LIMIT")
+            self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+            self.assertGreaterEqual(intent["entry"], support)
+            self.assertLess(intent["entry"], resistance)
+            self.assertLessEqual(entry_position, 0.30)
+            self.assertLess(intent["sl"], support)
+            self.assertTrue(metadata["range_tp_is_inside_box"])
+            self.assertIn("SPREAD_TOO_WIDE", issue_codes)
+
     def test_range_rotation_adds_market_reclaim_when_quote_is_at_rail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
