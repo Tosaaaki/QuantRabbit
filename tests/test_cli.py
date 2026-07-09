@@ -6320,10 +6320,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             with self.subTest(steps=[spec["argv"][0] for spec in specs[:3]]):
                 self.assertTrue(watchdog_indexes)
                 self.assertTrue(any(index < steps.index(intent_step) for index in watchdog_indexes))
-                last_guardian_router = max(
-                    index for index, step in enumerate(steps) if step == "guardian-event-router"
+                pre_watchdog_guardian_router = max(
+                    index
+                    for index, step in enumerate(steps)
+                    if step == "guardian-event-router" and index < max(watchdog_indexes)
                 )
-                self.assertLess(last_guardian_router, max(watchdog_indexes))
+                self.assertLess(pre_watchdog_guardian_router, max(watchdog_indexes))
                 self.assertLess(max(watchdog_indexes), steps.index("profit-capture-bot"))
                 self.assertLess(max(watchdog_indexes), steps.index("trader-support-bot"))
                 for index in watchdog_indexes:
@@ -6536,6 +6538,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_refresh_contract = max(index for index, step in enumerate(refresh) if step == "active-trader-contract")
         refresh_range_rail = refresh.index("range-rail-geometry-repair")
         refresh_operator_review = refresh.index("operator-review-report")
+        last_refresh_guardian_contract = max(
+            index for index, step in enumerate(refresh) if step == "guardian-trigger-contract"
+        )
+        last_refresh_guardian_router = max(
+            index for index, step in enumerate(refresh) if step == "guardian-event-router"
+        )
         last_refresh_goal_loop = max(
             index for index, step in enumerate(refresh) if step == "trader-goal-loop-orchestrator"
         )
@@ -6546,7 +6554,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh_frontier, last_refresh_contract)
         self.assertLess(refresh.index("forecast-pattern-refresh"), refresh_range_rail)
         self.assertLess(refresh_range_rail, last_refresh_contract)
-        self.assertLess(last_refresh_contract, refresh_operator_review)
+        self.assertLess(last_refresh_contract, last_refresh_guardian_contract)
+        self.assertLess(last_refresh_guardian_contract, last_refresh_guardian_router)
+        self.assertLess(last_refresh_guardian_router, refresh_operator_review)
         self.assertLess(refresh_operator_review, last_refresh_goal_loop)
         self.assertEqual(refresh[-1], "trader-goal-loop-orchestrator")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
@@ -6667,6 +6677,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_sidecar_contract = max(index for index, step in enumerate(sidecars) if step == "active-trader-contract")
         sidecar_range_rail = sidecars.index("range-rail-geometry-repair")
         sidecar_operator_review = sidecars.index("operator-review-report")
+        last_sidecar_guardian_contract = max(
+            index for index, step in enumerate(sidecars) if step == "guardian-trigger-contract"
+        )
+        last_sidecar_guardian_router = max(
+            index for index, step in enumerate(sidecars) if step == "guardian-event-router"
+        )
         last_sidecar_goal_loop = max(
             index for index, step in enumerate(sidecars) if step == "trader-goal-loop-orchestrator"
         )
@@ -6677,7 +6693,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecar_frontier, last_sidecar_contract)
         self.assertLess(sidecars.index("forecast-pattern-refresh"), sidecar_range_rail)
         self.assertLess(sidecar_range_rail, last_sidecar_contract)
-        self.assertLess(last_sidecar_contract, sidecar_operator_review)
+        self.assertLess(last_sidecar_contract, last_sidecar_guardian_contract)
+        self.assertLess(last_sidecar_guardian_contract, last_sidecar_guardian_router)
+        self.assertLess(last_sidecar_guardian_router, sidecar_operator_review)
         self.assertLess(sidecar_operator_review, last_sidecar_goal_loop)
         self.assertEqual(sidecars[-1], "trader-goal-loop-orchestrator")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}

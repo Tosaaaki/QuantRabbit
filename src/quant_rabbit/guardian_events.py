@@ -824,6 +824,7 @@ def build_guardian_trigger_contract(
     snapshot: dict[str, Any],
     order_intents: dict[str, Any],
     existing_contract: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     clock = _utc(now)
@@ -909,6 +910,12 @@ def build_guardian_trigger_contract(
             continue
         seen.add(key)
         entries.append(entry)
+
+    _merge_range_rail_watch_entry(
+        entries=entries,
+        seen=seen,
+        watch_entry=_range_rail_watch_contract_entry(range_rail_geometry_repair, now=clock),
+    )
 
     return {
         "schema_version": 1,
@@ -1894,6 +1901,184 @@ def _default_candidate_triggers(
         "invalidation_triggers": [{key: value for key, value in invalidation_trigger.items() if value is not None}],
         "emergency_triggers": [{key: value for key, value in emergency_trigger.items() if value is not None}],
     }
+
+
+def _range_rail_watch_contract_entry(
+    artifact: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> dict[str, Any] | None:
+    payload = artifact if isinstance(artifact, dict) else {}
+    if not payload or payload.get("read_only") is not True or payload.get("live_permission_allowed") is not False:
+        return None
+    lane = payload.get("top_lane") if isinstance(payload.get("top_lane"), dict) else {}
+    if not lane:
+        lane = payload.get("target_lane") if isinstance(payload.get("target_lane"), dict) else {}
+    condition = lane.get("rail_success_condition") if isinstance(lane.get("rail_success_condition"), dict) else {}
+    pair = _pair(condition.get("pair") or lane.get("pair"))
+    side = _direction_from_text(condition.get("direction") or lane.get("direction"))
+    trigger = _range_rail_watch_trigger(lane, condition)
+    if not pair or not side or trigger is None:
+        return None
+    lane_id = str(lane.get("lane_id") or trigger.get("lane_id") or "").strip()
+    repair_status = str(payload.get("status") or lane.get("repair_status") or "").strip() or "RANGE_RAIL_GEOMETRY_REPAIR"
+    deadline = datetime.fromtimestamp(now.timestamp() + DEFAULT_CONTRACT_REVIEW_DEADLINE_SECONDS, timezone.utc)
+    blockers = _unique(
+        _string_list(lane.get("blockers"))
+        + _string_list(condition.get("must_preserve_blockers"))
+        + _range_rail_counterpart_blockers(lane)
+    )
+    return {
+        "pair": pair,
+        "side": side,
+        "thesis": f"range rail recheck for {lane_id or pair}",
+        "owner": "SYSTEM",
+        "thesis_state": "ALIVE",
+        "lane_id": lane_id or None,
+        "strategy_family": lane.get("strategy_family"),
+        "vehicle": lane.get("vehicle"),
+        "status": repair_status,
+        "current": True,
+        "selected_for_review": True,
+        "watch_only": True,
+        "watch_only_reason": "WAIT_FOR_RANGE_RAIL_RECHECK",
+        "range_rail_watch": {
+            "source_artifact": "data/range_rail_geometry_repair.json",
+            "source_status": repair_status,
+            "rail_status": (lane.get("range_box") if isinstance(lane.get("range_box"), dict) else {}).get("rail_status"),
+            "condition": condition,
+            "preserve_blockers": blockers,
+            "live_permission_allowed": False,
+        },
+        "harvest_triggers": [],
+        "add_triggers": [trigger],
+        "no_add_triggers": [],
+        "wounded_triggers": [],
+        "invalidation_triggers": [],
+        "emergency_triggers": [],
+        "next_review_reason": (
+            "watch-only range rail recheck; wake GPT when quote reaches the executable rail, "
+            "then reprice/prove blockers before any gateway route"
+        ),
+        "next_review_deadline_utc": deadline.isoformat(),
+    }
+
+
+def _range_rail_watch_trigger(lane: dict[str, Any], condition: dict[str, Any]) -> dict[str, Any] | None:
+    pair = _pair(condition.get("pair") or lane.get("pair"))
+    side = _direction_from_text(condition.get("direction") or lane.get("direction"))
+    low = _float(condition.get("range_low_price"))
+    high = _float(condition.get("range_high_price"))
+    if not pair or not side or low is None or high is None or high <= low:
+        return None
+    if side == "LONG":
+        box_threshold = _float(condition.get("required_box_position_lte"))
+        operator = "<="
+    else:
+        box_threshold = _float(condition.get("required_box_position_gte"))
+        operator = ">="
+    if box_threshold is None:
+        return None
+    threshold_price = low + (high - low) * box_threshold
+    lane_id = str(lane.get("lane_id") or "").strip()
+    blockers = _unique(
+        _string_list(lane.get("blockers"))
+        + _string_list(condition.get("must_preserve_blockers"))
+        + _range_rail_counterpart_blockers(lane)
+    )
+    trigger_id = f"range_rail_recheck_ready:{_slug(lane_id or pair)}"
+    return {
+        "trigger_id": trigger_id,
+        "status": "PENDING",
+        "kind": "range_rail_recheck",
+        "lane_id": lane_id or None,
+        "pair": pair,
+        "side": side,
+        "owner": "SYSTEM",
+        "thesis_state": "ALIVE",
+        "action_hint": "ADD",
+        "recommended_review_type": "ADD_REVIEW",
+        "severity": "P1",
+        "condition": {
+            "metric": "mid",
+            "operator": operator,
+            "value": threshold_price,
+            "range_box_position_threshold": box_threshold,
+            "range_low_price": low,
+            "range_high_price": high,
+            "source": "range_rail_geometry_repair.rail_success_condition",
+        },
+        "rail_success_condition": condition,
+        "evidence_required": (
+            "rail reached only wakes GPT; preserve spread, bid/ask, negative-expectancy, "
+            "range-location, proof-floor, and gateway blockers before any live route"
+        ),
+        "preserve_blockers": blockers,
+        "live_permission_allowed": False,
+        "contract_triggers_do_not_execute": True,
+    }
+
+
+def _range_rail_counterpart_blockers(lane: dict[str, Any]) -> list[str]:
+    counterpart = lane.get("range_rotation_counterpart") if isinstance(lane.get("range_rotation_counterpart"), dict) else {}
+    geometry = lane.get("counterpart_geometry") if isinstance(lane.get("counterpart_geometry"), dict) else {}
+    return _string_list(counterpart.get("blocker_codes")) + _string_list(geometry.get("reasons"))
+
+
+def _merge_range_rail_watch_entry(
+    *,
+    entries: list[dict[str, Any]],
+    seen: set[str],
+    watch_entry: dict[str, Any] | None,
+) -> None:
+    if not watch_entry:
+        return
+    lane_id = str(watch_entry.get("lane_id") or "").strip()
+    pair = _pair(watch_entry.get("pair"))
+    side = _direction_from_text(watch_entry.get("side"))
+    for entry in entries:
+        if lane_id and str(entry.get("lane_id") or "").strip() == lane_id:
+            _merge_range_rail_watch_into_entry(entry, watch_entry)
+            return
+        if _contract_entry_key(entry) == _contract_entry_key(watch_entry):
+            _merge_range_rail_watch_into_entry(entry, watch_entry)
+            return
+    if pair and side:
+        seen.add(_contract_entry_key(watch_entry))
+        entries.append({key: value for key, value in watch_entry.items() if value is not None})
+
+
+def _merge_range_rail_watch_into_entry(entry: dict[str, Any], watch_entry: dict[str, Any]) -> None:
+    trigger = (watch_entry.get("add_triggers") or [None])[0]
+    if not isinstance(trigger, dict):
+        return
+    for field_name in (
+        "range_rail_watch",
+        "watch_only",
+        "watch_only_reason",
+        "current",
+        "selected_for_review",
+        "next_review_reason",
+        "next_review_deadline_utc",
+    ):
+        entry[field_name] = watch_entry[field_name]
+    for field_name in ("strategy_family", "vehicle", "status"):
+        if watch_entry.get(field_name) is not None:
+            entry[field_name] = watch_entry[field_name]
+    add_triggers = entry.get("add_triggers") if isinstance(entry.get("add_triggers"), list) else []
+    entry["add_triggers"] = _replace_trigger(add_triggers, trigger)
+
+
+def _replace_trigger(triggers: list[Any], replacement: dict[str, Any]) -> list[Any]:
+    replacement_id = str(replacement.get("trigger_id") or "").strip()
+    kept: list[Any] = []
+    for trigger in triggers:
+        trigger_id = str(trigger.get("trigger_id") or "").strip() if isinstance(trigger, dict) else ""
+        if replacement_id and trigger_id == replacement_id:
+            continue
+        kept.append(trigger)
+    kept.append(replacement)
+    return kept
 
 
 def _contract_entry_from_seed(
@@ -3286,6 +3471,25 @@ def _truthy(value: Any) -> bool:
 def _contains_any(values: list[Any], needles: tuple[str, ...]) -> bool:
     text = " ".join(str(value) for value in values).upper()
     return any(needle.upper() in text for needle in needles)
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _float(value: Any) -> float | None:

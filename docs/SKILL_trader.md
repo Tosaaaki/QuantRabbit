@@ -335,6 +335,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # entry-frequency-recovery → active-trader-contract →
 # forecast-pattern-refresh → active-trader-contract →
 # range-rail-geometry-repair → active-trader-contract →
+# guardian-trigger-contract → guardian-event-router →
 # operator-review-report → trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
@@ -569,7 +570,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `active-trader-contract` → `entry-frequency-recovery` →
 # `active-trader-contract` → `forecast-pattern-refresh` →
 # `active-trader-contract` → `range-rail-geometry-repair` →
-# `active-trader-contract` → `operator-review-report` →
+# `active-trader-contract` → `guardian-trigger-contract` →
+# `guardian-event-router` → `operator-review-report` →
 # `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
@@ -602,7 +604,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → active-trader-contract → entry-frequency-recovery
 #   → active-trader-contract → forecast-pattern-refresh
 #   → active-trader-contract → range-rail-geometry-repair
-#   → active-trader-contract → operator-review-report
+#   → active-trader-contract → guardian-trigger-contract
+#   → guardian-event-router → operator-review-report
 #   → trader-goal-loop-orchestrator
 # and prints one compact digest.
 #
@@ -811,7 +814,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   treat refresh output as live permission.
 # - range-rail-geometry-repair is read-only and runs after forecast-pattern
 #   refresh plus a contract consumption pass, then active-trader-contract runs
-#   again to consume it. It writes `data/range_rail_geometry_repair.json` and
+#   again to consume it, then guardian-trigger-contract / guardian-event-router
+#   refresh once more so WAIT_FOR_RANGE_RAIL_RECHECK becomes a bot-monitored
+#   wake condition in the same cycle. It writes `data/range_rail_geometry_repair.json` and
 #   `docs/range_rail_geometry_repair_report.md`, converts
 #   RANGE_RAIL_GEOMETRY_REPAIR into an executable rail success condition,
 #   checks the RANGE_ROTATION LIMIT counterpart's entry/TP/SL geometry against

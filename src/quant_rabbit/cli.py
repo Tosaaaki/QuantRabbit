@@ -2385,6 +2385,8 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         _active_trader_contract_step(),
         _range_rail_geometry_repair_step(),
         _active_trader_contract_step(),
+        {"argv": ["guardian-trigger-contract"], "required": True},
+        {"argv": ["guardian-event-router"], "required": True},
         _operator_review_report_step(),
         _trader_goal_loop_orchestrator_step(),
     ]
@@ -4436,6 +4438,7 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_contract.add_argument("--existing", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
     p_guardian_contract.add_argument("--operator-manual-positions", type=Path, default=DEFAULT_OPERATOR_MANUAL_POSITIONS)
     p_guardian_contract.add_argument("--operator-review", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)
+    p_guardian_contract.add_argument("--range-rail-geometry-repair", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
     p_guardian_contract.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
     p_guardian_contract.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT)
 
@@ -7987,10 +7990,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         order_intents_payload = _load_json_object(args.order_intents) if args.order_intents.exists() else {}
         existing_payload = _load_json_object(args.existing) if args.existing.exists() else {}
+        range_rail_geometry_repair_payload = (
+            _load_json_object(args.range_rail_geometry_repair) if args.range_rail_geometry_repair.exists() else {}
+        )
         contract = build_guardian_trigger_contract(
             snapshot=snapshot_payload,
             order_intents=order_intents_payload,
             existing_contract=existing_payload,
+            range_rail_geometry_repair=range_rail_geometry_repair_payload,
         )
         validation = validate_guardian_trigger_contract(contract, snapshot=snapshot_payload)
         _write_json(args.output, contract)

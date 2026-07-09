@@ -1179,6 +1179,69 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(entry["watch_only_reason"], "no_current_thesis")
         self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
 
+    def test_range_rail_repair_adds_watch_only_add_trigger_without_permission(self) -> None:
+        contract = build_guardian_trigger_contract(
+            snapshot=_snapshot(),
+            order_intents={},
+            existing_contract={},
+            range_rail_geometry_repair=_range_rail_repair_payload(),
+            now=NOW,
+        )
+
+        entry = contract["entries"][0]
+        trigger = entry["add_triggers"][0]
+
+        self.assertEqual(entry["pair"], "USD_CAD")
+        self.assertEqual(entry["side"], "LONG")
+        self.assertTrue(entry["watch_only"])
+        self.assertEqual(entry["watch_only_reason"], "WAIT_FOR_RANGE_RAIL_RECHECK")
+        self.assertTrue(entry["current"])
+        self.assertFalse(entry["range_rail_watch"]["live_permission_allowed"])
+        self.assertFalse(trigger["live_permission_allowed"])
+        self.assertTrue(trigger["contract_triggers_do_not_execute"])
+        self.assertEqual(trigger["condition"]["metric"], "mid")
+        self.assertEqual(trigger["condition"]["operator"], "<=")
+        self.assertAlmostEqual(trigger["condition"]["value"], 1.4165785)
+        self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", trigger["preserve_blockers"])
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
+
+    def test_range_rail_watch_trigger_waits_until_quote_reaches_rail(self) -> None:
+        contract = build_guardian_trigger_contract(
+            snapshot=_snapshot(),
+            order_intents={},
+            existing_contract={},
+            range_rail_geometry_repair=_range_rail_repair_payload(),
+            now=NOW,
+        )
+        snapshot = _snapshot()
+        snapshot["quotes"]["USD_CAD"] = {"bid": 1.4170, "ask": 1.4171}
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        self.assertNotIn("CONTRACT_ADD_TRIGGER", {event.event_type for event in events})
+
+    def test_range_rail_watch_trigger_wakes_when_quote_reaches_rail(self) -> None:
+        contract = build_guardian_trigger_contract(
+            snapshot=_snapshot(),
+            order_intents={},
+            existing_contract={},
+            range_rail_geometry_repair=_range_rail_repair_payload(),
+            now=NOW,
+        )
+        snapshot = _snapshot()
+        snapshot["quotes"]["USD_CAD"] = {"bid": 1.41650, "ask": 1.41654}
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        add_event = next(event for event in events if event.event_type == "CONTRACT_ADD_TRIGGER")
+        self.assertEqual(add_event.pair, "USD_CAD")
+        self.assertEqual(add_event.direction, "LONG")
+        self.assertEqual(add_event.action_hint, "ADD")
+        self.assertIn("mid <= 1.4165785 fired", add_event.price_zone)
+        self.assertFalse(add_event.details["contract_trigger"]["live_permission_allowed"])
+        self.assertTrue(escalation["wake_gpt"])
+
     def test_generated_contract_deadline_is_not_expired(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -1564,6 +1627,60 @@ def _open_required_trigger_fields() -> dict:
             "invalidation_triggers",
             "emergency_triggers",
         )
+    }
+
+
+def _range_rail_repair_payload() -> dict:
+    return {
+        "schema_version": "range_rail_geometry_repair_v1",
+        "status": "RANGE_RAIL_RECHECK_BUILT",
+        "generated_at_utc": NOW.isoformat(),
+        "read_only": True,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+        "top_lane": {
+            "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+            "pair": "USD_CAD",
+            "direction": "LONG",
+            "strategy_family": "BREAKOUT_FAILURE",
+            "vehicle": "LIMIT",
+            "status": "EVIDENCE_ACQUISITION",
+            "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", "SPREAD_TOO_WIDE"],
+            "range_box": {
+                "low": 1.41528,
+                "high": 1.41899,
+                "current": 1.4181,
+                "box_position": 0.7601,
+                "required_zone": "LONG_DISCOUNT_LOWER_RAIL",
+                "threshold": {"box_position_lte": 0.35},
+                "rail_status": "RANGE_RAIL_NOT_REACHED",
+            },
+            "range_rotation_counterpart": {
+                "preferred_lane_id": "range_trader:USD_CAD:LONG:RANGE_ROTATION",
+                "blocker_codes": ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+            },
+            "counterpart_geometry": {
+                "status": "COUNTERPART_PRICE_GEOMETRY_INCOMPLETE",
+                "geometry_ready": False,
+                "reasons": ["ENTRY_NOT_INSIDE_RANGE_BOX"],
+            },
+            "rail_success_condition": {
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "required_zone": "LONG_DISCOUNT_LOWER_RAIL",
+                "current_box_position": 0.7601,
+                "range_low_price": 1.41528,
+                "range_high_price": 1.41899,
+                "current_price": 1.4181,
+                "required_box_position_lte": 0.35,
+                "must_preserve_blockers": [
+                    "SPREAD_TOO_WIDE",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                ],
+            },
+            "repair_status": "RANGE_RAIL_RECHECK_BUILT",
+        },
     }
 
 
