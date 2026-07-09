@@ -193,6 +193,13 @@ RUNTIME_DISK_ENOSPC_LOGS = (
     "logs/qr_trader_run_watchdog.launchd.err",
     "logs/qr_trader_run_watchdog.log",
 )
+RUNTIME_DISK_RECOVERY_MARKERS = (
+    "docs/guardian_action_review.md",
+    "data/guardian_action_receipt.json",
+    "data/trader_support_bot.json",
+    "docs/trader_support_bot_report.md",
+    "logs/disk_maintenance_report.json",
+)
 
 
 @dataclass(frozen=True)
@@ -807,6 +814,7 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
 
     free_fraction = (usage.free / usage.total) if usage.total else 0.0
     recent_enospc = _recent_enospc_errors(root, now_utc=now_utc)
+    enospc_recovery_markers = _runtime_disk_recovery_markers(root, recent_enospc)
     base = {
         "root": str(root),
         "usage_base": str(usage_base),
@@ -819,19 +827,9 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
         "p1_free_bytes_threshold": RUNTIME_DISK_P1_FREE_BYTES,
         "p1_free_fraction_threshold": RUNTIME_DISK_P1_FREE_FRACTION,
         "recent_enospc_errors": recent_enospc,
+        "enospc_recovery_markers": enospc_recovery_markers,
+        "recovered_after_recent_enospc": bool(enospc_recovery_markers),
     }
-    if recent_enospc:
-        return {
-            **base,
-            "status": "ENOSPC_RECENT",
-            "severity": "P0",
-            "blocking": True,
-            "blocker_code": RUNTIME_DISK_ENOSPC_BLOCKER,
-            "message": (
-                "recent runtime logs contain ENOSPC/write failures; artifact writes and guardian "
-                "wake reviews may be incomplete until disk pressure is cleared"
-            ),
-        }
     if usage.free < RUNTIME_DISK_P0_FREE_BYTES:
         return {
             **base,
@@ -841,6 +839,18 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
             "blocker_code": RUNTIME_DISK_PRESSURE_BLOCKER,
             "message": (
                 f"runtime filesystem has only {usage.free} free bytes; artifact writes are unsafe"
+            ),
+        }
+    if recent_enospc and not enospc_recovery_markers:
+        return {
+            **base,
+            "status": "ENOSPC_RECENT",
+            "severity": "P0",
+            "blocking": True,
+            "blocker_code": RUNTIME_DISK_ENOSPC_BLOCKER,
+            "message": (
+                "recent runtime logs contain ENOSPC/write failures; artifact writes and guardian "
+                "wake reviews may be incomplete until disk pressure is cleared"
             ),
         }
     if usage.free < RUNTIME_DISK_P1_FREE_BYTES or free_fraction < RUNTIME_DISK_P1_FREE_FRACTION:
@@ -853,6 +863,18 @@ def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
             "message": (
                 f"runtime filesystem free space is low: free_bytes={usage.free}, "
                 f"free_pct={free_fraction * 100.0:.3f}"
+            ),
+        }
+    if recent_enospc:
+        return {
+            **base,
+            "status": "ENOSPC_RECOVERED",
+            "severity": "OK",
+            "blocking": False,
+            "blocker_code": None,
+            "message": (
+                "recent ENOSPC evidence is present, but later runtime artifact writes succeeded "
+                "and current free space is above the operating floor"
             ),
         }
     return {
@@ -883,6 +905,40 @@ def _nearest_existing_parent(path: Path) -> Path:
     while not candidate.exists() and candidate.parent != candidate:
         candidate = candidate.parent
     return candidate
+
+
+def _runtime_disk_recovery_markers(
+    root: Path,
+    recent_enospc_errors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    error_times = [
+        parsed
+        for parsed in (_parse_utc(item.get("mtime_utc")) for item in recent_enospc_errors)
+        if parsed is not None
+    ]
+    if not error_times:
+        return []
+    latest_error = max(error_times)
+    markers: list[dict[str, Any]] = []
+    for rel in RUNTIME_DISK_RECOVERY_MARKERS:
+        path = root / rel
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        except OSError:
+            continue
+        if mtime <= latest_error:
+            continue
+        markers.append(
+            {
+                "path": str(path),
+                "mtime_utc": mtime.isoformat(),
+                "seconds_after_latest_enospc": round((mtime - latest_error).total_seconds(), 3),
+            }
+        )
+    markers.sort(key=lambda item: str(item.get("mtime_utc") or ""), reverse=True)
+    return markers
 
 
 def _recent_enospc_errors(root: Path, *, now_utc: datetime) -> list[dict[str, Any]]:

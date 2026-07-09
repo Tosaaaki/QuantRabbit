@@ -830,7 +830,9 @@ def _memory_line_is_run_marker(line: str) -> bool:
     heading = lower.lstrip("#").strip() != lower
     if starts_with_timestamp and "hourly trader cycle" in lower:
         return True
-    if "trader cycle" in lower and ("ran one" in lower or "completed" in lower) and (
+    if "trader cycle" in lower and (
+        "ran one" in lower or "completed" in lower or "attempted" in lower
+    ) and (
         "hourly" in lower or "qr-trader" in lower or "qr vnext" in lower
     ):
         return True

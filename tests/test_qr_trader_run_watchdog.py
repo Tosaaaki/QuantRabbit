@@ -517,6 +517,26 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
                 "receipt expiry timestamp is not trader-run evidence",
             )
 
+    def test_automation_memory_attempted_cycle_heading_counts_as_wake_evidence(self) -> None:
+        now = _dt("2026-07-09T20:30:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "## 2026-07-09T20:04:52Z\n\n"
+                "- Attempted one deeper hourly QR vNext trader cycle from "
+                "`/Users/tossaki/App/QuantRabbit-live`, but stopped before normal routing "
+                "because the live runtime concurrency gate fired.\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["status"], "OK")
+            self.assertFalse(payload["missed_expected_window"])
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T20:04:52+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
+
     def test_automation_memory_timestamp_heading_without_run_marker_is_rejected(self) -> None:
         now = _dt("2026-07-09T16:51:00+00:00")
         with tempfile.TemporaryDirectory() as tmp:
