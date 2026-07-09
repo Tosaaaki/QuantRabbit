@@ -661,8 +661,13 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
         return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
     if status == STATUS_ALL_SPREAD_OR_FORECAST:
         return f"FORECAST_OR_SPREAD_REFRESH: refresh current forecast/spread packet for {lane_id}; do not ignore blockers."
-    if lane.get("bidask_status") in {"NEGATIVE", "REFRESH_REQUIRED"}:
+    if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"BIDASK_REPLAY_REFRESH: run exact read-only bid/ask replay for {lane_id}; do not send."
+    if lane.get("bidask_status") == "NEGATIVE":
+        return (
+            f"BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for {lane_id}; "
+            "repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
+        )
     if lane.get("tp_proof_remaining"):
         return f"TP_PROOF_COLLECTION: collect exact TAKE_PROFIT_ORDER proof for {lane_id}; do not mix market-close losses."
     if lane.get("forecast_status") != "PASS":
@@ -674,8 +679,13 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
 
 def _next_action(lane: dict[str, Any]) -> str:
     lane_id = lane.get("lane_id")
-    if lane.get("bidask_status") in {"NEGATIVE", "REFRESH_REQUIRED"}:
+    if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"Refresh exact S5 bid/ask replay for {lane_id}; keep negative blocker visible."
+    if lane.get("bidask_status") == "NEGATIVE":
+        return (
+            f"Repair bid/ask-negative pattern or vehicle shape for {lane_id}; "
+            "do not repeat replay until the lane inputs change."
+        )
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
         return f"Build exact TP-proven rotation proof for {lane_id}; do not hide negative expectancy."
     if lane.get("spread_status") == "BLOCKED":
