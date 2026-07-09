@@ -246,6 +246,188 @@ class EntryFrequencyRecoveryTest(unittest.TestCase):
         self.assertIn("Do not send", payload["next_contract_prompt"])
         self.assertIn("Entry Frequency Recovery", report)
 
+    def test_next_contract_prompt_uses_top_lane_action_not_global_first_action(self) -> None:
+        now = datetime(2026, 7, 9, 10, 30, tzinfo=timezone.utc)
+        top_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION:LIMIT"
+        other_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            top_lane = {
+                "lane_id": top_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "expected_edge_jpy": 457.9,
+                "entry_recovery_candidate": True,
+                "entry_recovery_history": {
+                    "accepted_before_recent": 26,
+                    "fills_before_recent": 12,
+                    "recent_accepted": 0,
+                    "recent_fills": 0,
+                    "closed_pl_jpy": 1554.3,
+                    "profit_source": "exact_lane",
+                },
+                "local_tp_proof": {
+                    "capture_take_profit_scope_key": "EUR_USD|SHORT|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 8,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 457.9,
+                    "capture_take_profit_proof_floor": 20,
+                },
+                "blockers": [
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+            }
+            other_lane = {
+                "lane_id": other_lane_id,
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "MARKET",
+                "status": "EVIDENCE_ACQUISITION",
+                "expected_edge_jpy": 658.9,
+                "entry_recovery_candidate": True,
+                "entry_recovery_history": {
+                    "accepted_before_recent": 2,
+                    "fills_before_recent": 2,
+                    "recent_accepted": 0,
+                    "recent_fills": 0,
+                    "closed_pl_jpy": 664.0,
+                    "profit_source": "exact_lane",
+                },
+                "local_tp_proof": {
+                    "capture_take_profit_scope_key": "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 1,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 658.9,
+                    "capture_take_profit_proof_floor": 20,
+                },
+                "blockers": [
+                    "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                    "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                ],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "top_lane": top_lane,
+                    "ranked_active_lanes": [top_lane, other_lane],
+                    "entry_recovery_summary": {"top_candidates": [top_lane, other_lane]},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "current_state": {"active_opportunity_board": {"top_lane": top_lane}},
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(paths["frontier"], {"live_permission_allowed": False, "live_side_effects": []})
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": top_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "risk_allowed": False,
+                            "live_blocker_codes": top_lane["blockers"],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "LIMIT",
+                            },
+                        },
+                        {
+                            "lane_id": other_lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "risk_allowed": False,
+                            "live_blocker_codes": other_lane["blockers"],
+                            "intent": {
+                                "pair": "USD_CAD",
+                                "side": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "order_type": "MARKET",
+                            },
+                        },
+                    ],
+                },
+            )
+            _write_json(
+                paths["strategy_profile"],
+                {
+                    "profiles": [
+                        {
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "method": "RANGE_ROTATION",
+                            "status": "CANDIDATE",
+                            "live_n": 12,
+                            "live_net_jpy": 1554.3,
+                        },
+                        {
+                            "pair": "USD_CAD",
+                            "direction": "LONG",
+                            "method": "BREAKOUT_FAILURE",
+                            "status": "CANDIDATE",
+                            "live_n": 2,
+                            "live_net_jpy": 664.0,
+                        },
+                    ]
+                },
+            )
+            _append_jsonl(
+                paths["forecast_history"],
+                [
+                    {
+                        "timestamp_utc": "2026-07-09T10:14:56.370426Z",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                    },
+                    {
+                        "timestamp_utc": "2026-07-09T10:14:56.370426Z",
+                        "pair": "USD_CAD",
+                        "direction": "RANGE",
+                    },
+                ],
+            )
+            _append_jsonl(paths["projection_ledger"], [])
+            _write_execution_db(paths["execution_db"])
+
+            EntryFrequencyRecovery(
+                active_trader_contract_path=paths["active_contract"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                order_intents_path=paths["order_intents"],
+                strategy_profile_path=paths["strategy_profile"],
+                execution_ledger_db_path=paths["execution_db"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        prompt = payload["next_contract_prompt"]
+        self.assertEqual(payload["top_lane"]["lane_id"], top_lane_id)
+        self.assertEqual(payload["forecast_pattern_tuning_queue"][0]["lane_id"], other_lane_id)
+        self.assertIn(top_lane_id, prompt)
+        self.assertIn("EXACT_TP_PROOF_COLLECTION", prompt)
+        self.assertNotIn("retune USD_CAD", prompt)
+
     def test_no_entry_drought_target_stays_read_only_noop(self) -> None:
         now = datetime(2026, 7, 9, 10, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

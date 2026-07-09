@@ -769,7 +769,15 @@ def _next_contract_prompt(lanes: list[dict[str, Any]], tuning_queue: list[dict[s
             "non_eurusd_live_grade_frontier; do not send."
         )
     lane = lanes[0]
-    first = tuning_queue[0] if tuning_queue else {}
+    lane_id = str(lane.get("lane_id") or "")
+    first = next(
+        (
+            row
+            for row in tuning_queue
+            if isinstance(row, dict) and str(row.get("lane_id") or "") == lane_id
+        ),
+        {},
+    )
     return (
         "Consume data/entry_frequency_recovery.json for "
         f"{lane.get('lane_id')}: next safe tuning action is {first.get('action_type') or 'KEEP_BLOCKED_WITH_CAUSE'}; "
