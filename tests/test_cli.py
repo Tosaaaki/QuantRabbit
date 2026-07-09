@@ -6534,13 +6534,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh_frontier = refresh.index("non-eurusd-live-grade-frontier")
         last_refresh_contract = max(index for index, step in enumerate(refresh) if step == "active-trader-contract")
         refresh_operator_review = refresh.index("operator-review-report")
+        last_refresh_goal_loop = max(
+            index for index, step in enumerate(refresh) if step == "trader-goal-loop-orchestrator"
+        )
         self.assertLess(refresh.index("trader-goal-loop-orchestrator"), first_refresh_contract)
         self.assertLess(first_refresh_contract, refresh_board)
         self.assertLess(refresh_board, refresh_mapper)
         self.assertLess(refresh_mapper, refresh_frontier)
         self.assertLess(refresh_frontier, last_refresh_contract)
         self.assertLess(last_refresh_contract, refresh_operator_review)
-        self.assertEqual(refresh[-1], "operator-review-report")
+        self.assertLess(refresh_operator_review, last_refresh_goal_loop)
+        self.assertEqual(refresh[-1], "trader-goal-loop-orchestrator")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertEqual(refresh_by_step[month_scale_timing_step]["timeout_seconds"], 180.0)
         self.assertFalse(refresh_by_step[month_scale_timing_step]["required"])
@@ -6657,13 +6661,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         sidecar_frontier = sidecars.index("non-eurusd-live-grade-frontier")
         last_sidecar_contract = max(index for index, step in enumerate(sidecars) if step == "active-trader-contract")
         sidecar_operator_review = sidecars.index("operator-review-report")
+        last_sidecar_goal_loop = max(
+            index for index, step in enumerate(sidecars) if step == "trader-goal-loop-orchestrator"
+        )
         self.assertLess(sidecars.index("trader-goal-loop-orchestrator"), first_sidecar_contract)
         self.assertLess(first_sidecar_contract, sidecar_board)
         self.assertLess(sidecar_board, sidecar_mapper)
         self.assertLess(sidecar_mapper, sidecar_frontier)
         self.assertLess(sidecar_frontier, last_sidecar_contract)
         self.assertLess(last_sidecar_contract, sidecar_operator_review)
-        self.assertEqual(sidecars[-1], "operator-review-report")
+        self.assertLess(sidecar_operator_review, last_sidecar_goal_loop)
+        self.assertEqual(sidecars[-1], "trader-goal-loop-orchestrator")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step[intent_step]["required"])
         self.assertTrue(sidecars_by_step["position-management"]["required"])
@@ -6790,6 +6798,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         direct_frontier = direct_sidecars.index("non-eurusd-live-grade-frontier")
         last_direct_contract = max(index for index, step in enumerate(direct_sidecars) if step == "active-trader-contract")
         direct_operator_review = direct_sidecars.index("operator-review-report")
+        last_direct_goal_loop = max(
+            index for index, step in enumerate(direct_sidecars) if step == "trader-goal-loop-orchestrator"
+        )
         self.assertLess(
             direct_sidecars.index("trader-goal-loop-orchestrator"),
             first_direct_contract,
@@ -6799,7 +6810,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(direct_mapper, direct_frontier)
         self.assertLess(direct_frontier, last_direct_contract)
         self.assertLess(last_direct_contract, direct_operator_review)
-        self.assertEqual(direct_sidecars[-1], "operator-review-report")
+        self.assertLess(direct_operator_review, last_direct_goal_loop)
+        self.assertEqual(direct_sidecars[-1], "trader-goal-loop-orchestrator")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
         self.assertTrue(direct_sidecar_specs[intent_step]["required"])
