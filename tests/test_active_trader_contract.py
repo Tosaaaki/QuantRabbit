@@ -1154,6 +1154,180 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("entry-frequency recovery analysis", payload["next_trade_enabling_action"])
         self.assertNotIn("(MARKET, NO_TRADE_WITH_CAUSE)", payload["next_trade_enabling_action"])
 
+    def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
+        now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
+        board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
+        frontier_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 134,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 2,
+                        "operator_review_required_count": 0,
+                        "pairs_scanned": ["EUR_USD", "USD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": {
+                        "lane_id": board_lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "MARKET",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": (
+                            "Run entry-frequency recovery analysis for "
+                            "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET; historical accepted=2, "
+                            "fills=2, closed_pl_jpy=664.0852 (exact_lane) but recent entries are zero. "
+                            "Do not send."
+                        ),
+                        "entry_recovery_candidate": True,
+                        "blockers": [
+                            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "HARVEST_TP_STRUCTURE_MISSING",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET "
+                        "is the closest read-only path."
+                    ),
+                },
+            )
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ONLY_EURUSD_FRONTIER_FOUND",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "USD_CAD"],
+                    "scanned_intents": 114,
+                    "top_lane": {
+                        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "distance_to_live_ready": "2_CLOSE_BUT_BLOCKED_BY_NEGATIVE_EXPECTANCY_AND_TP_PROOF_FLOOR",
+                        "bidask_status": "PASS",
+                        "spread_status": "PASS",
+                        "forecast_status": "PASS",
+                        "loss_budget_status": "PASS",
+                        "blockers": ["NEGATIVE_EXPECTANCY_ACTIVE"],
+                    },
+                    "top_non_eurusd_lane": {
+                        "lane_id": frontier_lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_FORECAST_TP_PROOF_FLOOR",
+                        "bidask_status": "PASS",
+                        "spread_status": "PASS",
+                        "forecast_status": "BLOCKED",
+                        "loss_budget_status": "PASS",
+                        "tp_proof_count": 1,
+                        "tp_proof_floor": 20,
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                        ],
+                        "next_action": (
+                            "Build exact TP-proven rotation proof for "
+                            "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT; do not hide negative expectancy."
+                        ),
+                    },
+                    "required_checks": {
+                        "non_eurusd_closer_than_eurusd": False,
+                        "spread_too_wide_not_ignored": False,
+                        "bidask_negative_not_ignored": False,
+                        "next_evidence_lane": {
+                            "lane_id": frontier_lane_id,
+                            "pair": "USD_CAD",
+                            "direction": "LONG",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "status": "EVIDENCE_ACQUISITION",
+                            "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_FORECAST_TP_PROOF_FLOOR",
+                            "bidask_status": "PASS",
+                            "spread_status": "PASS",
+                            "forecast_status": "BLOCKED",
+                            "loss_budget_status": "PASS",
+                            "tp_proof_count": 1,
+                            "tp_proof_floor": 20,
+                            "blockers": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                                "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            ],
+                            "next_action": (
+                                "Build exact TP-proven rotation proof for "
+                                "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT; do not hide negative expectancy."
+                            ),
+                        },
+                    },
+                    "next_active_path": (
+                        "TP_PROOF_COLLECTION: collect exact TAKE_PROFIT_ORDER proof for "
+                        "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT; do not mix market-close losses."
+                    ),
+                    "do_not_do": ["do_not_send_live_order"],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertIn("Non-EUR frontier points to the same pair/side/family", payload["selected_active_path_reason"])
+        self.assertIn(board_lane_id, payload["next_trade_enabling_action"])
+        self.assertIn(frontier_lane_id, payload["next_trade_enabling_action"])
+        self.assertIn("Pair this with non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["next_prompt"])
+        self.assertIn("frontier evidence USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
+        self.assertIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", blocker_codes)
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_edge_improvement_board_lane_preserves_evidence_status_despite_negative_blockers(self) -> None:
         now = datetime(2026, 7, 8, 17, 20, tzinfo=timezone.utc)
         lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"

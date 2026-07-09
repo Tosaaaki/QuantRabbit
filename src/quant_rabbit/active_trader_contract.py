@@ -948,11 +948,18 @@ def _select_active_path(
             if consumed
             else ""
         )
+        frontier_note = ""
+        if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+            frontier_note = (
+                " Non-EUR frontier points to the same pair/side/family proof lane "
+                f"{frontier_lane.get('lane_id')} ({frontier_lane.get('vehicle')}); "
+                "consume it with the board lane as one read-only unblock plan."
+            )
         return (
             path_by_status[board_status],
             "Latest active opportunity board is available from the previous refresh and has already "
             f"ranked {active_opportunity_board.get('total_lanes')} lanes; top lane "
-            f"{board_top.get('lane_id')} is {board_status}.{consumed_note}",
+            f"{board_top.get('lane_id')} is {board_status}.{consumed_note}{frontier_note}",
         )
     if not no_action.get("no_action_allowed") and (
         replay.get("artifact_status") == "missing"
@@ -1007,7 +1014,10 @@ def _remaining_blockers(
     active_board_top = active_opportunity_board.get("top_lane")
     active_board_top = active_board_top if isinstance(active_board_top, dict) else {}
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
-    use_frontier_lane = _active_board_all_no_trade(active_opportunity_board) and frontier_lane
+    use_frontier_lane = (
+        _active_board_all_no_trade(active_opportunity_board)
+        or _frontier_supplements_board_evidence(active_board_top, non_eurusd_frontier)
+    ) and frontier_lane
     frontier_codes = _string_list(frontier_lane.get("blockers")) if use_frontier_lane else []
     active_board_authoritative = _active_board_authoritative(active_opportunity_board)
     if active_board_authoritative:
@@ -1147,6 +1157,42 @@ def _frontier_evidence_lane(non_eurusd_frontier: dict[str, Any]) -> dict[str, An
     top = non_eurusd_frontier.get("top_lane")
     top = top if isinstance(top, dict) else {}
     return top if top.get("lane_id") else {}
+
+
+def _frontier_supplements_board_evidence(
+    board_top: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
+) -> bool:
+    if not board_top or not _frontier_evidence_action_available(non_eurusd_frontier):
+        return False
+    if str(board_top.get("status") or "") != "EVIDENCE_ACQUISITION":
+        return False
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+    if not frontier_lane or frontier_lane.get("lane_id") == board_top.get("lane_id"):
+        return False
+    board_shape = (
+        str(board_top.get("pair") or "").upper(),
+        str(board_top.get("direction") or board_top.get("side") or "").upper(),
+        str(board_top.get("strategy_family") or "").upper(),
+    )
+    frontier_shape = (
+        str(frontier_lane.get("pair") or "").upper(),
+        str(frontier_lane.get("direction") or frontier_lane.get("side") or "").upper(),
+        str(frontier_lane.get("strategy_family") or "").upper(),
+    )
+    if board_shape != frontier_shape or not all(board_shape):
+        return False
+    evidence_markers = {
+        "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+        "LOCAL_TP_PROOF_ZERO_TRADES",
+        "HARVEST_TP_STRUCTURE_MISSING",
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+        "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+    }
+    blocker_codes = set(_string_list(board_top.get("blockers"))) | set(
+        _string_list(frontier_lane.get("blockers"))
+    )
+    return bool(blocker_codes & evidence_markers)
 
 
 def _normalize_stale_blocker_codes(
@@ -1323,10 +1369,20 @@ def _next_trade_enabling_action(
             suffix = ""
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
                 suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
+            frontier_suffix = ""
+            if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+                frontier_suffix = (
+                    " Pair this with non_eurusd_live_grade_frontier evidence lane "
+                    f"{frontier_lane.get('lane_id')} "
+                    f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
+                    f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+                    "Keep both blocker sets visible; do not send."
+                )
             return (
                 "Use the latest active_opportunity_board rerank: "
                 f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
                 f"{board_top.get('next_action') or 'Acquire the next board-ranked evidence packet.'}"
+                f"{frontier_suffix}"
                 f"{suffix}"
             )
         if replay.get("artifact_status") == "missing":
@@ -1389,12 +1445,19 @@ def _next_prompt(
     non_eurusd_frontier: dict[str, Any] | None = None,
 ) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
-    use_frontier_target = _active_board_all_no_trade(active_opportunity_board or {})
-    target_shape = (
-        (_frontier_target_shape(non_eurusd_frontier) if use_frontier_target else None)
-        or _active_board_target_shape(active_opportunity_board)
-        or TARGET_SHAPE
+    active_board_shape = _active_board_target_shape(active_opportunity_board)
+    frontier_shape = _frontier_target_shape(non_eurusd_frontier)
+    board_top = (
+        (active_opportunity_board or {}).get("top_lane")
+        if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
+        else {}
     )
+    if _active_board_all_no_trade(active_opportunity_board or {}):
+        target_shape = frontier_shape or active_board_shape or TARGET_SHAPE
+    elif _frontier_supplements_board_evidence(board_top, non_eurusd_frontier or {}) and frontier_shape:
+        target_shape = f"{active_board_shape or TARGET_SHAPE} plus frontier evidence {frontier_shape}"
+    else:
+        target_shape = active_board_shape or TARGET_SHAPE
     return (
         f"Implement {selected_active_path} for {target_shape} as read-only work. "
         "Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. "
