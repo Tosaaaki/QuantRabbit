@@ -2370,9 +2370,9 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # contract so the terminal contract consumes the freshly reranked multi-lane
     # board, concrete drought-recovery queue, and the next range/trigger proof
     # action. Then package operator-review material from the terminal
-    # contract/top board lane and rebuild the goal-loop work order from that
-    # terminal contract so the next Codex run does not fall back to stale
-    # generic payoff work.
+    # contract/top board lane, refresh support-bot visibility from that active
+    # path, and rebuild the goal-loop work order from the terminal contract so
+    # the next Codex run does not fall back to stale generic payoff work.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
@@ -2388,6 +2388,7 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         _operator_review_report_step(),
+        {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
     ]
 

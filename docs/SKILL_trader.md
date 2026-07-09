@@ -336,7 +336,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # forecast-pattern-refresh → active-trader-contract →
 # range-rail-geometry-repair → active-trader-contract →
 # guardian-trigger-contract → guardian-event-router →
-# operator-review-report → trader-goal-loop-orchestrator) in one
+# operator-review-report → trader-support-bot →
+# trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -583,7 +584,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `active-trader-contract` → `range-rail-geometry-repair` →
 # `active-trader-contract` → `guardian-trigger-contract` →
 # `guardian-event-router` → `operator-review-report` →
-# `trader-goal-loop-orchestrator`. It preserves the original
+# `trader-support-bot` → `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -617,7 +618,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → active-trader-contract → range-rail-geometry-repair
 #   → active-trader-contract → guardian-trigger-contract
 #   → guardian-event-router → operator-review-report
-#   → trader-goal-loop-orchestrator
+#   → trader-support-bot → trader-goal-loop-orchestrator
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -684,8 +685,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   guardian receipt issues, latest guardian receipt consumption/operator-review
 #   status, whether normal routing is allowed, current profit-capture gate state, TP-progress
 #   profit-capture misses, fresh-entry send allowed flag, repair-frontier lanes,
-#   and explicit operator actions. It never loads launchd, sends orders, closes
-#   positions, cancels entries, or wakes the trader.
+#   explicit operator actions, and the latest active contract/board/frontier
+#   lane so support visibility cannot fall back to a legacy EUR/USD diagnostic
+#   when the terminal active path selected a non-EUR lane. It never loads launchd,
+#   sends orders, closes positions, cancels entries, or wakes the trader.
 # - as-live-ready-evidence-loop and as-4x-proof-path are read-only artifact
 #   builders that run after trader-support-bot. They refresh
 #   `data/rolling_30d_4x_firepower_board.json`, `data/as_proof_pack_queue.json`,
@@ -717,9 +720,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   `data/trader_goal_loop_orchestrator.json` and
 #   `docs/trader_goal_loop_orchestrator_report.md` with the next Codex work type
 #   and a complete Japanese prompt. The terminal board/contract sync reruns it
-#   after `operator-review-report` so the final prompt consumes the latest
-#   `active_trader_contract` lane-specific work order instead of stale generic
-#   payoff work. It prioritizes evidence growth and expectancy improvement
+#   after terminal `trader-support-bot` refreshes current active-path support
+#   visibility from `operator-review-report` and `active_trader_contract`, so
+#   the final prompt consumes the latest lane-specific work order instead of
+#   stale generic payoff work. It prioritizes evidence growth and expectancy improvement
 #   toward rolling 30d funding-adjusted equity 4x:
 #   operator-review SCOUT judgement material first when
 #   `SCOUT_BLOCKED_OPERATOR_REVIEW` is active, otherwise live-grade HARVEST proof

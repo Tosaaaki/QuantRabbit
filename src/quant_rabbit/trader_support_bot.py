@@ -19,6 +19,8 @@ from quant_rabbit.execution_timing_contracts import (
 from quant_rabbit.guardian_receipt_consumption import consumption_status_summary
 from quant_rabbit.guardian_receipt_operator_review import operator_review_status_summary
 from quant_rabbit.paths import (
+    DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    DEFAULT_ACTIVE_TRADER_CONTRACT,
     DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAPTURE_ECONOMICS,
@@ -36,6 +38,7 @@ from quant_rabbit.paths import (
     DEFAULT_PROFIT_CAPTURE_BOT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
+    DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
@@ -223,6 +226,9 @@ class TraderSupportBot:
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+        active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
+        active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+        non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
@@ -256,6 +262,21 @@ class TraderSupportBot:
         self.guardian_receipt_operator_review_path = _default_receipt_artifact_path(
             requested_path=guardian_receipt_operator_review_path,
             default_path=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+            output_path=output_path,
+        )
+        self.active_trader_contract_path = _default_receipt_artifact_path(
+            requested_path=active_trader_contract_path,
+            default_path=DEFAULT_ACTIVE_TRADER_CONTRACT,
+            output_path=output_path,
+        )
+        self.active_opportunity_board_path = _default_receipt_artifact_path(
+            requested_path=active_opportunity_board_path,
+            default_path=DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+            output_path=output_path,
+        )
+        self.non_eurusd_live_grade_frontier_path = _default_receipt_artifact_path(
+            requested_path=non_eurusd_live_grade_frontier_path,
+            default_path=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
             output_path=output_path,
         )
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
@@ -326,6 +347,9 @@ class TraderSupportBot:
         guardian_receipt_operator_review = operator_review_status_summary(
             _read_json(self.guardian_receipt_operator_review_path)
         )
+        active_trader_contract = _read_json(self.active_trader_contract_path)
+        active_opportunity_board = _read_json(self.active_opportunity_board_path)
+        non_eurusd_live_grade_frontier = _read_json(self.non_eurusd_live_grade_frontier_path)
         oanda_rotation_effective_path = (
             effective_oanda_universal_rotation_path(
                 self.oanda_rotation_mining_path,
@@ -365,6 +389,9 @@ class TraderSupportBot:
             oanda_rotation=oanda_rotation,
             guardian=guardian,
             current_p0_findings=p0_findings,
+            active_trader_contract=active_trader_contract,
+            active_opportunity_board=active_opportunity_board,
+            non_eurusd_live_grade_frontier=non_eurusd_live_grade_frontier,
         )
         artifact_freshness = _artifact_freshness_summary(
             broker=broker_summary,
@@ -490,6 +517,10 @@ class TraderSupportBot:
             "shortest_live_ready_path_lane_id": entry["shortest_live_ready_path"].get("lane_id"),
             "shortest_live_ready_path_status": entry["shortest_live_ready_path"].get("status"),
             "shortest_live_ready_path_blocker_groups": entry["shortest_live_ready_path"].get("blocker_groups"),
+            "active_path_lane_id": entry["active_path"].get("lane_id"),
+            "active_path_pair": entry["active_path"].get("pair"),
+            "active_path_status": entry["active_path"].get("status"),
+            "active_path_source": entry["active_path"].get("source"),
             "stale_support_blocker_codes": entry["stale_support_blocker_codes"],
             "stale_support_blocker_lanes": entry["stale_support_blocker_lanes"],
             "order_intents_stale_against_broker_snapshot": artifact_freshness[
@@ -656,6 +687,9 @@ class TraderSupportBot:
                 "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
                 "guardian_receipt_consumption": str(self.guardian_receipt_consumption_path),
                 "guardian_receipt_operator_review": str(self.guardian_receipt_operator_review_path),
+                "active_trader_contract": str(self.active_trader_contract_path),
+                "active_opportunity_board": str(self.active_opportunity_board_path),
+                "non_eurusd_live_grade_frontier": str(self.non_eurusd_live_grade_frontier_path),
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
@@ -1857,6 +1891,9 @@ def _entry_readiness_summary(
     oanda_rotation: dict[str, Any] | None = None,
     guardian: dict[str, Any] | None = None,
     current_p0_findings: list[dict[str, Any]] | None = None,
+    active_trader_contract: dict[str, Any] | None = None,
+    active_opportunity_board: dict[str, Any] | None = None,
+    non_eurusd_live_grade_frontier: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     intent_pairs = _intent_pairs(results)
@@ -2040,7 +2077,12 @@ def _entry_readiness_summary(
     month_scale_residual_blocked_intents.sort(key=lambda item: str(item.get("lane_id") or ""))
     near_ready_lanes.sort(key=_near_ready_lane_sort_key)
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
-    shortest_live_ready_path = _shortest_live_ready_path(near_ready_lanes)
+    active_path = _active_path_summary(
+        active_trader_contract or {},
+        active_opportunity_board or {},
+        non_eurusd_live_grade_frontier or {},
+    )
+    shortest_live_ready_path = _shortest_live_ready_path(near_ready_lanes, active_path=active_path)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "lanes": len(results),
@@ -2072,6 +2114,7 @@ def _entry_readiness_summary(
         "near_ready_lanes": near_ready_lanes[:10],
         "near_ready_blocker_groups": _near_ready_blocker_groups(near_ready_lanes),
         "shortest_live_ready_path": shortest_live_ready_path,
+        "active_path": active_path,
         "global_unlock_frontier": global_unlock_frontier[:12],
         "month_scale_residual_blocked_intents": month_scale_residual_blocked_intents[:12],
         "month_scale_residual_blocked_intent_count": len(month_scale_residual_blocked_intents),
@@ -2154,7 +2197,197 @@ def _near_ready_lane_sort_key(item: dict[str, Any]) -> tuple[int, int, float, st
     )
 
 
-def _shortest_live_ready_path(near_ready_lanes: list[dict[str, Any]]) -> dict[str, Any]:
+def _active_path_summary(
+    active_trader_contract: dict[str, Any],
+    active_opportunity_board: dict[str, Any],
+    non_eurusd_live_grade_frontier: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(active_trader_contract, dict):
+        active_trader_contract = {}
+    if not isinstance(active_opportunity_board, dict):
+        active_opportunity_board = {}
+    if not isinstance(non_eurusd_live_grade_frontier, dict):
+        non_eurusd_live_grade_frontier = {}
+
+    contract_state = (
+        active_trader_contract.get("current_state")
+        if isinstance(active_trader_contract.get("current_state"), dict)
+        else {}
+    )
+    contract_board = (
+        contract_state.get("active_opportunity_board")
+        if isinstance(contract_state.get("active_opportunity_board"), dict)
+        else {}
+    )
+    contract_frontier = (
+        contract_state.get("non_eurusd_live_grade_frontier")
+        if isinstance(contract_state.get("non_eurusd_live_grade_frontier"), dict)
+        else {}
+    )
+    sources: list[tuple[str, dict[str, Any]]] = [
+        (
+            "active_trader_contract.current_state.active_opportunity_board.top_lane",
+            _dict_or_empty(contract_board.get("top_lane")),
+        ),
+        ("active_opportunity_board.top_lane", _dict_or_empty(active_opportunity_board.get("top_lane"))),
+        (
+            "active_trader_contract.current_state.non_eurusd_live_grade_frontier.top_non_eurusd_lane",
+            _dict_or_empty(contract_frontier.get("top_non_eurusd_lane")),
+        ),
+        (
+            "non_eurusd_live_grade_frontier.top_non_eurusd_lane",
+            _dict_or_empty(non_eurusd_live_grade_frontier.get("top_non_eurusd_lane")),
+        ),
+    ]
+    for source, lane in sources:
+        lane_id = str(lane.get("lane_id") or "").strip()
+        if not lane_id:
+            continue
+        blockers = [str(code) for code in lane.get("blockers") or [] if str(code).strip()]
+        return {
+            "status": lane.get("status") or active_trader_contract.get("status"),
+            "lane_id": lane_id,
+            "pair": lane.get("pair"),
+            "side": lane.get("direction") or lane.get("side"),
+            "method": lane.get("strategy_family") or lane.get("method"),
+            "order_type": lane.get("vehicle") or lane.get("order_type"),
+            "blocker_codes": blockers,
+            "expected_edge_jpy": lane.get("expected_edge_jpy"),
+            "spread_status": lane.get("spread_status"),
+            "forecast_status": lane.get("forecast_status"),
+            "loss_budget_status": lane.get("loss_budget_status"),
+            "next_action": lane.get("next_action")
+            or active_trader_contract.get("next_trade_enabling_action")
+            or active_opportunity_board.get("next_active_path")
+            or non_eurusd_live_grade_frontier.get("next_active_path"),
+            "target_shape": active_trader_contract.get("target_shape"),
+            "contract_status": active_trader_contract.get("status"),
+            "board_status": active_opportunity_board.get("status") or contract_board.get("status"),
+            "frontier_status": non_eurusd_live_grade_frontier.get("status") or contract_frontier.get("status"),
+            "generated_at_utc": active_trader_contract.get("generated_at_utc")
+            or active_opportunity_board.get("generated_at_utc")
+            or non_eurusd_live_grade_frontier.get("generated_at_utc"),
+            "live_permission": bool(lane.get("live_permission_allowed") is True)
+            and bool(active_trader_contract.get("live_permission_allowed") is True),
+            "ordinary_fresh_entries_must_remain_blocked": True,
+            "source": source,
+        }
+    target_shape = str(active_trader_contract.get("target_shape") or "").strip()
+    if target_shape:
+        parts = target_shape.split("|")
+        return {
+            "status": active_trader_contract.get("status"),
+            "lane_id": None,
+            "pair": parts[0] if len(parts) > 0 else None,
+            "side": parts[1] if len(parts) > 1 else None,
+            "method": parts[2] if len(parts) > 2 else None,
+            "order_type": parts[3] if len(parts) > 3 else None,
+            "blocker_codes": [
+                str(code)
+                for code in active_trader_contract.get("remaining_blockers") or []
+                if str(code).strip()
+            ],
+            "next_action": active_trader_contract.get("next_trade_enabling_action")
+            or active_trader_contract.get("next_prompt"),
+            "target_shape": target_shape,
+            "contract_status": active_trader_contract.get("status"),
+            "live_permission": bool(active_trader_contract.get("live_permission_allowed") is True),
+            "ordinary_fresh_entries_must_remain_blocked": True,
+            "source": "active_trader_contract.target_shape",
+        }
+    return {
+        "status": "NO_ACTIVE_PATH_ARTIFACT",
+        "lane_id": None,
+        "pair": None,
+        "side": None,
+        "method": None,
+        "order_type": None,
+        "blocker_codes": [],
+        "next_action": None,
+        "live_permission": False,
+        "ordinary_fresh_entries_must_remain_blocked": True,
+        "source": None,
+    }
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _shortest_live_ready_path(
+    near_ready_lanes: list[dict[str, Any]],
+    *,
+    active_path: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    active_lane_id = str((active_path or {}).get("lane_id") or "").strip()
+    active_shape_selected = active_lane_id or any(
+        str((active_path or {}).get(key) or "").strip()
+        for key in ("pair", "side", "method", "order_type")
+    )
+    if active_shape_selected:
+        for lane in near_ready_lanes:
+            if not _active_path_matches_lane(active_path or {}, lane):
+                continue
+            evidence_needed = [
+                str(item)
+                for item in lane.get("evidence_needed") or []
+                if str(item).strip()
+            ]
+            blocker_codes = [
+                str(item)
+                for item in lane.get("blocker_codes") or []
+                if str(item).strip()
+            ]
+            first_next_step = str((active_path or {}).get("next_action") or "").strip()
+            if not first_next_step:
+                first_next_step = (
+                    evidence_needed[0]
+                    if evidence_needed
+                    else "clear the lane's named active-path blockers in refreshed broker, forecast, replay, and risk evidence"
+                )
+            return {
+                "status": "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE",
+                "lane_id": lane.get("lane_id"),
+                "pair": lane.get("pair"),
+                "side": lane.get("side"),
+                "method": lane.get("method"),
+                "order_type": lane.get("order_type"),
+                "current_status": lane.get("status"),
+                "blocker_codes": blocker_codes,
+                "blocker_groups": lane.get("blocker_groups") or [],
+                "evidence_needed": evidence_needed,
+                "first_next_step": first_next_step,
+                "live_permission": False,
+                "ordinary_fresh_entries_must_remain_blocked": True,
+                "selection_basis": "active_trader_contract",
+                "active_path": active_path,
+            }
+        blocker_codes = [
+            str(item)
+            for item in (active_path or {}).get("blocker_codes") or []
+            if str(item).strip()
+        ]
+        next_action = str((active_path or {}).get("next_action") or "").strip()
+        return {
+            "status": "ACTIVE_PATH_SELECTED_BUT_NOT_IN_NEAR_READY_INTENTS",
+            "lane_id": active_lane_id or None,
+            "pair": (active_path or {}).get("pair"),
+            "side": (active_path or {}).get("side"),
+            "method": (active_path or {}).get("method"),
+            "order_type": (active_path or {}).get("order_type"),
+            "current_status": (active_path or {}).get("status"),
+            "blocker_codes": blocker_codes,
+            "blocker_groups": sorted(
+                {_near_ready_blocker_group(code, stale_support_blocker_codes=set()) for code in blocker_codes}
+            ),
+            "evidence_needed": _near_ready_evidence_needed(blocker_codes),
+            "first_next_step": next_action
+            or "refresh order_intents/support after active_opportunity_board selects this lane",
+            "live_permission": False,
+            "ordinary_fresh_entries_must_remain_blocked": True,
+            "selection_basis": "active_trader_contract",
+            "active_path": active_path,
+        }
     if not near_ready_lanes:
         return {
             "status": "NO_NEAR_READY_DIAGNOSTIC_LANES",
@@ -2209,6 +2442,28 @@ def _shortest_live_ready_path(near_ready_lanes: list[dict[str, Any]]) -> dict[st
             "then highest reward, using existing order_intents diagnostics"
         ),
     }
+
+
+def _active_path_matches_lane(active_path: dict[str, Any], lane: dict[str, Any]) -> bool:
+    active_lane_id = str(active_path.get("lane_id") or "").strip()
+    lane_id = str(lane.get("lane_id") or "").strip()
+    if active_lane_id:
+        return lane_id == active_lane_id
+
+    comparisons = (
+        ("pair", "pair"),
+        ("side", "side"),
+        ("method", "method"),
+        ("order_type", "order_type"),
+    )
+    for active_key, lane_key in comparisons:
+        active_value = str(active_path.get(active_key) or "").strip().upper()
+        if not active_value:
+            continue
+        lane_value = str(lane.get(lane_key) or "").strip().upper()
+        if lane_value != active_value:
+            return False
+    return True
 
 
 def _near_ready_blocker_groups(near_ready_lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5914,6 +6169,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian receipt consumption | `{consumption.get('status')}` normal_routing_allowed=`{consumption.get('normal_routing_allowed')}` unresolved=`{consumption.get('unresolved_issue_count')}` |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Near-ready diagnostic lanes | `{entry.get('near_ready_lane_count')}` |",
+        f"| Active path lane | `{entry.get('active_path', {}).get('lane_id')}` pair=`{entry.get('active_path', {}).get('pair')}` source=`{entry.get('active_path', {}).get('source')}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Profitability acceptance freshness | `{acceptance_freshness.get('status')}` stale_inputs=`{acceptance_freshness.get('stale_input_names')}` |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
@@ -5960,6 +6216,7 @@ def _render_report(payload: dict[str, Any]) -> str:
                 (
                     "- Shortest path: "
                     f"`{shortest_path.get('lane_id')}` status=`{shortest_path.get('status')}` "
+                    f"basis=`{shortest_path.get('selection_basis')}` "
                     f"next=`{shortest_path.get('first_next_step')}`"
                 ),
                 (
