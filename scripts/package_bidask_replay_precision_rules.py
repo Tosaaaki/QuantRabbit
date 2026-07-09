@@ -99,8 +99,9 @@ def main() -> int:
         source_report=args.source_report,
         allow_partial=bool(args.allow_partial),
     )
-    if args.output.exists():
-        existing = json.loads(args.output.read_text(encoding="utf-8"))
+    preserve_path = args.preserve_from or args.output
+    if preserve_path.exists():
+        existing = json.loads(preserve_path.read_text(encoding="utf-8"))
         if isinstance(existing, dict):
             preserve_existing_rule_rows(packaged, existing)
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +117,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-report", type=Path, default=DEFAULT_SOURCE_REPORT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--preserve-from",
+        type=Path,
+        help="existing packaged rules to preserve broader coverage from; defaults to --output",
+    )
     parser.add_argument(
         "--allow-partial",
         action="store_true",
@@ -175,6 +181,9 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
     blockers/support from the broader runtime artifact. Existing rows for
     refreshed pairs are intentionally not preserved when absent from the new
     report, so a pair-scoped refresh can clear stale blockers for that pair.
+    When the same refreshed-pair rule is still present but the focused report
+    has fewer samples than the existing packaged row, keep the broader row; a
+    refresh must not silently downgrade live evidence coverage.
     """
 
     refreshed_pairs = {
@@ -202,15 +211,16 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
             refreshed_pairs=refreshed_pairs,
             preservation_metadata=preservation_metadata,
         )
-        preserved_count += max(len(merged) - len(current_rows), 0)
         packaged[section] = merged
+    preserved_count = _preserved_row_count(packaged)
     if preserved_count <= 0:
         return
     packaged["existing_rule_rows_preserved"] = True
     packaged["existing_rule_rows_preserved_count"] = preserved_count
     packaged["existing_rule_rows_preservation_reason"] = (
         "source report is a pair-filtered bid/ask replay refresh; preserved "
-        "existing rule rows for pairs outside source_pair_filter"
+        "existing rule rows for pairs outside source_pair_filter or broader "
+        "same-pair rule rows when the focused refresh was narrower"
     )
     packaged["existing_rule_rows_preserved_excluding_pairs"] = sorted(refreshed_pairs)
     _preserve_adoption_summary_counts(packaged, existing)
@@ -225,6 +235,10 @@ def _merge_rule_rows_for_refreshed_pairs(
 ) -> list[Any]:
     merged: list[Any] = []
     index_by_key: dict[tuple[Any, ...], int] = {}
+    existing_by_key: dict[tuple[Any, ...], Any] = {}
+    for row in existing_rows:
+        key = _rule_row_key(row)
+        existing_by_key.setdefault(key, row)
     for row in existing_rows:
         if _row_pair(row) in refreshed_pairs:
             continue
@@ -233,12 +247,68 @@ def _merge_rule_rows_for_refreshed_pairs(
         merged.append(_annotated_preserved_row(row, preservation_metadata))
     for row in current_rows:
         key = _rule_row_key(row)
+        existing_row = existing_by_key.get(key)
+        if (
+            _row_pair(row) in refreshed_pairs
+            and _row_pair(existing_row) in refreshed_pairs
+            and _existing_rule_row_is_stronger(existing_row, row)
+        ):
+            row = _annotated_preserved_row(
+                existing_row,
+                {
+                    **preservation_metadata,
+                    "preserved_because_pair_filtered_source_was_narrower": True,
+                },
+            )
         if key in index_by_key:
             merged[index_by_key[key]] = row
             continue
         index_by_key[key] = len(merged)
         merged.append(row)
     return merged
+
+
+def _preserved_row_count(packaged: dict[str, Any]) -> int:
+    count = 0
+    for section in RULE_SECTIONS:
+        rows = packaged.get(section)
+        if not isinstance(rows, list):
+            continue
+        count += sum(
+            1
+            for row in rows
+            if isinstance(row, dict) and row.get("preserved_from_existing_packaged_artifact")
+        )
+    return count
+
+
+def _existing_rule_row_is_stronger(existing_row: Any, current_row: Any) -> bool:
+    if not isinstance(existing_row, dict) or not isinstance(current_row, dict):
+        return False
+    existing_rank = _adoption_strength(existing_row)
+    current_rank = _adoption_strength(current_row)
+    if existing_rank != current_rank:
+        return existing_rank > current_rank
+    existing_samples = _optional_int(existing_row.get("samples")) or 0
+    current_samples = _optional_int(current_row.get("samples")) or 0
+    if existing_samples != current_samples:
+        return existing_samples > current_samples
+    existing_days = _optional_int(existing_row.get("active_days")) or 0
+    current_days = _optional_int(current_row.get("active_days")) or 0
+    return existing_days > current_days
+
+
+def _adoption_strength(row: dict[str, Any]) -> int:
+    if row.get("live_grade") is True:
+        return 3
+    status = str(row.get("adoption_status") or row.get("daily_stability_status") or "").upper()
+    if "LIVE_GRADE" in status or "LIVE_BLOCK_NEGATIVE_EXPECTANCY" in status:
+        return 3
+    if "RANK_ONLY" in status:
+        return 2
+    if status:
+        return 1
+    return 0
 
 
 def _row_pair(row: Any) -> str | None:

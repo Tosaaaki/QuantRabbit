@@ -411,6 +411,63 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         self.assertTrue(packaged["adoption_summary"]["has_live_grade_support"])
         self.assertTrue(packaged["adoption_summary"]["has_rank_only_support"])
 
+    def test_pair_filtered_refresh_keeps_broader_same_pair_rule_when_narrower(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-07-09T00:56:53Z",
+            "pair_filter": ["AUD_JPY"],
+            "price_truth_coverage": {"status": "PRICE_TRUTH_OK"},
+            "precision_rules": {
+                "adoption_summary": {
+                    "has_live_grade_support": False,
+                    "has_rank_only_support": False,
+                    "live_grade_support_rules": 0,
+                    "rank_only_support_rules": 0,
+                    "negative_block_rules": 1,
+                },
+                "negative_rules": [
+                    {
+                        "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                        "pair": "AUD_JPY",
+                        "direction": "UP",
+                        "samples": 135,
+                        "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+                    }
+                ],
+            },
+        }
+        existing = {
+            "generated_at_utc": "2026-07-08T13:32:03Z",
+            "source_report": "logs/reports/forecast_improvement/old_broader.json",
+            "adoption_summary": {
+                "has_live_grade_support": False,
+                "has_rank_only_support": False,
+                "live_grade_support_rules": 0,
+                "rank_only_support_rules": 0,
+                "negative_block_rules": 1,
+            },
+            "negative_rules": [
+                {
+                    "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                    "pair": "AUD_JPY",
+                    "direction": "UP",
+                    "samples": 1246,
+                    "active_days": 12,
+                    "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+                }
+            ],
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("audjpy_narrow.json"))
+        packager.preserve_existing_rule_rows(packaged, existing)
+
+        row = packaged["negative_rules"][0]
+        self.assertEqual(row["samples"], 1246)
+        self.assertTrue(row["preserved_from_existing_packaged_artifact"])
+        self.assertTrue(row["preserved_because_pair_filtered_source"])
+        self.assertTrue(row["preserved_because_pair_filtered_source_was_narrower"])
+        self.assertTrue(packaged["existing_rule_rows_preserved"])
+        self.assertEqual(packaged["existing_rule_rows_preserved_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
