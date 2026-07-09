@@ -813,7 +813,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   frontier lane at all. The terminal
 #   active-trader-contract may consume frontier.next_evidence_lane as a
 #   read-only EVIDENCE_ACQUISITION target when the board is otherwise all
-#   NO_TRADE_WITH_CAUSE, but this still never grants live order, cancel/close,
+#   NO_TRADE_WITH_CAUSE, or as a same-shape supplement to a board lane. In
+#   either case, `next_prompt` and `next_trade_enabling_action` must name the
+#   same frontier lane; stale board-local prompts such as range-rail
+#   wait/recheck must not hide or override the frontier action. This still
+#   never grants live order, cancel/close,
 #   launchd, gate relaxation, lot-backsolve, market-close-loss-as-TP-proof,
 #   secret-disclosure, or inferred approval.
 # - entry-frequency-recovery is read-only and runs after the terminal

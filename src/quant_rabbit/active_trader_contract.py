@@ -1468,6 +1468,30 @@ def _frontier_evidence_lane(non_eurusd_frontier: dict[str, Any]) -> dict[str, An
     return top if top.get("lane_id") else {}
 
 
+def _lane_target_shape(lane: dict[str, Any]) -> str | None:
+    pair = str(lane.get("pair") or "").strip().upper()
+    direction = str(lane.get("direction") or lane.get("side") or "").strip().upper()
+    strategy = str(lane.get("strategy_family") or "").strip().upper()
+    vehicle = str(lane.get("vehicle") or "").strip().upper()
+    parts = [part for part in (pair, direction, strategy, vehicle) if part]
+    return "|".join(parts) if len(parts) >= 4 else None
+
+
+def _frontier_evidence_prompt(non_eurusd_frontier: dict[str, Any]) -> str:
+    lane = _frontier_evidence_lane(non_eurusd_frontier)
+    if not lane:
+        return "Use non_eurusd_live_grade_frontier: acquire the next frontier-ranked evidence packet."
+    shape = _lane_target_shape(lane)
+    shape_text = f" ({shape})" if shape else ""
+    return (
+        "Use non_eurusd_live_grade_frontier: "
+        f"next evidence lane {lane.get('lane_id')}{shape_text} "
+        f"({lane.get('vehicle')}, {lane.get('distance_to_live_ready')}). "
+        f"{lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the next frontier-ranked evidence packet.'} "
+        "Keep negative expectancy, spread, bid/ask, forecast, and loss-budget blockers visible; do not send."
+    )
+
+
 def _frontier_supplements_board_evidence(
     board_top: dict[str, Any],
     non_eurusd_frontier: dict[str, Any],
@@ -1502,6 +1526,22 @@ def _frontier_supplements_board_evidence(
         _string_list(frontier_lane.get("blockers"))
     )
     return bool(blocker_codes & evidence_markers)
+
+
+def _frontier_supplement_prompt(
+    board_top: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
+) -> str:
+    if not _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+        return ""
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+    frontier_shape = _lane_target_shape(frontier_lane)
+    frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
+    return (
+        f" Pair this with frontier evidence {frontier_ref}: "
+        f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+        "Keep both blocker sets visible; do not send."
+    )
 
 
 def _normalize_stale_blocker_codes(
@@ -1838,13 +1878,7 @@ def _next_trade_enabling_action(
             and _frontier_evidence_action_available(non_eurusd_frontier)
             and frontier_lane
         ):
-            return (
-                "Use non_eurusd_live_grade_frontier: "
-                f"next evidence lane {frontier_lane.get('lane_id')} "
-                f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
-                f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the next frontier-ranked evidence packet.'} "
-                "Keep negative expectancy, spread, bid/ask, forecast, and loss-budget blockers visible; do not send."
-            )
+            return _frontier_evidence_prompt(non_eurusd_frontier)
         if board_top:
             suffix = ""
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
@@ -2038,10 +2072,21 @@ def _next_prompt(
         if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
         else {}
     )
+    frontier_suffix = _frontier_supplement_prompt(board_top, non_eurusd_frontier or {})
+    if (
+        selected_active_path == "EVIDENCE_ACQUISITION"
+        and _active_board_all_no_trade(active_opportunity_board or {})
+        and _frontier_evidence_action_available(non_eurusd_frontier or {})
+    ):
+        return (
+            f"{_frontier_evidence_prompt(non_eurusd_frontier or {})} "
+            f"Keep blockers visible: {blocker_codes}. "
+            "This is read-only evidence/tuning work, not live permission."
+        )
     guardian_prompt = _guardian_range_rail_trigger_prompt(guardian_events or {}, board_top)
     if selected_active_path == "EVIDENCE_ACQUISITION" and guardian_prompt:
         return (
-            f"{guardian_prompt} Keep blockers visible: {blocker_codes}. "
+            f"{guardian_prompt}{frontier_suffix} Keep blockers visible: {blocker_codes}. "
             "This is read-only evidence/tuning work, not live permission."
         )
     if (
@@ -2051,7 +2096,7 @@ def _next_prompt(
         rail_prompt = str((range_rail_geometry_repair or {}).get("next_contract_prompt") or "").strip()
         if rail_prompt:
             return (
-                f"{rail_prompt} Keep blockers visible: {blocker_codes}. "
+                f"{rail_prompt}{frontier_suffix} Keep blockers visible: {blocker_codes}. "
                 "This is read-only evidence/tuning work, not live permission."
             )
     if (
@@ -2061,7 +2106,7 @@ def _next_prompt(
         pattern_prompt = str((forecast_pattern_refresh or {}).get("next_contract_prompt") or "").strip()
         if pattern_prompt:
             return (
-                f"{pattern_prompt} Keep blockers visible: {blocker_codes}. "
+                f"{pattern_prompt}{frontier_suffix} Keep blockers visible: {blocker_codes}. "
                 "This is read-only evidence/tuning work, not live permission."
             )
     if (
@@ -2071,7 +2116,7 @@ def _next_prompt(
         recovery_prompt = str((entry_frequency_recovery or {}).get("next_contract_prompt") or "").strip()
         if recovery_prompt:
             return (
-                f"{recovery_prompt} Keep blockers visible: {blocker_codes}. "
+                f"{recovery_prompt}{frontier_suffix} Keep blockers visible: {blocker_codes}. "
                 "This is read-only evidence/tuning work, not live permission."
             )
     if _active_board_all_no_trade(active_opportunity_board or {}):
@@ -2102,12 +2147,7 @@ def _active_board_target_shape(active_opportunity_board: dict[str, Any] | None) 
 def _frontier_target_shape(non_eurusd_frontier: dict[str, Any] | None) -> str | None:
     frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
     lane = _frontier_evidence_lane(frontier)
-    pair = str(lane.get("pair") or "").strip().upper()
-    direction = str(lane.get("direction") or lane.get("side") or "").strip().upper()
-    strategy = str(lane.get("strategy_family") or "").strip().upper()
-    vehicle = str(lane.get("vehicle") or "").strip().upper()
-    parts = [part for part in (pair, direction, strategy, vehicle) if part]
-    return "|".join(parts) if len(parts) >= 4 else None
+    return _lane_target_shape(lane)
 
 
 def _contract_target_shape(

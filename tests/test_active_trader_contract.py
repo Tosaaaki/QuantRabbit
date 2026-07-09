@@ -928,6 +928,30 @@ class ActiveTraderContractTest(unittest.TestCase):
                     "do_not_do": ["do_not_send_live_order"],
                 },
             )
+            _write_json(
+                paths["range_rail"],
+                {
+                    "schema_version": "range_rail_geometry_repair_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "RANGE_RAIL_RECHECK_BUILT",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "top_lane": {
+                        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "NO_TRADE_WITH_CAUSE",
+                    },
+                    "next_contract_prompt": (
+                        "Consume data/range_rail_geometry_repair.json for "
+                        "range_trader:EUR_USD:SHORT:RANGE_ROTATION: "
+                        "next safe action is WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                    ),
+                },
+            )
 
             ActiveTraderContract(
                 trader_goal_loop_path=paths["goal_loop"],
@@ -945,6 +969,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 limit_sample_mining_path=paths["mining"],
                 active_opportunity_board_path=paths["active_board"],
                 non_eurusd_live_grade_frontier_path=paths["frontier"],
+                range_rail_geometry_repair_path=paths["range_rail"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -959,6 +984,7 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("NON_EURUSD_LIVE_GRADE_FRONTIER_AVAILABLE", payload["active_deployment_gap"]["active_path_triggers"])
         self.assertEqual(frontier["next_evidence_lane"]["lane_id"], "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT")
         self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
+        self.assertNotIn("WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
         self.assertIn("Use non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
         self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
         self.assertIn("SPREAD_TOO_WIDE", blocker_codes)
@@ -1264,7 +1290,6 @@ class ActiveTraderContractTest(unittest.TestCase):
                     "do_not_do": ["do_not_send_live_order"],
                 },
             )
-
             ActiveTraderContract(
                 trader_goal_loop_path=paths["goal_loop"],
                 payoff_shape_diagnosis_path=paths["payoff"],
@@ -1889,6 +1914,29 @@ class ActiveTraderContractTest(unittest.TestCase):
                     "do_not_do": ["do_not_send_live_order"],
                 },
             )
+            _write_json(
+                paths["range_rail"],
+                {
+                    "schema_version": "range_rail_geometry_repair_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "RANGE_RAIL_RECHECK_BUILT",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "top_lane": {
+                        "lane_id": board_lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "MARKET",
+                        "status": "EVIDENCE_ACQUISITION",
+                    },
+                    "next_contract_prompt": (
+                        "Consume data/range_rail_geometry_repair.json for "
+                        f"{board_lane_id}: next safe action is WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                    ),
+                },
+            )
 
             ActiveTraderContract(
                 trader_goal_loop_path=paths["goal_loop"],
@@ -1906,6 +1954,7 @@ class ActiveTraderContractTest(unittest.TestCase):
                 limit_sample_mining_path=paths["mining"],
                 active_opportunity_board_path=paths["active_board"],
                 non_eurusd_live_grade_frontier_path=paths["frontier"],
+                range_rail_geometry_repair_path=paths["range_rail"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -1918,7 +1967,8 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn(board_lane_id, payload["next_trade_enabling_action"])
         self.assertIn(frontier_lane_id, payload["next_trade_enabling_action"])
         self.assertIn("Pair this with non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
-        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["next_prompt"])
+        self.assertIn(board_lane_id, payload["next_prompt"])
+        self.assertIn("WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
         self.assertIn("frontier evidence USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
         self.assertIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", blocker_codes)
         self.assertFalse(payload["live_permission_allowed"])
