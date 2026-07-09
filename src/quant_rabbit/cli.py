@@ -186,6 +186,8 @@ from quant_rabbit.paths import (
     DEFAULT_CURRENCY_STRENGTH_REPORT,
     DEFAULT_ENTRY_FREQUENCY_RECOVERY,
     DEFAULT_ENTRY_FREQUENCY_RECOVERY_REPORT,
+    DEFAULT_FORECAST_PATTERN_REFRESH,
+    DEFAULT_FORECAST_PATTERN_REFRESH_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEVELS_REPORT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
@@ -1506,6 +1508,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "active-trader-contract",
         "active-opportunity-board",
         "entry-frequency-recovery",
+        "forecast-pattern-refresh",
         "non-eurusd-proof-lane-mapper",
         "non-eurusd-live-grade-frontier",
         "operator-review-report",
@@ -2336,6 +2339,10 @@ def _entry_frequency_recovery_step() -> dict[str, Any]:
     return {"argv": ["entry-frequency-recovery"], "required": True}
 
 
+def _forecast_pattern_refresh_step() -> dict[str, Any]:
+    return {"argv": ["forecast-pattern-refresh"], "required": True}
+
+
 def _non_eurusd_proof_lane_mapper_step() -> dict[str, Any]:
     return {"argv": ["non-eurusd-proof-lane-mapper"], "required": True}
 
@@ -2352,11 +2359,13 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # The board reads the previous contract for narrative context, while the
     # contract is the artifact the trader loop consumes for the final active
     # path. Run contract -> board -> non-EUR frontier -> contract ->
-    # entry-frequency recovery -> contract so the terminal contract consumes the
-    # freshly reranked multi-lane board and any concrete drought-recovery queue.
-    # Then package operator-review material from the terminal contract/top board
-    # lane and rebuild the goal-loop work order from that terminal contract so
-    # the next Codex run does not fall back to stale generic payoff work.
+    # entry-frequency recovery -> contract -> forecast-pattern refresh ->
+    # contract so the terminal contract consumes the freshly reranked multi-lane
+    # board, concrete drought-recovery queue, and the next range/trigger proof
+    # action. Then package operator-review material from the terminal
+    # contract/top board lane and rebuild the goal-loop work order from that
+    # terminal contract so the next Codex run does not fall back to stale
+    # generic payoff work.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
@@ -2364,6 +2373,8 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         _non_eurusd_live_grade_frontier_step(),
         _active_trader_contract_step(),
         _entry_frequency_recovery_step(),
+        _active_trader_contract_step(),
+        _forecast_pattern_refresh_step(),
         _active_trader_contract_step(),
         _operator_review_report_step(),
         _trader_goal_loop_orchestrator_step(),
@@ -4103,6 +4114,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     )
     p_active_contract.add_argument("--entry-frequency-recovery", type=Path, default=DEFAULT_ENTRY_FREQUENCY_RECOVERY)
+    p_active_contract.add_argument("--forecast-pattern-refresh", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH)
     p_active_contract.add_argument("--output", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
     p_active_contract.add_argument("--report", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT)
 
@@ -4164,6 +4176,27 @@ def main(argv: list[str] | None = None) -> int:
     p_entry_recovery.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_entry_recovery.add_argument("--output", type=Path, default=DEFAULT_ENTRY_FREQUENCY_RECOVERY)
     p_entry_recovery.add_argument("--report", type=Path, default=DEFAULT_ENTRY_FREQUENCY_RECOVERY_REPORT)
+
+    p_forecast_pattern_refresh = sub.add_parser(
+        "forecast-pattern-refresh",
+        help="Consume entry-frequency RANGE work into read-only range/trigger proof actions.",
+    )
+    p_forecast_pattern_refresh.add_argument(
+        "--entry-frequency-recovery",
+        type=Path,
+        default=DEFAULT_ENTRY_FREQUENCY_RECOVERY,
+    )
+    p_forecast_pattern_refresh.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_forecast_pattern_refresh.add_argument(
+        "--active-opportunity-board",
+        type=Path,
+        default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    )
+    p_forecast_pattern_refresh.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_forecast_pattern_refresh.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
+    p_forecast_pattern_refresh.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_forecast_pattern_refresh.add_argument("--output", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH)
+    p_forecast_pattern_refresh.add_argument("--report", type=Path, default=DEFAULT_FORECAST_PATTERN_REFRESH_REPORT)
 
     p_non_eurusd_mapper = sub.add_parser(
         "non-eurusd-proof-lane-mapper",
@@ -7011,6 +7044,7 @@ def main(argv: list[str] | None = None) -> int:
                 active_opportunity_board_path=args.active_opportunity_board,
                 non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
                 entry_frequency_recovery_path=args.entry_frequency_recovery,
+                forecast_pattern_refresh_path=args.forecast_pattern_refresh,
                 output_path=args.output,
                 report_path=args.report,
             ).run()
@@ -7085,6 +7119,38 @@ def main(argv: list[str] | None = None) -> int:
                 order_intents_path=args.order_intents,
                 strategy_profile_path=args.strategy_profile,
                 execution_ledger_db_path=args.execution_ledger_db,
+                forecast_history_path=args.forecast_history,
+                projection_ledger_path=args.projection_ledger,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "target_lane_id": summary.target_lane_id,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "forecast-pattern-refresh":
+        try:
+            from quant_rabbit.forecast_pattern_refresh import ForecastPatternRefresh
+
+            summary = ForecastPatternRefresh(
+                entry_frequency_recovery_path=args.entry_frequency_recovery,
+                active_trader_contract_path=args.active_trader_contract,
+                active_opportunity_board_path=args.active_opportunity_board,
+                order_intents_path=args.order_intents,
                 forecast_history_path=args.forecast_history,
                 projection_ledger_path=args.projection_ledger,
                 output_path=args.output,

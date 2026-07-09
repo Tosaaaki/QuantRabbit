@@ -1301,6 +1301,165 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_forecast_pattern_refresh_artifact_replaces_entry_recovery_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 2, 30, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 134,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "pairs_scanned": ["USD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": "Consume forecast-pattern refresh before repeating drought work. Do not send.",
+                        "entry_recovery_candidate": True,
+                        "blockers": [
+                            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                            "SPREAD_TOO_WIDE",
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT "
+                        "needs forecast-pattern refresh consumption."
+                    ),
+                },
+            )
+            _write_json(
+                paths["entry_recovery"],
+                {
+                    "schema_version": "entry_frequency_recovery_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "target_lane_count": 1,
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    },
+                    "forecast_pattern_tuning_queue": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "FORECAST_PATTERN_REFRESH",
+                            "description": "Retune around RANGE forecast.",
+                            "preserve_blockers": ["RANGE_FORECAST_REQUIRES_RANGE_ROTATION"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/entry_frequency_recovery.json for "
+                        "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT: next safe tuning "
+                        "action is FORECAST_PATTERN_REFRESH; do not send."
+                    ),
+                },
+            )
+            _write_json(
+                paths["forecast_pattern"],
+                {
+                    "schema_version": "forecast_pattern_refresh_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "FORECAST_PATTERN_REFRESH_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                        "range_rotation_counterpart": {
+                            "status": "RANGE_ROTATION_COUNTERPART_BLOCKED_BY_RANGE_RAIL"
+                        },
+                        "forecast_range_box": {"status": "RANGE_BOX_NOT_AT_EXECUTABLE_RAIL"},
+                        "projection_trigger_audit": {
+                            "status": "TRIGGER_PROJECTIONS_EXPIRED_PENDING_VERIFICATION_REQUIRED"
+                        },
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "RANGE_RAIL_GEOMETRY_REPAIR",
+                            "description": "Do not chase the current RANGE midpoint.",
+                            "preserve_blockers": ["RANGE_FORECAST_REQUIRES_RANGE_ROTATION"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/forecast_pattern_refresh.json for "
+                        "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT: next safe action is "
+                        "RANGE_RAIL_GEOMETRY_REPAIR; do not send."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                forecast_pattern_refresh_path=paths["forecast_pattern"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        pattern_state = payload["current_state"]["forecast_pattern_refresh"]
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(pattern_state["artifact_status"], "present")
+        self.assertEqual(pattern_state["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(pattern_state["top_lane"]["forecast_box_status"], "RANGE_BOX_NOT_AT_EXECUTABLE_RAIL")
+        self.assertEqual(pattern_state["next_actions"][0]["action_type"], "RANGE_RAIL_GEOMETRY_REPAIR")
+        self.assertIn("Consume data/forecast_pattern_refresh.json", payload["next_prompt"])
+        self.assertIn("RANGE_RAIL_GEOMETRY_REPAIR", payload["next_prompt"])
+        self.assertNotIn("Consume data/entry_frequency_recovery.json", payload["next_prompt"])
+        self.assertIn("forecast_pattern_refresh artifact", payload["next_trade_enabling_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
         now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
         board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
@@ -1579,6 +1738,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "active_board": root / "data" / "active_opportunity_board.json",
         "frontier": root / "data" / "non_eurusd_live_grade_frontier.json",
         "entry_recovery": root / "data" / "entry_frequency_recovery.json",
+        "forecast_pattern": root / "data" / "forecast_pattern_refresh.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }

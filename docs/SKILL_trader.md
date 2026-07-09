@@ -333,6 +333,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # active-opportunity-board → non-eurusd-proof-lane-mapper →
 # non-eurusd-live-grade-frontier → active-trader-contract →
 # entry-frequency-recovery → active-trader-contract →
+# forecast-pattern-refresh → active-trader-contract →
 # operator-review-report → trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
@@ -565,6 +566,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `active-trader-contract` → `active-opportunity-board` →
 # `non-eurusd-proof-lane-mapper` → `non-eurusd-live-grade-frontier` →
 # `active-trader-contract` → `entry-frequency-recovery` →
+# `active-trader-contract` → `forecast-pattern-refresh` →
 # `active-trader-contract` → `operator-review-report` →
 # `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
@@ -596,6 +598,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → active-trader-contract → active-opportunity-board
 #   → non-eurusd-proof-lane-mapper → non-eurusd-live-grade-frontier
 #   → active-trader-contract → entry-frequency-recovery
+#   → active-trader-contract → forecast-pattern-refresh
 #   → active-trader-contract → operator-review-report
 #   → trader-goal-loop-orchestrator
 # and prints one compact digest.
@@ -792,6 +795,17 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   keeping every blocker visible. It never grants live order, cancel/close,
 #   launchd, gate relaxation, lot-backsolve, market-close-loss-as-TP-proof,
 #   secret-disclosure, model API calls, or inferred approval.
+# - forecast-pattern-refresh is read-only and runs after entry-frequency
+#   recovery plus a contract consumption pass, then active-trader-contract runs
+#   again to consume it. It writes `data/forecast_pattern_refresh.json` and
+#   `docs/forecast_pattern_refresh_report.md`, audits the latest RANGE box
+#   location, maps the matching RANGE_ROTATION LIMIT/MARKET counterpart,
+#   verifies expired/pending trigger projections, preserves spread/bid-ask/
+#   negative-expectancy blockers, and emits lane-local actions such as
+#   RANGE_RAIL_GEOMETRY_REPAIR, VERIFY_TRIGGER_PROJECTIONS, or
+#   EXACT_TP_PROOF_COLLECTION. It must not force non-range MARKET recovery
+#   under a RANGE forecast, chase the current range midpoint/opposite rail, or
+#   treat refresh output as live permission.
 # - operator-review-report is read-only and runs after the terminal
 #   active-trader-contract. It writes `data/operator_review_report.json` and
 #   `docs/operator_review_report.md` from the current contract, active board,
@@ -840,4 +854,5 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Guardian receipt operator review JSON/report: `data/guardian_receipt_operator_review.json`, `docs/guardian_receipt_operator_review_report.md`.
 - Operator review material JSON/report: `data/operator_review_report.json`, `docs/operator_review_report.md`.
 - Entry-frequency recovery JSON/report: `data/entry_frequency_recovery.json`, `docs/entry_frequency_recovery_report.md`.
+- Forecast-pattern refresh JSON/report: `data/forecast_pattern_refresh.json`, `docs/forecast_pattern_refresh_report.md`.
 - Trader support JSON/report: `data/trader_support_bot.json`, `docs/trader_support_bot_report.md`.
