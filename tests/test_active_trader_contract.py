@@ -790,6 +790,164 @@ class ActiveTraderContractTest(unittest.TestCase):
             payload["next_prompt"],
         )
 
+    def test_eurusd_board_path_keeps_distinct_non_eurusd_frontier_parallel_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 17, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 127,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 2,
+                        "operator_review_required_count": 0,
+                        "no_trade_count": 125,
+                        "pairs_scanned": ["EUR_USD", "AUD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": (
+                            "Collect exact local TAKE_PROFIT_ORDER proof for "
+                            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER."
+                        ),
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT "
+                        "is the closest read-only path."
+                    ),
+                },
+            )
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NON_EURUSD_FRONTIER_FOUND",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "AUD_CAD"],
+                    "scanned_intents": 113,
+                    "top_lane": {
+                        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                    },
+                    "top_non_eurusd_lane": {
+                        "lane_id": "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                        "pair": "AUD_CAD",
+                        "direction": "SHORT",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_BIDASK_REPLAY_TP_PROOF_FLOOR",
+                        "bidask_status": "NEGATIVE",
+                        "spread_status": "PASS",
+                        "forecast_status": "PASS",
+                        "loss_budget_status": "PASS",
+                        "tp_proof_count": 0,
+                        "tp_proof_floor": 20,
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                            "LOCAL_TP_PROOF_ZERO_TRADES",
+                        ],
+                        "next_action": (
+                            "Repair bid/ask-negative pattern or vehicle shape for "
+                            "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; do not repeat replay until the lane inputs change."
+                        ),
+                    },
+                    "required_checks": {
+                        "non_eurusd_closer_than_eurusd": False,
+                        "spread_too_wide_not_ignored": True,
+                        "bidask_negative_not_ignored": True,
+                        "next_evidence_lane": {
+                            "lane_id": "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                            "pair": "AUD_CAD",
+                            "direction": "SHORT",
+                            "strategy_family": "RANGE_ROTATION",
+                            "vehicle": "LIMIT",
+                            "status": "EVIDENCE_ACQUISITION",
+                            "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_BIDASK_REPLAY_TP_PROOF_FLOOR",
+                            "bidask_status": "NEGATIVE",
+                            "spread_status": "PASS",
+                            "forecast_status": "PASS",
+                            "loss_budget_status": "PASS",
+                            "blockers": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                                "LOCAL_TP_PROOF_ZERO_TRADES",
+                            ],
+                            "next_action": (
+                                "Repair bid/ask-negative pattern or vehicle shape for "
+                                "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; do not repeat replay until the lane inputs change."
+                            ),
+                        },
+                    },
+                    "next_active_path": (
+                        "BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for "
+                        "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertIn("distinct read-only evidence lane", payload["selected_active_path_reason"])
+        self.assertIn("range_trader:AUD_CAD:SHORT:RANGE_ROTATION", payload["next_trade_enabling_action"])
+        self.assertIn("Parallel non_eurusd_live_grade_frontier", payload["next_trade_enabling_action"])
+        self.assertIn("AUD_CAD|SHORT|RANGE_ROTATION|LIMIT", payload["next_prompt"])
+        self.assertIn("EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT", payload["next_prompt"])
+        self.assertIn("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", blocker_codes)
+        self.assertNotIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blocker_codes)
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_board_all_no_trade_with_guardian_clear_overrides_stale_single_lane_evidence(self) -> None:
         now = datetime(2026, 7, 8, 10, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

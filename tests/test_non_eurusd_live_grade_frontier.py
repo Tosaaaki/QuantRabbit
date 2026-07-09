@@ -569,7 +569,7 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", blockers)
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blockers)
 
-    def test_all_top_frontier_negative_reports_negative_status(self) -> None:
+    def test_non_eurusd_frontier_presence_takes_priority_over_all_negative_status(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "failure_trader:CAD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"
         with tempfile.TemporaryDirectory() as tmp:
@@ -608,7 +608,51 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
             ).run()
             payload = json.loads(paths["output"].read_text())
 
+        self.assertEqual(payload["status"], STATUS_NON_EURUSD_FOUND)
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], lane_id)
+        self.assertIn("negative expectancy", payload["next_active_path"])
+
+    def test_only_eurusd_negative_frontier_reports_negative_status(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            blocker = ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"]
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [_intent(lane_id, "EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", blocker)]},
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "ranked_active_lanes": [
+                        _board_lane(lane_id, "EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", blocker)
+                    ]
+                },
+            )
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
         self.assertEqual(payload["status"], STATUS_ALL_NEGATIVE)
+        self.assertEqual(payload["top_non_eurusd_lane"], {})
         self.assertIn("negative expectancy", payload["next_active_path"])
 
     def test_missing_current_artifacts_reports_data_incomplete(self) -> None:

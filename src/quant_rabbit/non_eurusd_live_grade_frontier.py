@@ -718,14 +718,14 @@ def _frontier_status(
         or not ranked
     ):
         return STATUS_DATA_INCOMPLETE
+    if top_non:
+        return STATUS_NON_EURUSD_FOUND
     if top_lanes and all(_has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS) for lane in top_lanes):
         return STATUS_ALL_NEGATIVE
     if top_lanes and all(
         _has_marker(lane.get("blockers") or [], SPREAD_BLOCKERS + FORECAST_BLOCKERS) for lane in top_lanes
     ):
         return STATUS_ALL_SPREAD_OR_FORECAST
-    if top_non:
-        return STATUS_NON_EURUSD_FOUND
     if top_lane.get("pair") == "EUR_USD":
         return STATUS_ONLY_EURUSD_FOUND
     return STATUS_NON_EURUSD_FOUND if top_non else STATUS_DATA_INCOMPLETE
@@ -751,6 +751,8 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
             f"BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for {lane_id}; "
             "repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
         )
+    if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
+        return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
     if lane.get("tp_proof_remaining"):
         return f"TP_PROOF_COLLECTION: collect exact TAKE_PROFIT_ORDER proof for {lane_id}; do not mix market-close losses."
     if lane.get("forecast_status") != "PASS":

@@ -1266,6 +1266,12 @@ def _select_active_path(
                 f"{frontier_lane.get('lane_id')} ({frontier_lane.get('vehicle')}); "
                 "consume it with the board lane as one read-only unblock plan."
             )
+        elif _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
+            frontier_note = (
+                " Non-EUR frontier also exposes a distinct read-only evidence lane "
+                f"{frontier_lane.get('lane_id')} ({frontier_lane.get('vehicle')}); "
+                "queue it as secondary evidence work after the board lane so EUR/USD does not monopolize repair."
+            )
         return (
             path_by_status[board_status],
             "Latest active opportunity board is available from the previous refresh and has already "
@@ -1530,20 +1536,85 @@ def _frontier_supplements_board_evidence(
     return bool(blocker_codes & evidence_markers)
 
 
+def _frontier_parallel_board_evidence(
+    board_top: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
+) -> bool:
+    if not board_top or not _frontier_evidence_action_available(non_eurusd_frontier):
+        return False
+    if str(non_eurusd_frontier.get("status") or "") != "NON_EURUSD_FRONTIER_FOUND":
+        return False
+    if str(board_top.get("status") or "") != "EVIDENCE_ACQUISITION":
+        return False
+    if str(board_top.get("pair") or "").upper() != "EUR_USD":
+        return False
+    frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+    if not frontier_lane or frontier_lane.get("lane_id") == board_top.get("lane_id"):
+        return False
+    if str(frontier_lane.get("pair") or "").upper() == "EUR_USD":
+        return False
+    if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+        return False
+    board_blockers = set(_string_list(board_top.get("blockers")))
+    board_bidask_refresh_or_negative = {
+        "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "BIDASK_REPLAY_NEGATIVE",
+    }
+    if board_blockers & board_bidask_refresh_or_negative:
+        return False
+    return bool(frontier_lane.get("next_action") or non_eurusd_frontier.get("next_active_path"))
+
+
 def _frontier_supplement_prompt(
     board_top: dict[str, Any],
     non_eurusd_frontier: dict[str, Any],
 ) -> str:
-    if not _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
-        return ""
+    if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+        frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+        frontier_shape = _lane_target_shape(frontier_lane)
+        frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
+        return (
+            f" Pair this with frontier evidence {frontier_ref}: "
+            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            "Keep both blocker sets visible; do not send."
+        )
+    if _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
+        frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
+        frontier_shape = _lane_target_shape(frontier_lane)
+        frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
+        return (
+            f" Parallel non_eurusd_live_grade_frontier evidence {frontier_ref}: "
+            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            "Keep the non-EUR blocker set visible; do not send."
+        )
+    return ""
+
+
+def _frontier_action_suffix(
+    board_top: dict[str, Any],
+    non_eurusd_frontier: dict[str, Any],
+) -> str:
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
-    frontier_shape = _lane_target_shape(frontier_lane)
-    frontier_ref = frontier_shape or str(frontier_lane.get("lane_id") or "frontier lane")
-    return (
-        f" Pair this with frontier evidence {frontier_ref}: "
-        f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
-        "Keep both blocker sets visible; do not send."
-    )
+    if not frontier_lane:
+        return ""
+    if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
+        return (
+            " Pair this with non_eurusd_live_grade_frontier evidence lane "
+            f"{frontier_lane.get('lane_id')} "
+            f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
+            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            "Keep both blocker sets visible; do not send."
+        )
+    if _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
+        return (
+            " Parallel non_eurusd_live_grade_frontier evidence lane "
+            f"{frontier_lane.get('lane_id')} "
+            f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
+            f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            "Keep the non-EUR blocker set visible; do not send."
+        )
+    return ""
 
 
 def _normalize_stale_blocker_codes(
@@ -1886,14 +1957,8 @@ def _next_trade_enabling_action(
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
                 suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
             frontier_suffix = ""
-            if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
-                frontier_suffix = (
-                    " Pair this with non_eurusd_live_grade_frontier evidence lane "
-                    f"{frontier_lane.get('lane_id')} "
-                    f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
-                    f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
-                    "Keep both blocker sets visible; do not send."
-                )
+            if frontier_lane:
+                frontier_suffix = _frontier_action_suffix(board_top, non_eurusd_frontier)
             consumed_prompt = _consumed_lane_prompt(
                 board_top,
                 entry_frequency_recovery=entry_frequency_recovery,
@@ -2139,7 +2204,10 @@ def _next_prompt(
             )
     if _active_board_all_no_trade(active_opportunity_board or {}):
         target_shape = frontier_shape or active_board_shape or TARGET_SHAPE
-    elif _frontier_supplements_board_evidence(board_top, non_eurusd_frontier or {}) and frontier_shape:
+    elif (
+        _frontier_supplements_board_evidence(board_top, non_eurusd_frontier or {})
+        or _frontier_parallel_board_evidence(board_top, non_eurusd_frontier or {})
+    ) and frontier_shape:
         target_shape = f"{active_board_shape or TARGET_SHAPE} plus frontier evidence {frontier_shape}"
     else:
         target_shape = active_board_shape or TARGET_SHAPE
