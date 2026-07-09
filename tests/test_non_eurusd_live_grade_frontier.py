@@ -514,6 +514,124 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_range_forecast_mismatch_prefers_range_rotation_counterpart(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        trend_id = "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION"
+        range_id = "range_trader:AUD_JPY:SHORT:RANGE_ROTATION"
+        eur_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        trend_blockers = [
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "MATRIX_REPAIR_REJECT_CONTEXT",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "CHART_DIRECTION_CONFLICT",
+            "STRATEGY_NOT_ELIGIBLE",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+        ]
+        range_blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "REWARD_RISK_TOO_LOW",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent(eur_id, "EUR_USD", "SHORT", "RANGE_ROTATION", "LIMIT", ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]),
+                        _intent(trend_id, "AUD_JPY", "SHORT", "TREND_CONTINUATION", "STOP", trend_blockers),
+                        _intent(range_id, "AUD_JPY", "SHORT", "RANGE_ROTATION", "LIMIT", range_blockers),
+                    ],
+                },
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "ranked_active_lanes": [
+                        _board_lane(eur_id, "EUR_USD", "SHORT", "RANGE_ROTATION", "LIMIT", ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]),
+                        _board_lane(trend_id, "AUD_JPY", "SHORT", "TREND_CONTINUATION", "STOP", trend_blockers),
+                        _board_lane(range_id, "AUD_JPY", "SHORT", "RANGE_ROTATION", "LIMIT", range_blockers),
+                    ]
+                },
+            )
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["status"], STATUS_NON_EURUSD_FOUND)
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], range_id)
+        self.assertEqual(payload["next_evidence_lane"]["lane_id"], range_id)
+        self.assertIn(range_id, payload["next_active_path"])
+        self.assertNotIn(trend_id, payload["next_active_path"])
+        trend_lane = next(lane for lane in payload["ranked_frontier_lanes"] if lane["lane_id"] == trend_id)
+        self.assertIn("Route current RANGE forecast mismatch", trend_lane["next_action"])
+        self.assertIn(range_id, trend_lane["next_action"])
+        self.assertNotIn("Build exact TP-proven rotation proof", trend_lane["next_action"])
+
+    def test_range_forecast_mismatch_without_counterpart_does_not_request_trend_tp_proof(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        trend_id = "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION"
+        blockers = [
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "CHART_DIRECTION_CONFLICT",
+            "STRATEGY_NOT_ELIGIBLE",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [_intent(trend_id, "AUD_JPY", "SHORT", "TREND_CONTINUATION", "STOP", blockers)]},
+            )
+            _write_json(
+                paths["active_board"],
+                {"ranked_active_lanes": [_board_lane(trend_id, "AUD_JPY", "SHORT", "TREND_CONTINUATION", "STOP", blockers)]},
+            )
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_non_eurusd_lane"]
+        self.assertEqual(top["lane_id"], trend_id)
+        self.assertIn("Route current RANGE forecast mismatch away", top["next_action"])
+        self.assertIn("RANGE_FORECAST_COUNTERPART_HANDOFF", payload["next_active_path"])
+        self.assertNotIn("Build exact TP-proven rotation proof", top["next_action"])
+
     def test_frontier_does_not_reactivate_active_board_stale_guardian_blocker(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT"

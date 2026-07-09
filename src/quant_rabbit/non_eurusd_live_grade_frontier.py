@@ -72,6 +72,9 @@ FORECAST_BLOCKERS = (
     "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
     "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
 )
+RANGE_FORECAST_METHOD_MISMATCH_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
+RANGE_ROTATION_STRATEGY = "RANGE_ROTATION"
+RANGE_FORECAST_MISMATCH_SCORE_PENALTY = 40
 LOSS_BUDGET_BLOCKERS = (
     "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
     "MARGIN_TOO_THIN_FOR_MIN_LOT",
@@ -203,10 +206,12 @@ class NonEurusdLiveGradeFrontier:
             (_frontier_lane(row, stale_blocker_codes=stale_blocker_codes) for row in frontier_universe),
             key=_frontier_sort_key,
         )
+        _annotate_range_forecast_counterparts(ranked)
+        ranked = sorted(ranked, key=_frontier_sort_key)
         top_lanes = ranked[:TOP_N]
         top_lane = top_lanes[0] if top_lanes else {}
         non_eur_ranked = [lane for lane in ranked if lane.get("pair") != "EUR_USD"]
-        top_non = non_eur_ranked[0] if non_eur_ranked else {}
+        top_non = _select_top_non_eurusd_lane(non_eur_ranked)
         gaps = _gap_sets(ranked)
         required_checks = _required_checks(ranked, top_lane, top_non)
         status = _frontier_status(
@@ -568,6 +573,8 @@ def _distance_score(
         score += 9
     if forecast_status != "PASS":
         score += 7 if forecast_status == "BLOCKED" else 4
+    if _is_range_forecast_method_mismatch(lane, blockers=blockers):
+        score += RANGE_FORECAST_MISMATCH_SCORE_PENALTY
     if loss_budget_status == "BLOCKED":
         score += 7
     if proof_remaining is not None:
@@ -622,6 +629,42 @@ def _frontier_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
         str(lane.get("strategy_family") or ""),
         str(lane.get("vehicle") or ""),
     )
+
+
+def _select_top_non_eurusd_lane(non_eur_ranked: list[dict[str, Any]]) -> dict[str, Any]:
+    if not non_eur_ranked:
+        return {}
+    for lane in non_eur_ranked:
+        if not _is_range_forecast_method_mismatch(lane):
+            return lane
+    return non_eur_ranked[0]
+
+
+def _annotate_range_forecast_counterparts(ranked: list[dict[str, Any]]) -> None:
+    for lane in ranked:
+        if not _is_range_forecast_method_mismatch(lane):
+            continue
+        counterpart = _best_range_rotation_counterpart(lane, ranked)
+        if counterpart:
+            lane["range_rotation_counterpart"] = counterpart
+        lane["next_action"] = _next_action(lane)
+
+
+def _best_range_rotation_counterpart(
+    lane: dict[str, Any],
+    ranked: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidates = [
+        candidate
+        for candidate in ranked
+        if candidate is not lane
+        and str(candidate.get("pair") or "") == str(lane.get("pair") or "")
+        and str(candidate.get("direction") or "") == str(lane.get("direction") or "")
+        and str(candidate.get("strategy_family") or "").upper() == RANGE_ROTATION_STRATEGY
+    ]
+    if not candidates:
+        return {}
+    return sorted(candidates, key=_frontier_sort_key)[0]
 
 
 def _gap_sets(ranked: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -743,6 +786,8 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
     if not lane:
         return "FRONTIER_DATA_INCOMPLETE"
     lane_id = lane.get("lane_id")
+    if _is_range_forecast_method_mismatch(lane):
+        return "RANGE_FORECAST_COUNTERPART_HANDOFF: " + _range_forecast_handoff_action(lane)
     if status == STATUS_ALL_NEGATIVE:
         if lane.get("bidask_status") == "NEGATIVE":
             return (
@@ -777,6 +822,8 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
 
 def _next_action(lane: dict[str, Any]) -> str:
     lane_id = lane.get("lane_id")
+    if _is_range_forecast_method_mismatch(lane):
+        return _range_forecast_handoff_action(lane)
     if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"Refresh exact S5 bid/ask replay for {lane_id}; keep negative blocker visible."
     if lane.get("bidask_status") == "NEGATIVE":
@@ -797,6 +844,31 @@ def _next_action(lane: dict[str, Any]) -> str:
     if lane.get("tp_proof_remaining"):
         return f"Collect {lane.get('tp_proof_remaining')} exact TP proof sample(s) for {lane_id}."
     return f"Keep {lane_id} on verifier/gateway path; frontier grants no live permission."
+
+
+def _is_range_forecast_method_mismatch(lane: dict[str, Any], *, blockers: list[str] | None = None) -> bool:
+    blockers = _string_list(lane.get("blockers")) if blockers is None else blockers
+    if RANGE_FORECAST_METHOD_MISMATCH_BLOCKER not in blockers:
+        return False
+    return str(lane.get("strategy_family") or "").upper() != RANGE_ROTATION_STRATEGY
+
+
+def _range_forecast_handoff_action(lane: dict[str, Any]) -> str:
+    lane_id = str(lane.get("lane_id") or "")
+    counterpart = lane.get("range_rotation_counterpart") if isinstance(lane.get("range_rotation_counterpart"), dict) else {}
+    counterpart_id = str(counterpart.get("lane_id") or "")
+    if counterpart_id:
+        return (
+            f"Route current RANGE forecast mismatch from {lane_id} to RANGE_ROTATION counterpart {counterpart_id}; "
+            "repair/evaluate the counterpart's range-rail geometry, reward/risk, and exact TP proof while preserving "
+            f"negative expectancy, spread, bid/ask, forecast, and loss-budget blockers. Keep {lane_id} blocked until "
+            "the current forecast becomes directional. Do not send."
+        )
+    return (
+        f"Route current RANGE forecast mismatch away from {lane_id}; create or refresh the same pair/side "
+        "RANGE_ROTATION counterpart before collecting TP proof. Keep the original lane blocked until the current "
+        "forecast becomes directional. Do not send."
+    )
 
 
 def _has_entry_drought_recovery(lane: dict[str, Any]) -> bool:
