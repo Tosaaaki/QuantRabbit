@@ -805,14 +805,19 @@ def _lane_proof_floor(lane: dict[str, Any], evidence: list[dict[str, Any]]) -> d
         "proof_scope_status": "EXACT_VEHICLE" if exact_current > 0 else "NO_EXACT_VEHICLE_PROOF",
     }
     if broad_current is not None:
+        broad_scope = proof.get("broad_capture_take_profit_scope") or proof.get("capture_take_profit_scope")
+        broad_scope_key = proof.get("broad_capture_take_profit_scope_key") or proof.get("capture_take_profit_scope_key")
         result.update(
             {
                 "broad_method_tp_trades": broad_current,
-                "broad_method_scope": proof.get("capture_take_profit_scope"),
-                "broad_method_scope_key": proof.get("capture_take_profit_scope_key"),
+                "broad_method_scope": broad_scope,
+                "broad_method_scope_key": broad_scope_key,
                 "broad_method_not_used_as_exact_vehicle_proof": bool(
                     broad_current > exact_current
-                    and str(proof.get("capture_take_profit_scope") or "").upper() == "PAIR_SIDE_METHOD"
+                    and (
+                        str(broad_scope or "").upper() == "PAIR_SIDE_METHOD"
+                        or proof.get("broad_capture_take_profit_not_used_as_exact_vehicle_proof") is True
+                    )
                 ),
             }
         )
@@ -820,6 +825,9 @@ def _lane_proof_floor(lane: dict[str, Any], evidence: list[dict[str, Any]]) -> d
 
 
 def _broad_method_tp_trades(proof: dict[str, Any]) -> int | None:
+    broad = _first_int(proof.get("broad_capture_take_profit_trades"), None)
+    if broad is not None:
+        return broad
     if str(proof.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
         return None
     return _first_int(proof.get("capture_take_profit_trades"), None)
@@ -988,7 +996,10 @@ def _mapper_next_action(
         return f"Keep {lane_key} diagnostic only; mapper grants no live permission."
     if assessment == "EVIDENCE_ACQUISITION_CANDIDATE":
         if _bidask_negative(lane):
-            return f"Refresh exact bid/ask replay for {lane_key}; preserve negative blocker and do not send."
+            return (
+                f"Repair bid/ask-negative pattern or vehicle shape for {lane_key}; preserve the negative blocker, "
+                "do not repeat exact replay until lane inputs change, and do not send."
+            )
         if proof_floor.get("met") is not True:
             return f"Collect {proof_floor.get('remaining_tp_trades')} more exact TP proof sample(s) for {lane_key}."
         return f"Canonicalize exact proof pack for {lane_key}; do not infer live permission."

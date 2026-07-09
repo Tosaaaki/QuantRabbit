@@ -221,6 +221,9 @@ class NonEurusdProofLaneMapperTests(unittest.TestCase):
         self.assertTrue(mapped["bidask_replay_negative"])
         self.assertEqual(payload["bidask_replay_gaps"][0]["lane_id"], lane_id)
         self.assertEqual(payload["proof_floor_gaps"][0]["remaining_tp_trades"], 14)
+        self.assertIn("Repair bid/ask-negative pattern or vehicle shape", mapped["next_action"])
+        self.assertIn("do not repeat exact replay until lane inputs change", mapped["next_action"])
+        self.assertNotIn("Refresh exact bid/ask replay", mapped["next_action"])
 
     def test_spread_too_wide_blocks_live_ready_assessment(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)

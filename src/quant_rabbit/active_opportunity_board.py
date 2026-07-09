@@ -118,6 +118,7 @@ ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_CURRENT_
 ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_BLOCKER = "ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING"
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+BROAD_TP_PROOF_NOT_EXACT_VEHICLE_BLOCKER = "BROAD_TP_PROOF_NOT_EXACT_VEHICLE"
 TP_PROVEN_HARVEST_REPAIR_TARGET = "TP_PROVEN_HARVEST_BLOCKER_REPAIR_REQUIRED"
 STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
 TP_PROOF_COLLECTION_MIN_TRADES = 5
@@ -214,7 +215,11 @@ class ActiveOpportunityBoard:
         lanes: dict[str, dict[str, Any]] = {}
 
         _add_order_intent_lanes(lanes, artifacts["order_intents"])
-        _attach_capture_economics_local_tp(lanes, artifacts["capture_economics"])
+        _attach_capture_economics_local_tp(
+            lanes,
+            artifacts["capture_economics"],
+            exact_vehicle_tp_metrics=_exact_vehicle_take_profit_metrics(self.execution_ledger_db_path),
+        )
         _add_proof_queue_lanes(lanes, artifacts["as_proof_pack_queue"])
         _add_portfolio_lanes(lanes, artifacts["portfolio_4x_path_planner"])
         _add_lane_board_lanes(lanes, artifacts["as_lane_candidate_board"])
@@ -1237,6 +1242,8 @@ def _attach_local_tp_proof_context(lane: dict[str, Any], intent: dict[str, Any])
 def _attach_capture_economics_local_tp(
     lanes: dict[str, dict[str, Any]],
     artifact: dict[str, Any],
+    *,
+    exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> None:
     if artifact.get("_artifact_status") != "present":
         return
@@ -1254,7 +1261,7 @@ def _attach_capture_economics_local_tp(
         method = str(lane.get("strategy_family") or "")
         if not pair or not direction or not method:
             continue
-        metrics, scope_name, scope_key = _capture_scoped_exit_metrics(
+        broad_metrics, broad_scope_name, broad_scope_key = _capture_scoped_exit_metrics(
             artifact,
             pair=pair,
             side=direction,
@@ -1262,10 +1269,31 @@ def _attach_capture_economics_local_tp(
             exit_reason="TAKE_PROFIT_ORDER",
         )
         enriched = dict(proof)
+        vehicle = _normalize_vehicle(lane.get("vehicle"))
+        exact_scope_available = exact_vehicle_tp_metrics is not None and vehicle not in {"", "UNKNOWN"}
+        exact_scope_key = f"{pair}|{direction}|{method}|{vehicle}|TAKE_PROFIT_ORDER"
+        if exact_scope_available:
+            metrics = exact_vehicle_tp_metrics.get((pair.upper(), direction.upper(), method.upper(), vehicle.upper()), {})
+            scope_name = "PAIR_SIDE_METHOD_VEHICLE"
+            scope_key = exact_scope_key
+            enriched["capture_take_profit_metrics_source"] = "data/execution_ledger.db:exact_vehicle_take_profit"
+        else:
+            metrics = broad_metrics
+            scope_name = broad_scope_name
+            scope_key = broad_scope_key
+            enriched["capture_take_profit_metrics_source"] = "data/capture_economics.json"
         enriched["capture_take_profit_scope"] = scope_name
         enriched["capture_take_profit_scope_key"] = scope_key
         enriched["capture_take_profit_proof_floor"] = floor
-        enriched["capture_take_profit_metrics_source"] = "data/capture_economics.json"
+        if broad_metrics:
+            enriched["broad_capture_take_profit_scope"] = broad_scope_name
+            enriched["broad_capture_take_profit_scope_key"] = broad_scope_key
+            enriched["broad_capture_take_profit_trades"] = _first_int(broad_metrics.get("trades"), 0)
+            enriched["broad_capture_take_profit_wins"] = _first_int(broad_metrics.get("wins"), 0)
+            enriched["broad_capture_take_profit_losses"] = _first_int(broad_metrics.get("losses"), 0)
+            enriched["broad_capture_take_profit_expectancy_jpy"] = _json_number_or_none(
+                broad_metrics.get("expectancy_jpy_per_trade")
+            )
         if metrics:
             enriched["capture_take_profit_trades"] = _first_int(metrics.get("trades"), 0)
             enriched["capture_take_profit_wins"] = _first_int(metrics.get("wins"), 0)
@@ -1284,6 +1312,7 @@ def _attach_capture_economics_local_tp(
             enriched["capture_take_profit_avg_loss_jpy"] = 0.0
             enriched["capture_take_profit_zero_trade"] = True
         lane["local_tp_proof"] = enriched
+        _append_broad_tp_not_exact_vehicle_blocker(lane, enriched)
         _append_local_tp_proof_floor_blocker(lane, enriched)
 
 
@@ -1312,6 +1341,129 @@ def _capture_scoped_exit_metrics(
     return {}, "MISSING_SCOPED", f"{pair}|{side}|{method}|{exit_reason}"
 
 
+def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
+    if not path.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            columns = {
+                str(row["name"])
+                for row in con.execute("pragma table_info(execution_events)").fetchall()
+                if "name" in row.keys()
+            }
+            required = {"ts_utc", "event_type", "trade_id", "lane_id", "pair", "side", "realized_pl_jpy", "exit_reason"}
+            if not required.issubset(columns):
+                return None
+            rows = con.execute(
+                """
+                WITH fills AS (
+                    SELECT
+                        trade_id,
+                        MAX(NULLIF(lane_id, '')) AS lane_id,
+                        MAX(NULLIF(pair, '')) AS pair,
+                        MAX(NULLIF(side, '')) AS side,
+                        MAX(NULLIF(exit_reason, '')) AS entry_reason
+                    FROM execution_events
+                    WHERE event_type = 'ORDER_FILLED'
+                      AND COALESCE(trade_id, '') != ''
+                    GROUP BY trade_id
+                ),
+                closes AS (
+                    SELECT
+                        e.trade_id AS trade_id,
+                        MAX(NULLIF(e.lane_id, '')) AS close_lane_id,
+                        MAX(NULLIF(e.pair, '')) AS pair,
+                        MAX(NULLIF(e.side, '')) AS side,
+                        SUM(e.realized_pl_jpy) AS realized_pl_jpy,
+                        (
+                            SELECT e2.exit_reason
+                            FROM execution_events e2
+                            WHERE e2.trade_id = e.trade_id
+                              AND e2.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                              AND e2.realized_pl_jpy IS NOT NULL
+                            ORDER BY e2.ts_utc DESC
+                            LIMIT 1
+                        ) AS final_exit_reason
+                    FROM execution_events e
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND e.realized_pl_jpy IS NOT NULL
+                      AND COALESCE(e.trade_id, '') != ''
+                    GROUP BY e.trade_id
+                )
+                SELECT
+                    COALESCE(f.lane_id, c.close_lane_id, '') AS entry_lane_id,
+                    COALESCE(f.entry_reason, '') AS entry_reason,
+                    COALESCE(f.pair, c.pair, '') AS pair,
+                    COALESCE(f.side, c.side, '') AS side,
+                    COUNT(*) AS trades,
+                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN 1 ELSE 0 END) AS losses,
+                    SUM(c.realized_pl_jpy) AS net_jpy,
+                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN c.realized_pl_jpy ELSE 0 END) AS win_jpy,
+                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN c.realized_pl_jpy ELSE 0 END) AS loss_jpy
+                FROM closes c
+                LEFT JOIN fills f ON f.trade_id = c.trade_id
+                WHERE c.final_exit_reason = 'TAKE_PROFIT_ORDER'
+                  AND COALESCE(f.lane_id, c.close_lane_id, '') != ''
+                GROUP BY 1, 2, 3, 4
+                """
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+
+    accum: dict[tuple[str, str, str, str], dict[str, float]] = {}
+    for row in rows:
+        lane_id = str(row["entry_lane_id"] or "")
+        parsed = _parse_lane_id(lane_id)
+        pair = str(parsed.get("pair") or row["pair"] or "UNKNOWN").upper()
+        direction = str(parsed.get("direction") or row["side"] or "UNKNOWN").upper()
+        method = str(parsed.get("strategy_family") or "UNKNOWN").upper()
+        vehicle = _normalize_vehicle(parsed.get("vehicle") or row["entry_reason"] or "UNKNOWN")
+        if "UNKNOWN" in {pair, direction, method, vehicle}:
+            continue
+        trades = int(row["trades"] or 0)
+        wins = int(row["wins"] or 0)
+        losses = int(row["losses"] or 0)
+        net_jpy = float(row["net_jpy"] or 0.0)
+        win_jpy = float(row["win_jpy"] or 0.0)
+        loss_jpy = float(row["loss_jpy"] or 0.0)
+        key = (pair, direction, method, vehicle)
+        slot = accum.setdefault(
+            key,
+            {"trades": 0.0, "wins": 0.0, "losses": 0.0, "net_jpy": 0.0, "win_jpy": 0.0, "loss_jpy": 0.0},
+        )
+        slot["trades"] += trades
+        slot["wins"] += wins
+        slot["losses"] += losses
+        slot["net_jpy"] += net_jpy
+        slot["win_jpy"] += win_jpy
+        slot["loss_jpy"] += loss_jpy
+
+    metrics: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for key, slot in accum.items():
+        trades = int(slot["trades"])
+        wins = int(slot["wins"])
+        losses = int(slot["losses"])
+        net_jpy = float(slot["net_jpy"])
+        win_jpy = float(slot["win_jpy"])
+        loss_jpy = float(slot["loss_jpy"])
+        metrics[key] = {
+            "trades": trades,
+            "wins": wins,
+            "losses": losses,
+            "expectancy_jpy_per_trade": round(net_jpy / trades, 4) if trades else 0.0,
+            "avg_win_jpy": round(win_jpy / wins, 4) if wins else 0.0,
+            "avg_loss_jpy": round(abs(loss_jpy) / losses, 4) if losses else 0.0,
+            "net_jpy": round(net_jpy, 4),
+            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        }
+    return metrics
+
+
 def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
     cursor: object = root
     for key in keys:
@@ -1323,13 +1475,29 @@ def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
 
 def _append_local_tp_proof_floor_blocker(lane: dict[str, Any], proof: dict[str, Any]) -> None:
     blockers = _string_list(lane.get("blockers"))
-    if TP_PROVEN_ROTATION_BLOCKER not in blockers:
-        return
     trades = _first_int(proof.get("capture_take_profit_trades"), 0)
+    if (
+        TP_PROVEN_ROTATION_BLOCKER not in blockers
+        and BROAD_TP_PROOF_NOT_EXACT_VEHICLE_BLOCKER not in blockers
+        and not (0 < trades < TP_PROOF_COLLECTION_MIN_TRADES)
+    ):
+        return
     if trades <= 0:
         lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER])
     elif trades < TP_PROOF_COLLECTION_MIN_TRADES:
         lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER])
+
+
+def _append_broad_tp_not_exact_vehicle_blocker(lane: dict[str, Any], proof: dict[str, Any]) -> None:
+    broad_trades = _float(proof.get("broad_capture_take_profit_trades"))
+    exact_trades = _float(proof.get("capture_take_profit_trades"))
+    if broad_trades is None or exact_trades is None or broad_trades <= exact_trades:
+        return
+    if str(proof.get("capture_take_profit_scope") or "") != "PAIR_SIDE_METHOD_VEHICLE":
+        return
+    proof["broad_capture_take_profit_not_used_as_exact_vehicle_proof"] = True
+    blockers = _string_list(lane.get("blockers"))
+    lane["blockers"] = _unique(blockers + [BROAD_TP_PROOF_NOT_EXACT_VEHICLE_BLOCKER])
 
 
 def _mark_tp_proven_harvest_repair_candidate(lane: dict[str, Any]) -> None:
@@ -1360,6 +1528,8 @@ def _local_tp_proof_floor_met(lane: dict[str, Any]) -> bool:
     if str(proof.get("tp_execution_mode") or "") != "ATTACHED_TECHNICAL_TP":
         return False
     if str(proof.get("tp_target_intent") or "") != "HARVEST":
+        return False
+    if str(proof.get("capture_take_profit_scope") or "") != "PAIR_SIDE_METHOD_VEHICLE":
         return False
     trades = _float(proof.get("capture_take_profit_trades"))
     losses = _float(proof.get("capture_take_profit_losses"))
@@ -1706,13 +1876,15 @@ def _has_evidence_path(lane: dict[str, Any]) -> bool:
 
 def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
     blockers = _string_list(lane.get("blockers"))
-    if TP_PROVEN_ROTATION_BLOCKER not in blockers:
-        return False
     if str(lane.get("vehicle") or "").upper() == "MARKET":
         return False
     proof = lane.get("local_tp_proof")
     if not isinstance(proof, dict):
         return False
+    if TP_PROVEN_ROTATION_BLOCKER not in blockers and BROAD_TP_PROOF_NOT_EXACT_VEHICLE_BLOCKER not in blockers:
+        current_trades = _float(proof.get("capture_take_profit_trades"))
+        if current_trades is None or current_trades <= 0:
+            return False
     if proof.get("attach_take_profit_on_fill") is not True:
         return False
     if str(proof.get("tp_execution_mode") or "") != "ATTACHED_TECHNICAL_TP":
@@ -1999,6 +2171,12 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     if status == "LIVE_READY":
         return f"Keep {lane_key} visible for verifier/gateway checks only; this board grants no live permission."
     if status == "EVIDENCE_ACQUISITION":
+        if lane.get("edge_improvement_candidate") is True:
+            target = lane.get("edge_improvement_target") or lane_key
+            return (
+                f"Run read-only EDGE_IMPROVEMENT_EXPERIMENT for {target}; preserve negative/month-scale blockers, "
+                "canonicalize proof/replay/sample gaps, rerank, and do not send."
+            )
         if lane.get("entry_recovery_candidate") is True:
             history = lane.get("entry_recovery_history") if isinstance(lane.get("entry_recovery_history"), dict) else {}
             accepted = history.get("accepted_before_recent")
@@ -2030,12 +2208,6 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
             return (
                 f"Collect exact local TAKE_PROFIT_ORDER proof for {scope_key}; require positive expectancy, "
                 "zero TP losses, and positive Wilson-stressed expectancy before reranking. Do not send."
-            )
-        if lane.get("edge_improvement_candidate") is True:
-            target = lane.get("edge_improvement_target") or lane_key
-            return (
-                f"Run read-only EDGE_IMPROVEMENT_EXPERIMENT for {target}; preserve negative/month-scale blockers, "
-                "canonicalize proof/replay/sample gaps, rerank, and do not send."
             )
         return f"Acquire or canonicalize proof/replay evidence for {lane_key}; do not send or mix vehicles."
     if status == "SCOUT_READY":
@@ -2464,8 +2636,12 @@ def _metadata(intent: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_vehicle(value: Any) -> str:
     text = str(value or "UNKNOWN").upper()
-    if text in {"STOP-ENTRY", "STOP_ENTRY"}:
+    if text in {"STOP-ENTRY", "STOP_ENTRY", "STOP_ORDER"}:
         return "STOP"
+    if text == "LIMIT_ORDER":
+        return "LIMIT"
+    if text == "MARKET_ORDER":
+        return "MARKET"
     if text in {"LIMIT", "MARKET", "STOP", "UNKNOWN"}:
         return text
     return text
