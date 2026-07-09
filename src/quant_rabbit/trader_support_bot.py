@@ -530,10 +530,16 @@ class TraderSupportBot:
             "shortest_live_ready_path_lane_id": entry["shortest_live_ready_path"].get("lane_id"),
             "shortest_live_ready_path_status": entry["shortest_live_ready_path"].get("status"),
             "shortest_live_ready_path_blocker_groups": entry["shortest_live_ready_path"].get("blocker_groups"),
+            "shortest_live_ready_path_parallel_frontier_lane_id": entry["shortest_live_ready_path"].get(
+                "parallel_frontier_evidence_lane_id"
+            ),
             "active_path_lane_id": entry["active_path"].get("lane_id"),
             "active_path_pair": entry["active_path"].get("pair"),
             "active_path_status": entry["active_path"].get("status"),
             "active_path_source": entry["active_path"].get("source"),
+            "active_path_parallel_frontier_lane_id": entry["active_path"].get(
+                "parallel_frontier_evidence_lane_id"
+            ),
             "stale_support_blocker_codes": entry["stale_support_blocker_codes"],
             "stale_support_blocker_lanes": entry["stale_support_blocker_lanes"],
             "order_intents_stale_against_broker_snapshot": artifact_freshness[
@@ -2244,6 +2250,10 @@ def _active_path_summary(
         if isinstance(contract_state.get("non_eurusd_live_grade_frontier"), dict)
         else {}
     )
+    parallel_frontier = _active_path_parallel_frontier_evidence_lane(
+        contract_frontier=contract_frontier,
+        non_eurusd_live_grade_frontier=non_eurusd_live_grade_frontier,
+    )
     sources: list[tuple[str, dict[str, Any]]] = [
         (
             "active_trader_contract.current_state.active_opportunity_board.top_lane",
@@ -2264,7 +2274,7 @@ def _active_path_summary(
         if not lane_id:
             continue
         blockers = [str(code) for code in lane.get("blockers") or [] if str(code).strip()]
-        return {
+        summary = {
             "status": lane.get("status") or active_trader_contract.get("status"),
             "lane_id": lane_id,
             "pair": lane.get("pair"),
@@ -2293,10 +2303,12 @@ def _active_path_summary(
             "ordinary_fresh_entries_must_remain_blocked": True,
             "source": source,
         }
+        _attach_parallel_frontier_evidence(summary, parallel_frontier)
+        return summary
     target_shape = str(active_trader_contract.get("target_shape") or "").strip()
     if target_shape:
         parts = target_shape.split("|")
-        return {
+        summary = {
             "status": active_trader_contract.get("status"),
             "lane_id": None,
             "pair": parts[0] if len(parts) > 0 else None,
@@ -2316,6 +2328,8 @@ def _active_path_summary(
             "ordinary_fresh_entries_must_remain_blocked": True,
             "source": "active_trader_contract.target_shape",
         }
+        _attach_parallel_frontier_evidence(summary, parallel_frontier)
+        return summary
     return {
         "status": "NO_ACTIVE_PATH_ARTIFACT",
         "lane_id": None,
@@ -2333,6 +2347,57 @@ def _active_path_summary(
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _active_path_parallel_frontier_evidence_lane(
+    *,
+    contract_frontier: dict[str, Any],
+    non_eurusd_live_grade_frontier: dict[str, Any],
+) -> dict[str, Any]:
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
+        (
+            "active_trader_contract.current_state.non_eurusd_live_grade_frontier.top_non_eurusd_lane",
+            contract_frontier,
+            _dict_or_empty(contract_frontier.get("top_non_eurusd_lane")),
+        ),
+        (
+            "non_eurusd_live_grade_frontier.top_non_eurusd_lane",
+            non_eurusd_live_grade_frontier,
+            _dict_or_empty(non_eurusd_live_grade_frontier.get("top_non_eurusd_lane")),
+        ),
+    ]
+    for source, frontier, lane in candidates:
+        lane_id = str(lane.get("lane_id") or "").strip()
+        pair = str(lane.get("pair") or "").strip().upper()
+        if not lane_id or pair == "EUR_USD":
+            continue
+        status = str(frontier.get("status") or "").strip()
+        if status and status != "NON_EURUSD_FRONTIER_FOUND":
+            continue
+        return {
+            "lane_id": lane_id,
+            "pair": lane.get("pair"),
+            "side": lane.get("direction") or lane.get("side"),
+            "method": lane.get("strategy_family") or lane.get("method"),
+            "order_type": lane.get("vehicle") or lane.get("order_type"),
+            "status": lane.get("status"),
+            "distance_to_live_ready": lane.get("distance_to_live_ready"),
+            "blocker_codes": [str(code) for code in lane.get("blockers") or [] if str(code).strip()],
+            "next_action": lane.get("next_action") or frontier.get("next_active_path"),
+            "live_permission": False,
+            "ordinary_fresh_entries_must_remain_blocked": True,
+            "source": source,
+        }
+    return {}
+
+
+def _attach_parallel_frontier_evidence(summary: dict[str, Any], frontier_lane: dict[str, Any]) -> None:
+    if not frontier_lane:
+        return
+    if str(frontier_lane.get("lane_id") or "") == str(summary.get("lane_id") or ""):
+        return
+    summary["parallel_frontier_evidence_lane"] = frontier_lane
+    summary["parallel_frontier_evidence_lane_id"] = frontier_lane.get("lane_id")
 
 
 def _shortest_live_ready_path(
@@ -2366,7 +2431,7 @@ def _shortest_live_ready_path(
                     if evidence_needed
                     else "clear the lane's named active-path blockers in refreshed broker, forecast, replay, and risk evidence"
                 )
-            return {
+            result = {
                 "status": "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE",
                 "lane_id": lane.get("lane_id"),
                 "pair": lane.get("pair"),
@@ -2383,13 +2448,18 @@ def _shortest_live_ready_path(
                 "selection_basis": "active_trader_contract",
                 "active_path": active_path,
             }
+            _attach_parallel_frontier_evidence(
+                result,
+                _dict_or_empty((active_path or {}).get("parallel_frontier_evidence_lane")),
+            )
+            return result
         blocker_codes = [
             str(item)
             for item in (active_path or {}).get("blocker_codes") or []
             if str(item).strip()
         ]
         next_action = str((active_path or {}).get("next_action") or "").strip()
-        return {
+        result = {
             "status": "ACTIVE_PATH_SELECTED_BUT_NOT_IN_NEAR_READY_INTENTS",
             "lane_id": active_lane_id or None,
             "pair": (active_path or {}).get("pair"),
@@ -2409,6 +2479,11 @@ def _shortest_live_ready_path(
             "selection_basis": "active_trader_contract",
             "active_path": active_path,
         }
+        _attach_parallel_frontier_evidence(
+            result,
+            _dict_or_empty((active_path or {}).get("parallel_frontier_evidence_lane")),
+        )
+        return result
     if not near_ready_lanes:
         return {
             "status": "NO_NEAR_READY_DIAGNOSTIC_LANES",
@@ -6237,6 +6312,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Near-ready diagnostic lanes | `{entry.get('near_ready_lane_count')}` |",
         f"| Active path lane | `{entry.get('active_path', {}).get('lane_id')}` pair=`{entry.get('active_path', {}).get('pair')}` source=`{entry.get('active_path', {}).get('source')}` |",
+        f"| Active path parallel frontier | `{entry.get('active_path', {}).get('parallel_frontier_evidence_lane_id')}` "
+        f"pair=`{(entry.get('active_path', {}).get('parallel_frontier_evidence_lane') or {}).get('pair')}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Profitability acceptance freshness | `{acceptance_freshness.get('status')}` stale_inputs=`{acceptance_freshness.get('stale_input_names')}` |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
