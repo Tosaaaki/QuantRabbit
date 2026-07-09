@@ -1959,6 +1959,19 @@ def _next_trade_enabling_action(
             frontier_suffix = ""
             if frontier_lane:
                 frontier_suffix = _frontier_action_suffix(board_top, non_eurusd_frontier)
+            if (
+                _range_rail_latest_forecast_not_range(range_rail_geometry_repair, board_top)
+                and _frontier_evidence_action_available(non_eurusd_frontier)
+                and frontier_lane
+            ):
+                return (
+                    "Use the latest active_opportunity_board rerank: "
+                    f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}) "
+                    "has consumed range_rail_geometry_repair, but the latest forecast is no longer RANGE. "
+                    "Do not repeat range-box refresh for that invalidated range-rail path. "
+                    f"{_frontier_evidence_prompt(non_eurusd_frontier)}"
+                    f"{suffix}"
+                )
             consumed_prompt = _consumed_lane_prompt(
                 board_top,
                 entry_frequency_recovery=entry_frequency_recovery,
@@ -2084,6 +2097,8 @@ def _forecast_pattern_refresh_matches_board(
         return False
     if forecast_pattern_refresh.get("artifact_status") != "present":
         return False
+    if _forecast_pattern_latest_forecast_not_range(forecast_pattern_refresh, board_top):
+        return False
     top = forecast_pattern_refresh.get("top_lane")
     if not isinstance(top, dict):
         return False
@@ -2110,6 +2125,8 @@ def _range_rail_geometry_repair_matches_board(
         return False
     if range_rail_geometry_repair.get("artifact_status") != "present":
         return False
+    if _range_rail_latest_forecast_not_range(range_rail_geometry_repair, board_top):
+        return False
     top = range_rail_geometry_repair.get("top_lane")
     if not isinstance(top, dict):
         return False
@@ -2126,6 +2143,37 @@ def _range_rail_geometry_repair_matches_board(
         str(board_top.get("direction") or "").upper(),
         str(board_top.get("strategy_family") or "").upper(),
     )
+
+
+def _artifact_top_matches_board(artifact: dict[str, Any], board_top: dict[str, Any]) -> bool:
+    top = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+    if not top or not board_top:
+        return False
+    if top.get("lane_id") and top.get("lane_id") == board_top.get("lane_id"):
+        return True
+    return _lane_shape(top) == _lane_shape(board_top)
+
+
+def _forecast_pattern_latest_forecast_not_range(
+    forecast_pattern_refresh: dict[str, Any],
+    board_top: dict[str, Any],
+) -> bool:
+    if not _artifact_top_matches_board(forecast_pattern_refresh, board_top):
+        return False
+    top = forecast_pattern_refresh.get("top_lane")
+    top = top if isinstance(top, dict) else {}
+    return str(top.get("forecast_box_status") or "").upper() == "LATEST_FORECAST_NOT_RANGE"
+
+
+def _range_rail_latest_forecast_not_range(
+    range_rail_geometry_repair: dict[str, Any],
+    board_top: dict[str, Any],
+) -> bool:
+    if not _artifact_top_matches_board(range_rail_geometry_repair, board_top):
+        return False
+    top = range_rail_geometry_repair.get("top_lane")
+    top = top if isinstance(top, dict) else {}
+    return str(top.get("rail_status") or "").upper() == "LATEST_FORECAST_NOT_RANGE"
 
 
 def _lane_shape(value: dict[str, Any]) -> tuple[str, str, str]:
@@ -2170,6 +2218,18 @@ def _next_prompt(
     if selected_active_path == "EVIDENCE_ACQUISITION" and guardian_prompt:
         return (
             f"{guardian_prompt}{frontier_suffix} Keep blockers visible: {blocker_codes}. "
+            "This is read-only evidence/tuning work, not live permission."
+        )
+    if (
+        selected_active_path == "EVIDENCE_ACQUISITION"
+        and _range_rail_latest_forecast_not_range(range_rail_geometry_repair or {}, board_top)
+        and _frontier_evidence_action_available(non_eurusd_frontier or {})
+    ):
+        return (
+            "The board-selected range-rail path has been consumed, but the latest forecast is no longer RANGE; "
+            "do not repeat range-box refresh for that invalidated lane. "
+            f"{_frontier_evidence_prompt(non_eurusd_frontier or {})} "
+            f"Keep board blockers visible: {blocker_codes}. "
             "This is read-only evidence/tuning work, not live permission."
         )
     if (
