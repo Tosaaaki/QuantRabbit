@@ -2256,8 +2256,9 @@ def _active_path_summary(
             "spread_status": lane.get("spread_status"),
             "forecast_status": lane.get("forecast_status"),
             "loss_budget_status": lane.get("loss_budget_status"),
-            "next_action": lane.get("next_action")
-            or active_trader_contract.get("next_trade_enabling_action")
+            "next_action": active_trader_contract.get("next_trade_enabling_action")
+            or active_trader_contract.get("next_prompt")
+            or lane.get("next_action")
             or active_opportunity_board.get("next_active_path")
             or non_eurusd_live_grade_frontier.get("next_active_path"),
             "target_shape": active_trader_contract.get("target_shape"),

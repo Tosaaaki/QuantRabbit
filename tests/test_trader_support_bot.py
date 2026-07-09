@@ -1093,6 +1093,113 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["entry_readiness"]["active_path"]["pair"], "USD_CAD")
             self.assertEqual(shortest["selection_basis"], "active_trader_contract")
 
+    def test_active_contract_next_action_overrides_stale_board_next_action(self) -> None:
+        now = datetime(2026, 7, 9, 14, 5, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": lane_id,
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                                "SPREAD_TOO_WIDE",
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            ],
+                            "intent": {
+                                "pair": "USD_CAD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "sizing_actual_reward_jpy": 659.0,
+                                    "sizing_actual_risk_jpy": 240.0,
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            stale_board_action = "Run entry-frequency recovery analysis for USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT."
+            terminal_contract_action = (
+                "Consume range_rail_geometry_repair artifact as the current next action: "
+                "WAIT_FOR_RANGE_RAIL_RECHECK."
+            )
+            active_lane = {
+                "lane_id": lane_id,
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "blockers": [
+                    "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                    "SPREAD_TOO_WIDE",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                ],
+                "next_action": stale_board_action,
+            }
+            _write_json(
+                root / "data" / "active_trader_contract.json",
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "target_shape": "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT",
+                    "next_trade_enabling_action": terminal_contract_action,
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                            "top_lane": active_lane,
+                        }
+                    },
+                    "live_permission_allowed": False,
+                },
+            )
+            _write_json(
+                root / "data" / "active_opportunity_board.json",
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "top_lane": active_lane,
+                    "live_permission_allowed": False,
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            shortest = payload["entry_readiness"]["shortest_live_ready_path"]
+            self.assertEqual(shortest["lane_id"], lane_id)
+            self.assertEqual(shortest["first_next_step"], terminal_contract_action)
+            self.assertNotIn("entry-frequency", shortest["first_next_step"])
+            self.assertEqual(
+                payload["entry_readiness"]["active_path"]["next_action"],
+                terminal_contract_action,
+            )
+
     def test_profitability_acceptance_stale_against_newer_capture_economics_blocks_support(self) -> None:
         now = datetime(2026, 7, 3, 20, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
