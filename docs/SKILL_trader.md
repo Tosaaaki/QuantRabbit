@@ -415,9 +415,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # audit. The command is read-only except for the receipt/report files: it does
 # not call model APIs, send orders, cancel orders, close positions, or change
 # launchd state. It selects current LIVE_READY lanes from order_intents /
-# ai_attack_advice when clean, and emits WAIT / REQUEST_EVIDENCE when named
-# blockers such as news-health, projection, exposure, close-first, or
-# self-improvement gates win. Before any normal new-entry routing, it also
+# ai_attack_advice when clean. When LIVE_READY=0, it still reads
+# active_trader_contract / active_opportunity_board /
+# non_eurusd_live_grade_frontier / range_rail_geometry_repair and uses the
+# current active top lane as the market-read/evidence-acquisition target instead
+# of falling back to the first stale order intent; that active lane is context,
+# not live permission. It emits WAIT / REQUEST_EVIDENCE when named blockers
+# such as news-health, projection, exposure, close-first, active-path blockers,
+# or self-improvement gates win. Before any normal new-entry routing, it also
 # writes `data/guardian_receipt_consumption.json` /
 # `docs/guardian_receipt_consumption_report.md` from watchdog guardian receipt
 # issues and reads `data/guardian_receipt_operator_review.json` /
@@ -534,6 +539,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
 # PositionProtectionGateway before considering fresh entry risk. Skipping the
 # wrapper leaves profit-side partial closes, profitable hedge TPs, profit-lock
 # stops, and other dependent-order protection stale.
+# `run-autotrade-live.sh` refreshes a missing/stale/non-TRADE GPT handoff before
+# this gateway step when broker truth, order intents, attack advice, active
+# contract/board/frontier, or range-rail repair are newer than the response, or
+# when the newer verifier result already consumed the response as non-TRADE. The
+# refresh writes one fresh draft and verifier result; verifier rejection still
+# proceeds to gateway maintenance and must not become a deterministic send.
 # This does not enable target-path live by itself. A target-path send still
 # needs QR_TARGET_PATH_LIVE_ENABLED=1 and LiveOrderGateway target-path proof.
 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \

@@ -35,6 +35,14 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _parse_utc(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -1644,6 +1652,8 @@ from quant_rabbit.guardian_receipt_operator_review import (
     operator_review_status_summary,
 )
 from quant_rabbit.paths import (
+    DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    DEFAULT_ACTIVE_TRADER_CONTRACT,
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_INSTRUMENTS,
     DEFAULT_CAMPAIGN_PLAN,
@@ -1673,6 +1683,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_NEWS_HEALTH,
     DEFAULT_NEWS_SNAPSHOT,
+    DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPERATOR_PRECEDENT_AUDIT,
     DEFAULT_ORDER_INTENTS,
@@ -1686,6 +1697,7 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_VERIFICATION_LEDGER,
+    DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
 )
 from quant_rabbit.instruments import (
     DEFAULT_CONTEXT_ASSETS,
@@ -2092,6 +2104,10 @@ class GPTTraderBrain:
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+        active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
+        active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+        non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+        range_rail_geometry_repair_path: Path = DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         market_read_predictions_path: Path | None = None,
@@ -2131,6 +2147,10 @@ class GPTTraderBrain:
         self.predictive_limits_path = predictive_limits_path
         self.news_items_path = news_items_path
         self.news_health_path = news_health_path
+        self.active_trader_contract_path = active_trader_contract_path
+        self.active_opportunity_board_path = active_opportunity_board_path
+        self.non_eurusd_live_grade_frontier_path = non_eurusd_live_grade_frontier_path
+        self.range_rail_geometry_repair_path = range_rail_geometry_repair_path
         self.output_path = output_path
         self.report_path = report_path
         self.qr_trader_run_watchdog_path = (
@@ -2233,6 +2253,16 @@ class GPTTraderBrain:
         news_items = _load_optional_json(self.news_items_path)
         news_health = _load_optional_json(self.news_health_path)
         qr_trader_run_watchdog = _load_optional_json(self.qr_trader_run_watchdog_path)
+        active_trader_contract = _load_optional_json(self.active_trader_contract_path)
+        active_opportunity_board = _load_optional_json(self.active_opportunity_board_path)
+        non_eurusd_frontier = _load_optional_json(self.non_eurusd_live_grade_frontier_path)
+        range_rail_geometry_repair = _load_optional_json(self.range_rail_geometry_repair_path)
+        active_path = _active_path_packet(
+            active_trader_contract=active_trader_contract,
+            active_opportunity_board=active_opportunity_board,
+            non_eurusd_frontier=non_eurusd_frontier,
+            range_rail_geometry_repair=range_rail_geometry_repair,
+        )
         guardian_receipt_consumption = consumption_status_summary(
             load_guardian_receipt_consumption(self.guardian_receipt_consumption_path)
         )
@@ -2265,6 +2295,7 @@ class GPTTraderBrain:
         )
         if user_alpha_continuation.get("active"):
             refs.extend(_user_alpha_evidence_refs(user_alpha_continuation))
+        refs.extend(_active_path_evidence_refs(active_path))
         attack_packet = _attack_advice_packet(attack_advice)
         learning_packet = _learning_audit_packet(learning_audit)
         return {
@@ -2352,6 +2383,7 @@ class GPTTraderBrain:
             "qr_trader_run_watchdog": _qr_trader_run_watchdog_packet(qr_trader_run_watchdog),
             "guardian_receipt_consumption": guardian_receipt_consumption,
             "guardian_receipt_operator_review": guardian_receipt_operator_review,
+            "active_path": active_path,
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -4518,6 +4550,10 @@ def draft_trader_decision(
     guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     guardian_receipt_consumption_report_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
+    active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
+    non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    range_rail_geometry_repair_path: Path = DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
     output_path: Path = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     report_path: Path = DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -4573,6 +4609,10 @@ def draft_trader_decision(
         qr_trader_run_watchdog_path=qr_trader_run_watchdog_path,
         guardian_receipt_consumption_path=guardian_receipt_consumption_path,
         guardian_receipt_operator_review_path=guardian_receipt_operator_review_path,
+        active_trader_contract_path=active_trader_contract_path,
+        active_opportunity_board_path=active_opportunity_board_path,
+        non_eurusd_live_grade_frontier_path=non_eurusd_live_grade_frontier_path,
+        range_rail_geometry_repair_path=range_rail_geometry_repair_path,
         max_lanes=max_lanes,
     )
     packet = brain._input_packet(snapshot_path)
@@ -4681,6 +4721,152 @@ def _guardian_receipt_blocker_issue_code(blockers: list[str]) -> str:
         if code:
             return code
     return BLOCK_NEW_ENTRY_CODE
+
+
+def _active_path_packet(
+    *,
+    active_trader_contract: dict[str, Any] | None,
+    active_opportunity_board: dict[str, Any] | None,
+    non_eurusd_frontier: dict[str, Any] | None,
+    range_rail_geometry_repair: dict[str, Any] | None,
+) -> dict[str, Any]:
+    contract = active_trader_contract if isinstance(active_trader_contract, dict) else {}
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    frontier = non_eurusd_frontier if isinstance(non_eurusd_frontier, dict) else {}
+    rail = range_rail_geometry_repair if isinstance(range_rail_geometry_repair, dict) else {}
+    top_lane = _first_active_lane(
+        board.get("top_lane"),
+        frontier.get("top_non_eurusd_lane"),
+        frontier.get("top_lane"),
+        contract.get("top_lane"),
+    )
+    next_action = _first_text(
+        board.get("next_action"),
+        board.get("next_active_path"),
+        contract.get("next_trade_enabling_action"),
+        contract.get("next_active_path"),
+        frontier.get("next_active_path"),
+    )
+    rail_action = _first_text(
+        rail.get("next_safe_action"),
+        rail.get("next_action"),
+        rail.get("next_contract_prompt"),
+    )
+    return {
+        "evidence_ref": "active:contract",
+        "contract_status": contract.get("status"),
+        "selected_active_path": contract.get("selected_active_path"),
+        "board_status": board.get("status"),
+        "frontier_status": frontier.get("status"),
+        "live_permission_allowed": bool(
+            contract.get("live_permission_allowed")
+            or board.get("live_permission_allowed")
+            or frontier.get("live_permission_allowed")
+        ),
+        "top_lane": top_lane,
+        "next_trade_enabling_action": next_action,
+        "range_rail_action": rail_action,
+        "range_rail_status": rail.get("rail_status"),
+    }
+
+
+def _first_active_lane(*candidates: Any) -> dict[str, Any]:
+    for candidate in candidates:
+        if isinstance(candidate, dict) and str(candidate.get("lane_id") or "").strip():
+            return dict(candidate)
+    return {}
+
+
+def _active_path_evidence_refs(active_path: dict[str, Any]) -> list[str]:
+    if not isinstance(active_path, dict) or not active_path:
+        return []
+    refs = ["active:contract", "active:board", "active:non_eurusd_frontier", "active:range_rail"]
+    lane_id = str((active_path.get("top_lane") or {}).get("lane_id") or "").strip()
+    if lane_id:
+        refs.append(f"active:lane:{lane_id}")
+    return refs
+
+
+def _active_path_primary_lane(packet: dict[str, Any]) -> dict[str, Any]:
+    active_path = packet.get("active_path")
+    if not isinstance(active_path, dict):
+        return {}
+    lane = active_path.get("top_lane")
+    return dict(lane) if isinstance(lane, dict) else {}
+
+
+def _active_path_lane_id(packet: dict[str, Any]) -> str:
+    return str(_active_path_primary_lane(packet).get("lane_id") or "").strip()
+
+
+def _active_path_lane_for_market_read(active_lane: dict[str, Any]) -> dict[str, Any]:
+    lane_id = str(active_lane.get("lane_id") or "").strip()
+    pair = str(active_lane.get("pair") or "").strip()
+    direction = str(active_lane.get("direction") or "").strip().upper()
+    strategy = str(active_lane.get("strategy_family") or active_lane.get("method") or "").strip()
+    blockers = list(active_lane.get("blockers") or [])
+    vehicle = str(active_lane.get("vehicle") or active_lane.get("order_type") or "").strip().upper()
+    order_type = {"STOP": "STOP-ENTRY"}.get(vehicle, vehicle)
+    return {
+        "lane_id": lane_id,
+        "evidence_ref": f"active:lane:{lane_id}",
+        "status": active_lane.get("status") or "EVIDENCE_ACQUISITION",
+        "pair": pair,
+        "direction": direction,
+        "method": strategy,
+        "order_type": order_type or "LIMIT",
+        "entry": active_lane.get("entry"),
+        "tp": active_lane.get("tp"),
+        "sl": active_lane.get("sl"),
+        "units": active_lane.get("units"),
+        "risk_metrics": {},
+        "thesis": f"Active read-only path for {lane_id}",
+        "narrative": str(active_lane.get("next_action") or ""),
+        "chart_story": f"Active board top lane {lane_id}; execution remains blocked by current evidence gates.",
+        "invalidation": "Do not trade until the active path blockers clear and a fresh accepted TRADE receipt exists.",
+        "risk_blockers": [],
+        "strategy_blockers": [],
+        "live_blockers": blockers,
+        "forecast": {},
+        "opportunity": {},
+        "target_path": {},
+        "self_improvement": {},
+        "market_close_leak_family": {},
+        "position_building": {},
+        "market_context_matrix": {},
+        "technical_context": {},
+    }
+
+
+def _draft_active_fallback_lane_ids(
+    packet: dict[str, Any],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    lane_id = _active_path_lane_id(packet)
+    if not lane_id:
+        return ()
+    if lane_id not in lanes_by_id:
+        active_lane = _active_path_primary_lane(packet)
+        lanes_by_id[lane_id] = _active_path_lane_for_market_read(active_lane)
+    return (lane_id,)
+
+
+def _active_path_blocker_summary(packet: dict[str, Any]) -> str:
+    active_path = packet.get("active_path")
+    if not isinstance(active_path, dict):
+        return ""
+    lane = active_path.get("top_lane") if isinstance(active_path.get("top_lane"), dict) else {}
+    lane_id = str(lane.get("lane_id") or "").strip()
+    next_action = str(active_path.get("next_trade_enabling_action") or "").strip()
+    rail_action = str(active_path.get("range_rail_action") or "").strip()
+    parts: list[str] = []
+    if lane_id:
+        parts.append(f"ACTIVE_PATH_LANE {lane_id}")
+    if next_action:
+        parts.append(f"NEXT_ACTIVE_ACTION {next_action}")
+    if rail_action:
+        parts.append(f"RANGE_RAIL_ACTION {rail_action}")
+    return "; ".join(parts)
 
 
 def _draft_candidate_lane_ids(packet: dict[str, Any], live_ready_lane_ids: list[str]) -> list[str]:
@@ -5211,8 +5397,12 @@ def _non_trade_decision_draft(
 ) -> dict[str, Any]:
     refs = _draft_non_trade_evidence_refs(packet, live_ready_lane_ids, lanes_by_id)
     action = "WAIT" if live_ready_lane_ids else "REQUEST_EVIDENCE"
-    blocker_text = "; ".join(blockers[:5]) if blockers else "NO_EXECUTABLE_ENTRY_ROUTE"
-    fallback_lane_ids = tuple(live_ready_lane_ids[:1])
+    active_summary = _active_path_blocker_summary(packet)
+    blocker_items = [*blockers[:5]]
+    if active_summary:
+        blocker_items.append(active_summary)
+    blocker_text = "; ".join(blocker_items) if blocker_items else "NO_EXECUTABLE_ENTRY_ROUTE"
+    fallback_lane_ids = tuple(live_ready_lane_ids[:1]) or _draft_active_fallback_lane_ids(packet, lanes_by_id)
     market_read = _draft_market_read_first(
         packet,
         lanes_by_id,
@@ -5239,18 +5429,19 @@ def _non_trade_decision_draft(
         "risk_notes": [
             "No new risk is authorized by this draft.",
             "The live wrapper may still run existing-position maintenance through the gateway path.",
+            active_summary or "No active path summary was available in the current packet.",
         ],
         "evidence_refs": refs,
         "twenty_minute_plan": _draft_twenty_minute_plan(
             action=action,
-            pair=_draft_primary_pair(live_ready_lane_ids, lanes_by_id),
+            pair=_draft_primary_pair(list(fallback_lane_ids), lanes_by_id),
             side="",
             selected_lane_ids=(),
             refs=refs,
             market_read_first=market_read,
         ),
         "strategy_reviews": [],
-        "specialist_reviews": [],
+        "specialist_reviews": _draft_active_path_reviews(packet),
         "operator_summary": f"{market_summary} Autonomous trader draft did not select a trade because required evidence/gates are blocked.",
     }
 
@@ -5442,6 +5633,7 @@ def _draft_non_trade_evidence_refs(
     lanes_by_id: dict[str, dict[str, Any]],
 ) -> list[str]:
     refs: list[str] = ["broker:snapshot", "target:daily", "news:health", "news:items"]
+    refs.extend(_active_path_evidence_refs(packet.get("active_path") if isinstance(packet.get("active_path"), dict) else {}))
     for lane_id in live_ready_lane_ids[:4]:
         lane = lanes_by_id.get(lane_id)
         if not lane:
@@ -5455,6 +5647,36 @@ def _draft_non_trade_evidence_refs(
     if user_alpha is not None:
         refs.extend(_user_alpha_evidence_refs(user_alpha))
     return _known_ordered_refs(packet, refs)
+
+
+def _draft_active_path_reviews(packet: dict[str, Any]) -> list[dict[str, Any]]:
+    active_path = packet.get("active_path")
+    if not isinstance(active_path, dict):
+        return []
+    lane = active_path.get("top_lane") if isinstance(active_path.get("top_lane"), dict) else {}
+    lane_id = str(lane.get("lane_id") or "").strip()
+    if not lane_id:
+        return []
+    packet_lane_ids = {
+        str(item.get("lane_id") or "")
+        for item in packet.get("lanes", []) or []
+        if isinstance(item, dict)
+    }
+    summary = _active_path_blocker_summary(packet)
+    hard_codes = [str(code) for code in lane.get("blockers", []) or [] if str(code or "").strip()]
+    return [
+        {
+            "role": "portfolio_context",
+            "lane_id": lane_id if lane_id in packet_lane_ids else None,
+            "method": str(lane.get("strategy_family") or ""),
+            "verdict": "BLOCKED",
+            "summary": summary or "Active path is read-only and not live permission.",
+            "cited_evidence_refs": _active_path_evidence_refs(active_path),
+            "hard_gate_codes": hard_codes[:12],
+            "read_only": True,
+            "live_permission": False,
+        }
+    ]
 
 
 def _draft_pair_refs(pair: str, side: str) -> list[str]:

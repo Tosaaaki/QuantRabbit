@@ -238,6 +238,85 @@ class GPTTraderBrainTest(unittest.TestCase):
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
 
+    def test_draft_uses_active_non_eurusd_lane_for_no_live_ready_market_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            aud_lane = _result(
+                lane_id="failure_trader:AUD_CHF:SHORT:BREAKOUT_FAILURE:LIMIT",
+                method="BREAKOUT_FAILURE",
+                pair="AUD_CHF",
+                side="SHORT",
+            )
+            aud_lane["status"] = "DRY_RUN_BLOCKED"
+            aud_lane["live_blockers"] = ["NO_LIVE_READY_LANES"]
+            usd_cad_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+            files["intents"].write_text(json.dumps({"results": [aud_lane]}))
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["USD_CAD"] = {
+                "bid": 1.3712,
+                "ask": 1.3714,
+                "timestamp_utc": snapshot["fetched_at_utc"],
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            active_lane = {
+                "lane_id": usd_cad_lane_id,
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "status": "BLOCKED_EVIDENCE_ACQUISITION",
+                "entry": 1.3712,
+                "tp": 1.3748,
+                "sl": 1.3691,
+                "blockers": [
+                    "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                ],
+                "next_action": "Refresh USD_CAD pattern and TP proof before live permission.",
+            }
+            files["active_opportunity_board"].write_text(
+                json.dumps(
+                    {
+                        "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                        "live_permission_allowed": False,
+                        "top_lane": active_lane,
+                        "next_active_path": "ENTRY_FREQUENCY_RECOVERY",
+                    }
+                )
+            )
+            files["active_trader_contract"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                        "selected_active_path": "EVIDENCE_ACQUISITION",
+                        "live_permission_allowed": False,
+                        "next_trade_enabling_action": "Use latest active board top lane USD_CAD LONG LIMIT.",
+                    }
+                )
+            )
+            files["non_eurusd_frontier"].write_text(
+                json.dumps(
+                    {
+                        "status": "ONLY_EURUSD_FRONTIER_FOUND",
+                        "live_permission_allowed": False,
+                        "top_non_eurusd_lane": active_lane,
+                        "next_active_path": "TP_PROOF_COLLECTION_USD_CAD_LONG_LIMIT",
+                    }
+                )
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.action, "REQUEST_EVIDENCE")
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertEqual(decision["market_read_first"]["best_trade_if_forced"]["pair"], "USD_CAD")
+            self.assertEqual(decision["market_read_first"]["best_trade_if_forced"]["direction"], "LONG")
+            self.assertIn("active:board", decision["evidence_refs"])
+            self.assertIn(f"active:lane:{usd_cad_lane_id}", decision["evidence_refs"])
+            self.assertIn(usd_cad_lane_id, " ".join(decision["risk_notes"]))
+            self.assertIsNone(decision["specialist_reviews"][0]["lane_id"])
+
     def test_draft_ignores_operator_manual_position_for_scheduled_trader(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4290,6 +4369,10 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
+        active_trader_contract_path=files["active_trader_contract"],
+        active_opportunity_board_path=files["active_opportunity_board"],
+        non_eurusd_live_grade_frontier_path=files["non_eurusd_frontier"],
+        range_rail_geometry_repair_path=files["range_rail_geometry_repair"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -4335,6 +4418,10 @@ def _draft(root: Path, files: dict[str, Path]):
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         guardian_receipt_consumption_report_path=files["guardian_receipt_consumption_report"],
         guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
+        active_trader_contract_path=files["active_trader_contract"],
+        active_opportunity_board_path=files["active_opportunity_board"],
+        non_eurusd_live_grade_frontier_path=files["non_eurusd_frontier"],
+        range_rail_geometry_repair_path=files["range_rail_geometry_repair"],
     )
 
 
@@ -4433,6 +4520,10 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "guardian_receipt_consumption": root / "guardian_receipt_consumption.json",
         "guardian_receipt_consumption_report": root / "guardian_receipt_consumption_report.md",
         "guardian_receipt_operator_review": root / "guardian_receipt_operator_review.json",
+        "active_trader_contract": root / "active_trader_contract.json",
+        "active_opportunity_board": root / "active_opportunity_board.json",
+        "non_eurusd_frontier": root / "non_eurusd_live_grade_frontier.json",
+        "range_rail_geometry_repair": root / "range_rail_geometry_repair.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -4752,6 +4843,10 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
             }
         )
     )
+    files["active_trader_contract"].write_text(json.dumps({}))
+    files["active_opportunity_board"].write_text(json.dumps({}))
+    files["non_eurusd_frontier"].write_text(json.dumps({}))
+    files["range_rail_geometry_repair"].write_text(json.dumps({}))
     return files
 
 

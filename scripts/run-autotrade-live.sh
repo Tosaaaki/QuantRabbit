@@ -265,6 +265,96 @@ has_arg() {
   return 1
 }
 
+arg_value() {
+  local needle="$1"
+  shift
+  local item next_is_value=0
+  for item in "$@"; do
+    if [[ "$next_is_value" == "1" ]]; then
+      printf '%s\n' "$item"
+      return 0
+    fi
+    if [[ "$item" == "$needle" ]]; then
+      next_is_value=1
+      continue
+    fi
+    if [[ "$item" == "${needle}="* ]]; then
+      printf '%s\n' "${item#*=}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+json_string_value() {
+  local path="$1"
+  local key="$2"
+  if [[ ! -f "$path" ]]; then
+    return 1
+  fi
+  grep -E "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$path" \
+    | head -n 1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+gpt_handoff_needs_refresh() {
+  local response_path="$1"
+  local dep status action
+  if [[ ! -f "$response_path" ]]; then
+    echo "[run-autotrade-live] GPT handoff response missing; composing a fresh receipt: ${response_path}" >&2
+    return 0
+  fi
+  for dep in data/broker_snapshot.json data/order_intents.json data/ai_attack_advice.json data/active_trader_contract.json data/active_opportunity_board.json data/non_eurusd_live_grade_frontier.json data/range_rail_geometry_repair.json; do
+    if [[ -f "$dep" && "$dep" -nt "$response_path" ]]; then
+      echo "[run-autotrade-live] GPT handoff response predates ${dep}; composing a fresh receipt." >&2
+      return 0
+    fi
+  done
+  if [[ -f data/gpt_trader_decision.json && data/gpt_trader_decision.json -nt "$response_path" ]]; then
+    status="$(json_string_value data/gpt_trader_decision.json status || true)"
+    action="$(json_string_value data/gpt_trader_decision.json action || true)"
+    if [[ "$status" != "ACCEPTED" || "$action" != "TRADE" ]]; then
+      echo "[run-autotrade-live] GPT handoff response was already verified as ${status:-UNKNOWN} ${action:-NO_ACTION}; composing a fresh receipt." >&2
+      return 0
+    fi
+  fi
+  return 1
+}
+
+refresh_gpt_handoff_if_needed() {
+  if [[ "${QR_LIVE_WRAPPER_AUTO_DRAFT_DECISION:-1}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$arg_count" -le 0 ]] || ! has_arg "--use-gpt-trader" "${args[@]}" || ! has_arg "--gpt-decision-response" "${args[@]}"; then
+    return 0
+  fi
+  local response_path
+  response_path="$(arg_value "--gpt-decision-response" "${args[@]}")" || return 0
+  if ! gpt_handoff_needs_refresh "$response_path"; then
+    return 0
+  fi
+  local draft_status verify_status
+  set +e
+  "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
+    --snapshot data/broker_snapshot.json \
+    --output "$response_path"
+  draft_status="$?"
+  set -e
+  if [[ "$draft_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] trader-draft-decision failed with status=${draft_status}; aborting before gateway handoff." >&2
+    exit "$draft_status"
+  fi
+  set +e
+  "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
+    --snapshot data/broker_snapshot.json \
+    --decision-response "$response_path"
+  verify_status="$?"
+  set -e
+  if [[ "$verify_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] gpt-trader-decision returned status=${verify_status}; continuing to autotrade-cycle so stale/rejected receipts cannot skip position maintenance." >&2
+  fi
+}
+
 refresh_position_guardian_send_status() {
   if [[ "$QR_LIVE_ENABLED" != "1" || "$arg_count" -le 0 || "$QR_REQUIRE_POSITION_GUARDIAN_ACTIVE" != "1" ]] \
     || ! has_arg "--send" "${args[@]}"; then
@@ -315,6 +405,7 @@ if [[ "$QR_LIVE_ENABLED" == "1" && "$arg_count" -gt 0 ]] \
 fi
 
 refresh_position_guardian_send_status
+refresh_gpt_handoff_if_needed
 
 set +e
 if [[ "$arg_count" -gt 0 ]]; then

@@ -4684,6 +4684,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     )
+    p_draft.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_draft.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_draft.add_argument(
+        "--non-eurusd-live-grade-frontier",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    )
+    p_draft.add_argument("--range-rail-geometry-repair", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
     p_draft.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_draft.add_argument("--report", type=Path, default=DEFAULT_TRADER_DECISION_DRAFT_REPORT)
     p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -4713,6 +4721,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path(os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)),
     )
+    p_gpt.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_gpt.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_gpt.add_argument(
+        "--non-eurusd-live-grade-frontier",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    )
+    p_gpt.add_argument("--range-rail-geometry-repair", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -8866,6 +8882,10 @@ def main(argv: list[str] | None = None) -> int:
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 guardian_receipt_consumption_report_path=args.guardian_receipt_consumption_report,
                 guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
+                active_trader_contract_path=args.active_trader_contract,
+                active_opportunity_board_path=args.active_opportunity_board,
+                non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
+                range_rail_geometry_repair_path=args.range_rail_geometry_repair,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,
@@ -8920,6 +8940,10 @@ def main(argv: list[str] | None = None) -> int:
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
+                active_trader_contract_path=args.active_trader_contract,
+                active_opportunity_board_path=args.active_opportunity_board,
+                non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
+                range_rail_geometry_repair_path=args.range_rail_geometry_repair,
                 output_path=args.output,
                 report_path=args.report,
                 market_read_predictions_path=args.market_read_predictions,
