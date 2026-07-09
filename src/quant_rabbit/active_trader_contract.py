@@ -1485,6 +1485,13 @@ def _lane_target_shape(lane: dict[str, Any]) -> str | None:
     return "|".join(parts) if len(parts) >= 4 else None
 
 
+def _frontier_blocker_fragment(lane: dict[str, Any], *, label: str = "Frontier blockers") -> str:
+    blockers = _unique(_string_list(lane.get("blockers")))[:10]
+    if not blockers:
+        return ""
+    return f"{label}: {', '.join(blockers)}. "
+
+
 def _frontier_evidence_prompt(non_eurusd_frontier: dict[str, Any]) -> str:
     lane = _frontier_evidence_lane(non_eurusd_frontier)
     if not lane:
@@ -1496,6 +1503,7 @@ def _frontier_evidence_prompt(non_eurusd_frontier: dict[str, Any]) -> str:
         f"next evidence lane {lane.get('lane_id')}{shape_text} "
         f"({lane.get('vehicle')}, {lane.get('distance_to_live_ready')}). "
         f"{lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the next frontier-ranked evidence packet.'} "
+        f"{_frontier_blocker_fragment(lane)}"
         "Keep negative expectancy, spread, bid/ask, forecast, and loss-budget blockers visible; do not send."
     )
 
@@ -1577,6 +1585,7 @@ def _frontier_supplement_prompt(
         return (
             f" Pair this with frontier evidence {frontier_ref}: "
             f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            f"{_frontier_blocker_fragment(frontier_lane)}"
             "Keep both blocker sets visible; do not send."
         )
     if _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
@@ -1586,6 +1595,7 @@ def _frontier_supplement_prompt(
         return (
             f" Parallel non_eurusd_live_grade_frontier evidence {frontier_ref}: "
             f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
             "Keep the non-EUR blocker set visible; do not send."
         )
     return ""
@@ -1604,6 +1614,7 @@ def _frontier_action_suffix(
             f"{frontier_lane.get('lane_id')} "
             f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
             f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
+            f"{_frontier_blocker_fragment(frontier_lane)}"
             "Keep both blocker sets visible; do not send."
         )
     if _frontier_parallel_board_evidence(board_top, non_eurusd_frontier):
@@ -1612,6 +1623,7 @@ def _frontier_action_suffix(
             f"{frontier_lane.get('lane_id')} "
             f"({frontier_lane.get('vehicle')}, {frontier_lane.get('distance_to_live_ready')}). "
             f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the frontier evidence packet.'} "
+            f"{_frontier_blocker_fragment(frontier_lane, label='Non-EUR frontier blockers')}"
             "Keep the non-EUR blocker set visible; do not send."
         )
     return ""
@@ -2273,6 +2285,7 @@ def _next_prompt(
         target_shape = active_board_shape or TARGET_SHAPE
     return (
         f"Implement {selected_active_path} for {target_shape} as read-only work. "
+        f"{frontier_suffix}"
         "Do not send, cancel, close, mutate broker state, relax gates, or infer operator approval. "
         f"Keep blockers visible: {blocker_codes}."
     )
