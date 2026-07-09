@@ -1930,10 +1930,12 @@ def _next_trade_enabling_action(
             suffix = ""
             if active_opportunity_board.get("failed_exact_replay_consumed_count", 0) > 0:
                 suffix = " STOP exact replay is already consumed as failed/not-SCOUT-ready; do not repeat it."
+            after_review = _operator_review_follow_up(board_top)
             return (
                 "Package operator/guardian review evidence for the latest active_opportunity_board top lane "
                 f"{board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}); "
                 "keep live permission false until explicit operator review is recorded."
+                f"{after_review}"
                 f"{suffix}"
             )
         return "Package SCOUT approval/rejection evidence without creating live permission."
@@ -1950,6 +1952,20 @@ def _next_trade_enabling_action(
             f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}) is blocked by {blockers}."
         )
     return "Emit NO_TRADE_WITH_CAUSE with machine-readable blockers and next unlock action."
+
+
+def _operator_review_follow_up(board_top: dict[str, Any]) -> str:
+    next_action = str(board_top.get("next_action") or "")
+    marker = "After review clears,"
+    if marker in next_action:
+        return " " + next_action[next_action.index(marker) :]
+    if board_top.get("edge_improvement_candidate") is True:
+        target = board_top.get("edge_improvement_target") or board_top.get("lane_id") or "top lane"
+        return (
+            f" After review clears, run read-only EDGE_IMPROVEMENT_EXPERIMENT for {target}; "
+            "preserve remaining blockers and do not send."
+        )
+    return ""
 
 
 def _safety_contract() -> dict[str, Any]:

@@ -491,6 +491,86 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("top lane failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT is OPERATOR_REVIEW_REQUIRED", payload["selected_active_path_reason"])
         self.assertIn("operator/guardian review evidence", payload["next_trade_enabling_action"])
 
+    def test_operator_review_path_preserves_after_review_edge_repair_action(self) -> None:
+        now = datetime(2026, 7, 8, 10, 20, tzinfo=timezone.utc)
+        lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_OPERATOR_REVIEW_REQUIRED_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 95,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 0,
+                        "operator_review_required_count": 81,
+                        "pairs_scanned": ["EUR_USD", "GBP_USD"],
+                        "vehicles_scanned": ["LIMIT", "STOP", "MARKET"],
+                    },
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "LIMIT",
+                        "status": "OPERATOR_REVIEW_REQUIRED",
+                        "edge_improvement_candidate": True,
+                        "edge_improvement_target": "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
+                        "next_action": (
+                            "Package guardian receipt operator-review evidence for "
+                            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT; do not infer approval. "
+                            "After review clears, run read-only EDGE_IMPROVEMENT_EXPERIMENT for "
+                            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT; preserve bid/ask, forecast, risk, "
+                            "and profitability blockers, rerank, and do not send."
+                        ),
+                        "blockers": [
+                            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                            "NEGATIVE_EXPECTANCY_ACTIVE",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "OPERATOR_REVIEW_REQUIRED: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT "
+                        "is top-ranked."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["selected_active_path"], "OPERATOR_REVIEW_REPORT")
+        self.assertIn("After review clears", payload["next_trade_enabling_action"])
+        self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", payload["next_trade_enabling_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_active_board_top_blockers_override_stale_hardcoded_target_blockers(self) -> None:
         now = datetime(2026, 7, 8, 10, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

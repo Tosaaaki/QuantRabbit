@@ -806,9 +806,19 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   positive closed P/L must not promote a lane over a current live-grade
 #   frontier. Positive zero-loss local TAKE_PROFIT_ORDER proof below the floor
 #   is read-only EVIDENCE_ACQUISITION for exact TP-proof collection, while zero
-#   local TP proof remains NO_TRADE_WITH_CAUSE. Under the same live-grade /
-#   evidence proximity with negative expectancy, prefer LIMIT or STOP proof
-#   paths before MARKET without mixing proof between vehicles.
+#   local TP proof remains NO_TRADE_WITH_CAUSE. If exact local TAKE_PROFIT_ORDER
+#   proof already meets the broker-TP floor with zero losses and positive
+#   expectancy, do not ask for more TP-proof collection; tag the lane as a
+#   read-only TP-proven HARVEST blocker-repair / edge-improvement candidate,
+#   preserve guardian, bid/ask, forecast, risk, market-close, and profitability
+#   blockers, and rank it ahead of below-floor or zero-proof lanes within the
+#   same active-path class. Under the same live-grade / evidence proximity with
+#   negative expectancy, prefer LIMIT or STOP proof paths before MARKET without
+#   mixing proof between vehicles.
+#   If the selected board lane is OPERATOR_REVIEW_REQUIRED and also carries a
+#   TP-proven edge-improvement candidate, active-trader-contract must keep the
+#   post-review read-only EDGE_IMPROVEMENT_EXPERIMENT follow-up in
+#   next_trade_enabling_action while live_permission_allowed remains false.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # - non-eurusd-proof-lane-mapper and non-eurusd-live-grade-frontier are

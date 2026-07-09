@@ -114,6 +114,7 @@ ENTRY_DROUGHT_CURRENT_INTENT_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_CURRENT_
 ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_BLOCKER = "ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQUIRES_LANE_MAPPING"
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
+TP_PROVEN_HARVEST_REPAIR_TARGET = "TP_PROVEN_HARVEST_BLOCKER_REPAIR_REQUIRED"
 STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
 TP_PROOF_COLLECTION_MIN_TRADES = 5
 BIDASK_REPLAY_NEGATIVE_MAX_AGE_HOURS = 72
@@ -1090,6 +1091,7 @@ def _finalize_lane(
     _suppress_stale_current_intent_owned_blockers(lane)
     _suppress_live_ready_stale_diagnostic_blockers(lane)
     _mark_bidask_negative_evidence_refresh(lane, now_utc=now_utc)
+    _mark_tp_proven_harvest_repair_candidate(lane)
     lane["spread_status"] = _spread_status(lane)
     lane["risk_status"] = _risk_status(lane)
     lane["guardian_status"] = _marker_status(lane["blockers"], GUARDIAN_MARKERS, "BLOCKED", "NOT_BLOCKED")
@@ -1304,6 +1306,48 @@ def _append_local_tp_proof_floor_blocker(lane: dict[str, Any], proof: dict[str, 
         lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER])
     elif trades < TP_PROOF_COLLECTION_MIN_TRADES:
         lane["blockers"] = _unique(blockers + [LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER])
+
+
+def _mark_tp_proven_harvest_repair_candidate(lane: dict[str, Any]) -> None:
+    if _has_marker(lane.get("blockers") or [], FAILED_EXACT_REPLAY_MARKERS):
+        return
+    if not _local_tp_proof_floor_met(lane):
+        return
+    blockers = _string_list(lane.get("blockers"))
+    repair_markers = (
+        NEGATIVE_BLOCKER_MARKERS
+        + RISK_BLOCKER_MARKERS
+        + SPREAD_BLOCKER_MARKERS
+        + ("FORECAST", "HARVEST_TP_STRUCTURE_MISSING", "EXHAUSTION_RANGE_CHASE", "PATTERN_REVERSAL_CHASE")
+    )
+    if not _has_marker(blockers, repair_markers):
+        return
+    lane["edge_improvement_candidate"] = True
+    lane["edge_improvement_target"] = _shape_from_target(lane)
+    lane["tp_proven_harvest_repair_target"] = TP_PROVEN_HARVEST_REPAIR_TARGET
+
+
+def _local_tp_proof_floor_met(lane: dict[str, Any]) -> bool:
+    proof = lane.get("local_tp_proof")
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(proof.get("tp_execution_mode") or "") != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(proof.get("tp_target_intent") or "") != "HARVEST":
+        return False
+    trades = _float(proof.get("capture_take_profit_trades"))
+    losses = _float(proof.get("capture_take_profit_losses"))
+    expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+    floor = _float(proof.get("capture_take_profit_proof_floor")) or float(TP_PROOF_COLLECTION_MIN_TRADES)
+    return (
+        trades is not None
+        and trades >= floor
+        and (losses is None or losses == 0)
+        and expectancy is not None
+        and expectancy > 0
+    )
 
 
 def _attach_bidask_negative_evidence(
@@ -1599,6 +1643,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
         return "EVIDENCE_ACQUISITION"
     if has_negative and _local_tp_proof_acquisition_required(lane):
         return "EVIDENCE_ACQUISITION"
+    if _tp_proven_harvest_repair_required(lane):
+        return "EVIDENCE_ACQUISITION"
     if has_negative and _edge_improvement_evidence_required(lane):
         return "EVIDENCE_ACQUISITION"
     if _entry_drought_recovery_required(lane):
@@ -1655,11 +1701,12 @@ def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
             return False
         losses = _float(proof.get("capture_take_profit_losses"))
         expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+        floor = _float(proof.get("capture_take_profit_proof_floor")) or float(TP_PROOF_COLLECTION_MIN_TRADES)
         if losses is None or losses > 0:
             return False
         if expectancy is None or expectancy <= 0:
             return False
-        return True
+        return trades < floor
     scope = str(proof.get("capture_take_profit_scope") or "")
     if scope.startswith("MISSING") or scope in {"", "None", "UNKNOWN"}:
         return True
@@ -1670,6 +1717,14 @@ def _local_tp_proof_acquisition_required(lane: dict[str, Any]) -> bool:
         "capture_take_profit_wins",
     )
     return any(proof.get(key) is None for key in required_numeric)
+
+
+def _tp_proven_harvest_repair_required(lane: dict[str, Any]) -> bool:
+    if lane.get("edge_improvement_candidate") is not True:
+        return False
+    if lane.get("tp_proven_harvest_repair_target") != TP_PROVEN_HARVEST_REPAIR_TARGET:
+        return False
+    return _local_tp_proof_floor_met(lane)
 
 
 def _edge_improvement_evidence_required(lane: dict[str, Any]) -> bool:
@@ -1747,6 +1802,10 @@ def _rank_score(lane: dict[str, Any]) -> float:
     proof_gap = _float(lane.get("proof_gap_trades"))
     if proof_gap is not None:
         score += max(0.0, 30.0 - proof_gap)
+    if _local_tp_proof_floor_met(lane):
+        score += 80.0
+    elif _local_tp_proof_positive_partial(lane):
+        score += 25.0
     if lane.get("can_enter_proof_pack"):
         score += 25.0
     if lane.get("entry_recovery_candidate") is True:
@@ -1773,6 +1832,7 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
     blockers = lane.get("blockers") or []
     return (
         -float(STATUS_PRIORITY.get(str(lane.get("status")), 0)),
+        _tp_proof_sort_bucket(lane),
         _current_intent_sort_bucket(lane),
         _entry_recovery_sort_bucket(lane),
         _vehicle_sort_bucket(lane),
@@ -1783,6 +1843,38 @@ def _rank_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
         str(lane.get("direction")),
         str(lane.get("strategy_family")),
         str(lane.get("vehicle")),
+    )
+
+
+def _tp_proof_sort_bucket(lane: dict[str, Any]) -> int:
+    if _local_tp_proof_floor_met(lane):
+        return 0
+    proof = lane.get("local_tp_proof")
+    if not isinstance(proof, dict):
+        return 3
+    trades = _float(proof.get("capture_take_profit_trades"))
+    losses = _float(proof.get("capture_take_profit_losses"))
+    expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+    if trades is not None and trades > 0 and (losses is None or losses == 0) and expectancy is not None and expectancy > 0:
+        if trades >= TP_PROOF_COLLECTION_MIN_TRADES:
+            return 1
+        return 2
+    return 3
+
+
+def _local_tp_proof_positive_partial(lane: dict[str, Any]) -> bool:
+    proof = lane.get("local_tp_proof")
+    if not isinstance(proof, dict):
+        return False
+    trades = _float(proof.get("capture_take_profit_trades"))
+    losses = _float(proof.get("capture_take_profit_losses"))
+    expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+    return (
+        trades is not None
+        and trades > 0
+        and (losses is None or losses == 0)
+        and expectancy is not None
+        and expectancy > 0
     )
 
 
@@ -1927,6 +2019,13 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     if status == "HARVEST_READY":
         return f"Run HARVEST readiness checks for {lane_key} while preserving negative/replay blockers."
     if status == "OPERATOR_REVIEW_REQUIRED":
+        if lane.get("edge_improvement_candidate") is True:
+            target = lane.get("edge_improvement_target") or lane_key
+            return (
+                f"Package guardian receipt operator-review evidence for {lane_key}; do not infer approval. "
+                f"After review clears, run read-only EDGE_IMPROVEMENT_EXPERIMENT for {target}; preserve "
+                "bid/ask, forecast, risk, and profitability blockers, rerank, and do not send."
+            )
         if _has_marker(lane.get("blockers") or [], GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS):
             return f"Package guardian receipt operator-review evidence for {lane_key}; do not infer approval."
         return f"Package operator/guardian review evidence for {lane_key}; do not infer approval."
@@ -1980,6 +2079,8 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
     if lane.get("edge_improvement_candidate") is True:
         public["edge_improvement_candidate"] = True
         public["edge_improvement_target"] = str(lane.get("edge_improvement_target") or "")
+    if lane.get("tp_proven_harvest_repair_target"):
+        public["tp_proven_harvest_repair_target"] = str(lane.get("tp_proven_harvest_repair_target") or "")
     if lane.get("entry_recovery_candidate") is True:
         public["entry_recovery_candidate"] = True
         if isinstance(lane.get("entry_recovery_history"), dict):

@@ -817,6 +817,223 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("Collect exact local TAKE_PROFIT_ORDER proof", top["next_action"])
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_tp_floor_met_local_proof_becomes_blocker_repair_not_more_collection(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            tp_metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            below_floor_metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            "range_trader:EUR_JPY:LONG:RANGE_ROTATION:LIMIT",
+                            "EUR_JPY",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            metadata=below_floor_metadata,
+                        ),
+                        _intent_row(
+                            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "EUR_USD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=[
+                                "NEGATIVE_EXPECTANCY_ACTIVE",
+                                "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+                                "HARVEST_TP_STRUCTURE_MISSING",
+                            ],
+                            metadata=tp_metadata,
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            capture = _capture_payload(
+                "EUR_USD",
+                "LONG",
+                "BREAKOUT_FAILURE",
+                trades=20,
+                wins=20,
+                losses=0,
+                expectancy=591.5,
+                avg_win=591.5,
+                avg_loss=0.0,
+            )
+            capture["by_pair_side_method_exit_reason"]["EUR_JPY"] = {
+                "LONG": {
+                    "RANGE_ROTATION": {
+                        "TAKE_PROFIT_ORDER": {
+                            "trades": 1,
+                            "wins": 1,
+                            "losses": 0,
+                            "expectancy_jpy_per_trade": 655.2,
+                            "avg_win_jpy": 655.2,
+                            "avg_loss_jpy": 0.0,
+                        }
+                    }
+                }
+            }
+            _write_json(paths["capture"], capture)
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT")
+        self.assertEqual(top["status"], "EVIDENCE_ACQUISITION")
+        self.assertTrue(top["edge_improvement_candidate"])
+        self.assertEqual(top["tp_proven_harvest_repair_target"], "TP_PROVEN_HARVEST_BLOCKER_REPAIR_REQUIRED")
+        self.assertEqual(top["local_tp_proof"]["capture_take_profit_trades"], 20)
+        self.assertNotIn("LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR", top["blockers"])
+        self.assertNotIn("Collect exact local TAKE_PROFIT_ORDER proof", top["next_action"])
+        self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", top["next_action"])
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_tp_floor_met_operator_lane_outranks_zero_proof_operator_lane(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            tp_metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            zero_metadata = {
+                "attach_take_profit_on_fill": True,
+                "capture_take_profit_scope": "MISSING_METHOD_EXIT",
+                "capture_take_profit_scope_key": "USD_JPY|SHORT|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            "range_trader:USD_JPY:SHORT:RANGE_ROTATION:LIMIT",
+                            "USD_JPY",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=[
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            ],
+                            metadata=zero_metadata,
+                        ),
+                        _intent_row(
+                            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "EUR_USD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=[
+                                "NEGATIVE_EXPECTANCY_ACTIVE",
+                                "MARKET_CLOSE_LEAK_FAMILY_BLOCKED",
+                                "HARVEST_TP_STRUCTURE_MISSING",
+                                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+                            ],
+                            metadata=tp_metadata,
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+            _write_json(
+                paths["capture"],
+                _capture_payload(
+                    "EUR_USD",
+                    "LONG",
+                    "BREAKOUT_FAILURE",
+                    trades=20,
+                    wins=20,
+                    losses=0,
+                    expectancy=591.5,
+                    avg_win=591.5,
+                    avg_loss=0.0,
+                ),
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        top = payload["top_lane"]
+        self.assertEqual(top["lane_id"], "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT")
+        self.assertEqual(top["status"], "OPERATOR_REVIEW_REQUIRED")
+        self.assertTrue(top["edge_improvement_candidate"])
+        self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", top["blockers"])
+        self.assertIn("After review clears", top["next_action"])
+        self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", top["next_action"])
+        self.assertEqual(payload["coverage_summary"]["operator_review_required_count"], 2)
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_zero_local_tp_proof_is_no_trade_not_evidence_acquisition(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
