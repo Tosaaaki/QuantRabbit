@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -449,6 +449,112 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
         )
         self.assertIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_newer_active_contract_prompt_supersedes_repair_waiting_refresh_loop(self) -> None:
+        now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ORCHESTRATOR_BLOCKED",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 3,
+                    "repair_request_count": 3,
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "next_evidence_actions": [
+                        {
+                            "action_id": "refresh_lane_board_after_input_evidence_changes",
+                            "read_only": True,
+                            "live_side_effects": [],
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=5)).isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "selected_active_path_reason": "terminal active contract consumed the latest board/frontier.",
+                    "target_shape": "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
+                    "four_x_progress_hypothesis": (
+                        "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT plus GBP_USD frontier evidence."
+                    ),
+                    "root_improvement_target": "Advance the terminal lane-specific evidence plan.",
+                    "expected_edge_improvement": "Exact TP proof collection for the active lane and frontier.",
+                    "next_prompt": (
+                        "Implement EVIDENCE_ACQUISITION for EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT "
+                        "plus frontier evidence GBP_USD|LONG|RANGE_ROTATION|LIMIT."
+                    ),
+                    "next_trade_enabling_action": (
+                        "Collect exact local TP proof for EUR_USD and build exact TP-proven "
+                        "rotation proof for GBP_USD; do not send."
+                    ),
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "top_lane": {
+                                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "strategy_family": "BREAKOUT_FAILURE",
+                                "vehicle": "LIMIT",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        },
+                        "non_eurusd_live_grade_frontier": {
+                            "next_evidence_lane": {
+                                "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                                "pair": "GBP_USD",
+                                "direction": "LONG",
+                                "strategy_family": "RANGE_ROTATION",
+                                "vehicle": "LIMIT",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        },
+                    },
+                    "remaining_blockers": [{"code": "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"}],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "ACTIVE_TRADER_CONTRACT_EVIDENCE")
+        self.assertEqual(payload["selected_next_work_type"], "ACTIVE_TRADER_CONTRACT_EVIDENCE")
+        self.assertTrue(payload["repair_loop_state"]["waiting_for_evidence"])
+        self.assertTrue(payload["active_contract_state"]["active_prompt_available"])
+        self.assertEqual(
+            payload["active_contract_state"]["frontier_lane_id"],
+            "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+        )
+        self.assertIn("already-satisfied generic artifact refresh", payload["selection_reason"])
+        self.assertIn("GBP_USD|LONG|RANGE_ROTATION|LIMIT", payload["selected_next_prompt"])
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_repeat_guard_does_not_override_scout_blocked_classification(self) -> None:

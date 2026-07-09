@@ -945,6 +945,15 @@ def _select_work_type(
     active_contract_state: dict[str, Any],
     repair_loop_state: dict[str, Any],
 ) -> tuple[str, str]:
+    if (
+        repair_loop_state.get("waiting_for_evidence")
+        and active_contract_state.get("active_prompt_available")
+        and _active_contract_supersedes_repair_waiting(active_contract_state, repair_loop_state)
+    ):
+        return (
+            "ACTIVE_TRADER_CONTRACT_EVIDENCE",
+            "active_trader_contract was refreshed after trader_repair_orchestrator's waiting-evidence state and carries the concrete lane-specific next_prompt; dispatch that work instead of looping on already-satisfied generic artifact refresh.",
+        )
     if repair_loop_state.get("waiting_for_evidence"):
         return (
             "READ_ONLY_EVIDENCE_REFRESH",
@@ -1004,6 +1013,17 @@ def _select_work_type(
         "NO_ACTION_WAIT",
         "no rule selected actionable work and live permission readiness is not met; wait for refreshed evidence or operator state change.",
     )
+
+
+def _active_contract_supersedes_repair_waiting(
+    active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
+) -> bool:
+    active_generated = _parse_dt(active_contract_state.get("generated_at_utc"))
+    repair_generated = _parse_dt(repair_loop_state.get("generated_at_utc"))
+    if active_generated is None or repair_generated is None:
+        return False
+    return active_generated > repair_generated
 
 
 def _key_blocker(
