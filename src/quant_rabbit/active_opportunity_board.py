@@ -1356,8 +1356,18 @@ def _attach_packaged_pair_side_bidask_negative_evidence(lanes: dict[str, dict[st
         if BIDASK_REPLAY_NEGATIVE_BLOCKER not in blockers:
             blockers.append(BIDASK_REPLAY_NEGATIVE_BLOCKER)
             lane["blockers"] = blockers
-        if not isinstance(lane.get("bidask_negative_evidence"), dict):
-            lane["bidask_negative_evidence"] = _packaged_bidask_negative_payload(rule)
+        packaged_payload = _packaged_bidask_negative_payload(rule)
+        existing_evidence = lane.get("bidask_negative_evidence")
+        if not isinstance(existing_evidence, dict):
+            lane["bidask_negative_evidence"] = packaged_payload
+        elif _should_replace_intent_bidask_evidence_with_packaged(existing_evidence, packaged_payload):
+            packaged_payload["replaced_intent_bidask_negative_evidence"] = {
+                "audit_report": existing_evidence.get("audit_report"),
+                "audit_report_exists": existing_evidence.get("audit_report_exists"),
+                "rule_set_generated_at_utc": existing_evidence.get("rule_set_generated_at_utc"),
+                "last_day": existing_evidence.get("last_day"),
+            }
+            lane["bidask_negative_evidence"] = packaged_payload
 
 
 def _packaged_bidask_negative_rules() -> list[dict[str, Any]]:
@@ -1438,6 +1448,33 @@ def _packaged_bidask_negative_payload(rule: dict[str, Any]) -> dict[str, Any]:
         payload["audit_report_resolved_path"] = str(audit_path) if audit_path else ""
     payload["packaged_pair_side_supplement"] = True
     return payload
+
+
+def _should_replace_intent_bidask_evidence_with_packaged(
+    existing: dict[str, Any],
+    packaged: dict[str, Any],
+) -> bool:
+    if not packaged.get("packaged_pair_side_supplement"):
+        return False
+    if packaged.get("audit_report_exists") is not True:
+        return False
+    if existing.get("packaged_pair_side_supplement"):
+        return False
+    if existing.get("audit_report_exists") is False:
+        return True
+    if not _first_str(existing.get("audit_report")):
+        return True
+    packaged_generated_at = _parse_utc(packaged.get("rule_set_generated_at_utc"))
+    existing_generated_at = _parse_utc(existing.get("rule_set_generated_at_utc"))
+    if packaged_generated_at is not None and (
+        existing_generated_at is None or packaged_generated_at > existing_generated_at
+    ):
+        return True
+    packaged_last_day = _parse_utc(packaged.get("last_day"))
+    existing_last_day = _parse_utc(existing.get("last_day"))
+    return packaged_last_day is not None and (
+        existing_last_day is None or packaged_last_day > existing_last_day
+    )
 
 
 def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: datetime) -> None:

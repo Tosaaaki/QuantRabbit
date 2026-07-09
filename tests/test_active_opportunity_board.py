@@ -954,6 +954,139 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 1)
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_current_packaged_bidask_evidence_replaces_stale_intent_evidence(self) -> None:
+        now = datetime(2026, 7, 9, 9, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now)
+            audit_report = root / "current_euraud_bidask_report.json"
+            audit_report.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "price_truth_coverage": {
+                            "status": "PRICE_TRUTH_OK",
+                            "missing_price_truth_samples": 0,
+                            "missing_price_window_group_count": 0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rules_path = root / "bidask_replay_precision_rules.json"
+            _write_json(
+                rules_path,
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "generated_from": "test_packaged_rules",
+                    "price_truth_coverage": {
+                        "status": "PRICE_TRUTH_OK",
+                        "missing_price_truth_samples": 0,
+                        "missing_price_window_group_count": 0,
+                    },
+                    "negative_rules": [
+                        {
+                            "name": "EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                            "pair": "EUR_AUD",
+                            "side": "SHORT",
+                            "direction": "DOWN",
+                            "granularity": "S5",
+                            "samples": 396,
+                            "active_days": 27,
+                            "directional_hit_rate": 0.3157,
+                            "avg_final_pips": -5.551,
+                            "optimized_profit_factor": 0.0,
+                            "positive_day_rate": 0.0,
+                            "last_day": "2026-07-08",
+                            "blocks_live_support": True,
+                            "audit_report": str(audit_report),
+                        }
+                    ],
+                },
+            )
+            lane_id = "range_trader:EUR_AUD:SHORT:RANGE_ROTATION"
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            lane_id,
+                            "EUR_AUD",
+                            "SHORT",
+                            "LIMIT",
+                            blockers=["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                            metadata={
+                                "forecast_direction": "DOWN",
+                                "bidask_replay_precision_negative": {
+                                    "name": "EUR_AUD_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                                    "pair": "EUR_AUD",
+                                    "side": "SHORT",
+                                    "direction": "DOWN",
+                                    "granularity": "S5",
+                                    "samples": 396,
+                                    "active_days": 27,
+                                    "last_day": "2026-07-08",
+                                    "directional_hit_rate": 0.3157,
+                                    "avg_final_pips": -5.551,
+                                    "positive_day_rate": 0.0,
+                                    "audit_report": "logs/reports/forecast_improvement/missing_euraud_bidask.json",
+                                    "rule_set_generated_at_utc": "2026-07-08T12:36:54Z",
+                                },
+                            },
+                        ),
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            with patch("quant_rabbit.active_opportunity_board.BIDASK_REPLAY_PRECISION_RULES_PATH", rules_path):
+                ActiveOpportunityBoard(
+                    active_trader_contract_path=paths["active_contract"],
+                    trader_goal_loop_path=paths["goal_loop"],
+                    payoff_shape_diagnosis_path=paths["payoff"],
+                    harvest_live_grade_path=paths["harvest"],
+                    proof_pack_queue_path=paths["proof"],
+                    lane_candidate_board_path=paths["board"],
+                    portfolio_4x_path_planner_path=paths["portfolio"],
+                    live_order_request_path=paths["live_order"],
+                    broker_snapshot_path=paths["broker"],
+                    order_intents_path=paths["order_intents"],
+                    capture_economics_path=paths["capture"],
+                    verification_ledger_path=paths["verification"],
+                    execution_ledger_db_path=paths["execution_db"],
+                    strategy_profile_path=paths["strategy"],
+                    guardian_receipt_consumption_path=paths["guardian_consumption"],
+                    guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                    replay_artifact_paths=[],
+                    output_path=paths["output"],
+                    report_path=paths["report"],
+                    now_utc=now,
+                ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = payload["top_lane"]
+        self.assertEqual(lane["lane_id"], lane_id)
+        self.assertEqual(lane["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(lane["replay_status"], "NEGATIVE")
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", lane["blockers"])
+        self.assertNotIn("BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED", lane["blockers"])
+        self.assertNotIn("evidence_refresh_reasons", lane)
+        evidence = lane["bidask_negative_evidence"]
+        self.assertTrue(evidence["packaged_pair_side_supplement"])
+        self.assertEqual(evidence["audit_report"], str(audit_report))
+        self.assertEqual(evidence["audit_report_exists"], True)
+        self.assertEqual(
+            evidence["replaced_intent_bidask_negative_evidence"]["audit_report"],
+            "logs/reports/forecast_improvement/missing_euraud_bidask.json",
+        )
+        self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 0)
+        self.assertFalse(payload["live_permission_allowed"])
+
     def test_bidask_last_day_stale_but_price_truth_ok_stays_no_trade_cause(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
