@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from quant_rabbit.active_opportunity_board import ActiveOpportunityBoard
 
@@ -1224,6 +1225,95 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", aud["blockers"])
         reasons = {row["code"] for row in payload["no_trade_reasons"]}
         self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", reasons)
+
+    def test_packaged_pair_side_negative_blocks_vehicle_when_intent_omits_negative(self) -> None:
+        now = datetime(2026, 7, 9, 9, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now)
+            rules_path = root / "bidask_replay_precision_rules.json"
+            _write_json(
+                rules_path,
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "generated_from": "test_packaged_rules",
+                    "price_truth_coverage": {"status": "PRICE_TRUTH_OK", "missing_price_truth_samples": 0},
+                    "negative_rules": [
+                        {
+                            "name": "AUD_JPY_DOWN_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                            "pair": "AUD_JPY",
+                            "side": "SHORT",
+                            "direction": "DOWN",
+                            "granularity": "S5",
+                            "samples": 1369,
+                            "active_days": 42,
+                            "directional_hit_rate": 0.3477,
+                            "avg_final_pips": -3.3925,
+                            "optimized_profit_factor": 0.0,
+                            "positive_day_rate": 0.0,
+                            "last_day": "2026-07-08",
+                            "blocks_live_support": True,
+                            "audit_report": "logs/reports/forecast_improvement/audjpy.json",
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+                            "AUD_JPY",
+                            "SHORT",
+                            "STOP-ENTRY",
+                            blockers=[
+                                "MATRIX_REPAIR_REJECT_CONTEXT",
+                                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                            ],
+                            metadata={"forecast_direction": "UP"},
+                        )
+                    ],
+                },
+            )
+            _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
+            _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
+
+            with patch("quant_rabbit.active_opportunity_board.BIDASK_REPLAY_PRECISION_RULES_PATH", rules_path):
+                ActiveOpportunityBoard(
+                    active_trader_contract_path=paths["active_contract"],
+                    trader_goal_loop_path=paths["goal_loop"],
+                    payoff_shape_diagnosis_path=paths["payoff"],
+                    harvest_live_grade_path=paths["harvest"],
+                    proof_pack_queue_path=paths["proof"],
+                    lane_candidate_board_path=paths["board"],
+                    portfolio_4x_path_planner_path=paths["portfolio"],
+                    live_order_request_path=paths["live_order"],
+                    broker_snapshot_path=paths["broker"],
+                    order_intents_path=paths["order_intents"],
+                    capture_economics_path=paths["capture"],
+                    verification_ledger_path=paths["verification"],
+                    execution_ledger_db_path=paths["execution_db"],
+                    strategy_profile_path=paths["strategy"],
+                    guardian_receipt_consumption_path=paths["guardian_consumption"],
+                    guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                    replay_artifact_paths=[],
+                    output_path=paths["output"],
+                    report_path=paths["report"],
+                    now_utc=now,
+                ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        lane = payload["top_lane"]
+        self.assertEqual(lane["lane_id"], "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE")
+        self.assertEqual(lane["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", lane["blockers"])
+        self.assertTrue(lane["bidask_negative_evidence"]["packaged_pair_side_supplement"])
+        self.assertEqual(lane["bidask_negative_evidence"]["samples"], 1369)
 
     def test_min_lot_feasible_capped_candidate_can_surface_as_scout_ready_without_permission(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)

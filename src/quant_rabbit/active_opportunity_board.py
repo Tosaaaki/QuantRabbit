@@ -32,6 +32,7 @@ from quant_rabbit.paths import (
 
 
 BOARD_VERSION = "active_opportunity_board_v1"
+BIDASK_REPLAY_PRECISION_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
 LANE_STATUSES = {
     "LIVE_READY",
     "HARVEST_READY",
@@ -221,6 +222,7 @@ class ActiveOpportunityBoard:
             self.execution_ledger_db_path,
             now_utc=self.now_utc,
         )
+        _attach_packaged_pair_side_bidask_negative_evidence(lanes)
 
         execution_ledger_summary = _execution_ledger_summary(self.execution_ledger_db_path)
         guardian_routing_clear = _guardian_routing_clear(
@@ -1326,6 +1328,118 @@ def _attach_bidask_negative_evidence(
     lane["bidask_negative_evidence"] = payload
 
 
+def _attach_packaged_pair_side_bidask_negative_evidence(lanes: dict[str, dict[str, Any]]) -> None:
+    rules = _packaged_bidask_negative_rules()
+    if not rules:
+        return
+    by_pair_side: dict[tuple[str, str], dict[str, Any]] = {}
+    for rule in rules:
+        if rule.get("blocks_live_support") is False:
+            continue
+        pair = _first_str(rule.get("pair")).upper()
+        side = _first_str(rule.get("side")).upper()
+        if not pair or side not in {"LONG", "SHORT"}:
+            continue
+        current = by_pair_side.get((pair, side))
+        if current is None or _packaged_negative_rule_sort_key(rule) > _packaged_negative_rule_sort_key(current):
+            by_pair_side[(pair, side)] = rule
+
+    for lane in lanes.values():
+        pair = _first_str(lane.get("pair")).upper()
+        side = _first_str(lane.get("direction")).upper()
+        rule = by_pair_side.get((pair, side))
+        if not rule:
+            continue
+        blockers = _string_list(lane.get("blockers"))
+        if not blockers and lane.get("units") and lane.get("risk_jpy") is not None:
+            continue
+        if BIDASK_REPLAY_NEGATIVE_BLOCKER not in blockers:
+            blockers.append(BIDASK_REPLAY_NEGATIVE_BLOCKER)
+            lane["blockers"] = blockers
+        if not isinstance(lane.get("bidask_negative_evidence"), dict):
+            lane["bidask_negative_evidence"] = _packaged_bidask_negative_payload(rule)
+
+
+def _packaged_bidask_negative_rules() -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(BIDASK_REPLAY_PRECISION_RULES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_rules = payload.get("negative_rules") if isinstance(payload, dict) else None
+    if not isinstance(raw_rules, list):
+        return []
+    rules: list[dict[str, Any]] = []
+    for raw in raw_rules:
+        if not isinstance(raw, dict):
+            continue
+        pair = _first_str(raw.get("pair")).upper()
+        direction = _first_str(raw.get("direction")).upper()
+        side = _first_str(raw.get("side")).upper()
+        if not side:
+            side = "LONG" if direction == "UP" else "SHORT" if direction == "DOWN" else ""
+        if not pair or side not in {"LONG", "SHORT"}:
+            continue
+        rule = dict(raw)
+        rule["pair"] = pair
+        rule["side"] = side
+        if direction:
+            rule["direction"] = direction
+        rule.setdefault("rule_set_generated_at_utc", payload.get("generated_at_utc"))
+        rule.setdefault("rule_set_source", payload.get("generated_from") or str(BIDASK_REPLAY_PRECISION_RULES_PATH))
+        if isinstance(payload.get("price_truth_coverage"), dict):
+            rule.setdefault("price_truth_coverage", payload["price_truth_coverage"])
+        rules.append(rule)
+    return rules
+
+
+def _packaged_negative_rule_sort_key(rule: dict[str, Any]) -> tuple[float, float, float, float]:
+    return (
+        _float(rule.get("samples")) or 0.0,
+        _float(rule.get("active_days")) or 0.0,
+        -(_float(rule.get("optimized_profit_factor")) or 0.0),
+        -(_float(rule.get("positive_day_rate")) or 0.0),
+    )
+
+
+def _packaged_bidask_negative_payload(rule: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in (
+        "name",
+        "pair",
+        "side",
+        "direction",
+        "granularity",
+        "samples",
+        "active_days",
+        "first_day",
+        "last_day",
+        "directional_hit_rate",
+        "avg_final_pips",
+        "median_final_pips",
+        "avg_mae_pips",
+        "avg_mfe_pips",
+        "positive_days",
+        "negative_days",
+        "positive_day_rate",
+        "avg_daily_realized_pips",
+        "optimized_profit_factor",
+        "daily_stability_status",
+        "audit_report",
+        "rule_set_generated_at_utc",
+        "rule_set_source",
+        "price_truth_coverage",
+    ):
+        if key in rule:
+            payload[key] = rule[key]
+    audit_report = _first_str(rule.get("audit_report"))
+    if audit_report:
+        audit_path = _resolve_artifact_path(audit_report)
+        payload["audit_report_exists"] = bool(audit_path and audit_path.exists())
+        payload["audit_report_resolved_path"] = str(audit_path) if audit_path else ""
+    payload["packaged_pair_side_supplement"] = True
+    return payload
+
+
 def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: datetime) -> None:
     blockers = _string_list(lane.get("blockers"))
     if BIDASK_REPLAY_NEGATIVE_BLOCKER not in blockers:
@@ -1336,7 +1450,11 @@ def _mark_bidask_negative_evidence_refresh(lane: dict[str, Any], *, now_utc: dat
 
     reasons: list[str] = []
     audit_report = _first_str(evidence.get("audit_report"))
-    if audit_report and evidence.get("audit_report_exists") is False:
+    if (
+        audit_report
+        and evidence.get("audit_report_exists") is False
+        and not evidence.get("packaged_pair_side_supplement")
+    ):
         reasons.append("BIDASK_REPLAY_AUDIT_REPORT_MISSING")
     if not audit_report:
         reasons.append("BIDASK_REPLAY_AUDIT_REPORT_NOT_DECLARED")
