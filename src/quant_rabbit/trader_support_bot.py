@@ -2254,12 +2254,14 @@ def _active_path_summary(
         contract_frontier=contract_frontier,
         non_eurusd_live_grade_frontier=non_eurusd_live_grade_frontier,
     )
-    sources: list[tuple[str, dict[str, Any]]] = [
+    board_sources: list[tuple[str, dict[str, Any]]] = [
         (
             "active_trader_contract.current_state.active_opportunity_board.top_lane",
             _dict_or_empty(contract_board.get("top_lane")),
         ),
         ("active_opportunity_board.top_lane", _dict_or_empty(active_opportunity_board.get("top_lane"))),
+    ]
+    frontier_sources: list[tuple[str, dict[str, Any]]] = [
         (
             "active_trader_contract.current_state.non_eurusd_live_grade_frontier.top_non_eurusd_lane",
             _dict_or_empty(contract_frontier.get("top_non_eurusd_lane")),
@@ -2269,6 +2271,20 @@ def _active_path_summary(
             _dict_or_empty(non_eurusd_live_grade_frontier.get("top_non_eurusd_lane")),
         ),
     ]
+    promoted_frontier_sources = [
+        (source, lane)
+        for source, lane in frontier_sources
+        if _contract_promotes_non_eurusd_frontier_lane(active_trader_contract, lane)
+    ]
+    sources: list[tuple[str, dict[str, Any]]] = (
+        promoted_frontier_sources
+        + board_sources
+        + [
+            (source, lane)
+            for source, lane in frontier_sources
+            if (source, lane) not in promoted_frontier_sources
+        ]
+    )
     for source, lane in sources:
         lane_id = str(lane.get("lane_id") or "").strip()
         if not lane_id:
@@ -2347,6 +2363,29 @@ def _active_path_summary(
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _contract_promotes_non_eurusd_frontier_lane(
+    active_trader_contract: dict[str, Any],
+    lane: dict[str, Any],
+) -> bool:
+    lane_id = str(lane.get("lane_id") or "").strip()
+    pair = str(lane.get("pair") or "").strip().upper()
+    if not lane_id or pair == "EUR_USD":
+        return False
+    text = "\n".join(
+        str(active_trader_contract.get(key) or "")
+        for key in ("next_trade_enabling_action", "next_prompt")
+    ).lower()
+    if lane_id.lower() not in text:
+        return False
+    promotion_markers = (
+        "advance non_eurusd_live_grade_frontier",
+        "current next action: frontier lane",
+        "consume range_rail_geometry_repair artifact",
+        "consume data/range_rail_geometry_repair.json",
+    )
+    return any(marker in text for marker in promotion_markers)
 
 
 def _active_path_parallel_frontier_evidence_lane(
