@@ -426,17 +426,33 @@ def _next_contract_prompt(target_lane: dict[str, Any], actions: list[dict[str, A
             "entry_frequency_recovery and active_opportunity_board; do not send."
         )
     first = actions[0] if actions else {}
+    first_action = str(first.get("action_type") or "KEEP_BLOCKED_WITH_CAUSE")
     box = target_lane.get("range_box") if isinstance(target_lane.get("range_box"), dict) else {}
     geometry = (
         target_lane.get("counterpart_geometry")
         if isinstance(target_lane.get("counterpart_geometry"), dict)
         else {}
     )
+    followups = [
+        str(row.get("action_type"))
+        for row in actions[1:4]
+        if isinstance(row, dict) and row.get("action_type")
+    ]
+    if first_action == "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED":
+        followup_sentence = (
+            " Geometry is already ready; do not repeat range-rail geometry repair unless lane inputs change. "
+            f"Move next to {', '.join(followups) if followups else 'proof/spread/expectancy validation'}."
+        )
+    elif followups:
+        followup_sentence = f" Follow-up evidence actions: {', '.join(followups)}."
+    else:
+        followup_sentence = ""
     return (
         "Consume data/range_rail_geometry_repair.json for "
-        f"{target_lane.get('lane_id')}: next safe action is {first.get('action_type') or 'KEEP_BLOCKED_WITH_CAUSE'}; "
+        f"{target_lane.get('lane_id')}: next safe action is {first_action}; "
         f"rail_status={box.get('rail_status')}; box_position={box.get('box_position')}; "
         f"counterpart_geometry_status={geometry.get('status')}. "
+        f"{followup_sentence} "
         "Preserve spread, bid/ask, negative-expectancy, and range-location blockers. "
         "Do not send, cancel, close, relax gates, or treat rail repair as live permission."
     )

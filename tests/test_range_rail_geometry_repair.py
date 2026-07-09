@@ -84,6 +84,10 @@ class RangeRailGeometryRepairTest(unittest.TestCase):
         self.assertTrue(top["counterpart_geometry"]["tp_inside_box"])
         self.assertTrue(top["counterpart_geometry"]["sl_outside_box"])
         self.assertEqual(payload["next_actions"][0]["action_type"], "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED")
+        self.assertIn("Geometry is already ready", payload["next_contract_prompt"])
+        self.assertIn("do not repeat range-rail geometry repair", payload["next_contract_prompt"])
+        self.assertIn("VERIFY_TRIGGER_PROJECTIONS", payload["next_contract_prompt"])
+        self.assertIn("EXACT_TP_PROOF_COLLECTION", payload["next_contract_prompt"])
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_live_intent_entry_tp_sl_aliases_feed_counterpart_geometry(self) -> None:
@@ -124,6 +128,8 @@ class RangeRailGeometryRepairTest(unittest.TestCase):
         self.assertEqual(geometry["stop_loss_price"], 1.4149)
         self.assertEqual(geometry["status"], "COUNTERPART_GEOMETRY_READY")
         self.assertEqual(payload["next_actions"][0]["action_type"], "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED")
+        self.assertIn("do not repeat range-rail geometry repair", payload["next_contract_prompt"])
+        self.assertIn("EXACT_TP_PROOF_COLLECTION", payload["next_contract_prompt"])
 
 
 def _forecast_payload(now: datetime, lane_id: str, *, current: float) -> dict[str, Any]:
