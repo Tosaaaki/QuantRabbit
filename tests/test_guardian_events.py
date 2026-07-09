@@ -322,6 +322,78 @@ class GuardianEventRouterTest(unittest.TestCase):
 
         self.assertEqual(event_types, {"CONTRACT_STALE"})
 
+    def test_self_improvement_pending_cancel_review_wakes_before_age_stale(self) -> None:
+        snapshot = _snapshot(
+            orders=[
+                {
+                    "order_id": "473022",
+                    "pair": "EUR_USD",
+                    "owner": "trader",
+                    "state": "PENDING",
+                    "units": 11000,
+                    "price": 1.14334,
+                    "raw": {
+                        "createTime": (NOW - timedelta(minutes=10)).isoformat(),
+                        "clientExtensions": {
+                            "comment": "qr-vnext lane=failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+                        },
+                    },
+                }
+            ]
+        )
+        self_improvement = {
+            "findings": [
+                {
+                    "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                    "evidence": {
+                        "cancel_review_order_ids": ["473022"],
+                        "orders": [
+                            {
+                                "order_id": "473022",
+                                "parent_lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                "current_candidate_count": 1,
+                                "current_live_ready_candidate_count": 0,
+                                "review_reasons": [
+                                    {"code": "PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY"}
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+
+        events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "self_improvement_audit": self_improvement},
+            now=NOW,
+        )
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+        pending_events = [event for event in events if event.event_type == "STALE_PENDING"]
+
+        self.assertEqual(len(pending_events), 1)
+        self.assertEqual(pending_events[0].action_hint, "CANCEL_PENDING")
+        self.assertEqual(pending_events[0].recommended_review_type, "PENDING_CANCEL_REVIEW")
+        self.assertEqual(pending_events[0].details["source"], "self_improvement_audit")
+        self.assertEqual(pending_events[0].details["order_id"], "473022")
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_self_improvement_pending_cancel_review_requires_current_broker_order(self) -> None:
+        self_improvement = {
+            "findings": [
+                {
+                    "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                    "evidence": {"cancel_review_order_ids": ["missing-order"]},
+                }
+            ]
+        }
+
+        events = detect_guardian_events(
+            inputs={"snapshot": _snapshot(), "self_improvement_audit": self_improvement},
+            now=NOW,
+        )
+
+        self.assertEqual(events, [])
+
     def test_trigger_contract_builder_preserves_existing_trader_triggers(self) -> None:
         existing = _contract(
             entry_overrides={

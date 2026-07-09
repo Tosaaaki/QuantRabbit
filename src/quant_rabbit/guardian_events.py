@@ -140,6 +140,7 @@ def run_guardian_event_router(
     snapshot_path: Path,
     pair_charts_path: Path,
     order_intents_path: Path,
+    self_improvement_audit_path: Path | None = None,
     position_management_path: Path,
     thesis_evolution_path: Path,
     forecast_persistence_path: Path,
@@ -160,6 +161,7 @@ def run_guardian_event_router(
         "snapshot": _load_json(snapshot_path),
         "pair_charts": _load_json(pair_charts_path),
         "order_intents": _load_json(order_intents_path),
+        "self_improvement_audit": _load_json(self_improvement_audit_path),
         "position_management": _load_json(position_management_path),
         "thesis_evolution": _load_json(thesis_evolution_path),
         "forecast_persistence": _load_json(forecast_persistence_path),
@@ -260,6 +262,9 @@ def detect_guardian_events(*, inputs: dict[str, Any], now: datetime | None = Non
     snapshot = inputs.get("snapshot") if isinstance(inputs.get("snapshot"), dict) else {}
     pair_charts = inputs.get("pair_charts") if isinstance(inputs.get("pair_charts"), dict) else {}
     order_intents = inputs.get("order_intents") if isinstance(inputs.get("order_intents"), dict) else {}
+    self_improvement_audit = (
+        inputs.get("self_improvement_audit") if isinstance(inputs.get("self_improvement_audit"), dict) else {}
+    )
     position_management = (
         inputs.get("position_management") if isinstance(inputs.get("position_management"), dict) else {}
     )
@@ -276,6 +281,7 @@ def detect_guardian_events(*, inputs: dict[str, Any], now: datetime | None = Non
     )
 
     collected.extend(_snapshot_events(snapshot, now=now))
+    collected.extend(_self_improvement_pending_cancel_events(self_improvement_audit, snapshot=snapshot, now=now))
     collected.extend(_contract_events(trigger_contract, snapshot=snapshot, now=now))
     collected.extend(_wake_parse_failure_events(wake_dispatcher_state, now=now))
     collected.extend(_pair_chart_events(pair_charts, snapshot=snapshot, now=now))
@@ -1338,6 +1344,94 @@ def _snapshot_events(snapshot: dict[str, Any], *, now: datetime) -> list[Guardia
     events.extend(_spread_anomaly_events(quotes, now=now))
     events.extend(_quote_major_figure_events(quotes, now=now))
     return events
+
+
+def _self_improvement_pending_cancel_events(
+    self_improvement_audit: dict[str, Any],
+    *,
+    snapshot: dict[str, Any],
+    now: datetime,
+) -> list[GuardianEvent]:
+    findings = self_improvement_audit.get("findings") if isinstance(self_improvement_audit, dict) else []
+    if not isinstance(findings, list):
+        return []
+    current_pending_by_id = _current_trader_pending_orders_by_id(snapshot)
+    if not current_pending_by_id:
+        return []
+
+    events: list[GuardianEvent] = []
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("code") != "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            continue
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        audit_orders = {
+            str(order.get("order_id") or ""): order
+            for order in evidence.get("orders", []) or []
+            if isinstance(order, dict) and str(order.get("order_id") or "")
+        }
+        order_ids = [
+            str(order_id)
+            for order_id in evidence.get("cancel_review_order_ids", []) or []
+            if str(order_id)
+        ]
+        if not order_ids:
+            order_ids = list(audit_orders)
+        for order_id in dict.fromkeys(order_ids):
+            current_order = current_pending_by_id.get(order_id)
+            if current_order is None:
+                continue
+            audit_order = audit_orders.get(order_id) or {}
+            pair = _pair(current_order.get("pair") or current_order.get("instrument") or audit_order.get("pair"))
+            if not pair:
+                continue
+            price = current_order.get("price")
+            if price is None:
+                price = audit_order.get("price")
+            parent_lane_id = audit_order.get("parent_lane_id") or audit_order.get("lane_id")
+            thesis = _pending_order_thesis(current_order)
+            if thesis.startswith("pending order") and parent_lane_id:
+                thesis = str(parent_lane_id)
+            events.append(
+                _event(
+                    event_type="STALE_PENDING",
+                    pair=pair,
+                    direction=_direction_from_units(current_order.get("units") or audit_order.get("units")),
+                    thesis=thesis,
+                    price_zone=f"pending price={price} self_improvement_cancel_review",
+                    severity="P1",
+                    recommended_review_type="PENDING_CANCEL_REVIEW",
+                    action_hint="CANCEL_PENDING",
+                    now=now,
+                    details={
+                        "order_id": order_id,
+                        "state": current_order.get("state"),
+                        "source": "self_improvement_audit",
+                        "finding_code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                        "parent_lane_id": parent_lane_id,
+                        "current_candidate_count": audit_order.get("current_candidate_count"),
+                        "current_live_ready_candidate_count": audit_order.get("current_live_ready_candidate_count"),
+                        "review_reasons": audit_order.get("review_reasons") or [],
+                    },
+                )
+            )
+    return events
+
+
+def _current_trader_pending_orders_by_id(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    orders: dict[str, dict[str, Any]] = {}
+    for order in snapshot.get("orders", []) or []:
+        if not isinstance(order, dict):
+            continue
+        order_id = str(order.get("order_id") or "")
+        if not order_id or _owner(order.get("owner")) != Owner.TRADER.value:
+            continue
+        state = str(order.get("state") or "").upper()
+        if state and state not in {"PENDING", "LIVE", "OPEN"}:
+            continue
+        if not _pair(order.get("pair") or order.get("instrument")):
+            continue
+        orders[order_id] = order
+    return orders
 
 
 def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:

@@ -21,7 +21,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
-- `guardian-event-router` is read-only: it reads `data/guardian_trigger_contract.json`, writes event/wake artifacts for GPT-5.5, and never sends, cancels, or closes broker orders.
+- `guardian-event-router` is read-only: it reads `data/guardian_trigger_contract.json` and `data/self_improvement_audit.json`, writes event/wake artifacts for GPT-5.5, and never sends, cancels, or closes broker orders.
+- When `self_improvement_audit` raises `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and the refreshed broker snapshot still has the named trader-owned pending entry id, guardian emits a `STALE_PENDING` / `PENDING_CANCEL_REVIEW` event immediately instead of waiting for the age-only stale-pending timer. This is wake evidence only; an accepted `CANCEL_PENDING` receipt and gateway re-check are still required before any live cancel.
 - Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
 - Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
 - The `com.quantrabbit.guardian-wake-dispatcher` LaunchAgent may wake GPT-5.5 with read-only `codex exec`; its live default must keep `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` and `QR_GUARDIAN_ACTION_EXECUTE=0`, so wake output is review/receipt only unless a separate explicit gateway path is enabled.

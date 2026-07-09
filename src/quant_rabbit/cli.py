@@ -4451,6 +4451,7 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_events.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_guardian_events.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_guardian_events.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_guardian_events.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_guardian_events.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
     p_guardian_events.add_argument("--thesis-evolution", type=Path, default=Path("data/thesis_evolution_report.json"))
     p_guardian_events.add_argument("--forecast-persistence", type=Path, default=Path("data/forecast_persistence_report.json"))
@@ -8043,6 +8044,7 @@ def main(argv: list[str] | None = None) -> int:
             snapshot_path=args.snapshot,
             pair_charts_path=args.pair_charts,
             order_intents_path=args.order_intents,
+            self_improvement_audit_path=args.self_improvement_audit,
             position_management_path=args.position_management,
             thesis_evolution_path=args.thesis_evolution,
             forecast_persistence_path=args.forecast_persistence,
