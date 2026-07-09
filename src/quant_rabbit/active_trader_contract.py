@@ -13,6 +13,7 @@ from quant_rabbit.paths import (
     DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_ENTRY_FREQUENCY_RECOVERY,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
@@ -114,6 +115,7 @@ class ActiveTraderContract:
         limit_sample_mining_path: Path = DEFAULT_EURUSD_LIMIT_SAMPLE_MINING,
         active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
         non_eurusd_live_grade_frontier_path: Path | None = None,
+        entry_frequency_recovery_path: Path | None = None,
         output_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         report_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT_REPORT,
         now_utc: datetime | None = None,
@@ -136,6 +138,8 @@ class ActiveTraderContract:
         }
         if non_eurusd_live_grade_frontier_path is not None:
             self.paths["non_eurusd_live_grade_frontier"] = non_eurusd_live_grade_frontier_path
+        if entry_frequency_recovery_path is not None:
+            self.paths["entry_frequency_recovery"] = entry_frequency_recovery_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -183,6 +187,16 @@ class ActiveTraderContract:
                 {
                     "_artifact_status": "missing",
                     "_path": str(DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER),
+                    "_sha256": None,
+                },
+            )
+        )
+        entry_frequency_recovery = _entry_frequency_recovery_contract_state(
+            artifacts.get(
+                "entry_frequency_recovery",
+                {
+                    "_artifact_status": "missing",
+                    "_path": str(DEFAULT_ENTRY_FREQUENCY_RECOVERY),
                     "_sha256": None,
                 },
             )
@@ -264,6 +278,7 @@ class ActiveTraderContract:
                 limit_sample_mining,
                 active_opportunity_board=active_opportunity_board,
                 non_eurusd_frontier=non_eurusd_frontier,
+                entry_frequency_recovery=entry_frequency_recovery,
             ),
             "remaining_blockers": remaining_blockers,
             "current_state": {
@@ -279,6 +294,7 @@ class ActiveTraderContract:
                 "limit_sample_mining": limit_sample_mining,
                 "active_opportunity_board": active_opportunity_board,
                 "non_eurusd_live_grade_frontier": non_eurusd_frontier,
+                "entry_frequency_recovery": entry_frequency_recovery,
             },
             "safety_contract": _safety_contract(),
             "next_prompt": _next_prompt(
@@ -286,6 +302,7 @@ class ActiveTraderContract:
                 remaining_blockers,
                 active_opportunity_board=active_opportunity_board,
                 non_eurusd_frontier=non_eurusd_frontier,
+                entry_frequency_recovery=entry_frequency_recovery,
             ),
             "artifact_index": artifact_index,
         }
@@ -719,6 +736,58 @@ def _non_eurusd_frontier_contract_state(artifact: dict[str, Any]) -> dict[str, A
             if isinstance(checks.get("usd_cad_long_breakout_failure_blocker_breakdown"), list)
             else []
         ),
+        "live_permission_allowed": False,
+    }
+
+
+def _entry_frequency_recovery_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("_artifact_status") == "missing":
+        return {
+            "artifact_status": "missing",
+            "status": "MISSING",
+            "target_lane_count": 0,
+            "top_lane": {},
+            "tuning_queue": [],
+            "next_contract_prompt": None,
+            "live_permission_allowed": False,
+        }
+    top = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
+    tuning_queue = artifact.get("forecast_pattern_tuning_queue")
+    tuning_queue = tuning_queue if isinstance(tuning_queue, list) else []
+    return {
+        "artifact_status": "present",
+        "status": artifact.get("status"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "target_lane_count": _first_int(artifact.get("target_lane_count"), len(artifact.get("target_lanes") or [])),
+        "top_lane": {
+            "lane_id": top.get("lane_id"),
+            "pair": top.get("pair"),
+            "direction": top.get("direction"),
+            "strategy_family": top.get("strategy_family"),
+            "vehicle": top.get("vehicle"),
+            "status": top.get("status"),
+            "forecast_status": (top.get("forecast_audit") or {}).get("status")
+            if isinstance(top.get("forecast_audit"), dict)
+            else None,
+            "profile_status": (top.get("strategy_profile_audit") or {}).get("status")
+            if isinstance(top.get("strategy_profile_audit"), dict)
+            else None,
+            "tp_proof_status": (top.get("tp_proof_audit") or {}).get("status")
+            if isinstance(top.get("tp_proof_audit"), dict)
+            else None,
+        },
+        "tuning_queue": [
+            {
+                "priority": row.get("priority"),
+                "lane_id": row.get("lane_id"),
+                "action_type": row.get("action_type"),
+                "description": row.get("description"),
+                "preserve_blockers": _string_list(row.get("preserve_blockers")),
+            }
+            for row in tuning_queue[:8]
+            if isinstance(row, dict)
+        ],
+        "next_contract_prompt": artifact.get("next_contract_prompt"),
         "live_permission_allowed": False,
     }
 
@@ -1346,9 +1415,11 @@ def _next_trade_enabling_action(
     *,
     active_opportunity_board: dict[str, Any] | None = None,
     non_eurusd_frontier: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
 ) -> str:
     active_opportunity_board = active_opportunity_board or {}
     non_eurusd_frontier = non_eurusd_frontier or {}
+    entry_frequency_recovery = entry_frequency_recovery or {}
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
     if selected_active_path == "EVIDENCE_ACQUISITION":
@@ -1378,11 +1449,19 @@ def _next_trade_enabling_action(
                     f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
                     "Keep both blocker sets visible; do not send."
                 )
+            recovery_suffix = ""
+            if _entry_frequency_recovery_matches_board(entry_frequency_recovery, board_top):
+                recovery_prompt = entry_frequency_recovery.get("next_contract_prompt")
+                recovery_suffix = (
+                    " Consume entry_frequency_recovery artifact before repeating generic drought analysis: "
+                    f"{recovery_prompt}"
+                )
             return (
                 "Use the latest active_opportunity_board rerank: "
                 f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
                 f"{board_top.get('next_action') or 'Acquire the next board-ranked evidence packet.'}"
                 f"{frontier_suffix}"
+                f"{recovery_suffix}"
                 f"{suffix}"
             )
         if replay.get("artifact_status") == "missing":
@@ -1437,12 +1516,39 @@ def _safety_contract() -> dict[str, Any]:
     }
 
 
+def _entry_frequency_recovery_matches_board(
+    entry_frequency_recovery: dict[str, Any],
+    board_top: dict[str, Any],
+) -> bool:
+    if not entry_frequency_recovery or not board_top:
+        return False
+    if entry_frequency_recovery.get("artifact_status") != "present":
+        return False
+    top = entry_frequency_recovery.get("top_lane")
+    if not isinstance(top, dict):
+        return False
+    if not entry_frequency_recovery.get("next_contract_prompt"):
+        return False
+    if top.get("lane_id") and top.get("lane_id") == board_top.get("lane_id"):
+        return True
+    return (
+        str(top.get("pair") or "").upper(),
+        str(top.get("direction") or "").upper(),
+        str(top.get("strategy_family") or "").upper(),
+    ) == (
+        str(board_top.get("pair") or "").upper(),
+        str(board_top.get("direction") or "").upper(),
+        str(board_top.get("strategy_family") or "").upper(),
+    )
+
+
 def _next_prompt(
     selected_active_path: str,
     remaining_blockers: list[dict[str, Any]],
     *,
     active_opportunity_board: dict[str, Any] | None = None,
     non_eurusd_frontier: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
 ) -> str:
     blocker_codes = ", ".join(row["code"] for row in remaining_blockers[:10])
     active_board_shape = _active_board_target_shape(active_opportunity_board)
@@ -1452,6 +1558,16 @@ def _next_prompt(
         if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
         else {}
     )
+    if (
+        selected_active_path == "EVIDENCE_ACQUISITION"
+        and _entry_frequency_recovery_matches_board(entry_frequency_recovery or {}, board_top)
+    ):
+        recovery_prompt = str((entry_frequency_recovery or {}).get("next_contract_prompt") or "").strip()
+        if recovery_prompt:
+            return (
+                f"{recovery_prompt} Keep blockers visible: {blocker_codes}. "
+                "This is read-only evidence/tuning work, not live permission."
+            )
     if _active_board_all_no_trade(active_opportunity_board or {}):
         target_shape = frontier_shape or active_board_shape or TARGET_SHAPE
     elif _frontier_supplements_board_evidence(board_top, non_eurusd_frontier or {}) and frontier_shape:

@@ -1154,6 +1154,153 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("entry-frequency recovery analysis", payload["next_trade_enabling_action"])
         self.assertNotIn("(MARKET, NO_TRADE_WITH_CAUSE)", payload["next_trade_enabling_action"])
 
+    def test_entry_frequency_recovery_artifact_replaces_generic_drought_prompt(self) -> None:
+        now = datetime(2026, 7, 9, 2, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 134,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "pairs_scanned": ["USD_CAD"],
+                        "vehicles_scanned": ["LIMIT", "MARKET", "STOP"],
+                    },
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "MARKET",
+                        "status": "EVIDENCE_ACQUISITION",
+                        "next_action": (
+                            "Run entry-frequency recovery analysis for "
+                            "USD_CAD|LONG|BREAKOUT_FAILURE|MARKET; historical accepted=2, "
+                            "fills=2, closed_pl_jpy=664.0852 (exact_lane) but recent entries are zero. "
+                            "Do not send."
+                        ),
+                        "entry_recovery_candidate": True,
+                        "blockers": [
+                            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                            "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH",
+                        ],
+                    },
+                    "ranked_active_lanes": [],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET "
+                        "needs entry-frequency recovery analysis."
+                    ),
+                },
+            )
+            _write_json(
+                paths["entry_recovery"],
+                {
+                    "schema_version": "entry_frequency_recovery_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                    "read_only": True,
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                    "target_lane_count": 1,
+                    "target_lanes": [lane_id],
+                    "top_lane": {
+                        "lane_id": lane_id,
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "BREAKOUT_FAILURE",
+                        "vehicle": "MARKET",
+                        "status": "ENTRY_FREQUENCY_RECOVERY_ANALYSIS_BUILT",
+                        "forecast_audit": {
+                            "status": "FORECAST_PATTERN_REFRESH_REQUIRED",
+                            "latest_direction": "RANGE",
+                            "blockers": ["RANGE_FORECAST_REQUIRES_RANGE_ROTATION"],
+                        },
+                        "strategy_profile_audit": {
+                            "status": "METHOD_PROFILE_MISSING",
+                            "blockers": ["METHOD_SCOPED_STRATEGY_PROFILE_MISSING"],
+                        },
+                        "tp_proof_audit": {
+                            "status": "TP_PROOF_COLLECTION_REQUIRED",
+                            "tp_proof_count": 1,
+                            "tp_proof_floor": 20,
+                            "remaining_samples": 19,
+                        },
+                    },
+                    "forecast_pattern_tuning_queue": [
+                        {
+                            "priority": 1,
+                            "lane_id": lane_id,
+                            "action_type": "FORECAST_PATTERN_REFRESH",
+                            "description": (
+                                "Retune USD_CAD LONG BREAKOUT_FAILURE MARKET around RANGE "
+                                "forecast or promote a RANGE_ROTATION path; do not force MARKET."
+                            ),
+                            "preserve_blockers": [
+                                "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            ],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/entry_frequency_recovery.json for "
+                        "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET: next safe tuning "
+                        "action is FORECAST_PATTERN_REFRESH plus METHOD_SCOPED_PROFILE_PROMOTION "
+                        "and EXACT_TP_PROOF_COLLECTION; do not send."
+                    ),
+                    "do_not_do": ["do_not_send_live_order"],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        recovery_state = payload["current_state"]["entry_frequency_recovery"]
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(recovery_state["artifact_status"], "present")
+        self.assertEqual(recovery_state["top_lane"]["lane_id"], lane_id)
+        self.assertEqual(recovery_state["tuning_queue"][0]["action_type"], "FORECAST_PATTERN_REFRESH")
+        self.assertIn("Consume data/entry_frequency_recovery.json", payload["next_prompt"])
+        self.assertIn("FORECAST_PATTERN_REFRESH", payload["next_prompt"])
+        self.assertIn("METHOD_SCOPED_PROFILE_PROMOTION", payload["next_prompt"])
+        self.assertIn("EXACT_TP_PROOF_COLLECTION", payload["next_prompt"])
+        self.assertIn("entry_frequency_recovery artifact", payload["next_trade_enabling_action"])
+        self.assertNotIn("Implement EVIDENCE_ACQUISITION", payload["next_prompt"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
         now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
         board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"
@@ -1431,6 +1578,7 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
         "mining": root / "data" / "eurusd_short_breakout_failure_limit_sample_mining.json",
         "active_board": root / "data" / "active_opportunity_board.json",
         "frontier": root / "data" / "non_eurusd_live_grade_frontier.json",
+        "entry_recovery": root / "data" / "entry_frequency_recovery.json",
         "output": root / "data" / "active_trader_contract.json",
         "report": root / "docs" / "active_trader_contract.md",
     }
