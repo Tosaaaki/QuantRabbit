@@ -1297,6 +1297,8 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("METHOD_SCOPED_PROFILE_PROMOTION", payload["next_prompt"])
         self.assertIn("EXACT_TP_PROOF_COLLECTION", payload["next_prompt"])
         self.assertIn("entry_frequency_recovery artifact", payload["next_trade_enabling_action"])
+        self.assertNotIn("Run entry-frequency recovery analysis", payload["next_trade_enabling_action"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|MARKET", payload["root_improvement_target"])
         self.assertNotIn("Implement EVIDENCE_ACQUISITION", payload["next_prompt"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
@@ -1457,6 +1459,8 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("RANGE_RAIL_GEOMETRY_REPAIR", payload["next_prompt"])
         self.assertNotIn("Consume data/entry_frequency_recovery.json", payload["next_prompt"])
         self.assertIn("forecast_pattern_refresh artifact", payload["next_trade_enabling_action"])
+        self.assertNotIn("Consume data/entry_frequency_recovery.json", payload["next_trade_enabling_action"])
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["root_improvement_target"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
@@ -1594,6 +1598,12 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("WAIT_FOR_RANGE_RAIL_RECHECK", payload["next_prompt"])
         self.assertNotIn("Consume data/forecast_pattern_refresh.json", payload["next_prompt"])
         self.assertIn("range_rail_geometry_repair artifact", payload["next_trade_enabling_action"])
+        self.assertNotIn("Consume data/forecast_pattern_refresh.json", payload["next_trade_enabling_action"])
+        self.assertNotIn(
+            "Consume range rail repair before repeating forecast-pattern refresh",
+            payload["next_trade_enabling_action"],
+        )
+        self.assertIn("USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT", payload["root_improvement_target"])
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 

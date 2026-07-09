@@ -295,8 +295,22 @@ class ActiveTraderContract:
             "allowed_active_paths": sorted(ALLOWED_ACTIVE_PATHS),
             "target_shape": TARGET_SHAPE,
             "four_x_progress_hypothesis": _four_x_progress_hypothesis(replay, proof_floor, harvest),
-            "root_improvement_target": _root_improvement_target(replay),
-            "expected_edge_improvement": _expected_edge_improvement(replay, proof_floor, harvest),
+            "root_improvement_target": _root_improvement_target(
+                replay,
+                active_opportunity_board=active_opportunity_board,
+                entry_frequency_recovery=entry_frequency_recovery,
+                forecast_pattern_refresh=forecast_pattern_refresh,
+                range_rail_geometry_repair=range_rail_geometry_repair,
+            ),
+            "expected_edge_improvement": _expected_edge_improvement(
+                replay,
+                proof_floor,
+                harvest,
+                active_opportunity_board=active_opportunity_board,
+                entry_frequency_recovery=entry_frequency_recovery,
+                forecast_pattern_refresh=forecast_pattern_refresh,
+                range_rail_geometry_repair=range_rail_geometry_repair,
+            ),
             "no_action_allowed": bool(no_action["no_action_allowed"]),
             "no_action_contract": no_action,
             "active_deployment_gap": active_deployment_gap,
@@ -1526,7 +1540,33 @@ def _four_x_progress_hypothesis(
     )
 
 
-def _root_improvement_target(replay: dict[str, Any]) -> str:
+def _root_improvement_target(
+    replay: dict[str, Any],
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> str:
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    active_shape = _active_board_target_shape(board)
+    consumed_prompt = _consumed_lane_prompt(
+        board_top,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
+    if active_shape and consumed_prompt:
+        return (
+            f"Advance {active_shape} by consuming the latest lane-local evidence artifact "
+            "instead of repeating older board work or the legacy EUR_USD loop."
+        )
+    if active_shape:
+        return (
+            f"Advance {active_shape} toward live-grade evidence from the current active board, "
+            "while preserving forecast, spread, bid/ask, proof, and expectancy blockers."
+        )
     if replay.get("artifact_status") == "missing":
         return "Build the exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT HARVEST S5 bid/ask replay."
     return (
@@ -1539,7 +1579,36 @@ def _expected_edge_improvement(
     replay: dict[str, Any],
     proof_floor: dict[str, Any],
     harvest: dict[str, Any],
+    *,
+    active_opportunity_board: dict[str, Any] | None = None,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
 ) -> str:
+    board = active_opportunity_board if isinstance(active_opportunity_board, dict) else {}
+    board_top = board.get("top_lane") if isinstance(board.get("top_lane"), dict) else {}
+    active_shape = _active_board_target_shape(board)
+    consumed_prompt = _consumed_lane_prompt(
+        board_top,
+        entry_frequency_recovery=entry_frequency_recovery,
+        forecast_pattern_refresh=forecast_pattern_refresh,
+        range_rail_geometry_repair=range_rail_geometry_repair,
+    )
+    if active_shape and consumed_prompt:
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" current board expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        return (
+            f"Expected improvement is loop progress for {active_shape}:{edge_text} consume the "
+            "latest lane-local action so the next cycle moves to repricing/proof collection "
+            "instead of repeating drought or forecast refresh analysis. Live permission remains false."
+        )
+    if active_shape:
+        expected_edge = board_top.get("expected_edge_jpy")
+        edge_text = f" current board expected_edge_jpy={expected_edge};" if expected_edge is not None else ""
+        return (
+            f"Expected improvement is evidence quality for {active_shape}:{edge_text} choose the "
+            "shortest blocker-preserving unlock path across pairs and vehicles without granting live permission."
+        )
     tp = harvest.get("tp_proof") if isinstance(harvest.get("tp_proof"), dict) else {}
     return (
         "Expected improvement is evidence quality, not live permission: exact LIMIT replay and "
@@ -1547,6 +1616,28 @@ def _expected_edge_improvement(
         f"{proof_floor.get('losses')} material; harvest artifact currently {tp.get('take_profit_trades')}/"
         f"{tp.get('take_profit_losses')}) from market-close leakage."
     )
+
+
+def _consumed_lane_prompt(
+    board_top: dict[str, Any],
+    *,
+    entry_frequency_recovery: dict[str, Any] | None = None,
+    forecast_pattern_refresh: dict[str, Any] | None = None,
+    range_rail_geometry_repair: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    if _range_rail_geometry_repair_matches_board(range_rail_geometry_repair or {}, board_top):
+        prompt = str((range_rail_geometry_repair or {}).get("next_contract_prompt") or "").strip()
+        if prompt:
+            return ("range_rail_geometry_repair", prompt)
+    if _forecast_pattern_refresh_matches_board(forecast_pattern_refresh or {}, board_top):
+        prompt = str((forecast_pattern_refresh or {}).get("next_contract_prompt") or "").strip()
+        if prompt:
+            return ("forecast_pattern_refresh", prompt)
+    if _entry_frequency_recovery_matches_board(entry_frequency_recovery or {}, board_top):
+        prompt = str((entry_frequency_recovery or {}).get("next_contract_prompt") or "").strip()
+        if prompt:
+            return ("entry_frequency_recovery", prompt)
+    return None
 
 
 def _next_trade_enabling_action(
@@ -1594,35 +1685,26 @@ def _next_trade_enabling_action(
                     f"{frontier_lane.get('next_action') or non_eurusd_frontier.get('next_active_path') or 'Acquire the same-shape frontier evidence packet.'} "
                     "Keep both blocker sets visible; do not send."
                 )
-            pattern_suffix = ""
-            recovery_suffix = ""
-            rail_suffix = ""
-            if _range_rail_geometry_repair_matches_board(range_rail_geometry_repair, board_top):
-                rail_prompt = range_rail_geometry_repair.get("next_contract_prompt")
-                rail_suffix = (
-                    " Consume range_rail_geometry_repair artifact before repeating range rail analysis: "
-                    f"{rail_prompt}"
-                )
-            elif _forecast_pattern_refresh_matches_board(forecast_pattern_refresh, board_top):
-                pattern_prompt = forecast_pattern_refresh.get("next_contract_prompt")
-                pattern_suffix = (
-                    " Consume forecast_pattern_refresh artifact before repeating forecast-pattern refresh: "
-                    f"{pattern_prompt}"
-                )
-            elif _entry_frequency_recovery_matches_board(entry_frequency_recovery, board_top):
-                recovery_prompt = entry_frequency_recovery.get("next_contract_prompt")
-                recovery_suffix = (
-                    " Consume entry_frequency_recovery artifact before repeating generic drought analysis: "
-                    f"{recovery_prompt}"
+            consumed_prompt = _consumed_lane_prompt(
+                board_top,
+                entry_frequency_recovery=entry_frequency_recovery,
+                forecast_pattern_refresh=forecast_pattern_refresh,
+                range_rail_geometry_repair=range_rail_geometry_repair,
+            )
+            if consumed_prompt:
+                artifact_name, artifact_prompt = consumed_prompt
+                return (
+                    "Use the latest active_opportunity_board rerank: "
+                    f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
+                    f"Consume {artifact_name} artifact as the current next action: {artifact_prompt}"
+                    f"{frontier_suffix}"
+                    f"{suffix}"
                 )
             return (
                 "Use the latest active_opportunity_board rerank: "
                 f"top lane {board_top.get('lane_id')} ({board_top.get('vehicle')}, {board_top.get('status')}). "
                 f"{board_top.get('next_action') or 'Acquire the next board-ranked evidence packet.'}"
                 f"{frontier_suffix}"
-                f"{rail_suffix}"
-                f"{pattern_suffix}"
-                f"{recovery_suffix}"
                 f"{suffix}"
             )
         if replay.get("artifact_status") == "missing":

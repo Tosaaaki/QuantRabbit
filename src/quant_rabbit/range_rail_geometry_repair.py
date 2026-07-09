@@ -490,15 +490,24 @@ def _intent_summary(
         "blocker_codes": blockers,
         "order_type": intent.get("order_type") or source.get("order_type"),
         "units": _number_or_none(intent.get("units") if intent else source.get("units")),
-        "entry_price": _number_or_none(intent.get("entry_price") if intent else source.get("entry_price")),
-        "take_profit_price": _number_or_none(
-            intent.get("take_profit_price") if intent else source.get("take_profit_price")
-        ),
-        "stop_loss_price": _number_or_none(
-            intent.get("stop_loss_price") if intent else source.get("stop_loss_price")
-        ),
+        "entry_price": _price_value(source, intent, "entry_price", "entry", "price"),
+        "take_profit_price": _price_value(source, intent, "take_profit_price", "take_profit", "tp_price", "tp"),
+        "stop_loss_price": _price_value(source, intent, "stop_loss_price", "stop_loss", "sl_price", "sl"),
         "issue_messages": _issue_messages(source.get("risk_issues"))[:8],
     }
+
+
+def _price_value(source: dict[str, Any], intent: dict[str, Any], *keys: str) -> float | None:
+    for container in (intent, source):
+        if not isinstance(container, dict):
+            continue
+        for key in keys:
+            if key not in container:
+                continue
+            value = _number_or_none(container.get(key))
+            if value is not None:
+                return value
+    return None
 
 
 def _order_intents_by_lane(artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:

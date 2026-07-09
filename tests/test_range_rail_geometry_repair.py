@@ -86,6 +86,45 @@ class RangeRailGeometryRepairTest(unittest.TestCase):
         self.assertEqual(payload["next_actions"][0]["action_type"], "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED")
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_live_intent_entry_tp_sl_aliases_feed_counterpart_geometry(self) -> None:
+        now = datetime(2026, 7, 9, 12, 55, tzinfo=timezone.utc)
+        lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(paths["forecast"], _forecast_payload(now, lane_id, current=1.4155))
+            _write_json(paths["active_board"], {"top_lane": {"lane_id": lane_id, "pair": "USD_CAD", "direction": "LONG", "strategy_family": "BREAKOUT_FAILURE"}})
+            _write_json(
+                paths["order_intents"],
+                {
+                    "results": [
+                        _range_intent(
+                            entry=1.41555,
+                            tp=1.4168,
+                            sl=1.4149,
+                            intent_price_aliases=True,
+                        )
+                    ]
+                },
+            )
+
+            RangeRailGeometryRepair(
+                forecast_pattern_refresh_path=paths["forecast"],
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        geometry = payload["top_lane"]["counterpart_geometry"]
+        self.assertEqual(payload["status"], "RANGE_RAIL_GEOMETRY_READY_PROOF_BLOCKED")
+        self.assertEqual(geometry["entry_price"], 1.41555)
+        self.assertEqual(geometry["take_profit_price"], 1.4168)
+        self.assertEqual(geometry["stop_loss_price"], 1.4149)
+        self.assertEqual(geometry["status"], "COUNTERPART_GEOMETRY_READY")
+        self.assertEqual(payload["next_actions"][0]["action_type"], "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED")
+
 
 def _forecast_payload(now: datetime, lane_id: str, *, current: float) -> dict[str, Any]:
     return {
@@ -143,13 +182,33 @@ def _forecast_payload(now: datetime, lane_id: str, *, current: float) -> dict[st
     }
 
 
-def _range_intent(*, entry: float | None, tp: float | None, sl: float | None) -> dict[str, Any]:
+def _range_intent(
+    *,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+    intent_price_aliases: bool = False,
+) -> dict[str, Any]:
     blockers = [
         "SPREAD_TOO_WIDE",
         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
         "RANGE_ROTATION_BROADER_LOCATION_CHASE",
         "EXHAUSTION_RANGE_CHASE",
     ]
+    intent = {
+        "order_type": "LIMIT",
+        "units": 1000,
+    }
+    if intent_price_aliases:
+        intent.update({"entry": entry, "tp": tp, "sl": sl})
+    else:
+        intent.update(
+            {
+                "entry_price": entry,
+                "take_profit_price": tp,
+                "stop_loss_price": sl,
+            }
+        )
     return {
         "lane_id": "range_trader:USD_CAD:LONG:RANGE_ROTATION",
         "status": "DRY_RUN_BLOCKED",
@@ -157,13 +216,7 @@ def _range_intent(*, entry: float | None, tp: float | None, sl: float | None) ->
         "live_blocker_codes": blockers,
         "risk_issues": [{"severity": "BLOCK", "code": code, "message": code} for code in blockers],
         "strategy_issues": [],
-        "intent": {
-            "order_type": "LIMIT",
-            "units": 1000,
-            "entry_price": entry,
-            "take_profit_price": tp,
-            "stop_loss_price": sl,
-        },
+        "intent": intent,
     }
 
 
