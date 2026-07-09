@@ -185,6 +185,92 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["blockers"])
         self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["stale_source_blockers"])
 
+    def test_durable_consumption_suppresses_stale_guardian_blocker_even_when_legacy_review_top_level_false(
+        self,
+    ) -> None:
+        now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            order_intents = json.loads(paths["order_intents"].read_text())
+            order_intents["generated_at_utc"] = (now - timedelta(minutes=15)).isoformat()
+            for row in order_intents["results"]:
+                row["live_blocker_codes"].append("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+            _write_json(paths["order_intents"], order_intents)
+            _write_json(
+                paths["guardian_consumption"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+                    "normal_routing_allowed": True,
+                    "current_p0_p1_blocks_routing": False,
+                    "unresolved_issue_count": 0,
+                    "classifications": [
+                        {
+                            "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                            "receipt_event_id": "832d2908eeb84b2f",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "classification": "HISTORICAL_ONLY",
+                            "operator_review_required": True,
+                            "operator_review_status": "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+                            "normal_routing_allowed": True,
+                        }
+                    ],
+                    "live_side_effects": [],
+                    "read_only": True,
+                },
+            )
+            _write_json(
+                paths["guardian_operator_review"],
+                {
+                    "generated_at_utc": (now - timedelta(days=6)).isoformat(),
+                    "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+                    "normal_routing_allowed": False,
+                    "unresolved_review_count": 0,
+                    "classifications": [
+                        {
+                            "receipt_event_id": "832d2908eeb84b2f",
+                            "operator_decision": "OPERATOR_ACKNOWLEDGED_HISTORICAL",
+                            "normal_routing_allowed": True,
+                            "no_live_side_effects": True,
+                        }
+                    ],
+                    "live_side_effects": [],
+                    "read_only": True,
+                    "no_live_side_effects": True,
+                },
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[paths["limit_replay"]],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertTrue(payload["global_safety"]["guardian_receipt_normal_routing_allowed"])
+        self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(payload["top_lane"]["operator_review_status"], "NOT_REQUIRED")
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["blockers"])
+        self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_lane"]["stale_source_blockers"])
+
     def test_cleared_guardian_receipt_suppresses_stale_planner_guardian_blocker(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

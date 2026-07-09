@@ -13,6 +13,8 @@ from quant_rabbit.paths import (
     DEFAULT_AS_PROOF_PACK_QUEUE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_FORECAST_HISTORY,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER_REPORT,
     DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER,
@@ -75,6 +77,11 @@ GUARDIAN_REVIEW_BLOCKERS = (
     "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
     "OPERATOR_REVIEW_REQUIRED",
 )
+GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKER = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES = {
+    "OPERATOR_REVIEW_CLEARS_RECEIPT",
+    "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+}
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,8 @@ class NonEurusdLiveGradeFrontier:
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
+        guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         replay_artifact_paths: list[Path] | None = None,
         output_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
         report_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER_REPORT,
@@ -121,6 +130,8 @@ class NonEurusdLiveGradeFrontier:
             "as_proof_pack_queue": proof_pack_queue_path,
             "portfolio_4x_path_planner": portfolio_4x_path_planner_path,
             "verification_ledger": verification_ledger_path,
+            "guardian_receipt_consumption": guardian_receipt_consumption_path,
+            "guardian_receipt_operator_review": guardian_receipt_operator_review_path,
         }
         self.execution_ledger_db_path = execution_ledger_db_path
         self.forecast_history_path = forecast_history_path
@@ -173,10 +184,17 @@ class NonEurusdLiveGradeFrontier:
             order_intents=artifacts["order_intents"],
             proof_mapper=artifacts["non_eurusd_proof_lane_mapper"],
         )
+        stale_blocker_codes = _stale_source_blocker_codes(
+            guardian_receipt_consumption=artifacts["guardian_receipt_consumption"],
+            order_intents=artifacts["order_intents"],
+        )
         frontier_universe = [row for row in lanes.values() if row.get("order_intent_status")]
         if not frontier_universe:
             frontier_universe = list(lanes.values())
-        ranked = sorted((_frontier_lane(row) for row in frontier_universe), key=_frontier_sort_key)
+        ranked = sorted(
+            (_frontier_lane(row, stale_blocker_codes=stale_blocker_codes) for row in frontier_universe),
+            key=_frontier_sort_key,
+        )
         top_lanes = ranked[:TOP_N]
         top_lane = top_lanes[0] if top_lanes else {}
         non_eur_ranked = [lane for lane in ranked if lane.get("pair") != "EUR_USD"]
@@ -248,6 +266,53 @@ def _load_json_artifact(path: Path) -> dict[str, Any]:
     return result
 
 
+def _stale_source_blocker_codes(
+    *,
+    guardian_receipt_consumption: dict[str, Any],
+    order_intents: dict[str, Any],
+) -> list[str]:
+    stale_codes: list[str] = []
+    if (
+        _guardian_receipt_consumption_durably_clears_operator_review(guardian_receipt_consumption)
+        and _order_intents_older_than_consumption(order_intents, guardian_receipt_consumption)
+    ):
+        stale_codes.append(GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKER)
+    return stale_codes
+
+
+def _guardian_receipt_consumption_durably_clears_operator_review(
+    guardian_receipt_consumption: dict[str, Any],
+) -> bool:
+    if guardian_receipt_consumption.get("_artifact_status") != "present":
+        return False
+    if guardian_receipt_consumption.get("normal_routing_allowed") is not True:
+        return False
+    rows = guardian_receipt_consumption.get("classifications")
+    if not isinstance(rows, list) or not rows:
+        return False
+    classification_rows = [row for row in rows if isinstance(row, dict)]
+    if len(classification_rows) != len(rows):
+        return False
+    if any(row.get("normal_routing_allowed") is not True for row in classification_rows):
+        return False
+    return any(
+        row.get("operator_review_required") is True
+        and str(row.get("operator_review_status") or "") in OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES
+        for row in classification_rows
+    )
+
+
+def _order_intents_older_than_consumption(
+    order_intents: dict[str, Any],
+    guardian_receipt_consumption: dict[str, Any],
+) -> bool:
+    intent_generated = _parse_utc(order_intents.get("generated_at_utc"))
+    consumption_generated = _parse_utc(guardian_receipt_consumption.get("generated_at_utc"))
+    if intent_generated is None or consumption_generated is None:
+        return False
+    return intent_generated < consumption_generated
+
+
 def _collect_lanes(
     *,
     active_board: dict[str, Any],
@@ -301,6 +366,7 @@ def _ensure_lane(lanes: dict[str, dict[str, Any]], lane_id: str) -> dict[str, An
             "local_tp_proof": {},
             "proof_floor": {},
             "proof_mapper_assessment": "",
+            "stale_source_blockers": [],
         }
     return lanes[lane_id]
 
@@ -360,7 +426,7 @@ def _merge_board_lane(lane: dict[str, Any], row: dict[str, Any], index: int) -> 
     if isinstance(row.get("local_tp_proof"), dict):
         lane["local_tp_proof"] = {**(lane.get("local_tp_proof") or {}), **row["local_tp_proof"]}
     lane["blockers"].extend(_string_list(row.get("blockers")))
-    lane["blockers"].extend(_string_list(row.get("stale_source_blockers")))
+    lane["stale_source_blockers"].extend(_string_list(row.get("stale_source_blockers")))
     lane["source_refs"].extend(_string_list(row.get("source_refs")))
     lane["source_refs"].append("data/active_opportunity_board.json")
 
@@ -380,8 +446,13 @@ def _merge_mapper_lane(lane: dict[str, Any], row: dict[str, Any]) -> None:
     lane["source_refs"].append("data/non_eurusd_proof_lane_mapper.json")
 
 
-def _frontier_lane(lane: dict[str, Any]) -> dict[str, Any]:
-    blockers = _unique(_string_list(lane.get("blockers")))
+def _frontier_lane(lane: dict[str, Any], *, stale_blocker_codes: list[str]) -> dict[str, Any]:
+    stale_source_blockers = _unique(_string_list(lane.get("stale_source_blockers")) + stale_blocker_codes)
+    blockers = [
+        code
+        for code in _unique(_string_list(lane.get("blockers")))
+        if code not in stale_source_blockers
+    ]
     tp_count, tp_floor = _tp_proof_counts(lane)
     proof_remaining = max((tp_floor or 0) - (tp_count or 0), 0) if tp_floor is not None and tp_count is not None else None
     bidask_status = _bidask_status(lane, blockers)
@@ -400,6 +471,7 @@ def _frontier_lane(lane: dict[str, Any]) -> dict[str, Any]:
     row = {
         **lane,
         "blockers": blockers,
+        "stale_source_blockers": stale_source_blockers,
         "tp_proof_count": tp_count,
         "tp_proof_floor": tp_floor,
         "tp_proof_remaining": proof_remaining,
@@ -1014,6 +1086,18 @@ def _issue_codes(value: Any) -> list[str]:
 
 def _has_marker(values: list[Any], markers: tuple[str, ...]) -> bool:
     return any(any(marker in str(value) for marker in markers) for value in values)
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _list(value: Any) -> list[Any]:

@@ -3385,6 +3385,87 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(payload["metrics"]["guardian_receipt_consumption_classifications"], ["EXPIRED_ACKNOWLEDGED"])
         self.assertIn("EXPIRED_ACKNOWLEDGED", report)
 
+    def test_durable_consumption_overrides_legacy_operator_review_top_level_false(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            files["guardian_receipt_operator_review"] = root / "data" / "guardian_receipt_operator_review.json"
+            _write_json(
+                files["guardian_receipt_consumption"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+                    "normal_routing_allowed": True,
+                    "unresolved_issue_count": 0,
+                    "classifications": [
+                        {
+                            "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                            "receipt_event_id": "receipt-expired",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "classification": "HISTORICAL_ONLY",
+                            "operator_review_required": True,
+                            "operator_review_status": "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+                            "normal_routing_allowed": True,
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                files["guardian_receipt_operator_review"],
+                {
+                    "generated_at_utc": (now - timedelta(days=6)).isoformat(),
+                    "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+                    "normal_routing_allowed": False,
+                    "unresolved_review_count": 0,
+                    "classifications": [
+                        {
+                            "receipt_event_id": "receipt-expired",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "operator_decision": "OPERATOR_ACKNOWLEDGED_HISTORICAL",
+                            "normal_routing_allowed": True,
+                            "no_live_side_effects": True,
+                        }
+                    ],
+                    "read_only": True,
+                    "no_live_side_effects": True,
+                    "live_side_effects": [],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+                    guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+
+        self.assertEqual(summary.status, STATUS_READY)
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertNotIn("REVIEW_GUARDIAN_RECEIPT_OPERATOR_REVIEW", action_codes)
+        self.assertTrue(payload["metrics"]["guardian_receipt_consumption_normal_routing_allowed"])
+        self.assertFalse(payload["metrics"]["guardian_receipt_operator_review_normal_routing_allowed"])
+
     def test_custom_output_outside_data_keeps_default_guardian_receipt_paths(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

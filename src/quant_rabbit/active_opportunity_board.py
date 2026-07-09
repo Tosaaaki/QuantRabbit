@@ -96,6 +96,10 @@ OPERATOR_REVIEW_MARKERS = (
 )
 GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS = ("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",)
 GUARDIAN_MARKERS = ("GUARDIAN",)
+OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES = {
+    "OPERATOR_REVIEW_CLEARS_RECEIPT",
+    "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+}
 CURRENT_INTENT_OWNED_BLOCKERS = (
     "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
 )
@@ -1106,9 +1110,29 @@ def _finalize_lane(
 
 
 def _guardian_routing_clear(consumption: dict[str, Any], operator_review: dict[str, Any]) -> bool:
-    if consumption.get("_artifact_status") != "present" or operator_review.get("_artifact_status") != "present":
+    if consumption.get("_artifact_status") != "present":
         return False
-    return consumption.get("normal_routing_allowed") is True and operator_review.get("normal_routing_allowed") is True
+    if consumption.get("normal_routing_allowed") is not True:
+        return False
+    if operator_review.get("_artifact_status") == "present" and operator_review.get("normal_routing_allowed") is True:
+        return True
+    return _consumption_has_durable_operator_review_clearance(consumption)
+
+
+def _consumption_has_durable_operator_review_clearance(consumption: dict[str, Any]) -> bool:
+    rows = consumption.get("classifications") if isinstance(consumption.get("classifications"), list) else []
+    if not rows:
+        return False
+    normal_rows = [row for row in rows if isinstance(row, dict)]
+    if len(normal_rows) != len(rows):
+        return False
+    if any(row.get("normal_routing_allowed") is not True for row in normal_rows):
+        return False
+    return any(
+        row.get("operator_review_required") is True
+        and str(row.get("operator_review_status") or "") in OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES
+        for row in normal_rows
+    )
 
 
 def _guardian_intent_blockers_stale(consumption: dict[str, Any], order_intents: dict[str, Any]) -> bool:

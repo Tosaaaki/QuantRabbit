@@ -61,10 +61,15 @@ STATUS_READY = "SUPPORT_READY"
 STATUS_BLOCKED = "SUPPORT_BLOCKED"
 GUARDIAN_LABEL = "com.quantrabbit.position-guardian"
 GUARDIAN_BLOCKER = "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"
+GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKER = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
 PROFIT_CAPTURE_MISS = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
 PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
 REPAIR_BASKET_SELF_IMPROVEMENT_EXEMPT_P0_CODES = frozenset({PERSISTENT_DISCIPLINE})
 TP_HARVEST_REPAIR_MODE = "TP_HARVEST_REPAIR"
+OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES = {
+    "OPERATOR_REVIEW_CLEARS_RECEIPT",
+    "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+}
 RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
@@ -389,6 +394,8 @@ class TraderSupportBot:
             oanda_rotation=oanda_rotation,
             guardian=guardian,
             current_p0_findings=p0_findings,
+            guardian_receipt_consumption=guardian_receipt_consumption,
+            guardian_receipt_operator_review=guardian_receipt_operator_review,
             active_trader_contract=active_trader_contract,
             active_opportunity_board=active_opportunity_board,
             non_eurusd_live_grade_frontier=non_eurusd_live_grade_frontier,
@@ -462,7 +469,10 @@ class TraderSupportBot:
             and bool(entry["live_ready_lanes"])
             and (not guardian["required"] or bool(guardian["active"]))
             and guardian_receipt_consumption.get("normal_routing_allowed") is not False
-            and guardian_receipt_operator_review.get("normal_routing_allowed") is not False
+            and not _guardian_receipt_operator_review_blocks_normal_routing(
+                guardian_receipt_consumption,
+                guardian_receipt_operator_review,
+            )
         )
         repair_basket_self_improvement_blockers = _repair_basket_self_improvement_blockers(
             p0_findings,
@@ -472,7 +482,10 @@ class TraderSupportBot:
             bool(entry["repair_live_ready"])
             and (not guardian["required"] or bool(guardian["active"]))
             and not repair_basket_self_improvement_blockers
-            and guardian_receipt_operator_review.get("normal_routing_allowed") is not False
+            and not _guardian_receipt_operator_review_blocks_normal_routing(
+                guardian_receipt_consumption,
+                guardian_receipt_operator_review,
+            )
         )
         _annotate_operational_target_firepower(
             acceptance["target_firepower"],
@@ -1891,6 +1904,8 @@ def _entry_readiness_summary(
     oanda_rotation: dict[str, Any] | None = None,
     guardian: dict[str, Any] | None = None,
     current_p0_findings: list[dict[str, Any]] | None = None,
+    guardian_receipt_consumption: dict[str, Any] | None = None,
+    guardian_receipt_operator_review: dict[str, Any] | None = None,
     active_trader_contract: dict[str, Any] | None = None,
     active_opportunity_board: dict[str, Any] | None = None,
     non_eurusd_live_grade_frontier: dict[str, Any] | None = None,
@@ -1904,6 +1919,8 @@ def _entry_readiness_summary(
         results,
         guardian=guardian or {},
         current_p0_findings=current_p0_findings or [],
+        guardian_receipt_consumption=guardian_receipt_consumption or {},
+        guardian_receipt_operator_review=guardian_receipt_operator_review or {},
     )
     repair_frontier: list[dict[str, Any]] = []
     repair_live_ready: list[dict[str, Any]] = []
@@ -2011,8 +2028,11 @@ def _entry_readiness_summary(
                 global_unlock_frontier.append(unlock_item)
         if metadata.get("self_improvement_p0_repair_live_ready") is True:
             exempt = set(REPAIR_EXEMPTION_CODES)
+            stale_support = set(stale_support_blocker_codes)
             remaining_after_support = [
-                code for code in blocker_codes if code != GUARDIAN_BLOCKER and code not in exempt
+                code
+                for code in blocker_codes
+                if code != GUARDIAN_BLOCKER and code not in stale_support and code not in exempt
             ]
             intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
             context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
@@ -2492,6 +2512,8 @@ def _stale_support_blocker_codes(
     *,
     guardian: dict[str, Any],
     current_p0_findings: list[dict[str, Any]],
+    guardian_receipt_consumption: dict[str, Any],
+    guardian_receipt_operator_review: dict[str, Any],
 ) -> list[str]:
     """Support-only stale classifier for blockers embedded in older intents.
 
@@ -2519,6 +2541,14 @@ def _stale_support_blocker_codes(
         and GUARDIAN_BLOCKER not in current_p0_codes
     ):
         stale_codes.append(GUARDIAN_BLOCKER)
+    if (
+        blocker_counts.get(GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKER, 0) > 0
+        and not _guardian_receipt_operator_review_blocks_normal_routing(
+            guardian_receipt_consumption,
+            guardian_receipt_operator_review,
+        )
+    ):
+        stale_codes.append(GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKER)
     return stale_codes
 
 
@@ -3841,9 +3871,9 @@ def _build_blockers(
                 ),
             }
         )
-    if (
-        guardian_receipt_operator_review.get("normal_routing_allowed") is False
-        and not guardian_receipt_operator_review.get("missing")
+    if _guardian_receipt_operator_review_blocks_normal_routing(
+        guardian_receipt_consumption,
+        guardian_receipt_operator_review,
     ):
         decisions = [
             str(item.get("operator_decision") or "")
@@ -3949,6 +3979,39 @@ def _build_blockers(
             }
         )
     return blockers
+
+
+def _guardian_receipt_operator_review_blocks_normal_routing(
+    guardian_receipt_consumption: dict[str, Any],
+    guardian_receipt_operator_review: dict[str, Any],
+) -> bool:
+    if guardian_receipt_operator_review.get("missing"):
+        return False
+    if guardian_receipt_operator_review.get("normal_routing_allowed") is not False:
+        return False
+    return not _guardian_receipt_consumption_durably_clears_operator_review(
+        guardian_receipt_consumption,
+    )
+
+
+def _guardian_receipt_consumption_durably_clears_operator_review(
+    guardian_receipt_consumption: dict[str, Any],
+) -> bool:
+    if guardian_receipt_consumption.get("normal_routing_allowed") is not True:
+        return False
+    rows = guardian_receipt_consumption.get("classifications")
+    if not isinstance(rows, list) or not rows:
+        return False
+    classification_rows = [row for row in rows if isinstance(row, dict)]
+    if len(classification_rows) != len(rows):
+        return False
+    if any(row.get("normal_routing_allowed") is not True for row in classification_rows):
+        return False
+    return any(
+        row.get("operator_review_required") is True
+        and str(row.get("operator_review_status") or "") in OPERATOR_REVIEW_CONSUMPTION_CLEAR_STATUSES
+        for row in classification_rows
+    )
 
 
 def _profit_capture_support_blocker_severity(profit_capture: dict[str, Any]) -> str | None:
@@ -4309,7 +4372,10 @@ def _operator_actions(
                     ),
                 }
             )
-    if guardian_receipt_operator_review.get("normal_routing_allowed") is False:
+    if _guardian_receipt_operator_review_blocks_normal_routing(
+        guardian_receipt_consumption,
+        guardian_receipt_operator_review,
+    ):
         actions.append(
             {
                 "code": "REVIEW_GUARDIAN_RECEIPT_OPERATOR_REVIEW",

@@ -4,7 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -287,6 +287,129 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertIn("BIDASK_REPLAY_REFRESH", payload["next_active_path"])
         self.assertIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
 
+    def test_frontier_does_not_reactivate_active_board_stale_guardian_blocker(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [_intent(lane_id, "GBP_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", [])]},
+            )
+            board_lane = _board_lane(lane_id, "GBP_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", [])
+            board_lane["stale_source_blockers"] = ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"]
+            _write_json(paths["active_board"], {"ranked_active_lanes": [board_lane]})
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], lane_id)
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", payload["top_non_eurusd_lane"]["blockers"])
+
+    def test_durable_guardian_consumption_suppresses_stale_order_intent_guardian_blocker(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": (now.replace(minute=0) - timedelta(minutes=15)).isoformat(),
+                    "results": [
+                        _intent(
+                            lane_id,
+                            "GBP_USD",
+                            "LONG",
+                            "BREAKOUT_FAILURE",
+                            "LIMIT",
+                            ["GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                        )
+                    ],
+                },
+            )
+            board_lane = _board_lane(
+                lane_id,
+                "GBP_USD",
+                "LONG",
+                "BREAKOUT_FAILURE",
+                "LIMIT",
+                ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+            )
+            _write_json(paths["active_board"], {"ranked_active_lanes": [board_lane]})
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+            _write_json(
+                paths["guardian_consumption"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+                    "normal_routing_allowed": True,
+                    "unresolved_issue_count": 0,
+                    "classifications": [
+                        {
+                            "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                            "receipt_event_id": "receipt-expired",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "classification": "HISTORICAL_ONLY",
+                            "operator_review_required": True,
+                            "operator_review_status": "OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT",
+                            "normal_routing_allowed": True,
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                paths["guardian_operator_review"],
+                {
+                    "generated_at_utc": (now.replace(day=8)).isoformat(),
+                    "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+                    "normal_routing_allowed": False,
+                    "classifications": [],
+                },
+            )
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        blockers = payload["top_non_eurusd_lane"]["blockers"]
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", blockers)
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", blockers)
+
     def test_all_top_frontier_negative_reports_negative_status(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "failure_trader:CAD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"
@@ -367,6 +490,8 @@ def _paths(root: Path) -> dict[str, Path]:
         "proof_queue": root / "data" / "as_proof_pack_queue.json",
         "portfolio": root / "data" / "portfolio_4x_path_planner.json",
         "verification": root / "data" / "verification_ledger.json",
+        "guardian_consumption": root / "data" / "guardian_receipt_consumption.json",
+        "guardian_operator_review": root / "data" / "guardian_receipt_operator_review.json",
         "execution_db": root / "data" / "execution_ledger.db",
         "forecast_history": root / "data" / "forecast_history.jsonl",
         "projection_ledger": root / "data" / "projection_ledger.jsonl",
