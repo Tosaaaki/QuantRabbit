@@ -13,11 +13,27 @@ from quant_rabbit.non_eurusd_live_grade_frontier import (
     STATUS_ALL_NEGATIVE,
     STATUS_DATA_INCOMPLETE,
     STATUS_NON_EURUSD_FOUND,
+    _active_board_evidence_tp_sort_bucket,
+    _artifact_is_current,
+    _frontier_sort_key,
+    _next_action,
+    _next_active_path,
+    _proof_mapper_is_current,
+    _select_top_non_eurusd_lane,
 )
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.name in {"active_opportunity_board.json", "non_eurusd_proof_lane_mapper.json"} and not payload.get(
+        "generated_at_utc"
+    ):
+        order_intents_path = path.with_name("order_intents.json")
+        if order_intents_path.exists():
+            order_intents = json.loads(order_intents_path.read_text())
+            generated_at_utc = order_intents.get("generated_at_utc") if isinstance(order_intents, dict) else None
+            if generated_at_utc:
+                payload = {**payload, "generated_at_utc": generated_at_utc}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -276,6 +292,549 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertEqual(top["tp_proof_floor"], 20)
         self.assertIn("BROAD_TP_PROOF_NOT_EXACT_VEHICLE", top["blockers"])
 
+    def test_frontier_keeps_zero_proof_no_trade_below_positive_exact_tp_evidence(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        zero_proof_id = "range_trader:CAD_JPY:SHORT:RANGE_ROTATION:LIMIT"
+        zero_repair_id = "range_trader:AUD_CAD:SHORT:RANGE_ROTATION:LIMIT"
+        positive_proof_id = "range_trader:EUR_JPY:LONG:RANGE_ROTATION:LIMIT"
+        zero_blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "LOCAL_TP_PROOF_ZERO_TRADES",
+        ]
+        positive_blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+            "RANGE_COUNTERTREND_RR_TOO_LOW",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+        ]
+        zero_repair_blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "LOCAL_TP_PROOF_ZERO_TRADES",
+            "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED",
+        ]
+        zero_next_action = (
+            "No trade for CAD_JPY|SHORT|RANGE_ROTATION|LIMIT; exact local TAKE_PROFIT_ORDER proof is 0/20. "
+            "Wait for new local TP receipts or an explicitly approved proof-collection scout, then rerank."
+        )
+        positive_next_action = (
+            "Collect exact local TAKE_PROFIT_ORDER proof for "
+            "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER; preserve every current blocker and do not send."
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            zero_intent = _intent(
+                zero_proof_id,
+                "CAD_JPY",
+                "SHORT",
+                "RANGE_ROTATION",
+                "LIMIT",
+                zero_blockers,
+            )
+            zero_intent["risk_metrics"]["expected_edge_jpy"] = 0.0
+            positive_intent = _intent(
+                positive_proof_id,
+                "EUR_JPY",
+                "LONG",
+                "RANGE_ROTATION",
+                "LIMIT",
+                positive_blockers,
+            )
+            positive_intent["risk_metrics"]["expected_edge_jpy"] = 655.2
+            positive_intent["intent"]["metadata"].update(
+                {
+                    "capture_take_profit_trades": 1,
+                    "capture_take_profit_wins": 1,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 655.2,
+                    "capture_take_profit_proof_floor": 20,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                    "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                }
+            )
+            zero_repair_intent = _intent(
+                zero_repair_id,
+                "AUD_CAD",
+                "SHORT",
+                "RANGE_ROTATION",
+                "LIMIT",
+                zero_repair_blockers,
+            )
+            zero_repair_intent["risk_metrics"]["expected_edge_jpy"] = 0.0
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [zero_intent, zero_repair_intent, positive_intent],
+                },
+            )
+
+            zero_board = _board_lane(
+                zero_proof_id,
+                "CAD_JPY",
+                "SHORT",
+                "RANGE_ROTATION",
+                "LIMIT",
+                zero_blockers,
+            )
+            zero_board["expected_edge_jpy"] = 0.0
+            zero_board["next_action"] = zero_next_action
+            positive_board = _board_lane(
+                positive_proof_id,
+                "EUR_JPY",
+                "LONG",
+                "RANGE_ROTATION",
+                "LIMIT",
+                positive_blockers,
+            )
+            positive_board["status"] = "EVIDENCE_ACQUISITION"
+            positive_board["expected_edge_jpy"] = 655.2
+            positive_board["next_action"] = positive_next_action
+            positive_board["local_tp_proof"].update(
+                {
+                    "capture_take_profit_trades": 1,
+                    "capture_take_profit_wins": 1,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 655.2,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                    "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                }
+            )
+            zero_repair_board = _board_lane(
+                zero_repair_id,
+                "AUD_CAD",
+                "SHORT",
+                "RANGE_ROTATION",
+                "LIMIT",
+                zero_repair_blockers,
+            )
+            zero_repair_board["status"] = "EVIDENCE_ACQUISITION"
+            zero_repair_board["expected_edge_jpy"] = 0.0
+            _write_json(
+                paths["active_board"],
+                {"ranked_active_lanes": [positive_board, zero_repair_board, zero_board]},
+            )
+            _write_json(
+                paths["mapper"],
+                {
+                    "mapped_lanes": [
+                        {
+                            "lane_id": positive_proof_id,
+                            "pair": "EUR_JPY",
+                            "side": "LONG",
+                            "strategy_family": "RANGE_ROTATION",
+                            "vehicle": "LIMIT",
+                            "promotion_assessment": "EVIDENCE_ACQUISITION_CANDIDATE",
+                            "proof_floor": {
+                                "current_tp_trades": 1,
+                                "required_tp_trades": 20,
+                                "remaining_tp_trades": 19,
+                                "met": False,
+                            },
+                        }
+                    ]
+                },
+            )
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], positive_proof_id)
+        self.assertEqual(payload["next_evidence_lane"]["lane_id"], positive_proof_id)
+        self.assertEqual(payload["top_non_eurusd_lane"]["next_action"], positive_next_action)
+        self.assertIn("TP_PROOF_COLLECTION", payload["next_active_path"])
+        ranked_by_id = {lane["lane_id"]: lane for lane in payload["ranked_frontier_lanes"]}
+        self.assertEqual(ranked_by_id[positive_proof_id]["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(ranked_by_id[zero_repair_id]["status"], "EVIDENCE_ACQUISITION")
+        self.assertEqual(ranked_by_id[zero_repair_id]["tp_proof_count"], 0)
+        self.assertEqual(ranked_by_id[zero_proof_id]["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(ranked_by_id[zero_proof_id]["next_action"], zero_next_action)
+        for blocker in positive_blockers:
+            self.assertIn(blocker, payload["top_non_eurusd_lane"]["blockers"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
+    def test_frontier_keeps_zero_distance_live_ready_ahead_of_positive_evidence(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        live_id = "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT"
+        evidence_id = "range_trader:EUR_USD:LONG:RANGE_ROTATION:LIMIT"
+        evidence_blockers = [
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            live_intent = _intent(live_id, "AUD_JPY", "SHORT", "BREAKOUT_FAILURE", "LIMIT", [])
+            live_intent["status"] = "LIVE_READY"
+            evidence_intent = _intent(
+                evidence_id,
+                "EUR_USD",
+                "LONG",
+                "RANGE_ROTATION",
+                "LIMIT",
+                evidence_blockers,
+            )
+            evidence_intent["intent"]["metadata"].update(
+                {
+                    "capture_take_profit_trades": 1,
+                    "capture_take_profit_wins": 1,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 500.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                }
+            )
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [evidence_intent, live_intent]},
+            )
+            evidence_board = _board_lane(
+                evidence_id,
+                "EUR_USD",
+                "LONG",
+                "RANGE_ROTATION",
+                "LIMIT",
+                evidence_blockers,
+            )
+            evidence_board["status"] = "EVIDENCE_ACQUISITION"
+            evidence_board["local_tp_proof"].update(
+                {
+                    "capture_take_profit_trades": 1,
+                    "capture_take_profit_wins": 1,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 500.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+                }
+            )
+            _write_json(
+                paths["active_board"],
+                {"ranked_active_lanes": [evidence_board]},
+            )
+            _write_json(paths["mapper"], {"mapped_lanes": []})
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], live_id)
+        self.assertEqual(payload["top_non_eurusd_lane"]["lane_id"], live_id)
+        self.assertEqual(payload["top_lane"]["status"], "LIVE_READY")
+        self.assertEqual(payload["top_lane"]["distance_to_live_ready"], "0_LIVE_READY_VERIFIER_GATE_ONLY")
+        self.assertTrue(payload["required_checks"]["non_eurusd_closer_than_eurusd"])
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
+    def test_proof_materiality_only_breaks_ties_within_same_distance_band(self) -> None:
+        base = {
+            "active_board_status": "EVIDENCE_ACQUISITION",
+            "status": "EVIDENCE_ACQUISITION",
+            "pair": "EUR_JPY",
+            "direction": "LONG",
+            "strategy_family": "RANGE_ROTATION",
+            "vehicle": "LIMIT",
+            "order_intent_index": 0,
+            "board_rank_index": 0,
+        }
+        exact_proof = {
+            "capture_take_profit_trades": 1,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_expectancy_jpy": 500.0,
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+        }
+        near_positive = {**base, "lane_id": "near-positive", "distance_score": 55, "tp_proof_count": 1, "local_tp_proof": exact_proof}
+        near_zero = {
+            **base,
+            "lane_id": "near-zero",
+            "distance_score": 51,
+            "tp_proof_count": 0,
+            "local_tp_proof": {
+                **exact_proof,
+                "capture_take_profit_trades": 0,
+                "capture_take_profit_expectancy_jpy": 0.0,
+            },
+        }
+        far_positive = {**near_positive, "lane_id": "far-positive", "distance_score": 65}
+        boundary_positive = {**near_positive, "lane_id": "boundary-positive", "distance_score": 50}
+        boundary_zero = {**near_zero, "lane_id": "boundary-zero", "distance_score": 49}
+
+        self.assertLess(_frontier_sort_key(near_positive), _frontier_sort_key(near_zero))
+        self.assertLess(_frontier_sort_key(near_zero), _frontier_sort_key(far_positive))
+        self.assertLess(_frontier_sort_key(boundary_positive), _frontier_sort_key(boundary_zero))
+
+    def test_positive_tp_bucket_requires_exact_vehicle_scope_and_known_zero_losses(self) -> None:
+        lane = {
+            "active_board_status": "EVIDENCE_ACQUISITION",
+            "pair": "EUR_JPY",
+            "direction": "LONG",
+            "strategy_family": "RANGE_ROTATION",
+            "vehicle": "LIMIT",
+            "tp_proof_count": 1,
+            "local_tp_proof": {
+                "capture_take_profit_trades": 1,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_expectancy_jpy": 500.0,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+            },
+        }
+        self.assertEqual(_active_board_evidence_tp_sort_bucket(lane), 0)
+        broad = {**lane, "local_tp_proof": {**lane["local_tp_proof"], "capture_take_profit_scope": "PAIR_SIDE_METHOD"}}
+        missing_losses = {
+            **lane,
+            "local_tp_proof": {
+                key: value
+                for key, value in lane["local_tp_proof"].items()
+                if key != "capture_take_profit_losses"
+            },
+        }
+        wrong_vehicle = {
+            **lane,
+            "local_tp_proof": {
+                **lane["local_tp_proof"],
+                "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|MARKET|TAKE_PROFIT_ORDER",
+            },
+        }
+        self.assertEqual(_active_board_evidence_tp_sort_bucket(broad), 1)
+        self.assertEqual(_active_board_evidence_tp_sort_bucket(missing_losses), 1)
+        self.assertEqual(_active_board_evidence_tp_sort_bucket(wrong_vehicle), 1)
+
+    def test_floor_met_exact_tp_evidence_routes_to_edge_improvement_not_more_proof(self) -> None:
+        edge_action = (
+            "Run read-only EDGE_IMPROVEMENT_EXPERIMENT for EUR_JPY|LONG|RANGE_ROTATION|LIMIT; "
+            "preserve negative/month-scale blockers, rerank, and do not send."
+        )
+        lane = {
+            "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION:LIMIT",
+            "pair": "EUR_JPY",
+            "direction": "LONG",
+            "strategy_family": "RANGE_ROTATION",
+            "vehicle": "LIMIT",
+            "status": "EVIDENCE_ACQUISITION",
+            "active_board_status": "EVIDENCE_ACQUISITION",
+            "active_board_next_action": edge_action,
+            "edge_improvement_candidate": True,
+            "edge_improvement_target": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT",
+            "tp_proof_count": 20,
+            "tp_proof_floor": 20,
+            "tp_proof_remaining": 0,
+            "bidask_status": "PASS",
+            "spread_status": "PASS",
+            "forecast_status": "BLOCKED",
+            "loss_budget_status": "PASS",
+            "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+            "local_tp_proof": {
+                "capture_take_profit_trades": 20,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_expectancy_jpy": 500.0,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                "capture_take_profit_scope_key": "EUR_JPY|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
+            },
+        }
+
+        self.assertEqual(_next_action(lane), edge_action)
+        self.assertEqual(
+            _next_active_path(STATUS_NON_EURUSD_FOUND, lane),
+            "EDGE_IMPROVEMENT_EXPERIMENT: " + edge_action,
+        )
+        self.assertNotIn("proof", _next_action(lane).lower())
+
+    def test_failed_exact_replay_no_trade_preserves_board_action_instead_of_rebuilding_proof(self) -> None:
+        failed_action = (
+            "No trade for EUR_JPY|SHORT|BREAKOUT_FAILURE|STOP; consume the failed exact replay as not "
+            "SCOUT-ready, wait for independent trigger/TP-path evidence, and do not repeat the same exact replay."
+        )
+        lane = {
+            "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:STOP",
+            "pair": "EUR_JPY",
+            "direction": "SHORT",
+            "strategy_family": "BREAKOUT_FAILURE",
+            "vehicle": "STOP",
+            "status": "NO_TRADE_WITH_CAUSE",
+            "active_board_status": "NO_TRADE_WITH_CAUSE",
+            "active_board_next_action": failed_action,
+            "tp_proof_count": 1,
+            "tp_proof_floor": 20,
+            "tp_proof_remaining": 19,
+            "bidask_status": "PASS",
+            "spread_status": "PASS",
+            "forecast_status": "BLOCKED",
+            "loss_budget_status": "PASS",
+            "blockers": [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+            ],
+        }
+
+        self.assertEqual(_next_action(lane), failed_action)
+        self.assertEqual(
+            _next_active_path(STATUS_NON_EURUSD_FOUND, lane),
+            "NO_TRADE_WITH_CAUSE: " + failed_action,
+        )
+        self.assertNotIn("Build exact TP-proven", _next_action(lane))
+
+    def test_market_proof_collection_lane_yields_to_non_market_frontier(self) -> None:
+        market = {
+            "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET",
+            "pair": "USD_CAD",
+            "direction": "LONG",
+            "strategy_family": "BREAKOUT_FAILURE",
+            "vehicle": "MARKET",
+            "active_board_status": "EVIDENCE_ACQUISITION",
+            "distance_score": 55,
+            "tp_proof_remaining": 19,
+            "blockers": ["LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"],
+        }
+        limit = {
+            **market,
+            "lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+            "vehicle": "LIMIT",
+        }
+        unrelated = {
+            **limit,
+            "lane_id": "range_trader:NZD_CHF:SHORT:RANGE_ROTATION:LIMIT",
+            "pair": "NZD_CHF",
+            "direction": "SHORT",
+            "strategy_family": "RANGE_ROTATION",
+        }
+        self.assertEqual(_select_top_non_eurusd_lane([market, limit])["lane_id"], limit["lane_id"])
+        self.assertEqual(_select_top_non_eurusd_lane([market, unrelated])["lane_id"], market["lane_id"])
+
+    def test_stale_active_board_does_not_downgrade_fresh_live_ready_intent(self) -> None:
+        now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+        lane_id = "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            intent = _intent(lane_id, "AUD_JPY", "SHORT", "BREAKOUT_FAILURE", "LIMIT", [])
+            intent["status"] = "LIVE_READY"
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": [intent]},
+            )
+            stale_board = _board_lane(
+                lane_id,
+                "AUD_JPY",
+                "SHORT",
+                "BREAKOUT_FAILURE",
+                "LIMIT",
+                ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION", "LOCAL_TP_PROOF_ZERO_TRADES"],
+            )
+            _write_json(
+                paths["active_board"],
+                {
+                    "generated_at_utc": (now - timedelta(minutes=5)).isoformat(),
+                    "ranked_active_lanes": [stale_board],
+                },
+            )
+            _write_json(
+                paths["mapper"],
+                {
+                    "generated_at_utc": (now - timedelta(minutes=4)).isoformat(),
+                    "mapped_lanes": [
+                        {
+                            "lane_id": lane_id,
+                            "pair": "AUD_JPY",
+                            "side": "SHORT",
+                            "strategy_family": "BREAKOUT_FAILURE",
+                            "vehicle": "LIMIT",
+                            "blockers": ["BROAD_TP_PROOF_NOT_EXACT_VEHICLE"],
+                            "proof_floor": {
+                                "current_tp_trades": 0,
+                                "required_tp_trades": 20,
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_support_files(paths)
+
+            NonEurusdLiveGradeFrontier(
+                active_opportunity_board_path=paths["active_board"],
+                order_intents_path=paths["order_intents"],
+                non_eurusd_proof_lane_mapper_path=paths["mapper"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                proof_pack_queue_path=paths["proof_queue"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                execution_ledger_db_path=paths["execution_db"],
+                verification_ledger_path=paths["verification"],
+                forecast_history_path=paths["forecast_history"],
+                projection_ledger_path=paths["projection_ledger"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["status"], "LIVE_READY")
+        self.assertEqual(payload["top_lane"]["blockers"], [])
+        self.assertEqual(payload["top_lane"]["distance_to_live_ready"], "0_LIVE_READY_VERIFIER_GATE_ONLY")
+
+    def test_artifact_freshness_fails_closed_when_current_intents_have_no_comparable_source_time(self) -> None:
+        current_intents = {"generated_at_utc": "2026-07-09T00:00:00+00:00"}
+        self.assertFalse(_artifact_is_current(artifact={}, order_intents=current_intents))
+        self.assertFalse(_artifact_is_current(artifact={}, order_intents={}))
+        self.assertFalse(
+            _artifact_is_current(
+                artifact={"generated_at_utc": "not-a-timestamp"},
+                order_intents=current_intents,
+            )
+        )
+        self.assertTrue(
+            _artifact_is_current(
+                artifact={"generated_at_utc": "2026-07-09T00:01:00+00:00"},
+                order_intents=current_intents,
+            )
+        )
+        board = {"generated_at_utc": "2026-07-09T00:02:00+00:00"}
+        self.assertFalse(
+            _proof_mapper_is_current(
+                proof_mapper={"generated_at_utc": "2026-07-09T00:01:00+00:00"},
+                active_board=board,
+                order_intents=current_intents,
+            )
+        )
+        self.assertTrue(
+            _proof_mapper_is_current(
+                proof_mapper={"generated_at_utc": "2026-07-09T00:03:00+00:00"},
+                active_board=board,
+                order_intents=current_intents,
+            )
+        )
+
     def test_reports_non_eurusd_found_even_when_eurusd_is_closer(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         eur_usd = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
@@ -366,7 +925,7 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         self.assertIn("Repair bid/ask-negative pattern", payload["top_non_eurusd_lane"]["next_action"])
         self.assertNotIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
 
-    def test_negative_bidask_replay_takes_priority_over_refresh_gap(self) -> None:
+    def test_negative_bidask_replay_refresh_gap_requests_fresh_evidence(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         lane_id = "range_trader:USD_CAD:SHORT:RANGE_ROTATION"
         blockers = [
@@ -404,11 +963,11 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
             ).run()
             payload = json.loads(paths["output"].read_text())
 
-        self.assertEqual(payload["top_non_eurusd_lane"]["bidask_status"], "NEGATIVE")
-        self.assertIn("BIDASK_NEGATIVE_PATTERN_REPAIR", payload["next_active_path"])
-        self.assertNotIn("BIDASK_REPLAY_REFRESH", payload["next_active_path"])
-        self.assertIn("Repair bid/ask-negative pattern", payload["top_non_eurusd_lane"]["next_action"])
-        self.assertNotIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
+        self.assertEqual(payload["top_non_eurusd_lane"]["bidask_status"], "REFRESH_REQUIRED")
+        self.assertIn("BIDASK_REPLAY_REFRESH", payload["next_active_path"])
+        self.assertNotIn("BIDASK_NEGATIVE_PATTERN_REPAIR", payload["next_active_path"])
+        self.assertIn("Refresh exact S5 bid/ask replay", payload["top_non_eurusd_lane"]["next_action"])
+        self.assertNotIn("Repair bid/ask-negative pattern", payload["top_non_eurusd_lane"]["next_action"])
 
     def test_refresh_required_bidask_replay_still_requests_replay_refresh(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
@@ -867,19 +1426,21 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
         lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
         with tempfile.TemporaryDirectory() as tmp:
             paths = _paths(Path(tmp))
-            blocker = ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"]
+            blocker = [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "LOCAL_TP_PROOF_ZERO_TRADES",
+            ]
+            no_trade_action = (
+                "No trade for EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT; exact local TAKE_PROFIT_ORDER proof is 0/20. "
+                "Wait for new local TP receipts or an explicitly approved proof-collection scout, then rerank."
+            )
             _write_json(
                 paths["order_intents"],
                 {"generated_at_utc": now.isoformat(), "results": [_intent(lane_id, "EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", blocker)]},
             )
-            _write_json(
-                paths["active_board"],
-                {
-                    "ranked_active_lanes": [
-                        _board_lane(lane_id, "EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", blocker)
-                    ]
-                },
-            )
+            board_lane = _board_lane(lane_id, "EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT", blocker)
+            board_lane["next_action"] = no_trade_action
+            _write_json(paths["active_board"], {"ranked_active_lanes": [board_lane]})
             _write_json(paths["mapper"], {"mapped_lanes": []})
             _write_support_files(paths)
 
@@ -903,7 +1464,8 @@ class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], STATUS_ALL_NEGATIVE)
         self.assertEqual(payload["top_non_eurusd_lane"], {})
-        self.assertIn("negative expectancy", payload["next_active_path"])
+        self.assertEqual(payload["top_lane"]["next_action"], no_trade_action)
+        self.assertEqual(payload["next_active_path"], "NO_TRADE_WITH_CAUSE: " + no_trade_action)
 
     def test_missing_current_artifacts_reports_data_incomplete(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)

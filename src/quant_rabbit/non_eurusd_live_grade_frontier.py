@@ -39,6 +39,7 @@ REQUIRED_NON_EUR_PAIRS = ("AUD_CAD", "USD_CAD", "CAD_JPY", "USD_JPY", "AUD_JPY",
 USD_CAD_LONG_BREAKOUT_SHAPE = ("USD_CAD", "LONG", "BREAKOUT_FAILURE")
 TOP_N = 10
 DEFAULT_TP_PROOF_FLOOR = 20
+EVIDENCE_TP_MATERIALITY_DISTANCE_CREDIT = 5
 
 NEGATIVE_BLOCKERS = (
     "NEGATIVE_EXPECTANCY",
@@ -48,6 +49,7 @@ NEGATIVE_BLOCKERS = (
     "REPLAY_NEGATIVE",
 )
 ENTRY_DROUGHT_RECOVERY_BLOCKER = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
+LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 BIDASK_BLOCKERS = (
     "BIDASK_REPLAY_NEGATIVE",
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
@@ -342,23 +344,62 @@ def _collect_lanes(
             continue
         lane = _ensure_lane(lanes, lane_id)
         _merge_order_intent(lane, row, index)
-    for index, row in enumerate(_list(active_board.get("ranked_active_lanes"))):
-        if not isinstance(row, dict):
-            continue
-        lane_id = str(row.get("lane_id") or "")
-        if not lane_id:
-            continue
-        lane = _ensure_lane(lanes, lane_id)
-        _merge_board_lane(lane, row, index)
-    mapper_by_id = {
-        str(row.get("lane_id")): row
-        for row in _list(proof_mapper.get("mapped_lanes"))
-        if isinstance(row, dict) and row.get("lane_id")
-    }
+    active_board_is_current = _active_board_is_current(
+        active_board=active_board,
+        order_intents=order_intents,
+    )
+    if active_board_is_current:
+        for index, row in enumerate(_list(active_board.get("ranked_active_lanes"))):
+            if not isinstance(row, dict):
+                continue
+            lane_id = str(row.get("lane_id") or "")
+            if not lane_id:
+                continue
+            lane = _ensure_lane(lanes, lane_id)
+            _merge_board_lane(lane, row, index)
+    mapper_by_id = {}
+    if active_board_is_current and _proof_mapper_is_current(
+        proof_mapper=proof_mapper,
+        active_board=active_board,
+        order_intents=order_intents,
+    ):
+        mapper_by_id = {
+            str(row.get("lane_id")): row
+            for row in _list(proof_mapper.get("mapped_lanes"))
+            if isinstance(row, dict) and row.get("lane_id")
+        }
     for lane_id, mapped in mapper_by_id.items():
         lane = _ensure_lane(lanes, lane_id)
         _merge_mapper_lane(lane, mapped)
     return lanes
+
+
+def _active_board_is_current(*, active_board: dict[str, Any], order_intents: dict[str, Any]) -> bool:
+    return _artifact_is_current(artifact=active_board, order_intents=order_intents)
+
+
+def _artifact_is_current(*, artifact: dict[str, Any], order_intents: dict[str, Any]) -> bool:
+    board_generated = _parse_utc(artifact.get("generated_at_utc"))
+    intents_generated = _parse_utc(order_intents.get("generated_at_utc"))
+    if intents_generated is None:
+        return False
+    if board_generated is None:
+        return False
+    return board_generated >= intents_generated
+
+
+def _proof_mapper_is_current(
+    *,
+    proof_mapper: dict[str, Any],
+    active_board: dict[str, Any],
+    order_intents: dict[str, Any],
+) -> bool:
+    mapper_generated = _parse_utc(proof_mapper.get("generated_at_utc"))
+    board_generated = _parse_utc(active_board.get("generated_at_utc"))
+    intents_generated = _parse_utc(order_intents.get("generated_at_utc"))
+    if mapper_generated is None or board_generated is None or intents_generated is None:
+        return False
+    return mapper_generated >= max(board_generated, intents_generated)
 
 
 def _ensure_lane(lanes: dict[str, dict[str, Any]], lane_id: str) -> dict[str, Any]:
@@ -429,7 +470,12 @@ def _merge_board_lane(lane: dict[str, Any], row: dict[str, Any], index: int) -> 
         strategy=row.get("strategy_family") or row.get("method"),
         vehicle=row.get("vehicle") or row.get("order_type"),
     )
-    lane["status"] = _prefer_status(str(lane.get("status") or ""), str(row.get("status") or ""))
+    board_status = str(row.get("status") or "")
+    if board_status:
+        # The active board owns evidence materiality.  A transport-level
+        # DRY_RUN_BLOCKED intent must not promote its exact-zero proof lane out
+        # of the board's conservative NO_TRADE_WITH_CAUSE classification.
+        lane["status"] = board_status
     lane["active_board_status"] = row.get("status")
     lane["board_rank_index"] = index if lane.get("board_rank_index") is None else min(index, int(lane["board_rank_index"]))
     lane["expected_edge_jpy"] = _first_number(lane.get("expected_edge_jpy"), row.get("expected_edge_jpy"))
@@ -443,6 +489,12 @@ def _merge_board_lane(lane: dict[str, Any], row: dict[str, Any], index: int) -> 
         lane["entry_recovery_candidate"] = bool(row.get("entry_recovery_candidate"))
     if isinstance(row.get("entry_recovery_history"), dict):
         lane["entry_recovery_history"] = dict(row["entry_recovery_history"])
+    if row.get("edge_improvement_candidate") is True:
+        lane["edge_improvement_candidate"] = True
+    if row.get("edge_improvement_target") not in (None, ""):
+        lane["edge_improvement_target"] = str(row.get("edge_improvement_target"))
+    if row.get("tp_proven_harvest_repair_target") not in (None, ""):
+        lane["tp_proven_harvest_repair_target"] = str(row.get("tp_proven_harvest_repair_target"))
     if isinstance(row.get("local_tp_proof"), dict):
         lane["local_tp_proof"] = {**(lane.get("local_tp_proof") or {}), **row["local_tp_proof"]}
     lane["blockers"].extend(_string_list(row.get("blockers")))
@@ -620,7 +672,11 @@ def _distance_label(
 
 def _frontier_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
     return (
-        int(lane.get("distance_score") or 9999),
+        _active_board_no_trade_sort_bucket(lane),
+        _materiality_adjusted_distance(lane),
+        _active_board_evidence_tp_sort_bucket(lane),
+        _active_board_evidence_vehicle_sort_bucket(lane),
+        _distance_sort_value(lane),
         str(lane.get("pair") or "") == "EUR_USD",
         int(lane.get("order_intent_index") if lane.get("order_intent_index") is not None else 999999),
         int(lane.get("board_rank_index") if lane.get("board_rank_index") is not None else 999999),
@@ -631,13 +687,120 @@ def _frontier_sort_key(lane: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _distance_sort_value(lane: dict[str, Any]) -> int:
+    score = _float(lane.get("distance_score"))
+    return int(score) if score is not None else 9999
+
+
+def _materiality_adjusted_distance(lane: dict[str, Any]) -> int:
+    distance = _distance_sort_value(lane)
+    if (
+        str(lane.get("active_board_status") or "") == "EVIDENCE_ACQUISITION"
+        and _active_board_evidence_tp_sort_bucket(lane) == 0
+    ):
+        # Exact positive TP evidence may resolve a local proximity tie, but the
+        # credit stays below a normal hard-gate penalty so it cannot outrank a
+        # materially more current/compatible lane.
+        return max(distance - EVIDENCE_TP_MATERIALITY_DISTANCE_CREDIT, 0)
+    return distance
+
+
+def _active_board_no_trade_sort_bucket(lane: dict[str, Any]) -> int:
+    # A current board classification is stronger than an unclassified intent;
+    # explicit NO_TRADE remains the most conservative class.  When the whole
+    # board is stale it is skipped, so fresh intents compare within one bucket.
+    status = str(lane.get("active_board_status") or "")
+    if status == "NO_TRADE_WITH_CAUSE":
+        return 2
+    if (
+        not status
+        and str(lane.get("status") or "") == "LIVE_READY"
+        and lane.get("risk_allowed") is True
+        and not _string_list(lane.get("blockers"))
+    ):
+        return 0
+    return 0 if status else 1
+
+
+def _active_board_evidence_tp_sort_bucket(lane: dict[str, Any]) -> int:
+    if str(lane.get("active_board_status") or "") != "EVIDENCE_ACQUISITION":
+        return 0
+    proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+    trades = _float(lane.get("tp_proof_count"))
+    losses = _float(proof.get("capture_take_profit_losses"))
+    expectancy = _float(proof.get("capture_take_profit_expectancy_jpy"))
+    if (
+        trades is not None
+        and trades > 0
+        and losses == 0
+        and expectancy is not None
+        and expectancy > 0
+        and _exact_vehicle_tp_scope_matches_lane(lane, proof)
+    ):
+        return 0
+    # The board can also classify a zero-proof lane as evidence acquisition
+    # when another read-only repair (for example bid/ask replay) is available.
+    # Keep that repair visible, but do not let it outrank exact positive TP
+    # evidence solely because its surface distance score is one point lower.
+    return 1
+
+
+def _exact_vehicle_tp_scope_matches_lane(lane: dict[str, Any], proof: dict[str, Any]) -> bool:
+    if str(proof.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD_VEHICLE":
+        return False
+    expected_key = "|".join(
+        (
+            str(lane.get("pair") or "UNKNOWN").upper(),
+            str(lane.get("direction") or "UNKNOWN").upper(),
+            str(lane.get("strategy_family") or "UNKNOWN").upper(),
+            str(lane.get("vehicle") or "UNKNOWN").upper(),
+            "TAKE_PROFIT_ORDER",
+        )
+    )
+    return str(proof.get("capture_take_profit_scope_key") or "").upper() == expected_key
+
+
+def _active_board_evidence_vehicle_sort_bucket(lane: dict[str, Any]) -> int:
+    if str(lane.get("active_board_status") or "") != "EVIDENCE_ACQUISITION":
+        return 0
+    return 1 if str(lane.get("vehicle") or "").upper() == "MARKET" else 0
+
+
 def _select_top_non_eurusd_lane(non_eur_ranked: list[dict[str, Any]]) -> dict[str, Any]:
     if not non_eur_ranked:
         return {}
     for lane in non_eur_ranked:
-        if not _is_range_forecast_method_mismatch(lane):
-            return lane
+        if _is_range_forecast_method_mismatch(lane):
+            continue
+        if _market_tp_proof_route_required(lane):
+            counterpart = _same_shape_non_market_counterpart(lane, non_eur_ranked)
+            return counterpart or lane
+        return lane
     return non_eur_ranked[0]
+
+
+def _same_shape_non_market_counterpart(
+    market_lane: dict[str, Any],
+    ranked: list[dict[str, Any]],
+) -> dict[str, Any]:
+    market_distance = _distance_sort_value(market_lane)
+    for candidate in ranked:
+        if candidate is market_lane:
+            continue
+        if str(candidate.get("vehicle") or "").upper() not in {"LIMIT", "STOP"}:
+            continue
+        if str(candidate.get("active_board_status") or "") in {"", "NO_TRADE_WITH_CAUSE"}:
+            continue
+        if abs(_distance_sort_value(candidate) - market_distance) > EVIDENCE_TP_MATERIALITY_DISTANCE_CREDIT:
+            continue
+        if _is_range_forecast_method_mismatch(candidate):
+            continue
+        if all(
+            str(candidate.get(key) or "").upper() == str(market_lane.get(key) or "").upper()
+            for key in ("pair", "direction", "strategy_family")
+        ):
+            return candidate
+    return {}
 
 
 def _annotate_range_forecast_counterparts(ranked: list[dict[str, Any]]) -> None:
@@ -741,7 +904,7 @@ def _required_checks(
             top_non
             and (
                 not top_eur
-                or int(top_non.get("distance_score") or 9999) <= int(top_eur.get("distance_score") or 9999)
+                or _distance_sort_value(top_non) <= _distance_sort_value(top_eur)
             )
         ),
         "top_eurusd_lane": _public_frontier_lane(top_eur) if top_eur else {},
@@ -790,15 +953,9 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
         return "RANGE_FORECAST_COUNTERPART_HANDOFF: " + _range_forecast_handoff_action(lane)
     if _market_tp_proof_route_required(lane):
         return "NON_MARKET_TP_PROOF_ROUTE_REQUIRED: " + _market_tp_proof_route_action(lane)
-    if status == STATUS_ALL_NEGATIVE:
-        if lane.get("bidask_status") == "NEGATIVE":
-            return (
-                f"BIDASK_NEGATIVE_PATTERN_REPAIR: current exact bid/ask replay is negative for {lane_id}; "
-                "repair pattern/vehicle selection or lane-local TP proof before rerunning replay. Do not send."
-            )
-        return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
-    if status == STATUS_ALL_SPREAD_OR_FORECAST:
-        return f"FORECAST_OR_SPREAD_REFRESH: refresh current forecast/spread packet for {lane_id}; do not ignore blockers."
+    tp_proven_edge_action = _tp_proven_edge_improvement_action(lane)
+    if tp_proven_edge_action:
+        return "EDGE_IMPROVEMENT_EXPERIMENT: " + tp_proven_edge_action
     if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"BIDASK_REPLAY_REFRESH: run exact read-only bid/ask replay for {lane_id}; do not send."
     if lane.get("bidask_status") == "NEGATIVE":
@@ -811,6 +968,19 @@ def _next_active_path(status: str, lane: dict[str, Any]) -> str:
             f"ENTRY_FREQUENCY_RECOVERY: {_entry_drought_recovery_action(lane)} "
             "Preserve negative expectancy, spread, bid/ask, forecast, proof-floor, and loss-budget blockers."
         )
+    zero_proof_no_trade_action = _zero_proof_no_trade_action(lane)
+    if zero_proof_no_trade_action:
+        return "NO_TRADE_WITH_CAUSE: " + zero_proof_no_trade_action
+    board_no_trade_action = _board_no_trade_action(lane)
+    if board_no_trade_action:
+        return "NO_TRADE_WITH_CAUSE: " + board_no_trade_action
+    positive_tp_evidence_action = _positive_exact_tp_evidence_action(lane)
+    if positive_tp_evidence_action:
+        return "TP_PROOF_COLLECTION: " + positive_tp_evidence_action
+    if status == STATUS_ALL_NEGATIVE:
+        return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
+    if status == STATUS_ALL_SPREAD_OR_FORECAST:
+        return f"FORECAST_OR_SPREAD_REFRESH: refresh current forecast/spread packet for {lane_id}; do not ignore blockers."
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
         return f"EVIDENCE_ACQUISITION: preserve negative expectancy and rebuild exact TP/bidask proof for {lane_id}."
     if lane.get("tp_proof_remaining"):
@@ -828,6 +998,9 @@ def _next_action(lane: dict[str, Any]) -> str:
         return _range_forecast_handoff_action(lane)
     if _market_tp_proof_route_required(lane):
         return _market_tp_proof_route_action(lane)
+    tp_proven_edge_action = _tp_proven_edge_improvement_action(lane)
+    if tp_proven_edge_action:
+        return tp_proven_edge_action
     if lane.get("bidask_status") == "REFRESH_REQUIRED":
         return f"Refresh exact S5 bid/ask replay for {lane_id}; keep negative blocker visible."
     if lane.get("bidask_status") == "NEGATIVE":
@@ -837,6 +1010,15 @@ def _next_action(lane: dict[str, Any]) -> str:
         )
     if _has_entry_drought_recovery(lane):
         return _entry_drought_recovery_action(lane)
+    zero_proof_no_trade_action = _zero_proof_no_trade_action(lane)
+    if zero_proof_no_trade_action:
+        return zero_proof_no_trade_action
+    board_no_trade_action = _board_no_trade_action(lane)
+    if board_no_trade_action:
+        return board_no_trade_action
+    positive_tp_evidence_action = _positive_exact_tp_evidence_action(lane)
+    if positive_tp_evidence_action:
+        return positive_tp_evidence_action
     if _has_marker(lane.get("blockers") or [], NEGATIVE_BLOCKERS):
         return f"Build exact TP-proven rotation proof for {lane_id}; do not hide negative expectancy."
     if lane.get("spread_status") == "BLOCKED":
@@ -848,6 +1030,77 @@ def _next_action(lane: dict[str, Any]) -> str:
     if lane.get("tp_proof_remaining"):
         return f"Collect {lane.get('tp_proof_remaining')} exact TP proof sample(s) for {lane_id}."
     return f"Keep {lane_id} on verifier/gateway path; frontier grants no live permission."
+
+
+def _zero_proof_no_trade_action(lane: dict[str, Any]) -> str:
+    if str(lane.get("active_board_status") or "") != "NO_TRADE_WITH_CAUSE":
+        return ""
+    if LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER not in _string_list(lane.get("blockers")):
+        return ""
+    tp_count = _float(lane.get("tp_proof_count"))
+    if tp_count is None or tp_count != 0:
+        return ""
+    board_action = str(lane.get("active_board_next_action") or "")
+    if board_action:
+        return board_action
+    lane_id = str(lane.get("lane_id") or "")
+    tp_floor = _first_int(lane.get("tp_proof_floor"), DEFAULT_TP_PROOF_FLOOR)
+    return (
+        f"No trade for {lane_id}; exact local TAKE_PROFIT_ORDER proof is 0/{tp_floor}. "
+        "Wait for new local TP receipts or an explicitly approved proof-collection scout, then rerank."
+    )
+
+
+def _board_no_trade_action(lane: dict[str, Any]) -> str:
+    if str(lane.get("active_board_status") or "") != "NO_TRADE_WITH_CAUSE":
+        return ""
+    return str(lane.get("active_board_next_action") or "").strip()
+
+
+def _positive_exact_tp_evidence_action(lane: dict[str, Any]) -> str:
+    if str(lane.get("active_board_status") or "") != "EVIDENCE_ACQUISITION":
+        return ""
+    if _active_board_evidence_tp_sort_bucket(lane) != 0:
+        return ""
+    remaining = _float(lane.get("tp_proof_remaining"))
+    if remaining is None or remaining <= 0:
+        return ""
+    if str(lane.get("vehicle") or "").upper() == "MARKET":
+        return ""
+    board_action = str(lane.get("active_board_next_action") or "").strip()
+    if board_action:
+        return board_action
+    proof = lane.get("local_tp_proof") if isinstance(lane.get("local_tp_proof"), dict) else {}
+    scope_key = str(proof.get("capture_take_profit_scope_key") or lane.get("lane_id") or "")
+    return (
+        f"Collect {int(remaining)} exact local TAKE_PROFIT_ORDER proof sample(s) for {scope_key}; "
+        "preserve negative expectancy and every current blocker. Do not send."
+    )
+
+
+def _tp_proven_edge_improvement_action(lane: dict[str, Any]) -> str:
+    if str(lane.get("active_board_status") or "") != "EVIDENCE_ACQUISITION":
+        return ""
+    if _active_board_evidence_tp_sort_bucket(lane) != 0:
+        return ""
+    count = _float(lane.get("tp_proof_count"))
+    floor = _float(lane.get("tp_proof_floor"))
+    if count is None or floor is None or count < floor:
+        return ""
+    board_action = str(lane.get("active_board_next_action") or "").strip()
+    if board_action and "EDGE_IMPROVEMENT" in board_action.upper():
+        return board_action
+    target = str(
+        lane.get("edge_improvement_target")
+        or lane.get("tp_proven_harvest_repair_target")
+        or lane.get("lane_id")
+        or ""
+    )
+    return (
+        f"Run read-only TP-proven HARVEST blocker repair / EDGE_IMPROVEMENT_EXPERIMENT for {target}; "
+        "the exact broker-TP floor is already met, so do not collect more TP proof. Preserve guardian, "
+        "bid/ask, forecast, risk, market-close, and profitability blockers, rerank, and do not send."
+    )
 
 
 def _is_range_forecast_method_mismatch(lane: dict[str, Any], *, blockers: list[str] | None = None) -> bool:
@@ -950,14 +1203,14 @@ def _tp_proof_counts(lane: dict[str, Any]) -> tuple[int | None, int | None]:
 
 def _bidask_status(lane: dict[str, Any], blockers: list[str]) -> str:
     replay_status = str(lane.get("replay_status_board") or "").upper()
-    if "NEGATIVE" in replay_status:
-        return "NEGATIVE"
-    if _has_marker(blockers, BIDASK_NEGATIVE_BLOCKERS):
-        return "NEGATIVE"
     if "REFRESH" in replay_status:
         return "REFRESH_REQUIRED"
+    if "NEGATIVE" in replay_status:
+        return "NEGATIVE"
     if _has_marker(blockers, BIDASK_REFRESH_BLOCKERS):
         return "REFRESH_REQUIRED"
+    if _has_marker(blockers, BIDASK_NEGATIVE_BLOCKERS):
+        return "NEGATIVE"
     return "PASS" if lane.get("order_intent_status") else "UNKNOWN"
 
 
