@@ -1753,6 +1753,84 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 {"EUR_USD", "GBP_USD"},
             )
 
+    def test_schema_v2_tuning_queue_stays_flat_and_bounded_across_rewrites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+
+            def json_depth(value) -> int:
+                if isinstance(value, dict):
+                    return 1 + max((json_depth(item) for item in value.values()), default=0)
+                if isinstance(value, list):
+                    return 1 + max((json_depth(item) for item in value), default=0)
+                return 0
+
+            first_size = 0
+            first_depth = 0
+            for index in range(25):
+                event = {
+                    **_event(
+                        severity="P1",
+                        event_id=f"event-tuning-{index}",
+                        pair=f"PAIR_{index:02d}",
+                        dedupe_key=f"PAIR_{index:02d}|regime|FAILED_ACCEPTANCE|HOLD",
+                    ),
+                    "wake_reason_codes": ["REGIME_STATE_CHANGE"],
+                }
+                result = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=event,
+                    receipt={"receipt_id": f"receipt-{index}"},
+                    now=NOW + timedelta(seconds=index),
+                )
+                payload = json.loads(path.read_text())
+                text_size = path.stat().st_size
+                depth = json_depth(payload)
+
+                self.assertEqual(result["status"], "WORK_ORDER_WRITTEN")
+                self.assertEqual(payload["pending_count"], min(index + 1, 20))
+                self.assertEqual(len(payload["work_orders"]), min(index + 1, 20))
+                self.assertTrue(
+                    all(
+                        "work_orders" not in item
+                        and "schema_version" not in item
+                        and "pending_count" not in item
+                        for item in payload["work_orders"]
+                    )
+                )
+                if index == 0:
+                    first_size = text_size
+                    first_depth = depth
+                else:
+                    # A flat queue grows at most linearly until its 20-entry
+                    # cap.  The historical recursive-envelope bug exceeds
+                    # this bound within a few rewrites, before producing a
+                    # dangerously large test artifact.
+                    self.assertLessEqual(
+                        text_size,
+                        first_size * (min(index + 1, 20) + 1),
+                    )
+                    self.assertLessEqual(depth, first_depth)
+
+            bounded_text = path.read_text()
+            newest_event = {
+                **_event(
+                    severity="P1",
+                    event_id="event-tuning-24",
+                    pair="PAIR_24",
+                    dedupe_key="PAIR_24|regime|FAILED_ACCEPTANCE|HOLD",
+                ),
+                "wake_reason_codes": ["REGIME_STATE_CHANGE"],
+            }
+            for offset in range(3):
+                unchanged = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=newest_event,
+                    receipt={"receipt_id": f"duplicate-{offset}"},
+                    now=NOW + timedelta(minutes=1, seconds=offset),
+                )
+                self.assertEqual(unchanged["status"], "UNCHANGED_IDEMPOTENT")
+                self.assertEqual(path.read_text(), bounded_text)
+
     def test_consumed_tuning_fingerprint_reopens_on_later_accepted_occurrence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))

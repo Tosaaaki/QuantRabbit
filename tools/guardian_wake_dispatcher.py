@@ -2820,9 +2820,40 @@ def _pending_tuning_work_order_entries(payload: dict[str, Any]) -> list[dict[str
     if not isinstance(payload, dict) or payload.get("_missing"):
         return []
     raw_entries = payload.get("work_orders")
-    entries = [payload]
+    envelope_keys = {"schema_version", "work_orders", "pending_count"}
+    top_level_entry = {
+        key: value for key, value in payload.items() if key not in envelope_keys
+    }
+    entries: list[dict[str, Any]] = [top_level_entry]
     if isinstance(raw_entries, list):
-        entries.extend(item for item in raw_entries if isinstance(item, dict))
+        # Schema v2 duplicates the newest entry at the top level for backward
+        # compatibility.  The top-level object is nevertheless an envelope:
+        # inserting it into work_orders recursively nests the prior queue on
+        # every write and makes the JSON grow exponentially.  Read only the
+        # flattened child entries, while overlaying the authoritative
+        # top-level lifecycle fields onto its matching child.
+        entries = []
+        top_fingerprint = str(
+            top_level_entry.get("event_fingerprint")
+            or top_level_entry.get("work_order_id")
+            or ""
+        )
+        matched_top = False
+        for raw_item in raw_entries:
+            if not isinstance(raw_item, dict):
+                continue
+            item = {
+                key: value for key, value in raw_item.items() if key not in envelope_keys
+            }
+            item_fingerprint = str(
+                item.get("event_fingerprint") or item.get("work_order_id") or ""
+            )
+            if top_fingerprint and item_fingerprint == top_fingerprint:
+                item = {**item, **top_level_entry}
+                matched_top = True
+            entries.append(item)
+        if top_fingerprint and not matched_top:
+            entries.insert(0, top_level_entry)
     pending: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in entries:
