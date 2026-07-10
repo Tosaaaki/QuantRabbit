@@ -37,6 +37,13 @@ LEGACY_CODEX_APP_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
 # model. This is a CLI compatibility guard, not market/risk logic.
 MIN_GPT55_CODEX_VERSION = (0, 142, 0)
 CODEX_MODEL_FAILURE_STATUSES = {"CODEX_MODEL_UNSUPPORTED", "CODEX_CLI_VERSION_UNSUPPORTED"}
+CODEX_RUNTIME_FAILURE_STATUSES = {
+    "CODEX_TIMEOUT",
+    "CODEX_AUTH_OR_SANDBOX_FAILURE",
+    "CODEX_USAGE_LIMIT",
+    *CODEX_MODEL_FAILURE_STATUSES,
+}
+CODEX_DIRECT_RESULT_STATUSES = {"CODEX_USAGE_LIMIT", *CODEX_MODEL_FAILURE_STATUSES}
 
 # Guardian wake runs every 30s from a router that just refreshed broker truth;
 # older snapshots are likely from a previous operating window and should wait
@@ -61,6 +68,7 @@ DEFAULT_RETRY_BASE_SECONDS = 60
 DEFAULT_RETRY_MAX_SECONDS = 15 * 60
 DEFAULT_RETRY_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_TTL_SECONDS = 30 * 60
+DEFAULT_USAGE_LIMIT_RETRY_SECONDS = 90 * 60
 DEFAULT_PENDING_DISPATCH_TTL_SECONDS = 2 * 60 * 60
 MAX_PENDING_DISPATCHES = 24
 DEFAULT_DISK_P0_FREE_BYTES = 2 * 1024**3
@@ -165,6 +173,11 @@ def run_dispatcher(
     daily_target_state = _load_json(paths.daily_target_state)
     event_report = _read_text(paths.event_report)
     dispatcher_state = _load_json(paths.dispatcher_state)
+    dispatcher_state, usage_limit_reclassification = _reclassify_legacy_usage_limit_attempts(
+        dispatcher_state,
+        now=clock,
+        env=environ,
+    )
     runtime_disk = _runtime_disk_state(paths.root, environ)
 
     escalation, events_payload, retry_injection = _inject_due_failed_attempts(
@@ -192,6 +205,8 @@ def run_dispatcher(
         result_base["retry_injection"] = retry_injection
     if pending_injection:
         result_base["pending_injection"] = pending_injection
+    if usage_limit_reclassification:
+        result_base["usage_limit_reclassification"] = usage_limit_reclassification
     # Expiry archival writes a new JSON file. Under P0 disk pressure preserve
     # the current receipt as-is and let the first recovered cycle expire it;
     # the disk guard must run before any optional archive/session growth.
@@ -381,9 +396,7 @@ def run_dispatcher(
     repair_attempted = False
     repair_skipped: dict[str, Any] | None = None
     if not parsed["valid"] and parsed.get("error") not in {
-        "CODEX_TIMEOUT",
-        "CODEX_AUTH_OR_SANDBOX_FAILURE",
-        *CODEX_MODEL_FAILURE_STATUSES,
+        *CODEX_RUNTIME_FAILURE_STATUSES,
     }:
         retry_lock = _active_live_lock(paths.live_lock)
         if retry_lock["active"]:
@@ -499,7 +512,7 @@ def run_dispatcher(
         else "RECEIPT_WRITTEN"
         if receipt_written
         else parsed["error"]
-        if not parsed["valid"] and parsed.get("error") in CODEX_MODEL_FAILURE_STATUSES
+        if not parsed["valid"] and parsed.get("error") in CODEX_DIRECT_RESULT_STATUSES
         else "PARSE_FAILED"
         if not parsed["valid"]
         else "RECEIPT_EVENT_MISMATCH"
@@ -646,6 +659,86 @@ def _inject_due_failed_attempts(
         "status": "DUE_FAILED_ATTEMPTS_INJECTED",
         "event_ids": [event.get("event_id") for event in due],
         "count": len(due),
+    }
+
+
+def _reclassify_legacy_usage_limit_attempts(
+    dispatcher_state: dict[str, Any],
+    *,
+    now: datetime,
+    env: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    state = dict(dispatcher_state) if isinstance(dispatcher_state, dict) else {}
+    last_result = state.get("last_result") if isinstance(state.get("last_result"), dict) else {}
+    parse = last_result.get("parse") if isinstance(last_result.get("parse"), dict) else {}
+    receipt = parse.get("receipt") if isinstance(parse.get("receipt"), dict) else {}
+    evidence = "\n".join(
+        str(value or "")
+        for value in (
+            receipt.get("message"),
+            parse.get("raw_output_excerpt"),
+            (last_result.get("codex") or {}).get("raw_stdout_excerpt")
+            if isinstance(last_result.get("codex"), dict)
+            else None,
+        )
+    )
+    source_generated_at = str(last_result.get("generated_at_utc") or "")
+    if (
+        not source_generated_at
+        or state.get("usage_limit_reclassified_source_at") == source_generated_at
+        or _codex_usage_limit_failure(
+            stderr_text="",
+            stdout_text=evidence,
+            last_message="",
+        )
+        is None
+    ):
+        return state, None
+
+    attempts = state.get("dispatch_attempts") if isinstance(state.get("dispatch_attempts"), dict) else {}
+    if not attempts or all(
+        isinstance(record, dict) and str(record.get("last_error") or "") == "CODEX_USAGE_LIMIT"
+        for record in attempts.values()
+    ):
+        state["usage_limit_reclassified_source_at"] = source_generated_at
+        return state, None
+
+    retry_seconds = max(
+        60,
+        int(
+            env.get(
+                "QR_GUARDIAN_WAKE_USAGE_LIMIT_RETRY_SECONDS",
+                DEFAULT_USAGE_LIMIT_RETRY_SECONDS,
+            )
+        ),
+    )
+    retry_after = now + timedelta(seconds=retry_seconds)
+    expires_at = retry_after + timedelta(seconds=retry_seconds)
+    changed: list[str] = []
+    normalized: dict[str, Any] = {}
+    for dedupe_key, value in attempts.items():
+        if not isinstance(value, dict):
+            normalized[str(dedupe_key)] = value
+            continue
+        record = dict(value)
+        record["last_error"] = "CODEX_USAGE_LIMIT"
+        record["last_status"] = "CODEX_USAGE_LIMIT"
+        record["retry_after_utc"] = retry_after.isoformat()
+        previous_expiry = _parse_utc(record.get("expires_at_utc"))
+        record["expires_at_utc"] = max(previous_expiry or expires_at, expires_at).isoformat()
+        record["usage_limit_retry_seconds"] = retry_seconds
+        record["legacy_usage_limit_reclassified_at_utc"] = now.isoformat()
+        normalized[str(dedupe_key)] = record
+        changed.append(str(dedupe_key))
+    state["dispatch_attempts"] = normalized
+    state["usage_limit_reclassified_source_at"] = source_generated_at
+    state["usage_limit_reclassified_at_utc"] = now.isoformat()
+    return state, {
+        "status": "LEGACY_USAGE_LIMIT_RECLASSIFIED",
+        "source_generated_at_utc": source_generated_at,
+        "retry_after_utc": retry_after.isoformat(),
+        "attempt_count": len(changed),
+        "dedupe_keys": changed,
     }
 
 
@@ -1484,10 +1577,17 @@ def _run_codex(
         if current_invocation_failed
         else None
     )
+    usage_limit = _codex_usage_limit_failure(
+        stderr_text=stderr_text,
+        stdout_text=stdout_text,
+        last_message=last_message,
+    )
     if getattr(proc, "returncode", 1) == 0 and last_message:
-        status = "OK"
+        status = "CODEX_USAGE_LIMIT" if usage_limit is not None else "OK"
     elif model_failure is not None:
         status = model_failure["status"]
+    elif usage_limit is not None:
+        status = "CODEX_USAGE_LIMIT"
     elif _codex_auth_or_sandbox_failed(getattr(proc, "returncode", 1), stderr_text, stdout_text):
         status = "CODEX_AUTH_OR_SANDBOX_FAILURE"
     elif stdout_text.strip() or session_path is not None:
@@ -1504,7 +1604,7 @@ def _run_codex(
         "codex_version": codex_version,
         "requested_model": MODEL,
         "supports_requested_model": status == "OK",
-        "remediation_hint": (model_failure or {}).get("remediation_hint"),
+        "remediation_hint": (model_failure or usage_limit or {}).get("remediation_hint"),
         "cli_failure_class": (model_failure or {}).get("cli_failure_class"),
         "returncode": getattr(proc, "returncode", None),
         "stderr_tail": stderr_text[-1000:],
@@ -1556,7 +1656,7 @@ def _parse_codex_receipt(text: str, *, empty_error: str = "CODEX_EMPTY_LAST_MESS
 
 def _parse_codex_result(codex: dict[str, Any]) -> dict[str, Any]:
     status = str(codex.get("status") or "").upper()
-    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", *CODEX_MODEL_FAILURE_STATUSES}:
+    if status in CODEX_RUNTIME_FAILURE_STATUSES:
         return {
             "valid": False,
             "error": status,
@@ -1571,7 +1671,7 @@ def _parse_codex_result(codex: dict[str, Any]) -> dict[str, Any]:
 
 def _empty_parse_error(codex: dict[str, Any]) -> str:
     status = str(codex.get("status") or "").upper()
-    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", "CODEX_NO_ASSISTANT_MESSAGE", *CODEX_MODEL_FAILURE_STATUSES}:
+    if status in {"CODEX_NO_ASSISTANT_MESSAGE", *CODEX_RUNTIME_FAILURE_STATUSES}:
         return status
     return "CODEX_EMPTY_LAST_MESSAGE"
 
@@ -1750,6 +1850,32 @@ def _codex_model_version_failure(*, stderr_text: str, stdout_text: str, codex_bi
             "remediation_hint": _codex_remediation_hint(status="CODEX_CLI_VERSION_UNSUPPORTED", codex_bin=codex_bin),
         }
     return None
+
+
+def _codex_usage_limit_failure(
+    *,
+    stderr_text: str,
+    stdout_text: str,
+    last_message: str,
+) -> dict[str, str] | None:
+    haystack = f"{stderr_text}\n{stdout_text}\n{last_message}".lower()
+    if not any(
+        marker in haystack
+        for marker in (
+            "hit your usage limit",
+            "usage limit",
+            "purchase more credits",
+            "try again at",
+        )
+    ):
+        return None
+    return {
+        "status": "CODEX_USAGE_LIMIT",
+        "remediation_hint": (
+            "Codex account usage is temporarily exhausted; keep the exact event in the durable "
+            "dispatcher queue and delay the next GPT attempt instead of schema-repair retrying."
+        ),
+    }
 
 
 def _codex_remediation_hint(*, status: str, codex_bin: str) -> str:
@@ -2558,7 +2684,7 @@ def _failed_attempt_code(result: dict[str, Any]) -> str | None:
         "RECEIPT_REJECTED",
         "RUNTIME_DISK_P0",
         "TUNING_HANDOFF_FAILED",
-        *CODEX_MODEL_FAILURE_STATUSES,
+        *CODEX_RUNTIME_FAILURE_STATUSES,
     }:
         return parse_error or status
     # A live lock that appeared after the first malformed response interrupted
@@ -2571,7 +2697,7 @@ def _failed_attempt_code(result: dict[str, Any]) -> str | None:
 def _result_has_parse_failure(result: dict[str, Any]) -> bool:
     parse = result.get("parse") if isinstance(result.get("parse"), dict) else {}
     status = str(result.get("status") or "").upper()
-    return parse.get("valid") is False and status not in CODEX_MODEL_FAILURE_STATUSES
+    return parse.get("valid") is False and status not in CODEX_RUNTIME_FAILURE_STATUSES
 
 
 def _next_failed_attempt_record(
@@ -2600,11 +2726,27 @@ def _next_failed_attempt_record(
     max_backoff = max(base, int(env.get("QR_GUARDIAN_WAKE_RETRY_MAX_SECONDS", DEFAULT_RETRY_MAX_SECONDS)))
     max_attempts = max(1, int(env.get("QR_GUARDIAN_WAKE_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)))
     ttl = max(base, int(env.get("QR_GUARDIAN_WAKE_RETRY_TTL_SECONDS", DEFAULT_RETRY_TTL_SECONDS)))
+    usage_limit_retry_seconds: int | None = None
+    if failure_code == "CODEX_USAGE_LIMIT":
+        usage_limit_retry_seconds = max(
+            60,
+            int(
+                env.get(
+                    "QR_GUARDIAN_WAKE_USAGE_LIMIT_RETRY_SECONDS",
+                    DEFAULT_USAGE_LIMIT_RETRY_SECONDS,
+                )
+            ),
+        )
+        ttl = max(ttl, usage_limit_retry_seconds * 2)
     expires_at = first_failed + timedelta(seconds=ttl)
     backoff = min(max_backoff, base * (2 ** max(0, attempt_count - 1)))
     retry_budget_exhausted = attempt_count >= max_attempts
-    retry_after = expires_at if retry_budget_exhausted else min(failed_at + timedelta(seconds=backoff), expires_at)
-    return {
+    retry_delay = usage_limit_retry_seconds or backoff
+    retry_after = expires_at if retry_budget_exhausted else min(
+        failed_at + timedelta(seconds=retry_delay),
+        expires_at,
+    )
+    record = {
         "event_id": event.get("event_id"),
         "dedupe_key": event.get("dedupe_key"),
         "pair": event.get("pair"),
@@ -2625,6 +2767,9 @@ def _next_failed_attempt_record(
         "last_error": failure_code,
         "runtime_disk": result.get("runtime_disk"),
     }
+    if usage_limit_retry_seconds is not None:
+        record["usage_limit_retry_seconds"] = usage_limit_retry_seconds
+    return record
 
 
 def _paths_payload(paths: DispatcherPaths) -> dict[str, str]:

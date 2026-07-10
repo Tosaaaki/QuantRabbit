@@ -755,6 +755,109 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertFalse(paths.action_receipt.exists())
 
+    def test_codex_usage_limit_is_classified_without_schema_repair_and_delays_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            message = json.dumps(
+                {
+                    "message": (
+                        "You've hit your usage limit. Visit settings to purchase more credits "
+                        "or try again at 9:42 PM."
+                    )
+                }
+            )
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_with_diagnostics(
+                    calls,
+                    message,
+                    stdout=message,
+                    returncode=1,
+                ),
+            )
+
+            self.assertEqual(result["status"], "CODEX_USAGE_LIMIT")
+            self.assertEqual(result["parse"]["error"], "CODEX_USAGE_LIMIT")
+            self.assertFalse(result["repair_attempted"])
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(paths.action_receipt.exists())
+            state = json.loads(paths.dispatcher_state.read_text())
+            attempt = next(iter(state["dispatch_attempts"].values()))
+            self.assertEqual(attempt["last_error"], "CODEX_USAGE_LIMIT")
+            self.assertEqual(attempt["usage_limit_retry_seconds"], 90 * 60)
+            self.assertEqual(
+                datetime.fromisoformat(attempt["retry_after_utc"]),
+                NOW + timedelta(minutes=90),
+            )
+            self.assertNotIn("parse_failure", state["last_result"])
+
+    def test_legacy_usage_limit_schema_failure_is_reclassified_before_another_gpt_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            event = {**_event(severity="P1"), "wake_reason_codes": ["NEW_EVENT"]}
+            source_time = (NOW - timedelta(seconds=5)).isoformat()
+            paths.dispatcher_state.write_text(
+                json.dumps(
+                    {
+                        "last_result": {
+                            "generated_at_utc": source_time,
+                            "parse": {
+                                "error": "SCHEMA_INVALID",
+                                "receipt": {
+                                    "message": "You've hit your usage limit; try again at 9:42 PM."
+                                },
+                            },
+                        },
+                        "dispatch_attempts": {
+                            event["dedupe_key"]: {
+                                "event_id": event["event_id"],
+                                "dedupe_key": event["dedupe_key"],
+                                "event": event,
+                                "attempt_count": 1,
+                                "last_error": "SCHEMA_INVALID",
+                                "last_status": "PARSE_FAILED",
+                                "retry_after_utc": (NOW - timedelta(seconds=1)).isoformat(),
+                                "expires_at_utc": (NOW + timedelta(hours=1)).isoformat(),
+                            }
+                        },
+                        "pending_dispatches": {
+                            event["dedupe_key"]: {
+                                "event": event,
+                                "queued_at_utc": (NOW - timedelta(minutes=1)).isoformat(),
+                                "expires_at_utc": (NOW + timedelta(hours=1)).isoformat(),
+                            }
+                        },
+                    }
+                )
+            )
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "SUPPRESSED")
+            self.assertEqual(calls, [])
+            self.assertEqual(
+                result["usage_limit_reclassification"]["status"],
+                "LEGACY_USAGE_LIMIT_RECLASSIFIED",
+            )
+            state = json.loads(paths.dispatcher_state.read_text())
+            attempt = state["dispatch_attempts"][event["dedupe_key"]]
+            self.assertEqual(attempt["last_error"], "CODEX_USAGE_LIMIT")
+            self.assertEqual(
+                datetime.fromisoformat(attempt["retry_after_utc"]),
+                NOW + timedelta(minutes=90),
+            )
+
     def test_unsupported_codex_preflight_queues_without_full_wake(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
