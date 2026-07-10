@@ -99,6 +99,37 @@ class PositionGuardianInstallTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("preflight OK", result.stdout)
 
+    def test_check_preflight_allows_current_active_frontier_runtime_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            for relative in (
+                "data/active_trader_contract.json",
+                "data/eurusd_short_breakout_failure_limit_sample_mining.json",
+                "docs/active_opportunity_board.md",
+                "docs/active_trader_contract.md",
+                "docs/eurusd_short_breakout_failure_limit_sample_mining.md",
+                "docs/non_eurusd_live_grade_frontier.md",
+                "docs/non_eurusd_proof_lane_mapper.md",
+            ):
+                path = live / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("runtime frontier drift\n", encoding="utf-8")
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--check"],
+                env=_install_env(live=live, home=home),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("preflight OK", result.stdout)
+
     def test_check_preflight_blocks_non_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
