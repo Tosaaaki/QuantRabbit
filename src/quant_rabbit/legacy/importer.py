@@ -2,21 +2,44 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat as stat_module
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterator
 
 from quant_rabbit.paths import DEFAULT_HISTORY_DB, DEFAULT_IMPORT_REPORT, DEFAULT_LEGACY_ARCHIVE
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".json", ".jsonl"}
+SOURCE_SUFFIXES = TEXT_SUFFIXES | {".db"}
 STRUCTURED_DB = "collab_trade/memory/memory.db"
 SENSITIVE_PARTS = {".git", ".venv", ".gcloud", ".gcloud_config", "__pycache__", ".pytest_cache"}
 NOISY_PARTS = {"archive/tmp", "logs/archive_legacy"}
+MAX_SOURCE_FILE_BYTES = 25_000_000
+IMPORTER_FORMAT_VERSION = "2"
+IMPORT_STATUS_COMPLETE = "COMPLETE"
+SOURCE_ENTRY_DIRECTORY = "DIRECTORY"
+SOURCE_ENTRY_CANDIDATE = "CANDIDATE"
+SOURCE_ENTRY_DEPENDENCY = "DEPENDENCY"
+SOURCE_DEPENDENCY_PATHS = {f"{STRUCTURED_DB}-wal"}
+LEGACY_TABLES = (
+    "trades",
+    "pretrade_outcomes",
+    "seat_outcomes",
+    "chunks",
+    "user_calls",
+    "market_events",
+)
+JSONL_SOURCES = (
+    ("logs/trader_journal.jsonl", "trader_journal"),
+    ("logs/s_hunt_ledger.jsonl", "s_hunt_ledger"),
+    ("logs/audit_history.jsonl", "audit_history"),
+)
 LIVE_LOG_RE = re.compile(
     r"^\[(?P<ts>[^\]]+)\]\s+"
     r"(?P<action>[A-Z_]+)\s+"
@@ -39,6 +62,32 @@ class ImportSummary:
     report_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class _SourceScanEntry:
+    path: Path
+    rel_path: str
+    entry_kind: str
+    stat_result: os.stat_result
+
+
+@dataclass(frozen=True)
+class _ImportedCounts:
+    source_files: int
+    legacy_rows: dict[str, int]
+    live_trade_events: int
+    jsonl_events: dict[str, int]
+    source_scan_state: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "source_files": self.source_files,
+            "legacy_rows": self.legacy_rows,
+            "live_trade_events": self.live_trade_events,
+            "jsonl_events": self.jsonl_events,
+            "source_scan_state": self.source_scan_state,
+        }
+
+
 class LegacyImporter:
     def __init__(
         self,
@@ -57,21 +106,56 @@ class LegacyImporter:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             self._create_schema(conn)
-            self._clear(conn)
-            source_count = self._import_source_files(conn)
-            legacy_rows = self._import_memory_db(conn)
-            live_events = self._import_live_trade_log(conn)
-            journal_events = self._import_jsonl_events(conn, "logs/trader_journal.jsonl", "trader_journal")
-            self._import_jsonl_events(conn, "logs/s_hunt_ledger.jsonl", "s_hunt_ledger")
-            self._import_jsonl_events(conn, "logs/audit_history.jsonl", "audit_history")
-            conn.commit()
-            self._write_report(conn, source_count, legacy_rows, live_events, journal_events)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                counts = self._reusable_import_counts(conn)
+                if counts is None:
+                    self._clear(conn)
+                    source_count = self._import_source_files(conn)
+                    legacy_rows = self._import_memory_db(conn)
+                    live_events = self._import_live_trade_log(conn)
+                    jsonl_events: dict[str, int] = {}
+                    for rel_path, source_name in JSONL_SOURCES:
+                        jsonl_events[source_name] = self._import_jsonl_events(
+                            conn,
+                            rel_path,
+                            source_name,
+                        )
+                    if not self._source_scan_state_matches(conn):
+                        raise RuntimeError("legacy archive changed during import; retry required")
+                    counts = _ImportedCounts(
+                        source_files=source_count,
+                        legacy_rows=legacy_rows,
+                        live_trade_events=live_events,
+                        jsonl_events=jsonl_events,
+                        source_scan_state=int(
+                            conn.execute("SELECT COUNT(*) FROM source_scan_state").fetchone()[0]
+                        ),
+                    )
+                    if not _stored_counts_match_database(
+                        counts,
+                        self._database_counts(conn),
+                    ):
+                        raise RuntimeError("legacy import row counts are inconsistent; retry required")
+                    self._write_import_completion(conn, counts)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            journal_events = counts.jsonl_events.get("trader_journal", 0)
+            self._write_report(
+                conn,
+                counts.source_files,
+                counts.legacy_rows,
+                counts.live_trade_events,
+                journal_events,
+            )
         return ImportSummary(
             archive=self.archive,
             db_path=self.db_path,
-            source_files=source_count,
-            legacy_rows=legacy_rows,
-            live_trade_events=live_events,
+            source_files=counts.source_files,
+            legacy_rows=counts.legacy_rows,
+            live_trade_events=counts.live_trade_events,
             journal_events=journal_events,
             report_path=self.report_path,
         )
@@ -85,6 +169,16 @@ class LegacyImporter:
                 size_bytes INTEGER NOT NULL,
                 sha256 TEXT NOT NULL,
                 mtime_utc TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS source_scan_state (
+                rel_path TEXT PRIMARY KEY,
+                entry_kind TEXT NOT NULL,
+                st_dev INTEGER NOT NULL,
+                st_ino INTEGER NOT NULL,
+                st_mode INTEGER NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                mtime_ns INTEGER NOT NULL,
+                ctime_ns INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS legacy_records (
                 source_table TEXT NOT NULL,
@@ -136,58 +230,144 @@ class LegacyImporter:
         )
 
     def _clear(self, conn: sqlite3.Connection) -> None:
-        for table in ("source_files", "legacy_records", "live_trade_events", "jsonl_events", "import_notes"):
+        for table in (
+            "source_files",
+            "source_scan_state",
+            "legacy_records",
+            "live_trade_events",
+            "jsonl_events",
+            "import_notes",
+        ):
             conn.execute(f"DELETE FROM {table}")
 
     def _import_source_files(self, conn: sqlite3.Connection) -> int:
         count = 0
-        for path in self._iter_source_files():
-            rel = path.relative_to(self.archive).as_posix()
-            try:
-                stat = path.stat()
-                digest = self._sha256(path)
-            except OSError:
+        for entry in self._scan_source_tree():
+            stat_result = entry.stat_result
+            conn.execute(
+                """
+                INSERT INTO source_scan_state(
+                    rel_path, entry_kind, st_dev, st_ino, st_mode,
+                    size_bytes, mtime_ns, ctime_ns
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry.rel_path,
+                    entry.entry_kind,
+                    int(stat_result.st_dev),
+                    int(stat_result.st_ino),
+                    int(stat_result.st_mode),
+                    int(stat_result.st_size),
+                    int(stat_result.st_mtime_ns),
+                    int(stat_result.st_ctime_ns),
+                ),
+            )
+            if entry.entry_kind != SOURCE_ENTRY_CANDIDATE:
                 continue
+            if stat_result.st_size > MAX_SOURCE_FILE_BYTES:
+                continue
+            digest = self._sha256(entry.path)
             conn.execute(
                 """
                 INSERT INTO source_files(rel_path, kind, size_bytes, sha256, mtime_utc)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    rel,
-                    path.suffix.lower().lstrip(".") or "file",
-                    stat.st_size,
+                    entry.rel_path,
+                    entry.path.suffix.lower().lstrip(".") or "file",
+                    stat_result.st_size,
                     digest,
-                    datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                    datetime.fromtimestamp(stat_result.st_mtime, timezone.utc).isoformat(),
                 ),
             )
             count += 1
-        conn.execute("INSERT INTO import_notes(key, value) VALUES (?, ?)", ("archive", str(self.archive)))
-        conn.execute(
-            "INSERT INTO import_notes(key, value) VALUES (?, ?)",
-            ("imported_at_utc", datetime.now(timezone.utc).isoformat()),
-        )
         return count
 
-    def _iter_source_files(self) -> Iterable[Path]:
-        for path in self.archive.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(self.archive).as_posix()
-            parts = set(path.relative_to(self.archive).parts)
-            if parts & SENSITIVE_PARTS:
-                continue
-            if any(rel.startswith(prefix + "/") for prefix in NOISY_PARTS):
-                continue
-            if path.name == "env.toml" or path.suffix.lower() not in TEXT_SUFFIXES | {".db"}:
-                continue
-            # Keep source manifest lightweight. Large raw tick/replay artifacts stay in archive.
-            try:
-                if path.stat().st_size > 25_000_000:
+    def _scan_source_tree(self) -> Iterator[_SourceScanEntry]:
+        def raise_walk_error(error: OSError) -> None:
+            raise error
+
+        for raw_dir_path, dir_names, file_names in os.walk(
+            self.archive,
+            topdown=True,
+            onerror=raise_walk_error,
+            followlinks=False,
+        ):
+            dir_path = Path(raw_dir_path)
+            rel_dir = dir_path.relative_to(self.archive).as_posix() or "."
+            # ``os.walk`` has already enumerated this directory before it
+            # yields.  A source created between that enumeration and the stat
+            # below would otherwise be absent from ``file_names`` while the
+            # post-create directory token was persisted, producing a permanent
+            # false cache hit.  Re-list after the stat so either the listing is
+            # stable or this rebuild rolls back and retries.  A mutation after
+            # this check is still caught by the end-of-import stat validation.
+            listed_entries = frozenset(
+                [(name, SOURCE_ENTRY_DIRECTORY) for name in dir_names]
+                + [(name, SOURCE_ENTRY_CANDIDATE) for name in file_names]
+            )
+            dir_stat = dir_path.stat()
+            with os.scandir(dir_path) as current_dir:
+                current_entries = frozenset(
+                    (
+                        entry.name,
+                        (
+                            SOURCE_ENTRY_DIRECTORY
+                            if entry.is_dir()
+                            else SOURCE_ENTRY_CANDIDATE
+                        ),
+                    )
+                    for entry in current_dir
+                )
+            if current_entries != listed_entries:
+                raise RuntimeError(
+                    f"legacy archive directory changed during source scan: {rel_dir}"
+                )
+            dir_names[:] = sorted(
+                name
+                for name in dir_names
+                if not self._prune_source_directory(rel_dir, name)
+            )
+            if stat_module.S_ISDIR(dir_stat.st_mode):
+                yield _SourceScanEntry(
+                    path=dir_path,
+                    rel_path=rel_dir,
+                    entry_kind=SOURCE_ENTRY_DIRECTORY,
+                    stat_result=dir_stat,
+                )
+            for name in sorted(file_names):
+                path = dir_path / name
+                rel_path = path.relative_to(self.archive).as_posix()
+                is_dependency = rel_path in SOURCE_DEPENDENCY_PATHS
+                if (
+                    not is_dependency
+                    and (name == "env.toml" or path.suffix.lower() not in SOURCE_SUFFIXES)
+                ):
                     continue
-            except OSError:
-                continue
-            yield path
+                stat_result = path.stat()
+                if not stat_module.S_ISREG(stat_result.st_mode):
+                    continue
+                yield _SourceScanEntry(
+                    path=path,
+                    rel_path=rel_path,
+                    entry_kind=(
+                        SOURCE_ENTRY_DEPENDENCY
+                        if is_dependency
+                        else SOURCE_ENTRY_CANDIDATE
+                    ),
+                    stat_result=stat_result,
+                )
+
+    @staticmethod
+    def _prune_source_directory(parent_rel: str, name: str) -> bool:
+        if name in SENSITIVE_PARTS:
+            return True
+        child_rel = name if parent_rel == "." else f"{parent_rel}/{name}"
+        return any(
+            child_rel == prefix or child_rel.startswith(prefix + "/")
+            for prefix in NOISY_PARTS
+        )
 
     def _sha256(self, path: Path) -> str:
         digest = hashlib.sha256()
@@ -195,6 +375,143 @@ class LegacyImporter:
             for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def _reusable_import_counts(self, conn: sqlite3.Connection) -> _ImportedCounts | None:
+        notes = {
+            str(row["key"]): str(row["value"])
+            for row in conn.execute("SELECT key, value FROM import_notes").fetchall()
+        }
+        if notes.get("status") != IMPORT_STATUS_COMPLETE:
+            return None
+        if notes.get("importer_format_version") != IMPORTER_FORMAT_VERSION:
+            return None
+        if notes.get("archive_realpath") != self._archive_realpath():
+            return None
+        try:
+            stored_payload = json.loads(notes.get("summary_counts_json") or "")
+        except json.JSONDecodeError:
+            return None
+        stored_counts = _imported_counts_from_dict(stored_payload)
+        if stored_counts is None:
+            return None
+        if not _stored_counts_match_database(
+            stored_counts,
+            self._database_counts(conn),
+        ):
+            return None
+        if not self._source_scan_state_matches(conn):
+            return None
+        return stored_counts
+
+    def _database_counts(self, conn: sqlite3.Connection) -> _ImportedCounts:
+        legacy_raw = {
+            str(row["source_table"]): int(row["n"])
+            for row in conn.execute(
+                "SELECT source_table, COUNT(*) n FROM legacy_records GROUP BY source_table"
+            ).fetchall()
+        }
+        jsonl_raw = {
+            str(row["source_name"]): int(row["n"])
+            for row in conn.execute(
+                "SELECT source_name, COUNT(*) n FROM jsonl_events GROUP BY source_name"
+            ).fetchall()
+        }
+        return _ImportedCounts(
+            source_files=int(conn.execute("SELECT COUNT(*) FROM source_files").fetchone()[0]),
+            legacy_rows=_ordered_counts(legacy_raw, LEGACY_TABLES),
+            live_trade_events=int(
+                conn.execute("SELECT COUNT(*) FROM live_trade_events").fetchone()[0]
+            ),
+            jsonl_events=_ordered_counts(
+                jsonl_raw,
+                tuple(source_name for _, source_name in JSONL_SOURCES),
+            ),
+            source_scan_state=int(
+                conn.execute("SELECT COUNT(*) FROM source_scan_state").fetchone()[0]
+            ),
+        )
+
+    def _source_scan_state_matches(self, conn: sqlite3.Connection) -> bool:
+        rows = conn.execute(
+            """
+            SELECT rel_path, entry_kind, st_dev, st_ino, st_mode,
+                   size_bytes, mtime_ns, ctime_ns
+            FROM source_scan_state
+            """
+        ).fetchall()
+        if not rows:
+            return False
+        for row in rows:
+            rel_path = str(row["rel_path"] or "")
+            relative = Path(rel_path)
+            if rel_path == ".":
+                path = self.archive
+            elif not rel_path or relative.is_absolute() or ".." in relative.parts:
+                return False
+            else:
+                path = self.archive / relative
+            try:
+                current = path.stat()
+            except OSError:
+                return False
+            entry_kind = str(row["entry_kind"] or "")
+            if entry_kind == SOURCE_ENTRY_DIRECTORY:
+                if not stat_module.S_ISDIR(current.st_mode):
+                    return False
+            elif entry_kind == SOURCE_ENTRY_CANDIDATE:
+                if not stat_module.S_ISREG(current.st_mode):
+                    return False
+            elif entry_kind == SOURCE_ENTRY_DEPENDENCY:
+                if not stat_module.S_ISREG(current.st_mode):
+                    return False
+            else:
+                return False
+            stored_token = (
+                int(row["st_dev"]),
+                int(row["st_ino"]),
+                int(row["st_mode"]),
+                int(row["size_bytes"]),
+                int(row["mtime_ns"]),
+                int(row["ctime_ns"]),
+            )
+            current_token = (
+                int(current.st_dev),
+                int(current.st_ino),
+                int(current.st_mode),
+                int(current.st_size),
+                int(current.st_mtime_ns),
+                int(current.st_ctime_ns),
+            )
+            if current_token != stored_token:
+                return False
+        return True
+
+    def _write_import_completion(
+        self,
+        conn: sqlite3.Connection,
+        counts: _ImportedCounts,
+    ) -> None:
+        conn.executemany(
+            "INSERT INTO import_notes(key, value) VALUES (?, ?)",
+            (
+                ("archive", str(self.archive)),
+                ("archive_realpath", self._archive_realpath()),
+                ("importer_format_version", IMPORTER_FORMAT_VERSION),
+                ("imported_at_utc", datetime.now(timezone.utc).isoformat()),
+                (
+                    "summary_counts_json",
+                    json.dumps(counts.to_dict(), ensure_ascii=False, sort_keys=True),
+                ),
+            ),
+        )
+        # COMPLETE is deliberately the final write in the rebuild transaction.
+        conn.execute(
+            "INSERT INTO import_notes(key, value) VALUES (?, ?)",
+            ("status", IMPORT_STATUS_COMPLETE),
+        )
+
+    def _archive_realpath(self) -> str:
+        return str(self.archive.resolve(strict=True))
 
     def _import_memory_db(self, conn: sqlite3.Connection) -> dict[str, int]:
         db_path = self.archive / STRUCTURED_DB
@@ -204,7 +521,7 @@ class LegacyImporter:
         src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         src.row_factory = sqlite3.Row
         try:
-            for table in ("trades", "pretrade_outcomes", "seat_outcomes", "chunks", "user_calls", "market_events"):
+            for table in LEGACY_TABLES:
                 try:
                     rows = src.execute(f"SELECT * FROM {table}").fetchall()
                 except sqlite3.Error:
@@ -480,6 +797,75 @@ class LegacyImporter:
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
+
+
+def _ordered_counts(
+    counts: dict[str, int],
+    preferred_order: tuple[str, ...],
+) -> dict[str, int]:
+    ordered = {key: counts[key] for key in preferred_order if key in counts}
+    ordered.update({key: counts[key] for key in sorted(counts) if key not in ordered})
+    return ordered
+
+
+def _imported_counts_from_dict(payload: object) -> _ImportedCounts | None:
+    if not isinstance(payload, dict):
+        return None
+    legacy_rows = _count_map(payload.get("legacy_rows"))
+    jsonl_events = _count_map(payload.get("jsonl_events"))
+    if legacy_rows is None or jsonl_events is None:
+        return None
+    if not set(legacy_rows).issubset(LEGACY_TABLES):
+        return None
+    expected_jsonl_sources = tuple(source_name for _, source_name in JSONL_SOURCES)
+    if not set(jsonl_events).issubset(expected_jsonl_sources):
+        return None
+    legacy_rows = _ordered_counts(legacy_rows, LEGACY_TABLES)
+    jsonl_events = _ordered_counts(
+        jsonl_events,
+        expected_jsonl_sources,
+    )
+    try:
+        source_files = int(payload["source_files"])
+        live_trade_events = int(payload["live_trade_events"])
+        source_scan_state = int(payload["source_scan_state"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if min(source_files, live_trade_events, source_scan_state, *legacy_rows.values(), *jsonl_events.values()) < 0:
+        return None
+    return _ImportedCounts(
+        source_files=source_files,
+        legacy_rows=legacy_rows,
+        live_trade_events=live_trade_events,
+        jsonl_events=jsonl_events,
+        source_scan_state=source_scan_state,
+    )
+
+
+def _count_map(value: object) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return {str(key): int(count) for key, count in value.items()}
+    except (TypeError, ValueError):
+        return None
+
+
+def _stored_counts_match_database(
+    stored: _ImportedCounts,
+    database: _ImportedCounts,
+) -> bool:
+    return bool(
+        stored.source_files == database.source_files
+        and stored.live_trade_events == database.live_trade_events
+        and stored.source_scan_state == database.source_scan_state
+        and _nonzero_counts(stored.legacy_rows) == database.legacy_rows
+        and _nonzero_counts(stored.jsonl_events) == database.jsonl_events
+    )
+
+
+def _nonzero_counts(counts: dict[str, int]) -> dict[str, int]:
+    return {key: count for key, count in counts.items() if count != 0}
 
 
 def _float_or_none(value: object) -> float | None:

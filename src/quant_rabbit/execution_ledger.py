@@ -8,6 +8,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from quant_rabbit.ledger_schema import (
+    SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS,
+    ensure_profitability_acceptance_indexes,
+)
 from quant_rabbit.models import AccountSummary
 from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_EXECUTION_LEDGER_REPORT
 
@@ -25,11 +29,6 @@ GPT_CLOSE_RECONCILE_CLOCK_SKEW_SECONDS = 60
 # compatibility ceiling prevents a legacy claim from occupying a concurrent
 # slot forever without inventing a shorter market TTL.
 PREDICTIVE_SCOUT_LEGACY_CLAIM_MAX_TTL_MINUTES = 90
-# SQLite PRAGMA/schema setup can fail immediately when several fresh worker
-# processes open a brand-new ledger together, even with connection busy_timeout.
-# These short engineering backoffs serialize that one-time migration without
-# weakening the reservation transaction or waiting anywhere near a trade TTL.
-SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS = (0.05, 0.10, 0.20, 0.40, 0.80)
 # These three compatibility backfills repair rows written by older ledger
 # versions.  Current transaction/gateway parsers populate the fields on insert,
 # while genuinely manual/tagless broker rows can never acquire a lane/order id.
@@ -585,11 +584,12 @@ class ExecutionLedger:
                 "CREATE INDEX IF NOT EXISTS idx_predictive_scout_signal_claims_expiry "
                 "ON predictive_scout_signal_claims(expires_at_utc)"
             )
-            # executescript/schema changes must be durable before the migration
-            # opens its own IMMEDIATE transaction.  This also makes a failed
-            # migration rollback only its row repairs and marker, leaving the
-            # additive schema safe for the retry loop.
+            # Base schema changes must be durable before the independent index
+            # and legacy-backfill migrations open IMMEDIATE transactions.  A
+            # failure then rolls back only its own migration unit, leaving the
+            # additive base schema safe for the retry loop.
             conn.commit()
+            ensure_profitability_acceptance_indexes(conn)
             self._run_legacy_event_backfill_migration(conn)
 
     @staticmethod

@@ -4,11 +4,16 @@ import json
 import math
 import re
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.ledger_schema import (
+    SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS,
+    ensure_profitability_acceptance_indexes,
+)
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -276,11 +281,21 @@ class VerificationLedger:
         return summary
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
+        for delay in (*SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS, None):
+            try:
+                self._init_db_once()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or delay is None:
+                    raise
+                time.sleep(delay)
+
+    def _init_db_once(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(
@@ -333,6 +348,8 @@ class VerificationLedger:
                 );
                 """
             )
+            conn.commit()
+            ensure_profitability_acceptance_indexes(conn)
 
     def _write_report(
         self,
