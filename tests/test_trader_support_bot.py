@@ -45,6 +45,36 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderSupportBotTest(unittest.TestCase):
+    def test_target_summary_preserves_trade_pace_gap_visibility(self) -> None:
+        summary = trader_support_bot_module._target_summary(
+            {
+                "status": "PURSUE_TARGET",
+                "target_trades_per_day": 30,
+                "uncapped_required_trades_per_day": 173,
+                "uncapped_required_trades_per_day_basis_return_pct": 10.0,
+                "selected_basis_uncapped_required_trades_per_day": 87,
+                "selected_basis_return_pct": 5.0,
+                "operating_pace_trades_per_day": 30,
+                "automated_operating_cap_trades_per_day": 30,
+                "observed_trades_per_day": 4.7955,
+                "observed_expectancy_jpy_per_trade": 168.6658,
+                "frequency_multiple_required": 36.0755,
+                "planned_reward_at_operating_pace_jpy": 5059.974,
+                "stretch_required_minus_operating_gap_trades_per_day": 143,
+                "selected_required_minus_operating_gap_trades_per_day": 57,
+                "trade_pace_feasible_within_operating_pace": False,
+                "trade_pace_feasibility": "INFEASIBLE_AT_OPERATING_PACE",
+            }
+        )
+
+        self.assertEqual(summary["uncapped_required_trades_per_day"], 173)
+        self.assertEqual(summary["selected_basis_uncapped_required_trades_per_day"], 87)
+        self.assertEqual(summary["operating_pace_trades_per_day"], 30)
+        self.assertEqual(summary["planned_reward_at_operating_pace_jpy"], 5059.974)
+        self.assertEqual(summary["stretch_required_minus_operating_gap_trades_per_day"], 143)
+        self.assertEqual(summary["selected_required_minus_operating_gap_trades_per_day"], 57)
+        self.assertEqual(summary["trade_pace_feasibility"], "INFEASIBLE_AT_OPERATING_PACE")
+
     def test_pending_guardian_market_tuning_work_order_becomes_read_only_repair_request(self) -> None:
         work_order = {
             "status": "PENDING_HOURLY_AI_REVIEW",

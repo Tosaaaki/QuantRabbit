@@ -12,6 +12,190 @@ from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, 
 from quant_rabbit.target import DailyTargetLedger
 
 
+def _create_execution_ledger_schema(
+    conn: sqlite3.Connection,
+    *,
+    synced_at_utc: str,
+    coverage_start_utc: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        CREATE TABLE execution_events (
+            ts_utc TEXT,
+            event_type TEXT,
+            lane_id TEXT,
+            order_id TEXT,
+            trade_id TEXT,
+            realized_pl_jpy REAL,
+            financing_jpy REAL,
+            raw_json TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', '1', ?)",
+        (synced_at_utc,),
+    )
+    if coverage_start_utc is None:
+        coverage_start_utc = f"{synced_at_utc[:10]}T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO sync_state VALUES ('oanda_transaction_coverage_start_utc', ?, ?)",
+        (coverage_start_utc, synced_at_utc),
+    )
+
+
+def _insert_system_entry(
+    conn: sqlite3.Connection,
+    *,
+    ts_utc: str,
+    trade_id: str,
+    lane_id: str = "test:EUR_USD:LONG",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_events
+            (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy)
+        VALUES (?, 'ORDER_FILLED', ?, ?, ?, 0.0, 0.0)
+        """,
+        (ts_utc, lane_id, f"order-{trade_id}", trade_id),
+    )
+
+
+def _insert_realized_event(
+    conn: sqlite3.Connection,
+    *,
+    ts_utc: str,
+    event_type: str,
+    trade_id: str,
+    realized_pl_jpy: float,
+    financing_jpy: float = 0.0,
+    raw_json: dict[str, object] | None = None,
+    include_raw_json: bool = True,
+) -> None:
+    if raw_json is None and include_raw_json:
+        raw_json = {
+            "type": "ORDER_FILL",
+            "pl": str(realized_pl_jpy),
+            "financing": str(financing_jpy),
+            "commission": "0.0",
+            "guaranteedExecutionFee": "0.0",
+        }
+        if event_type == "TRADE_CLOSED":
+            raw_json["tradesClosed"] = [
+                {
+                    "tradeID": trade_id,
+                    "realizedPL": str(realized_pl_jpy),
+                    "financing": str(financing_jpy),
+                }
+            ]
+        elif event_type == "TRADE_REDUCED":
+            raw_json["tradeReduced"] = {
+                "tradeID": trade_id,
+                "realizedPL": str(realized_pl_jpy),
+                "financing": str(financing_jpy),
+            }
+    conn.execute(
+        """
+        INSERT INTO execution_events
+            (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy, raw_json)
+        VALUES (?, ?, NULL, ?, ?, ?, ?, ?)
+        """,
+        (
+            ts_utc,
+            event_type,
+            f"close-{trade_id}-{ts_utc}",
+            trade_id,
+            realized_pl_jpy,
+            financing_jpy,
+            json.dumps(raw_json) if raw_json is not None else None,
+        ),
+    )
+
+
+def _insert_manual_entry(
+    conn: sqlite3.Connection,
+    *,
+    ts_utc: str,
+    trade_id: str,
+    lane_id: str | None = None,
+    owner_tag: str | None = None,
+) -> None:
+    raw_json = (
+        json.dumps(
+            {
+                "type": "ORDER_FILL",
+                "tradeOpened": {
+                    "tradeID": trade_id,
+                    "tradeClientExtensions": {"tag": owner_tag},
+                },
+            }
+        )
+        if owner_tag is not None
+        else None
+    )
+    conn.execute(
+        """
+        INSERT INTO execution_events
+            (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy, raw_json)
+        VALUES (?, 'ORDER_FILLED', ?, ?, ?, 0.0, 0.0, ?)
+        """,
+        (ts_utc, lane_id, f"manual-order-{trade_id}", trade_id, raw_json),
+    )
+
+
+def _insert_financing_transaction(
+    conn: sqlite3.Connection,
+    *,
+    ts_utc: str,
+    financing_jpy: float,
+    trade_financings: tuple[tuple[str, float], ...],
+) -> None:
+    raw = {
+        "type": "DAILY_FINANCING",
+        "financing": str(financing_jpy),
+        "positionFinancings": [
+            {
+                "openTradeFinancings": [
+                    {"tradeID": trade_id, "financing": str(trade_financing)}
+                    for trade_id, trade_financing in trade_financings
+                ]
+            }
+        ],
+    }
+    conn.execute(
+        """
+        INSERT INTO execution_events
+            (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy, raw_json)
+        VALUES (?, 'OANDA_TRANSACTION', NULL, NULL, NULL, NULL, ?, ?)
+        """,
+        (ts_utc, financing_jpy, json.dumps(raw)),
+    )
+
+
+def _insert_transfer_transaction(
+    conn: sqlite3.Connection,
+    *,
+    ts_utc: str,
+    amount_jpy: float,
+) -> None:
+    raw = {
+        "type": "TRANSFER_FUNDS",
+        "amount": str(amount_jpy),
+        "accountBalance": "broker-balance-present",
+    }
+    conn.execute(
+        """
+        INSERT INTO execution_events
+            (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy, raw_json)
+        VALUES (?, 'OANDA_TRANSACTION', NULL, NULL, NULL, NULL, NULL, ?)
+        """,
+        (ts_utc, json.dumps(raw)),
+    )
+
+
 class DailyTargetLedgerTest(unittest.TestCase):
     def test_records_remaining_target_and_risk_budget_from_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1056,6 +1240,7 @@ class DailyTargetLedgerTest(unittest.TestCase):
             )
 
             summary = ledger.run(
+                start_balance_jpy=200_000.0,
                 realized_pl_jpy=0,
                 now_utc=datetime(2026, 5, 12, 12, tzinfo=timezone.utc),
             )
@@ -1130,6 +1315,76 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
             self.assertIn("Target trade pace basis: `6.0%`", report)
 
+    def test_daily_target_exposes_uncapped_stretch_and_selected_band_pace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-10T15:15:40+00:00",
+                        "target_return_pct": 10.0,
+                        "firepower": {
+                            "avg_selected_trade_jpy": 168.6658,
+                            "avg_selected_trades_per_day": 4.7955,
+                            "required_trades_per_day_at_observed_expectancy": 173,
+                            "trade_frequency_multiple_required": 36.0755,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 87,
+                                },
+                                {
+                                    "return_pct": 10.0,
+                                    "required_trades_per_day_at_observed_expectancy": 173,
+                                },
+                            ],
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            ).run(
+                start_balance_jpy=291_145.1432,
+                daily_risk_budget_jpy=29_114.5143,
+            )
+            payload = json.loads((root / "target.json").read_text())
+            report = (root / "target.md").read_text()
+
+            self.assertEqual(summary.target_trades_per_day, 30)
+            self.assertEqual(summary.operating_pace_trades_per_day, 30)
+            self.assertEqual(summary.automated_operating_cap_trades_per_day, 30)
+            self.assertEqual(summary.uncapped_required_trades_per_day, 173)
+            self.assertEqual(summary.uncapped_required_trades_per_day_basis_return_pct, 10.0)
+            self.assertEqual(summary.selected_basis_uncapped_required_trades_per_day, 87)
+            self.assertEqual(summary.selected_basis_return_pct, 5.0)
+            self.assertEqual(summary.observed_trades_per_day, 4.7955)
+            self.assertEqual(summary.observed_expectancy_jpy_per_trade, 168.6658)
+            self.assertEqual(summary.frequency_multiple_required, 36.0755)
+            self.assertAlmostEqual(summary.planned_reward_at_operating_pace_jpy, 5_059.974, places=4)
+            self.assertEqual(summary.stretch_required_minus_operating_gap_trades_per_day, 143)
+            self.assertEqual(summary.selected_required_minus_operating_gap_trades_per_day, 57)
+            self.assertFalse(summary.trade_pace_feasible_within_operating_pace)
+            self.assertEqual(summary.trade_pace_feasibility, "INFEASIBLE_AT_OPERATING_PACE")
+            self.assertAlmostEqual(summary.base_per_trade_risk_budget_jpy, 2_911.4514, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2_911.4514, places=4)
+            self.assertEqual(payload["uncapped_required_trades_per_day"], 173)
+            self.assertEqual(payload["selected_basis_uncapped_required_trades_per_day"], 87)
+            self.assertIn("Stretch uncapped required pace: `173 trades/day` (basis `10.0%`)", report)
+            self.assertIn("Selected-basis uncapped required pace: `87 trades/day` (basis `5.0%`)", report)
+            self.assertIn("Planned reward at operating pace: `5059.9740 JPY/day`", report)
+            self.assertIn("Trade pace feasibility: `INFEASIBLE_AT_OPERATING_PACE`", report)
+
     def test_target_sizing_near_miss_can_reduce_pace_for_floor_attempt(self) -> None:
         """A verified 5% near miss should size from target_sizing, not 10% firepower.
 
@@ -1198,6 +1453,13 @@ class DailyTargetLedgerTest(unittest.TestCase):
                 "ai_test_bot_target_sizing_5pct_near_miss_floored_by_min_per_trade_pct",
             )
             self.assertEqual(summary.target_trades_per_day_basis_return_pct, 5.0)
+            # The 28-shot operating selection comes from daily budget //
+            # scaled loss cap. The selected-band uncapped requirement remains
+            # the independent 5% firepower value (52), not that sizing result.
+            self.assertEqual(summary.selected_basis_uncapped_required_trades_per_day, 52)
+            self.assertEqual(summary.selected_basis_return_pct, 5.0)
+            self.assertEqual(summary.uncapped_required_trades_per_day, 80)
+            self.assertEqual(summary.operating_pace_trades_per_day, 28)
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2000.0, places=4)  # 1.0% equity floor > 4000/28
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
 
@@ -1468,9 +1730,35 @@ class DailyTargetLedgerTest(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "firepower": {
+                            "avg_selected_trade_jpy": 168.6658,
+                            "avg_selected_trades_per_day": 4.7955,
+                            "required_trades_per_day_at_observed_expectancy": 173,
+                            "trade_frequency_multiple_required": 36.0755,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 87,
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
             ledger = DailyTargetLedger(
                 state_path=root / "target.json",
                 report_path=root / "target.md",
+                pace_backtest_path=backtest,
             )
 
             summary = ledger.run(
@@ -1481,6 +1769,17 @@ class DailyTargetLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.target_trades_per_day, 200)
             self.assertEqual(summary.target_trades_per_day_source, "cli")
+            self.assertEqual(summary.operating_pace_trades_per_day, 200)
+            self.assertEqual(summary.automated_operating_cap_trades_per_day, 30)
+            self.assertEqual(summary.uncapped_required_trades_per_day, 173)
+            self.assertEqual(summary.stretch_required_minus_operating_gap_trades_per_day, 0)
+            self.assertEqual(summary.selected_required_minus_operating_gap_trades_per_day, 0)
+            self.assertTrue(summary.trade_pace_feasible_within_operating_pace)
+            self.assertEqual(
+                summary.trade_pace_feasibility,
+                "OPERATING_PACE_FEASIBLE_OBSERVED_SHORT",
+            )
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 20.0, places=4)
 
     def test_explicit_start_balance_overrides_snapshot_account(self) -> None:
         from quant_rabbit.models import AccountSummary
@@ -1510,21 +1809,28 @@ class DailyTargetLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger_path = root / "execution_ledger.db"
             with sqlite3.connect(ledger_path) as conn:
-                conn.execute(
-                    "CREATE TABLE execution_events (ts_utc TEXT, event_type TEXT, realized_pl_jpy REAL)"
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-05-15T00:45:00+00:00",
                 )
-                conn.execute(
-                    "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-05-14T20:00:00+00:00",
+                    trade_id="system-1",
                 )
-                conn.execute(
-                    "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', '1', '2026-05-15T00:45:00+00:00')"
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-05-15T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-1",
+                    realized_pl_jpy=-5641.44,
                 )
-                conn.executemany(
-                    "INSERT INTO execution_events (ts_utc, event_type, realized_pl_jpy) VALUES (?, ?, ?)",
-                    [
-                        ("2026-05-15T00:30:00+00:00", "TRADE_CLOSED", -5641.44),
-                        ("2026-05-14T23:30:00+00:00", "TRADE_CLOSED", 1000.0),
-                    ],
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-05-14T23:30:00+00:00",
+                    event_type="TRADE_REDUCED",
+                    trade_id="system-1",
+                    realized_pl_jpy=1000.0,
                 )
             now = datetime(2026, 5, 15, 1, 0, tzinfo=timezone.utc)
             snapshot = BrokerSnapshot(
@@ -1567,38 +1873,42 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(payload["realized_pl_jpy"], -5641.44)
             self.assertAlmostEqual(payload["progress_jpy"], -5941.44)
 
-    def test_same_day_poisoned_start_balance_self_heals_from_ledger_truth(self) -> None:
-        """§3.5 stale-persistence repair (2026-06-08 incident regression).
+    def test_same_day_poisoned_start_balance_is_preserved_and_blocks_capacity(self) -> None:
+        """A mismatched same-day opening is audited, never silently rewritten.
 
-        A persisted start_balance from weeks earlier (222,781) against a
-        current broker balance of 184,962 must not report -37,818 JPY of
-        same-day "realized" loss. With execution-ledger truth available the
-        ledger figure wins and the start balance re-derives from
-        `balance - realized_today`.
+        Once a campaign day exists, later balance changes can include manual
+        P/L and financing.  Even a historically poisoned opening therefore
+        requires an explicit repair rather than an automatic re-anchor that
+        could mint a larger daily loss allowance.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger_path = root / "execution_ledger.db"
             with sqlite3.connect(ledger_path) as conn:
-                conn.execute(
-                    "CREATE TABLE execution_events (ts_utc TEXT, event_type TEXT, realized_pl_jpy REAL)"
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-06-08T17:00:00+00:00",
                 )
-                conn.execute(
-                    "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
-                )
-                conn.execute(
-                    "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', '472132', '2026-06-08T17:00:00+00:00')"
-                )
-                conn.executemany(
-                    "INSERT INTO execution_events (ts_utc, event_type, realized_pl_jpy) VALUES (?, ?, ?)",
-                    [
-                        ("2026-06-08T01:26:00+00:00", "TRADE_CLOSED", 433.68),
-                        ("2026-06-08T05:03:00+00:00", "TRADE_CLOSED", -172.86),
-                        ("2026-06-08T16:38:00+00:00", "TRADE_CLOSED", -169.16),
-                        # Prior-day rows must not leak into the campaign day.
-                        ("2026-06-05T12:41:00+00:00", "TRADE_CLOSED", -2981.90),
-                    ],
-                )
+                for trade_id in ("system-win", "system-loss-1", "system-loss-2", "system-old"):
+                    _insert_system_entry(
+                        conn,
+                        ts_utc="2026-06-05T00:00:00+00:00",
+                        trade_id=trade_id,
+                    )
+                for ts_utc, trade_id, value in (
+                    ("2026-06-08T01:26:00+00:00", "system-win", 433.68),
+                    ("2026-06-08T05:03:00+00:00", "system-loss-1", -172.86),
+                    ("2026-06-08T16:38:00+00:00", "system-loss-2", -169.16),
+                    # Prior-day rows must not leak into the campaign day.
+                    ("2026-06-05T12:41:00+00:00", "system-old", -2981.90),
+                ):
+                    _insert_realized_event(
+                        conn,
+                        ts_utc=ts_utc,
+                        event_type="TRADE_CLOSED",
+                        trade_id=trade_id,
+                        realized_pl_jpy=value,
+                    )
             state_path = root / "target.json"
             state_path.write_text(
                 json.dumps(
@@ -1633,19 +1943,18 @@ class DailyTargetLedgerTest(unittest.TestCase):
             expected_realized = 433.68 - 172.86 - 169.16
             self.assertEqual(payload["campaign_day_jst"], "2026-06-08")
             self.assertAlmostEqual(payload["realized_pl_jpy"], expected_realized, places=2)
-            self.assertAlmostEqual(
-                payload["start_balance_jpy"], 184_962.9332 - expected_realized, places=2
-            )
-            # Daily risk budget re-derives from the healed start balance.
-            self.assertAlmostEqual(
-                payload["daily_risk_budget_jpy"],
-                round((184_962.9332 - expected_realized) * 0.10, 4),
-                places=2,
+            self.assertAlmostEqual(payload["start_balance_jpy"], 222_781.0, places=2)
+            self.assertEqual(payload["campaign_open_balance_status"], "AUDITED_MISMATCH")
+            self.assertAlmostEqual(payload["daily_risk_budget_jpy"], 22_278.1, places=2)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertEqual(summary.per_trade_risk_budget_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_OPEN_BALANCE_MISMATCH" in blocker for blocker in payload["blockers"])
             )
             self.assertAlmostEqual(summary.progress_jpy, expected_realized, places=2)
 
-    def test_same_day_without_ledger_keeps_balance_diff_realized(self) -> None:
-        """Without an execution ledger the snapshot balance-diff fallback stays."""
+    def test_same_day_without_ledger_preserves_opening_and_blocks_unattributed_balance_diff(self) -> None:
+        """Account-wide balance movement cannot masquerade as system P/L."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_path = root / "target.json"
@@ -1679,8 +1988,846 @@ class DailyTargetLedgerTest(unittest.TestCase):
 
             # No audited realized figure: start balance must NOT re-anchor.
             self.assertAlmostEqual(payload["start_balance_jpy"], 200_000.0)
-            self.assertAlmostEqual(payload["realized_pl_jpy"], -1_500.0)
-            self.assertAlmostEqual(summary.progress_jpy, -1_500.0)
+            self.assertAlmostEqual(payload["realized_pl_jpy"], 0.0)
+            self.assertAlmostEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(payload["campaign_open_balance_status"], "AUDIT_UNAVAILABLE")
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertEqual(summary.per_trade_risk_budget_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_OPEN_BALANCE_AUDIT_UNAVAILABLE" in blocker for blocker in payload["blockers"])
+            )
+
+    def test_gross_realized_loss_spent_is_not_refilled_by_later_profit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-partials",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_REDUCED",
+                    trade_id="system-partials",
+                    realized_pl_jpy=-600.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T01:00:00+00:00",
+                    event_type="TRADE_REDUCED",
+                    trade_id="system-partials",
+                    realized_pl_jpy=500.0,
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            )
+
+            summary = ledger.run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=now,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(payload["realized_pl_jpy"], -100.0)
+            self.assertEqual(summary.realized_loss_spent_jpy, 600.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 400.0)
+            self.assertEqual(summary.remaining_risk_budget_jpy, 400.0)
+            self.assertEqual(summary.base_per_trade_risk_budget_jpy, 100.0)
+            self.assertEqual(summary.per_trade_risk_budget_jpy, 100.0)
+
+            with sqlite3.connect(ledger_path) as conn:
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T01:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-partials",
+                    realized_pl_jpy=-400.0,
+                )
+            exhausted = ledger.run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=now,
+            )
+
+            self.assertEqual(exhausted.realized_loss_spent_jpy, 1_000.0)
+            self.assertEqual(exhausted.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertEqual(exhausted.per_trade_risk_budget_jpy, 0.0)
+            self.assertEqual(exhausted.status, "RISK_BUDGET_EXHAUSTED")
+
+    def test_manual_losses_are_excluded_from_realized_loss_spent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events
+                        (ts_utc, event_type, lane_id, order_id, trade_id, realized_pl_jpy, financing_jpy)
+                    VALUES ('2026-07-11T00:05:00+00:00', 'ORDER_FILLED', NULL, 'manual-order',
+                            'manual-trade', 0.0, 0.0)
+                    """
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-100.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:40:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="manual-trade",
+                    realized_pl_jpy=-5_000.0,
+                )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.progress_jpy, -100.0)
+            self.assertEqual(summary.realized_loss_spent_jpy, 100.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 900.0)
+
+    def test_same_day_manual_profit_and_loss_do_not_reanchor_opening(self) -> None:
+        for manual_pl_jpy, manual_lane_id, owner_tag in (
+            (5_000.0, "operator_manual:EUR_USD:LONG", None),
+            (-5_000.0, "external:EUR_USD:LONG", None),
+            (2_500.0, "trend_trader:EUR_USD:LONG", "operator_manual"),
+        ):
+            with self.subTest(
+                manual_pl_jpy=manual_pl_jpy,
+                manual_lane_id=manual_lane_id,
+                owner_tag=owner_tag,
+            ), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state_path = root / "target.json"
+                state_path.write_text(
+                    json.dumps(
+                        {
+                            "campaign_day_jst": "2026-07-11",
+                            "start_balance_jpy": 10_000.0,
+                            "current_equity_jpy": 10_000.0,
+                            "target_return_pct": 10.0,
+                            "daily_risk_pct": 10.0,
+                            "campaign_open_balance_status": "AUDITED_ACCOUNT_DELTA",
+                            "campaign_open_balance_source": "prior_campaign_open",
+                        }
+                    )
+                )
+                ledger_path = root / "execution_ledger.db"
+                with sqlite3.connect(ledger_path) as conn:
+                    _create_execution_ledger_schema(
+                        conn,
+                        synced_at_utc="2026-07-11T02:00:00+00:00",
+                    )
+                    _insert_system_entry(
+                        conn,
+                        ts_utc="2026-07-11T00:05:00+00:00",
+                        trade_id="system-trade",
+                    )
+                    _insert_manual_entry(
+                        conn,
+                        ts_utc="2026-07-11T00:06:00+00:00",
+                        trade_id="manual-trade",
+                        lane_id=manual_lane_id,
+                        owner_tag=owner_tag,
+                    )
+                    _insert_realized_event(
+                        conn,
+                        ts_utc="2026-07-11T00:30:00+00:00",
+                        event_type="TRADE_CLOSED",
+                        trade_id="system-trade",
+                        realized_pl_jpy=-100.0,
+                    )
+                    _insert_realized_event(
+                        conn,
+                        ts_utc="2026-07-11T00:40:00+00:00",
+                        event_type="TRADE_CLOSED",
+                        trade_id="manual-trade",
+                        realized_pl_jpy=manual_pl_jpy,
+                    )
+
+                now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+                broker_balance = 10_000.0 - 100.0 + manual_pl_jpy
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    account=AccountSummary(
+                        nav_jpy=broker_balance,
+                        balance_jpy=broker_balance,
+                        unrealized_pl_jpy=0.0,
+                        fetched_at_utc=now,
+                    ),
+                )
+
+                summary = DailyTargetLedger(
+                    state_path=state_path,
+                    report_path=root / "target.md",
+                    execution_ledger_path=ledger_path,
+                ).run(snapshot=snapshot, target_trades_per_day=10, now_utc=now)
+                payload = json.loads(state_path.read_text())
+
+                self.assertEqual(payload["start_balance_jpy"], 10_000.0)
+                self.assertEqual(payload["campaign_open_balance_status"], "AUDITED_ACCOUNT_DELTA")
+                self.assertEqual(payload["campaign_day_account_realized_jpy"], manual_pl_jpy - 100.0)
+                self.assertEqual(payload["realized_pl_jpy"], -100.0)
+                self.assertEqual(payload["daily_risk_budget_jpy"], 1_000.0)
+                self.assertEqual(summary.realized_loss_spent_jpy, 100.0)
+                self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 900.0)
+                self.assertFalse(
+                    any("CAMPAIGN_OPEN_BALANCE_MISMATCH" in blocker for blocker in payload["blockers"])
+                )
+
+    def test_new_day_reconstructs_opening_from_account_pl_financing_and_capital_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": "2026-07-10",
+                        "start_balance_jpy": 9_000.0,
+                        "current_equity_jpy": 10_000.0,
+                        "target_return_pct": 10.0,
+                        "daily_risk_pct": 10.0,
+                    }
+                )
+            )
+            flow_path = root / "capital_flows.json"
+            flow_path.write_text(
+                json.dumps(
+                    {
+                        "capital_flows": [
+                            {
+                                "timestamp_utc": "2026-07-11T00:15:00+00:00",
+                                "type": "DEPOSIT",
+                                "amount_jpy": 2_000.0,
+                                "included_in_raw_equity": True,
+                                "excluded_from_funding_adjusted_return": True,
+                            }
+                        ]
+                    }
+                )
+            )
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_manual_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:06:00+00:00",
+                    trade_id="manual-trade",
+                    lane_id="operator_manual:EUR_USD:LONG",
+                )
+                _insert_transfer_transaction(
+                    conn,
+                    ts_utc="2026-07-11T00:15:00+00:00",
+                    amount_jpy=2_000.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-80.0,
+                    financing_jpy=-20.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:40:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="manual-trade",
+                    realized_pl_jpy=5_000.0,
+                )
+
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=16_900.0,
+                    balance_jpy=16_900.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                capital_flows_path=flow_path,
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, target_trades_per_day=10, now_utc=now)
+            payload = json.loads(state_path.read_text())
+
+            self.assertEqual(payload["campaign_open_balance_status"], "AUDITED_ACCOUNT_DELTA")
+            self.assertEqual(payload["start_balance_jpy"], 10_000.0)
+            self.assertEqual(payload["campaign_day_account_realized_jpy"], 4_900.0)
+            self.assertEqual(payload["campaign_day_capital_flows_jpy"], 2_000.0)
+            self.assertEqual(payload["realized_pl_jpy"], -100.0)
+            self.assertEqual(payload["daily_risk_budget_jpy"], 1_000.0)
+            self.assertEqual(summary.realized_loss_spent_jpy, 100.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 900.0)
+
+    def test_daily_financing_is_account_wide_but_only_system_components_spend_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T22:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_manual_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:06:00+00:00",
+                    trade_id="manual-trade",
+                    lane_id="operator_manual:EUR_USD:LONG",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T01:00:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-90.0,
+                    financing_jpy=-10.0,
+                )
+                _insert_financing_transaction(
+                    conn,
+                    ts_utc="2026-07-11T21:00:00+00:00",
+                    financing_jpy=25.0,
+                    trade_financings=(("system-trade", -25.0), ("manual-trade", 50.0)),
+                )
+
+            now = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=9_925.0,
+                    balance_jpy=9_925.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                snapshot=snapshot,
+                daily_risk_pct=10.0,
+                target_trades_per_day=10,
+                now_utc=now,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            # The close financing is counted once in its close event and the
+            # 21:00 daily financing once in its OANDA transaction.
+            self.assertEqual(payload["campaign_day_account_realized_jpy"], -75.0)
+            self.assertEqual(payload["start_balance_jpy"], 10_000.0)
+            self.assertEqual(payload["realized_pl_jpy"], -125.0)
+            self.assertEqual(summary.realized_loss_spent_jpy, 125.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 875.0)
+
+    def test_new_day_provisional_opening_blocks_until_account_delta_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": "2026-07-10",
+                        "start_balance_jpy": 9_000.0,
+                        "current_equity_jpy": 10_000.0,
+                        "target_return_pct": 10.0,
+                        "daily_risk_pct": 10.0,
+                    }
+                )
+            )
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-10T23:59:00+00:00",
+                )
+
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=14_900.0,
+                    balance_jpy=14_900.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+            ledger = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            )
+
+            provisional = ledger.run(snapshot=snapshot, target_trades_per_day=10, now_utc=now)
+            provisional_payload = json.loads(state_path.read_text())
+            self.assertEqual(provisional_payload["campaign_open_balance_status"], "PROVISIONAL_UNAUDITED")
+            self.assertEqual(provisional.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertEqual(provisional.per_trade_risk_budget_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_OPEN_BALANCE_UNAUDITED" in blocker for blocker in provisional_payload["blockers"])
+            )
+
+            with sqlite3.connect(ledger_path) as conn:
+                conn.execute(
+                    """
+                    UPDATE sync_state SET updated_at_utc = '2026-07-11T02:00:00+00:00'
+                    WHERE key = 'last_oanda_transaction_id'
+                    """
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_manual_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:06:00+00:00",
+                    trade_id="manual-trade",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-100.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:40:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="manual-trade",
+                    realized_pl_jpy=5_000.0,
+                )
+
+            audited = ledger.run(snapshot=snapshot, target_trades_per_day=10, now_utc=now)
+            audited_payload = json.loads(state_path.read_text())
+            self.assertEqual(audited_payload["campaign_open_balance_status"], "AUDITED_ACCOUNT_DELTA")
+            self.assertEqual(audited_payload["start_balance_jpy"], 10_000.0)
+            self.assertEqual(audited_payload["realized_pl_jpy"], -100.0)
+            self.assertEqual(audited.daily_loss_capacity_before_open_jpy, 900.0)
+
+    def test_same_day_cold_baseline_does_not_claim_day_start_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": "2026-07-10",
+                        "start_balance_jpy": 9_000.0,
+                        "current_equity_jpy": 10_000.0,
+                        "target_return_pct": 10.0,
+                        "daily_risk_pct": 10.0,
+                    }
+                )
+            )
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                    # A cold baseline at 02:00 imported nothing from 00:00-02:00.
+                    coverage_start_utc="2026-07-11T02:00:00+00:00",
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=14_900.0,
+                    balance_jpy=14_900.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, target_trades_per_day=10, now_utc=now)
+            payload = json.loads(state_path.read_text())
+
+            self.assertEqual(payload["campaign_open_balance_status"], "PROVISIONAL_UNAUDITED")
+            self.assertEqual(payload["start_balance_jpy"], 14_900.0)
+            self.assertIsNone(payload["campaign_day_account_realized_jpy"])
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_OPEN_BALANCE_UNAUDITED" in blocker for blocker in payload["blockers"])
+            )
+
+    def test_snapshot_transaction_id_mismatch_blocks_account_delta_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=10_000.0,
+                    balance_jpy=10_000.0,
+                    unrealized_pl_jpy=0.0,
+                    last_transaction_id="2",
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                start_balance_jpy=10_000.0,
+                snapshot=snapshot,
+                daily_risk_pct=10.0,
+                now_utc=now,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(payload["campaign_open_balance_status"], "EXPLICIT")
+            self.assertIsNone(payload["campaign_day_account_realized_jpy"])
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_ACCOUNT_DELTA_AUDIT_UNAVAILABLE" in blocker for blocker in payload["blockers"])
+            )
+
+    def test_nonzero_unsupported_order_fill_cash_component_blocks_opening_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-100.0,
+                    raw_json={
+                        "type": "ORDER_FILL",
+                        "pl": "-100.0",
+                        "commission": "-5.0",
+                        "guaranteedExecutionFee": "0.0",
+                    },
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=9_895.0,
+                    balance_jpy=9_895.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                start_balance_jpy=10_000.0,
+                snapshot=snapshot,
+                daily_risk_pct=10.0,
+                now_utc=now,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(payload["campaign_open_balance_status"], "EXPLICIT")
+            self.assertIsNone(payload["campaign_day_account_realized_jpy"])
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_ACCOUNT_DELTA_AUDIT_UNAVAILABLE" in blocker for blocker in payload["blockers"])
+            )
+
+    def test_missing_close_raw_json_blocks_opening_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-trade",
+                    realized_pl_jpy=-100.0,
+                    include_raw_json=False,
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=9_900.0,
+                    balance_jpy=9_900.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, daily_risk_pct=10.0, now_utc=now)
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertIsNone(payload["campaign_day_account_realized_jpy"])
+            self.assertEqual(payload["campaign_open_balance_status"], "PROVISIONAL_UNAUDITED")
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+
+    def test_unrecorded_broker_transfer_funds_blocks_opening_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_transfer_transaction(
+                    conn,
+                    ts_utc="2026-07-11T01:00:00+00:00",
+                    amount_jpy=100_000.0,
+                )
+            now = datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=110_000.0,
+                    balance_jpy=110_000.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                capital_flows_path=root / "missing-capital-flows.json",
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, daily_risk_pct=10.0, now_utc=now)
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(payload["campaign_day_broker_capital_flows_jpy"], 100_000.0)
+            self.assertEqual(payload["campaign_day_capital_flows_jpy"], 0.0)
+            self.assertEqual(payload["campaign_open_balance_status"], "PROVISIONAL_UNAUDITED")
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+
+    def test_unreconciled_daily_financing_components_block_opening_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T22:00:00+00:00",
+                )
+                _insert_financing_transaction(
+                    conn,
+                    ts_utc="2026-07-11T21:00:00+00:00",
+                    financing_jpy=-50.0,
+                    trade_financings=(("unknown-trade", -25.0),),
+                )
+            now = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=9_950.0,
+                    balance_jpy=9_950.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                start_balance_jpy=10_000.0,
+                snapshot=snapshot,
+                daily_risk_pct=10.0,
+                now_utc=now,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(payload["campaign_open_balance_status"], "EXPLICIT")
+            self.assertIsNone(payload["campaign_day_account_realized_jpy"])
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 0.0)
+            self.assertTrue(
+                any("CAMPAIGN_ACCOUNT_DELTA_AUDIT_UNAVAILABLE" in blocker for blocker in payload["blockers"])
+            )
+
+    def test_losing_partial_is_not_erased_by_winning_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-partial",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:30:00+00:00",
+                    event_type="TRADE_REDUCED",
+                    trade_id="system-partial",
+                    realized_pl_jpy=-100.0,
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T00:40:00+00:00",
+                    event_type="TRADE_REDUCED",
+                    trade_id="system-partial",
+                    realized_pl_jpy=200.0,
+                )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.progress_jpy, 100.0)
+            self.assertEqual(summary.realized_loss_spent_jpy, 100.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 900.0)
+
+    def test_realized_loss_spent_resets_on_next_campaign_day(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T02:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-day-one",
+                )
+                _insert_realized_event(
+                    conn,
+                    ts_utc="2026-07-11T01:00:00+00:00",
+                    event_type="TRADE_CLOSED",
+                    trade_id="system-day-one",
+                    realized_pl_jpy=-600.0,
+                )
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            )
+            first = ledger.run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=datetime(2026, 7, 11, 2, 0, tzinfo=timezone.utc),
+            )
+            self.assertEqual(first.realized_loss_spent_jpy, 600.0)
+
+            with sqlite3.connect(ledger_path) as conn:
+                conn.execute(
+                    """
+                    UPDATE sync_state SET updated_at_utc = '2026-07-12T02:00:00+00:00'
+                    WHERE key = 'last_oanda_transaction_id'
+                    """
+                )
+            reset = ledger.run(
+                start_balance_jpy=10_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                target_trades_per_day=10,
+                now_utc=datetime(2026, 7, 12, 2, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(reset.realized_loss_spent_jpy, 0.0)
+            self.assertEqual(reset.daily_loss_capacity_before_open_jpy, 1_000.0)
+            self.assertEqual(reset.remaining_risk_budget_jpy, 1_000.0)
 
 
 if __name__ == "__main__":

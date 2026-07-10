@@ -1104,6 +1104,48 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertTrue(payload["input_packet"]["market_status"]["is_fx_open"])
             self.assertIn("market:status", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_exposes_uncapped_trade_pace_without_changing_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            target = json.loads(files["target"].read_text())
+            target.update(
+                {
+                    "uncapped_required_trades_per_day": 173,
+                    "uncapped_required_trades_per_day_basis_return_pct": 10.0,
+                    "selected_basis_uncapped_required_trades_per_day": 87,
+                    "selected_basis_return_pct": 5.0,
+                    "operating_pace_trades_per_day": 30,
+                    "automated_operating_cap_trades_per_day": 30,
+                    "observed_trades_per_day": 4.7955,
+                    "observed_expectancy_jpy_per_trade": 168.6658,
+                    "frequency_multiple_required": 36.0755,
+                    "planned_reward_at_operating_pace_jpy": 5059.974,
+                    "stretch_required_minus_operating_gap_trades_per_day": 143,
+                    "selected_required_minus_operating_gap_trades_per_day": 57,
+                    "trade_pace_feasible_within_operating_pace": False,
+                    "trade_pace_feasibility": "INFEASIBLE_AT_OPERATING_PACE",
+                }
+            )
+            files["target"].write_text(json.dumps(target))
+
+            summary = _brain(root, files, _trade_decision()).run(
+                snapshot_path=files["snapshot"]
+            )
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet = payload["input_packet"]["daily_target"]
+
+        self.assertEqual(summary.status, "ACCEPTED")
+        self.assertTrue(summary.allowed)
+        self.assertEqual(packet["uncapped_required_trades_per_day"], 173)
+        self.assertEqual(packet["selected_basis_uncapped_required_trades_per_day"], 87)
+        self.assertEqual(packet["operating_pace_trades_per_day"], 30)
+        self.assertEqual(packet["observed_expectancy_jpy_per_trade"], 168.6658)
+        self.assertEqual(packet["planned_reward_at_operating_pace_jpy"], 5059.974)
+        self.assertEqual(packet["stretch_required_minus_operating_gap_trades_per_day"], 143)
+        self.assertEqual(packet["selected_required_minus_operating_gap_trades_per_day"], 57)
+        self.assertEqual(packet["trade_pace_feasibility"], "INFEASIBLE_AT_OPERATING_PACE")
+
     def test_input_packet_includes_manual_precedent_context_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

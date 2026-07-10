@@ -30,6 +30,7 @@ def _trader_sl_repair_disabled() -> bool:
 from quant_rabbit.paths import (
     ROOT as _QR_ROOT,
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
@@ -43,6 +44,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.target import DailyTargetLedger
 from quant_rabbit.predictive_scout import (
     PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS,
     PREDICTIVE_SCOUT_MAX_CONCURRENT,
@@ -82,6 +84,7 @@ from quant_rabbit.self_improvement_guards import (
     profitability_p0_worst_segment,
 )
 from quant_rabbit.strategy.intent_generator import (
+    MACRO_EVENT_MAX_RISK_PCT_NAV,
     _daily_risk_budget_from_state,
     _expired_pending_projection_count,
     _per_trade_risk_from_state,
@@ -93,6 +96,10 @@ class ExecutionClient(Protocol):
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot: ...
 
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]: ...
+
+    def account_summary(self, *, now_utc: datetime | None = None) -> Any: ...
+
+    def transactions_since_id(self, transaction_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,27 @@ class LiveOrderStageSummary:
     strategy_issues: int
     sent_count: int = 0
     lane_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PrePostReconciliationResult:
+    intent: OrderIntent
+    snapshot: BrokerSnapshot
+    risk: Any
+    order_request: dict[str, Any] | None
+    attached_stop_metrics: dict[str, Any] | None
+    max_loss_jpy: float
+    portfolio_loss_cap_jpy: float | None
+    size_multiple: float
+    order_build_issues: list[dict[str, str]]
+    issues: tuple[RiskIssue, ...]
+    evidence: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _OrdinaryEntryPostClaimResult:
+    evidence: dict[str, Any]
+    issue: dict[str, str] | None = None
 
 
 # Portfolio occupancy needs to scale with the campaign pace. Three active FX
@@ -128,6 +156,14 @@ TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_
 TARGET_PATH_ATTACK_STACK_SLOTS = {"NOW", "RELOAD", "SECOND_SHOT"}
 TARGET_PATH_GRADE_RANK = {"C": 0, "B-": 1, "B0": 2, "B": 2, "B+": 3, "A": 4, "S": 5}
 
+# DailyTargetLedger is the final campaign state machine at the broker boundary.
+# Only PURSUE_TARGET authorizes fresh risk.  The explicit deny set keeps known
+# terminal/repair states auditable, while the allow-list makes a newly added or
+# malformed status fail closed instead of silently becoming send permission.
+PRE_POST_FRESH_ENTRY_ALLOWED_TARGET_STATUSES = frozenset({"PURSUE_TARGET"})
+PRE_POST_FRESH_ENTRY_FORBIDDEN_TARGET_STATUSES = frozenset(
+    {"TARGET_REACHED_PROTECT", "RISK_BUDGET_EXHAUSTED", "REPAIR_REQUIRED"}
+)
 
 class LiveOrderGateway:
     """Stage or send one OANDA order after the live risk contract passes."""
@@ -144,6 +180,8 @@ class LiveOrderGateway:
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
         portfolio_loss_cap_jpy: float | None = None,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        target_report_path: Path | None = None,
         self_improvement_audit: Path | None = None,
         verified_decision_path: Path | None = None,
         guardian_action_receipt_path: Path | None = DEFAULT_GUARDIAN_ACTION_RECEIPT,
@@ -164,6 +202,12 @@ class LiveOrderGateway:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self.portfolio_loss_cap_jpy = portfolio_loss_cap_jpy
+        self.target_state_path = target_state_path
+        self.target_report_path = target_report_path or (
+            DEFAULT_DAILY_TARGET_REPORT
+            if target_state_path == DEFAULT_DAILY_TARGET_STATE
+            else target_state_path.with_suffix(".md")
+        )
         self.execution_ledger_db_path = execution_ledger_db_path
         self.execution_ledger_report_path = execution_ledger_report_path
         self.predictive_scout_canonical_ledger_db_path = (
@@ -249,10 +293,13 @@ class LiveOrderGateway:
         # day) is the whole-day risk budget, not the per-trade slice. Using
         # `max_loss_jpy` here would treat the per-shot cap as a portfolio
         # ceiling, blocking every additional shot once one position opens.
+        # Resolve again immediately before broker validation. Automation may
+        # have passed a cap computed earlier in the cycle; a close synced in
+        # between must only tighten that value, never reopen capacity.
         portfolio_loss_cap = (
             self.portfolio_loss_cap_jpy
-            if self.portfolio_loss_cap_jpy is not None
-            else _daily_risk_budget_from_state(DEFAULT_DAILY_TARGET_STATE)
+            if send and self.execution_ledger_db_path is not None
+            else self._resolve_portfolio_loss_cap_jpy()
         )
         validate_live_enabled = self.live_enabled if send else True
         snapshot, risk, quote_refresh_attempts = self._snapshot_and_validate_intent(
@@ -396,6 +443,9 @@ class LiveOrderGateway:
         sent = False
         entry_thesis_record = None
         entry_thesis_issues: list[dict[str, str]] = []
+        ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
+        ordinary_entry_claim_issues: list[dict[str, str]] = []
+        pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             predictive_scout_issues.extend(
@@ -405,6 +455,69 @@ class LiveOrderGateway:
                 )
             )
             if any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues):
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            reconciliation = self._pre_post_reconcile(
+                intent=intent,
+                verified_intent=_intent_with_gateway_metadata(
+                    _intent_from_json(selected["intent"]),
+                    selected_lane_id,
+                ),
+                snapshot=snapshot,
+                risk=risk,
+                order_request=order_request,
+                attached_stop_metrics=attached_stop_metrics,
+                max_loss_jpy=max_loss_jpy,
+                portfolio_loss_cap_jpy=portfolio_loss_cap,
+                size_multiple=size_multiple,
+                order_build_issues=order_build_issues,
+                requested_units=requested_units,
+                snapshot_pairs=_snapshot_pairs(intents_payload, intent),
+                portfolio_position_cap=portfolio_position_cap,
+                intents_path=intents_path,
+                ignore_pending_order_ids=(),
+            )
+            intent = reconciliation.intent
+            snapshot = reconciliation.snapshot
+            risk = reconciliation.risk
+            order_request = reconciliation.order_request
+            attached_stop_metrics = reconciliation.attached_stop_metrics
+            max_loss_jpy = reconciliation.max_loss_jpy
+            portfolio_loss_cap = reconciliation.portfolio_loss_cap_jpy
+            size_multiple = reconciliation.size_multiple
+            order_build_issues = reconciliation.order_build_issues
+            scale_issues.extend(reconciliation.issues)
+            pre_post_reconciliation = reconciliation.evidence
+            risk_issues = [issue.__dict__ for issue in risk.issues]
+            sl_lint, sl_lint_issues = _sl_lint_result(
+                intent=intent,
+                snapshot=snapshot,
+                order_request=order_request,
+                metrics=risk.metrics,
+                attached_stop_metrics=attached_stop_metrics,
+            )
+            final_lint_blocks = [
+                str(issue.get("code") or "FINAL_SL_LINT_BLOCKED")
+                for issue in sl_lint_issues
+                if issue.get("severity") == "BLOCK"
+            ]
+            if final_lint_blocks:
+                pre_post_reconciliation = {
+                    **pre_post_reconciliation,
+                    "status": "BLOCKED",
+                    "final_check_failed": True,
+                    "final_blocking_codes": [
+                        *pre_post_reconciliation.get("final_blocking_codes", []),
+                        *final_lint_blocks,
+                    ],
+                }
+            if (
+                any(issue.severity == "BLOCK" for issue in reconciliation.issues)
+                or any(issue.severity == "BLOCK" for issue in risk.issues)
+                or any(issue.get("severity") == "BLOCK" for issue in order_build_issues)
+                or any(issue.get("severity") == "BLOCK" for issue in sl_lint_issues)
+            ):
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
@@ -420,9 +533,40 @@ class LiveOrderGateway:
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
-            response = self.client.post_order_json(order_request)
+            claim_result = self._reserve_ordinary_entry_post(
+                intent=intent,
+                order_request=order_request,
+                lane_id=selected_lane_id,
+            )
+            ordinary_entry_claim = claim_result.evidence
+            if claim_result.issue is not None:
+                ordinary_entry_claim_issues.append(claim_result.issue)
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            try:
+                response = self.client.post_order_json(order_request)
+            except Exception as exc:
+                ordinary_entry_claim, _ = self._finalize_ordinary_entry_post_claim(
+                    ordinary_entry_claim,
+                    status="POST_OUTCOME_UNKNOWN",
+                    broker_outcome={
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    },
+                )
+                raise
+            ordinary_entry_claim, claim_finalize_issue = self._finalize_ordinary_entry_post_claim(
+                ordinary_entry_claim,
+                status="BROKER_RESPONSE_RECORDED",
+                broker_outcome=response,
+            )
+            if claim_finalize_issue is not None:
+                ordinary_entry_claim_issues.append(claim_finalize_issue)
             sent = True
             status = "SENT"
+            if claim_finalize_issue is not None:
+                status = "SENT_WITH_ENTRY_CLAIM_GAP"
             # Record entry thesis (2026-05-15, user directive: 「どの視点で
             # エントリーしたのか、時間がたって今のポジ状況はエントリー
             # したときと市況が変わってないか」). Best-effort: never raises
@@ -498,12 +642,15 @@ class LiveOrderGateway:
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
+                *ordinary_entry_claim_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
             "sent": sent,
             "response": response,
             "entry_thesis_record": entry_thesis_record,
+            "ordinary_entry_claim": ordinary_entry_claim,
+            "pre_post_reconciliation": pre_post_reconciliation,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
                 "positions": len(snapshot.positions),
@@ -825,7 +972,11 @@ class LiveOrderGateway:
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         max_loss_jpy = self._resolve_gateway_max_loss_jpy()
-        portfolio_loss_cap = self._resolve_portfolio_loss_cap_jpy()
+        portfolio_loss_cap = (
+            self.portfolio_loss_cap_jpy
+            if send and self.execution_ledger_db_path is not None
+            else self._resolve_portfolio_loss_cap_jpy()
+        )
         validate_live_enabled = self.live_enabled if send else True
         snapshot, risk, quote_refresh_attempts = self._snapshot_and_validate_intent(
             snapshot_pairs=_snapshot_pairs(intents_payload, intent),
@@ -1012,6 +1163,9 @@ class LiveOrderGateway:
         sent = False
         entry_thesis_record = None
         entry_thesis_issues: list[dict[str, str]] = []
+        ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
+        ordinary_entry_claim_issues: list[dict[str, str]] = []
+        pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             predictive_scout_issues.extend(
@@ -1021,6 +1175,70 @@ class LiveOrderGateway:
                 )
             )
             if any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues):
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            final_position_cap = portfolio_position_cap or _portfolio_position_cap_from_state()
+            reconciliation = self._pre_post_reconcile(
+                intent=intent,
+                verified_intent=_intent_with_gateway_metadata(
+                    _intent_from_json(selected["intent"]),
+                    selected_lane_id,
+                ),
+                snapshot=snapshot,
+                risk=risk,
+                order_request=order_request,
+                attached_stop_metrics=attached_stop_metrics,
+                max_loss_jpy=max_loss_jpy,
+                portfolio_loss_cap_jpy=portfolio_loss_cap,
+                size_multiple=size_multiple,
+                order_build_issues=order_build_issues,
+                requested_units=requested_units,
+                snapshot_pairs=_snapshot_pairs(intents_payload, intent),
+                portfolio_position_cap=final_position_cap,
+                intents_path=intents_path,
+                ignore_pending_order_ids=ignore_pending_order_ids,
+            )
+            intent = reconciliation.intent
+            snapshot = reconciliation.snapshot
+            risk = reconciliation.risk
+            order_request = reconciliation.order_request
+            attached_stop_metrics = reconciliation.attached_stop_metrics
+            max_loss_jpy = reconciliation.max_loss_jpy
+            portfolio_loss_cap = reconciliation.portfolio_loss_cap_jpy
+            size_multiple = reconciliation.size_multiple
+            order_build_issues = reconciliation.order_build_issues
+            scale_issues.extend(reconciliation.issues)
+            pre_post_reconciliation = reconciliation.evidence
+            risk_issues = [issue.__dict__ for issue in risk.issues]
+            sl_lint, sl_lint_issues = _sl_lint_result(
+                intent=intent,
+                snapshot=snapshot,
+                order_request=order_request,
+                metrics=risk.metrics,
+                attached_stop_metrics=attached_stop_metrics,
+            )
+            final_lint_blocks = [
+                str(issue.get("code") or "FINAL_SL_LINT_BLOCKED")
+                for issue in sl_lint_issues
+                if issue.get("severity") == "BLOCK"
+            ]
+            if final_lint_blocks:
+                pre_post_reconciliation = {
+                    **pre_post_reconciliation,
+                    "status": "BLOCKED",
+                    "final_check_failed": True,
+                    "final_blocking_codes": [
+                        *pre_post_reconciliation.get("final_blocking_codes", []),
+                        *final_lint_blocks,
+                    ],
+                }
+            if (
+                any(issue.severity == "BLOCK" for issue in reconciliation.issues)
+                or any(issue.severity == "BLOCK" for issue in risk.issues)
+                or any(issue.get("severity") == "BLOCK" for issue in order_build_issues)
+                or any(issue.get("severity") == "BLOCK" for issue in sl_lint_issues)
+            ):
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
@@ -1036,9 +1254,40 @@ class LiveOrderGateway:
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
-            response = self.client.post_order_json(order_request)
+            claim_result = self._reserve_ordinary_entry_post(
+                intent=intent,
+                order_request=order_request,
+                lane_id=selected_lane_id,
+            )
+            ordinary_entry_claim = claim_result.evidence
+            if claim_result.issue is not None:
+                ordinary_entry_claim_issues.append(claim_result.issue)
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            try:
+                response = self.client.post_order_json(order_request)
+            except Exception as exc:
+                ordinary_entry_claim, _ = self._finalize_ordinary_entry_post_claim(
+                    ordinary_entry_claim,
+                    status="POST_OUTCOME_UNKNOWN",
+                    broker_outcome={
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    },
+                )
+                raise
+            ordinary_entry_claim, claim_finalize_issue = self._finalize_ordinary_entry_post_claim(
+                ordinary_entry_claim,
+                status="BROKER_RESPONSE_RECORDED",
+                broker_outcome=response,
+            )
+            if claim_finalize_issue is not None:
+                ordinary_entry_claim_issues.append(claim_finalize_issue)
             sent = True
             status = "SENT"
+            if claim_finalize_issue is not None:
+                status = "SENT_WITH_ENTRY_CLAIM_GAP"
             # Entry thesis recording — see comment in run() for rationale.
             try:
                 from quant_rabbit.strategy.entry_thesis_ledger import (
@@ -1109,12 +1358,15 @@ class LiveOrderGateway:
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
+                *ordinary_entry_claim_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
             "sent": sent,
             "response": response,
             "entry_thesis_record": entry_thesis_record,
+            "ordinary_entry_claim": ordinary_entry_claim,
+            "pre_post_reconciliation": pre_post_reconciliation,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
                 "positions": len(snapshot.positions),
@@ -1154,10 +1406,527 @@ class LiveOrderGateway:
         )
 
     def _resolve_portfolio_loss_cap_jpy(self) -> float | None:
-        return (
-            self.portfolio_loss_cap_jpy
-            if self.portfolio_loss_cap_jpy is not None
-            else _daily_risk_budget_from_state(DEFAULT_DAILY_TARGET_STATE)
+        persisted_capacity = _daily_risk_budget_from_state(self.target_state_path)
+        if self.portfolio_loss_cap_jpy is None:
+            return persisted_capacity
+        if persisted_capacity is None:
+            return self.portfolio_loss_cap_jpy
+        return min(self.portfolio_loss_cap_jpy, persisted_capacity)
+
+    def _pre_post_reconcile(
+        self,
+        *,
+        intent: OrderIntent,
+        verified_intent: OrderIntent,
+        snapshot: BrokerSnapshot,
+        risk: Any,
+        order_request: dict[str, Any] | None,
+        attached_stop_metrics: dict[str, Any] | None,
+        max_loss_jpy: float,
+        portfolio_loss_cap_jpy: float | None,
+        size_multiple: float,
+        order_build_issues: list[dict[str, str]],
+        requested_units: int,
+        snapshot_pairs: tuple[str, ...],
+        portfolio_position_cap: int,
+        intents_path: Path,
+        ignore_pending_order_ids: tuple[str, ...] = (),
+    ) -> _PrePostReconciliationResult:
+        """Reconcile loss capacity against broker truth immediately before POST.
+
+        The whole sequence intentionally lives inside the gateway so direct,
+        batch, AutoTradeCycle, and guardian entry paths share the same final
+        defense. The refreshed target publishes capacity *before* open risk;
+        this method then subtracts fresh open, pending, and candidate risk once
+        from the exact snapshot whose lastTransactionID matched the ledger.
+        """
+
+        evidence: dict[str, Any] = {
+            "status": "SKIPPED",
+            "execution_ledger_db_path": (
+                str(self.execution_ledger_db_path)
+                if self.execution_ledger_db_path is not None
+                else None
+            ),
+            "target_state_path": str(self.target_state_path),
+        }
+        def blocked(code: str, message: str) -> _PrePostReconciliationResult:
+            issue = RiskIssue(code, message)
+            evidence.update({"status": "BLOCKED", "issue_code": code, "message": message})
+            return _PrePostReconciliationResult(
+                intent=intent,
+                snapshot=snapshot,
+                risk=risk,
+                order_request=order_request,
+                attached_stop_metrics=attached_stop_metrics,
+                max_loss_jpy=max_loss_jpy,
+                portfolio_loss_cap_jpy=portfolio_loss_cap_jpy,
+                size_multiple=size_multiple,
+                order_build_issues=order_build_issues,
+                issues=(issue,),
+                evidence=evidence,
+            )
+
+        if self.execution_ledger_db_path is None:
+            return blocked(
+                "PRE_POST_LEDGER_PATH_MISSING",
+                "live send requires an execution_ledger_db_path for final broker/target reconciliation",
+            )
+
+        if not hasattr(self.client, "account_summary") or not hasattr(
+            self.client,
+            "transactions_since_id",
+        ):
+            return blocked(
+                "PRE_POST_LEDGER_SYNC_UNAVAILABLE",
+                "live send requires account_summary and transactions_since_id so the execution ledger can sync before POST",
+            )
+
+        report_path = self.execution_ledger_report_path or self.execution_ledger_db_path.with_suffix(".md")
+        ledger = ExecutionLedger(
+            db_path=self.execution_ledger_db_path,
+            report_path=report_path,
+        )
+        try:
+            sync_summary = ledger.sync_oanda_transactions(self.client)
+        except Exception as exc:
+            return blocked(
+                "PRE_POST_LEDGER_SYNC_FAILED",
+                f"execution ledger sync failed immediately before POST: {type(exc).__name__}: {exc}",
+            )
+        evidence.update(
+            {
+                "ledger_sync_status": sync_summary.status,
+                "ledger_last_transaction_id": sync_summary.last_transaction_id,
+            }
+        )
+        if sync_summary.status != "SYNCED" or not sync_summary.last_transaction_id:
+            return blocked(
+                "PRE_POST_LEDGER_NOT_SYNCED",
+                f"execution ledger status is {sync_summary.status} with last transaction "
+                f"{sync_summary.last_transaction_id!r}; a baseline/legacy ledger cannot authorize a live POST",
+            )
+
+        try:
+            fresh_snapshot = self.client.snapshot(snapshot_pairs)
+        except Exception as exc:
+            return blocked(
+                "PRE_POST_BROKER_SNAPSHOT_FAILED",
+                f"fresh broker snapshot failed immediately before POST: {type(exc).__name__}: {exc}",
+            )
+        fresh_snapshot = _snapshot_without_trader_pending_orders(
+            fresh_snapshot,
+            ignore_pending_order_ids,
+        )
+        broker_transaction_id = (
+            str(fresh_snapshot.account.last_transaction_id or "").strip()
+            if fresh_snapshot.account is not None
+            else ""
+        )
+        ledger_transaction_id = str(sync_summary.last_transaction_id or "").strip()
+        evidence.update(
+            {
+                "broker_last_transaction_id": broker_transaction_id or None,
+                "snapshot_fetched_at_utc": fresh_snapshot.fetched_at_utc.isoformat(),
+            }
+        )
+        if not broker_transaction_id or broker_transaction_id != ledger_transaction_id:
+            return blocked(
+                "PRE_POST_TRANSACTION_ID_MISMATCH",
+                f"ledger lastTransactionID {ledger_transaction_id or 'missing'} does not match fresh broker snapshot "
+                f"{broker_transaction_id or 'missing'}; retry after both views converge",
+            )
+
+        macro_event_confidence_sizing = _metadata_truthy(
+            (intent.metadata or {}).get("macro_event_confidence_sizing")
+        )
+        macro_event_fresh_nav_value: float | None = None
+        macro_event_fresh_nav_recheck: dict[str, Any] = {
+            "status": "NOT_APPLICABLE"
+        }
+        if macro_event_confidence_sizing:
+            account = fresh_snapshot.account
+            fresh_nav = account.nav_jpy if account is not None else None
+            try:
+                parsed_fresh_nav = float(fresh_nav)
+            except (TypeError, ValueError):
+                parsed_fresh_nav = math.nan
+            if not math.isfinite(parsed_fresh_nav) or parsed_fresh_nav <= 0.0:
+                macro_event_fresh_nav_recheck = {
+                    "status": "BLOCKED",
+                    "fresh_nav_jpy": fresh_nav,
+                    "max_risk_pct_nav": MACRO_EVENT_MAX_RISK_PCT_NAV,
+                    "issue_code": "PRE_POST_MACRO_EVENT_FRESH_NAV_MISSING",
+                }
+                evidence["macro_event_fresh_nav_recheck"] = (
+                    macro_event_fresh_nav_recheck
+                )
+                return blocked(
+                    "PRE_POST_MACRO_EVENT_FRESH_NAV_MISSING",
+                    "macro-event confidence sizing requires finite positive NAV from the "
+                    "same fresh broker snapshot used immediately before POST",
+                )
+            macro_event_fresh_nav_value = parsed_fresh_nav
+
+        try:
+            target_summary = DailyTargetLedger(
+                state_path=self.target_state_path,
+                report_path=self.target_report_path,
+                execution_ledger_path=self.execution_ledger_db_path,
+            ).run(
+                snapshot=fresh_snapshot,
+                now_utc=fresh_snapshot.fetched_at_utc,
+            )
+            target_payload = json.loads(self.target_state_path.read_text())
+        except Exception as exc:
+            return blocked(
+                "PRE_POST_TARGET_REFRESH_FAILED",
+                f"daily target could not refresh from the synced ledger and matching snapshot: "
+                f"{type(exc).__name__}: {exc}",
+            )
+        if not isinstance(target_payload, dict):
+            return blocked(
+                "PRE_POST_TARGET_STATE_LEGACY",
+                "refreshed daily target state is not a JSON object",
+            )
+
+        required_fields = (
+            "realized_loss_spent_jpy",
+            "daily_loss_capacity_before_open_jpy",
+            "base_per_trade_risk_budget_jpy",
+            "per_trade_risk_budget_jpy",
+        )
+        parsed: dict[str, float] = {}
+        for field in required_fields:
+            raw = target_payload.get(field)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return blocked(
+                    "PRE_POST_TARGET_STATE_LEGACY",
+                    f"refreshed daily target state lacks numeric {field}; legacy state cannot authorize POST",
+                )
+            if not math.isfinite(value) or value < 0.0:
+                return blocked(
+                    "PRE_POST_TARGET_STATE_LEGACY",
+                    f"refreshed daily target state has invalid {field}={raw!r}",
+                )
+            parsed[field] = value
+
+        final_capacity = parsed["daily_loss_capacity_before_open_jpy"]
+        final_per_trade = parsed["per_trade_risk_budget_jpy"]
+        evidence.update(
+            {
+                "status": "REFRESHED",
+                "target_status": target_summary.status,
+                **parsed,
+            }
+        )
+        # Preserve the more specific exhausted-capacity diagnosis when both
+        # the numeric ledger and its state-machine status say risk is gone.
+        if final_capacity <= 0.0 or final_per_trade <= 0.0:
+            return blocked(
+                "PRE_POST_DAILY_LOSS_CAPACITY_EXHAUSTED",
+                f"fresh daily loss capacity is {final_capacity:.4f} JPY and final per-trade cap is "
+                f"{final_per_trade:.4f} JPY; block new entry until the next campaign day",
+            )
+        final_target_status = str(target_summary.status or "").strip().upper()
+        if final_target_status in PRE_POST_FRESH_ENTRY_FORBIDDEN_TARGET_STATUSES:
+            return blocked(
+                "PRE_POST_TARGET_STATUS_BLOCKS_FRESH_ENTRY",
+                f"fresh daily target status {final_target_status} forbids new entry risk; "
+                "discard the stale intent packet and follow the target protection/repair state",
+            )
+        if final_target_status not in PRE_POST_FRESH_ENTRY_ALLOWED_TARGET_STATUSES:
+            return blocked(
+                "PRE_POST_TARGET_STATUS_UNRECOGNIZED",
+                f"fresh daily target status {final_target_status or 'missing'} is not an "
+                "explicit fresh-entry-allowed state",
+            )
+
+        macro_event_fresh_absolute_cap: float | None = None
+        if macro_event_confidence_sizing:
+            assert macro_event_fresh_nav_value is not None
+            nav_cap = macro_event_fresh_nav_value * (
+                MACRO_EVENT_MAX_RISK_PCT_NAV / 100.0
+            )
+            macro_event_fresh_absolute_cap = min(
+                final_per_trade,
+                final_capacity,
+                nav_cap,
+            )
+            macro_event_fresh_nav_recheck = {
+                "status": "APPLIED",
+                "fresh_nav_jpy": macro_event_fresh_nav_value,
+                "max_risk_pct_nav": MACRO_EVENT_MAX_RISK_PCT_NAV,
+                "fresh_nav_cap_jpy": nav_cap,
+                "fresh_absolute_cap_jpy": macro_event_fresh_absolute_cap,
+            }
+
+        final_max_loss = min(float(max_loss_jpy), final_per_trade)
+        if macro_event_fresh_absolute_cap is not None:
+            final_max_loss = min(
+                final_max_loss,
+                macro_event_fresh_absolute_cap,
+            )
+        final_portfolio_cap = (
+            final_capacity
+            if portfolio_loss_cap_jpy is None
+            else min(float(portfolio_loss_cap_jpy), final_capacity)
+        )
+
+        # Revalidate geometry/margin on the matching fresh snapshot without a
+        # portfolio cap in RiskEngine. Portfolio capacity is handled once below
+        # by the basket accounting helper, which includes open + pending + this
+        # candidate and starts cumulative risk at zero.
+        final_risk = self._validate_intent(
+            intent=intent,
+            snapshot=fresh_snapshot,
+            max_loss_jpy=final_max_loss,
+            portfolio_loss_cap=None,
+            validate_live_enabled=True,
+            allow_basket_pending=True,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        final_intent, final_risk, final_size_multiple, sizing_issues = self._clip_intent_to_loss_cap(
+            intent=intent,
+            risk=final_risk,
+            snapshot=fresh_snapshot,
+            max_loss_jpy=final_max_loss,
+            portfolio_loss_cap=None,
+            validate_live_enabled=True,
+            allow_basket_pending=True,
+            portfolio_position_cap=portfolio_position_cap,
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+        )
+        final_issues: list[RiskIssue] = list(sizing_issues)
+        if final_risk.metrics is not None:
+            capacity_scale, capacity_issue = _basket_size_multiple(
+                intent=final_intent,
+                snapshot=fresh_snapshot,
+                metrics=final_risk.metrics,
+                portfolio_loss_cap=final_portfolio_cap,
+                cumulative_risk_jpy=0.0,
+                cumulative_margin_jpy=0.0,
+            )
+            if capacity_issue is not None:
+                final_issues.append(capacity_issue)
+            if 0.0 < capacity_scale < 1.0:
+                scaled_units, scaled_issues = _scaled_units(
+                    final_intent.units,
+                    capacity_scale,
+                    sub_min_lot_mode="block",
+                )
+                final_issues.extend(scaled_issues)
+                if scaled_units is not None:
+                    final_intent = replace(final_intent, units=scaled_units)
+                    final_size_multiple = abs(scaled_units) / abs(requested_units) if requested_units else 0.0
+                    final_risk = self._validate_intent(
+                        intent=final_intent,
+                        snapshot=fresh_snapshot,
+                        max_loss_jpy=final_max_loss,
+                        portfolio_loss_cap=None,
+                        validate_live_enabled=True,
+                        allow_basket_pending=True,
+                        portfolio_position_cap=portfolio_position_cap,
+                    )
+
+        final_order_request, final_order_build_issues = _build_order_request(final_intent)
+        (
+            final_intent,
+            final_risk,
+            final_order_request,
+            final_attached_stop,
+            final_size_multiple,
+            attached_stop_issues,
+            final_order_build_issues,
+        ) = self._clip_intent_to_attached_stop_cap(
+            intent=final_intent,
+            risk=final_risk,
+            snapshot=fresh_snapshot,
+            max_loss_jpy=final_max_loss,
+            portfolio_loss_cap=final_portfolio_cap,
+            cumulative_risk_jpy=0.0,
+            validate_live_enabled=True,
+            allow_basket_pending=True,
+            portfolio_position_cap=portfolio_position_cap,
+            requested_units=requested_units,
+            size_multiple=final_size_multiple,
+            order_request=final_order_request,
+            order_build_issues=final_order_build_issues,
+        )
+        final_issues.extend(attached_stop_issues)
+        final_issues.extend(
+            _basket_issues(
+                intent=final_intent,
+                snapshot=fresh_snapshot,
+                metrics=final_risk.metrics,
+                portfolio_loss_cap=final_portfolio_cap,
+                cumulative_risk_jpy=0.0,
+                cumulative_margin_jpy=0.0,
+                seen_geometry=set(),
+            )
+        )
+        fresh_pending_issues, fresh_pending_evidence = _fresh_pending_entry_issues(
+            intent=final_intent,
+            snapshot=fresh_snapshot,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        final_issues.extend(fresh_pending_issues)
+        target_path_final_recheck: dict[str, Any] = {"status": "NOT_APPLICABLE"}
+        if _target_path_contract_present(dict(final_intent.metadata or {})):
+            raw_remaining_minimum = target_payload.get("remaining_minimum_jpy")
+            raw_minimum_progress = target_payload.get("minimum_progress_pct")
+            try:
+                fresh_remaining_minimum = float(raw_remaining_minimum)
+                fresh_minimum_progress = float(raw_minimum_progress)
+            except (TypeError, ValueError):
+                fresh_remaining_minimum = math.nan
+                fresh_minimum_progress = math.nan
+
+            if (
+                not math.isfinite(fresh_remaining_minimum)
+                or fresh_remaining_minimum < 0.0
+                or not math.isfinite(fresh_minimum_progress)
+            ):
+                issue = RiskIssue(
+                    "PRE_POST_TARGET_PATH_STATE_INVALID",
+                    "target-path live send requires fresh numeric remaining_minimum_jpy and "
+                    "minimum_progress_pct from the reconciled daily target state",
+                )
+                final_issues.append(issue)
+                target_path_final_recheck = {
+                    "status": "BLOCKED",
+                    "remaining_minimum_jpy": raw_remaining_minimum,
+                    "minimum_progress_pct": raw_minimum_progress,
+                    "issue_codes": [issue.code],
+                }
+            else:
+                # The dry-run receipt can be older than a just-synced winning
+                # close.  Overlay every 5%-progress alias with broker/ledger
+                # truth before re-running the live target-path contract; stale
+                # receipt metadata must not reopen B-grade risk after the floor.
+                final_metadata = dict(final_intent.metadata or {})
+                for key in (
+                    "daily_progress_pct",
+                    "day_progress_pct",
+                    "total_day_progress_pct",
+                ):
+                    final_metadata.pop(key, None)
+                final_metadata.update(
+                    {
+                        "remaining_to_5pct_yen": fresh_remaining_minimum,
+                        "remaining_to_5pct": fresh_remaining_minimum,
+                        "remaining_minimum_jpy": fresh_remaining_minimum,
+                        "minimum_progress_pct": fresh_minimum_progress,
+                    }
+                )
+                final_intent = replace(final_intent, metadata=final_metadata)
+                target_path_recheck_issues = _target_path_live_send_issues(
+                    final_intent,
+                    send=True,
+                )
+                for target_path_issue in target_path_recheck_issues:
+                    final_issues.append(
+                        RiskIssue(
+                            str(target_path_issue.get("code") or "TARGET_PATH_FINAL_RECHECK_FAILED"),
+                            str(
+                                target_path_issue.get("message")
+                                or "target-path final live-send recheck failed"
+                            ),
+                            str(target_path_issue.get("severity") or "BLOCK"),
+                        )
+                    )
+                target_path_final_recheck = {
+                    "status": (
+                        "BLOCKED"
+                        if any(
+                            issue.get("severity") == "BLOCK"
+                            for issue in target_path_recheck_issues
+                        )
+                        else "PASSED"
+                    ),
+                    "remaining_minimum_jpy": fresh_remaining_minimum,
+                    "minimum_progress_pct": fresh_minimum_progress,
+                    "final_units": final_intent.units,
+                    "issue_codes": [
+                        str(issue.get("code") or "TARGET_PATH_FINAL_RECHECK_FAILED")
+                        for issue in target_path_recheck_issues
+                    ],
+                }
+        if predictive_scout_intent_claimed(verified_intent):
+            verified_shape = (
+                verified_intent.units,
+                *_intent_geometry_key(verified_intent),
+            )
+            final_shape = (
+                final_intent.units,
+                *_intent_geometry_key(final_intent),
+            )
+            if final_shape != verified_shape:
+                final_issues.append(
+                    RiskIssue(
+                        "PREDICTIVE_SCOUT_PRE_POST_MUTATION_REQUIRES_REVERIFY",
+                        "fresh risk reconciliation changed predictive SCOUT units or order geometry; "
+                        "do not mutate an already verified experiment—regenerate and reverify the exact tier/digest",
+                    )
+                )
+        final_order_build_issues.extend(
+            _predictive_scout_built_order_issues(final_intent, final_order_request)
+        )
+        for scout_issue in predictive_scout_intent_issues(
+            final_intent,
+            snapshot=fresh_snapshot,
+            data_root=intents_path.parent,
+            validation_time_utc=datetime.now(timezone.utc),
+            execution_ledger_db_path=self._predictive_scout_canonical_ledger_path(
+                intents_path,
+                live_send=True,
+            ),
+        ):
+            final_issues.append(
+                RiskIssue(
+                    str(scout_issue.get("code") or "PREDICTIVE_SCOUT_FINAL_RECHECK_FAILED"),
+                    str(scout_issue.get("message") or "predictive SCOUT final recheck failed"),
+                    str(scout_issue.get("severity") or "BLOCK"),
+                )
+            )
+        blocking_codes = [
+            issue.code
+            for issue in (*final_risk.issues, *final_issues)
+            if issue.severity == "BLOCK"
+        ]
+        blocking_codes.extend(
+            str(issue.get("code") or "FINAL_ORDER_BUILD_BLOCKED")
+            for issue in final_order_build_issues
+            if issue.get("severity") == "BLOCK"
+        )
+        evidence.update(
+            {
+                "status": "BLOCKED" if blocking_codes else "PASSED",
+                "final_check_failed": bool(blocking_codes),
+                "final_blocking_codes": blocking_codes,
+                "final_max_loss_jpy": final_max_loss,
+                "final_portfolio_loss_cap_jpy": final_portfolio_cap,
+                "final_units": final_intent.units,
+                "macro_event_fresh_nav_recheck": macro_event_fresh_nav_recheck,
+                "fresh_pending_reconciliation": fresh_pending_evidence,
+                "target_path_final_recheck": target_path_final_recheck,
+            }
+        )
+        return _PrePostReconciliationResult(
+            intent=final_intent,
+            snapshot=fresh_snapshot,
+            risk=final_risk,
+            order_request=final_order_request,
+            attached_stop_metrics=final_attached_stop,
+            max_loss_jpy=final_max_loss,
+            portfolio_loss_cap_jpy=final_portfolio_cap,
+            size_multiple=final_size_multiple,
+            order_build_issues=final_order_build_issues,
+            issues=tuple(final_issues),
+            evidence=evidence,
         )
 
     def _validate_intent(
@@ -1518,6 +2287,373 @@ class LiveOrderGateway:
         if live_send:
             return DEFAULT_EXECUTION_LEDGER_DB
         return intents_path.parent / DEFAULT_EXECUTION_LEDGER_DB.name
+
+    def _reserve_ordinary_entry_post(
+        self,
+        *,
+        intent: OrderIntent,
+        order_request: dict[str, Any],
+        lane_id: str,
+    ) -> _OrdinaryEntryPostClaimResult:
+        """Durably consume one ordinary GPT entry signal before network I/O.
+
+        Predictive SCOUT keeps its stricter vehicle reservation table.  For an
+        ordinary lane, two independent uniqueness constraints are required:
+        the same accepted decision cannot be reused for the same parent lane,
+        and a new decision cannot relabel an already-consumed parent/forecast
+        cycle as a fresh signal.  Consequently ADD needs both a new receipt and
+        a new forecast cycle.  Claims are never deleted or released: a process
+        crash after this commit is an ambiguous broker outcome and retries fail
+        closed until a genuinely new signal is verified.
+        """
+
+        if predictive_scout_intent_claimed(intent):
+            return _OrdinaryEntryPostClaimResult(
+                evidence={"status": "NOT_APPLICABLE_PREDICTIVE_SCOUT"}
+            )
+        if self.verified_decision_path is None:
+            return _OrdinaryEntryPostClaimResult(
+                evidence={"status": "NOT_APPLICABLE_NO_GPT_RECEIPT"}
+            )
+        # Real live sends already require the configured canonical ledger in
+        # _pre_post_reconcile.  The adjacent fallback preserves durable claim
+        # semantics for isolated/test gateways whose reconciliation is mocked;
+        # it cannot weaken a real send because missing sync capability/path is
+        # blocked before this method is reached.
+        claim_db_path = self.execution_ledger_db_path or (
+            DEFAULT_EXECUTION_LEDGER_DB
+            if self.output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else self.output_path.parent / DEFAULT_EXECUTION_LEDGER_DB.name
+        )
+
+        try:
+            payload = json.loads(self.verified_decision_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return _OrdinaryEntryPostClaimResult(
+                evidence={"status": "BLOCKED", "issue_code": "ORDINARY_ENTRY_CLAIM_RECEIPT_UNREADABLE"},
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_RECEIPT_UNREADABLE",
+                    f"verified GPT receipt changed or became unreadable at the pre-POST claim boundary: {exc}",
+                ).__dict__,
+            )
+        decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+        receipt_status = str(payload.get("status") or "").strip().upper()
+        action = str(decision.get("action") or "").strip().upper()
+        selected_lanes = _gpt_receipt_selected_lane_ids(decision)
+        blocking_verification_codes = [
+            str(item.get("code") or "").strip()
+            for item in payload.get("verification_issues", []) or []
+            if isinstance(item, dict)
+            and str(item.get("severity") or "BLOCK").upper() == "BLOCK"
+            and str(item.get("code") or "").strip()
+        ]
+        if (
+            receipt_status != "ACCEPTED"
+            or action not in {"TRADE", "ADD"}
+            or not lane_id
+            or lane_id not in selected_lanes
+            or not isinstance(decision.get("market_read_first"), dict)
+            or bool(blocking_verification_codes)
+        ):
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_RECEIPT_MISMATCH",
+                    "receipt_status": receipt_status or None,
+                    "action": action or None,
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_RECEIPT_MISMATCH",
+                    "pre-POST one-shot claim requires the same ACCEPTED TRADE/ADD receipt to still name the selected lane",
+                ).__dict__,
+            )
+
+        metadata = dict(intent.metadata or {})
+        parent_lane_id = str(metadata.get("parent_lane_id") or "").strip()
+        derived_parent_lane_id = _parent_lane_id_from_lane_id(lane_id)
+        if parent_lane_id and parent_lane_id != derived_parent_lane_id:
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_PARENT_LANE_MISMATCH",
+                    "metadata_parent_lane_id": parent_lane_id,
+                    "derived_parent_lane_id": derived_parent_lane_id,
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_PARENT_LANE_MISMATCH",
+                    "intent parent_lane_id does not match the selected execution variant; "
+                    "refusing a relabeled one-shot claim",
+                ).__dict__,
+            )
+        if not parent_lane_id:
+            parent_lane_id = derived_parent_lane_id
+        forecast_cycle_id = str(metadata.get("forecast_cycle_id") or "").strip()
+        receipt_generated_at = str(
+            decision.get("generated_at_utc")
+            or payload.get("generated_at_utc")
+            or ""
+        ).strip()
+        if not parent_lane_id or not forecast_cycle_id or not receipt_generated_at:
+            missing = [
+                name
+                for name, value in (
+                    ("parent_lane_id", parent_lane_id),
+                    ("forecast_cycle_id", forecast_cycle_id),
+                    ("receipt_generated_at_utc", receipt_generated_at),
+                )
+                if not value
+            ]
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_IDENTITY_MISSING",
+                    "missing_fields": missing,
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_IDENTITY_MISSING",
+                    "ordinary GPT-authorized live entry lacks durable one-shot identity: "
+                    + ", ".join(missing),
+                ).__dict__,
+            )
+
+        receipt_identity = {
+            "status": receipt_status,
+            "decision": decision,
+            # A legacy verified artifact may keep the model timestamp only at
+            # top level; include the resolved value so rerunning a verifier
+            # around the same model decision cannot manufacture a new claim.
+            "receipt_generated_at_utc": receipt_generated_at,
+        }
+        receipt_sha256 = hashlib.sha256(
+            json.dumps(
+                receipt_identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        order_request_sha256 = hashlib.sha256(
+            json.dumps(
+                order_request,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        claim_id = hashlib.sha256(
+            f"{receipt_sha256}\0{parent_lane_id}\0{forecast_cycle_id}".encode("utf-8")
+        ).hexdigest()
+        claimed_at = datetime.now(timezone.utc).isoformat()
+        base_evidence = {
+            "claim_id": claim_id,
+            "receipt_sha256": receipt_sha256,
+            "receipt_generated_at_utc": receipt_generated_at,
+            "action": action,
+            "lane_id": lane_id,
+            "parent_lane_id": parent_lane_id,
+            "forecast_cycle_id": forecast_cycle_id,
+            "order_request_sha256": order_request_sha256,
+            "ledger_db_path": str(claim_db_path),
+        }
+
+        conn: sqlite3.Connection | None = None
+        try:
+            claim_db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(claim_db_path), timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ordinary_live_entry_signal_claims (
+                    claim_id TEXT PRIMARY KEY,
+                    receipt_sha256 TEXT NOT NULL,
+                    receipt_generated_at_utc TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    lane_id TEXT NOT NULL,
+                    parent_lane_id TEXT NOT NULL,
+                    forecast_cycle_id TEXT NOT NULL,
+                    order_request_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    claimed_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    broker_outcome_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ordinary_entry_claim_receipt_parent
+                ON ordinary_live_entry_signal_claims(receipt_sha256, parent_lane_id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ordinary_entry_claim_parent_cycle
+                ON ordinary_live_entry_signal_claims(parent_lane_id, forecast_cycle_id)
+                """
+            )
+            prior_receipt = conn.execute(
+                """
+                SELECT claim_id, forecast_cycle_id, status
+                FROM ordinary_live_entry_signal_claims
+                WHERE receipt_sha256 = ? AND parent_lane_id = ?
+                """,
+                (receipt_sha256, parent_lane_id),
+            ).fetchone()
+            if prior_receipt is not None:
+                conn.rollback()
+                same_cycle = str(prior_receipt["forecast_cycle_id"] or "") == forecast_cycle_id
+                code = (
+                    "ORDINARY_ENTRY_RECEIPT_ALREADY_CLAIMED"
+                    if same_cycle
+                    else "ORDINARY_ENTRY_RECEIPT_PARENT_ALREADY_CLAIMED"
+                )
+                return _OrdinaryEntryPostClaimResult(
+                    evidence={
+                        **base_evidence,
+                        "status": "DUPLICATE_BLOCKED",
+                        "issue_code": code,
+                        "existing_claim_id": prior_receipt["claim_id"],
+                        "existing_claim_status": prior_receipt["status"],
+                    },
+                    issue=RiskIssue(
+                        code,
+                        "the same accepted GPT receipt already consumed this parent lane; "
+                        "a changed intent/cycle cannot replay that authorization",
+                    ).__dict__,
+                )
+            prior_cycle = conn.execute(
+                """
+                SELECT claim_id, receipt_sha256, status
+                FROM ordinary_live_entry_signal_claims
+                WHERE parent_lane_id = ? AND forecast_cycle_id = ?
+                """,
+                (parent_lane_id, forecast_cycle_id),
+            ).fetchone()
+            if prior_cycle is not None:
+                conn.rollback()
+                return _OrdinaryEntryPostClaimResult(
+                    evidence={
+                        **base_evidence,
+                        "status": "DUPLICATE_BLOCKED",
+                        "issue_code": "ORDINARY_ENTRY_FORECAST_CYCLE_ALREADY_CLAIMED",
+                        "existing_claim_id": prior_cycle["claim_id"],
+                        "existing_claim_status": prior_cycle["status"],
+                    },
+                    issue=RiskIssue(
+                        "ORDINARY_ENTRY_FORECAST_CYCLE_ALREADY_CLAIMED",
+                        "this parent lane/forecast cycle already owns a durable broker-POST claim; "
+                        "a new receipt alone is not independent ADD/TRADE evidence",
+                    ).__dict__,
+                )
+            conn.execute(
+                """
+                INSERT INTO ordinary_live_entry_signal_claims(
+                    claim_id, receipt_sha256, receipt_generated_at_utc, action,
+                    lane_id, parent_lane_id, forecast_cycle_id,
+                    order_request_sha256, status, claimed_at_utc, updated_at_utc,
+                    broker_outcome_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RESERVED_PRE_POST', ?, ?, NULL)
+                """,
+                (
+                    claim_id,
+                    receipt_sha256,
+                    receipt_generated_at,
+                    action,
+                    lane_id,
+                    parent_lane_id,
+                    forecast_cycle_id,
+                    order_request_sha256,
+                    claimed_at,
+                    claimed_at,
+                ),
+            )
+            conn.commit()
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    **base_evidence,
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_RESERVATION_FAILED",
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_RESERVATION_FAILED",
+                    "refusing broker POST because the ordinary GPT entry signal could not be durably claimed first: "
+                    f"{type(exc).__name__}: {exc}",
+                ).__dict__,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+        return _OrdinaryEntryPostClaimResult(
+            evidence={
+                **base_evidence,
+                "status": "RESERVED_PRE_POST",
+                "claimed_at_utc": claimed_at,
+            }
+        )
+
+    def _finalize_ordinary_entry_post_claim(
+        self,
+        claim_evidence: dict[str, Any],
+        *,
+        status: str,
+        broker_outcome: Any,
+    ) -> tuple[dict[str, Any], dict[str, str] | None]:
+        claim_id = str(claim_evidence.get("claim_id") or "").strip()
+        raw_claim_db_path = str(claim_evidence.get("ledger_db_path") or "").strip()
+        if not claim_id or not raw_claim_db_path:
+            return claim_evidence, None
+        claim_db_path = Path(raw_claim_db_path)
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            outcome_json = json.dumps(
+                broker_outcome,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            with sqlite3.connect(str(claim_db_path), timeout=5.0) as conn:
+                conn.execute("PRAGMA busy_timeout=5000")
+                conn.execute("PRAGMA synchronous=FULL")
+                conn.execute("BEGIN IMMEDIATE")
+                updated = conn.execute(
+                    """
+                    UPDATE ordinary_live_entry_signal_claims
+                    SET status = ?, updated_at_utc = ?, broker_outcome_json = ?
+                    WHERE claim_id = ? AND status = 'RESERVED_PRE_POST'
+                    """,
+                    (status, now, outcome_json, claim_id),
+                ).rowcount
+                if updated != 1:
+                    raise ValueError(
+                        f"ordinary live-entry claim {claim_id} was missing or no longer RESERVED_PRE_POST"
+                    )
+            return {
+                **claim_evidence,
+                "status": status,
+                "updated_at_utc": now,
+            }, None
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            # The original committed reservation remains consumed.  Never
+            # delete/release it merely because post-response annotation failed.
+            return {
+                **claim_evidence,
+                "status": "FINALIZE_FAILED_RESERVATION_RETAINED",
+                "finalize_error": f"{type(exc).__name__}: {exc}",
+            }, RiskIssue(
+                "ORDINARY_ENTRY_CLAIM_FINALIZE_FAILED",
+                "broker POST returned but its one-shot claim outcome could not be annotated; "
+                "the reservation remains consumed and must not be retried",
+            ).__dict__
 
     def _record_predictive_scout_receipt_durably(
         self,
@@ -1993,8 +3129,9 @@ def _selected_parent_lane_key(selected: dict[str, Any], requested_lane_id: str |
 
 
 def _parent_lane_id_from_lane_id(lane_id: str) -> str:
-    if lane_id.endswith(":MARKET"):
-        return lane_id[: -len(":MARKET")]
+    for suffix in (":MARKET", ":LIMIT", ":STOP"):
+        if lane_id.endswith(suffix):
+            return lane_id[: -len(suffix)]
     return lane_id
 
 
@@ -2188,6 +3325,75 @@ def _pending_parent_lane_keys(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     return tuple(keys)
 
 
+def _fresh_pending_entry_issues(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    portfolio_position_cap: int,
+) -> tuple[list[RiskIssue], dict[str, Any]]:
+    """Rebuild duplicate and occupancy state from the final broker snapshot.
+
+    Initial validation can race with another gateway process or a broker-side
+    pending-order reflection.  This check intentionally derives every key from
+    the snapshot fetched after ledger sync, rather than carrying the initial
+    process-local ``seen_geometry`` set across the network boundary.
+    """
+
+    issues: list[RiskIssue] = []
+    pending_geometry = set(_pending_geometry_keys(snapshot))
+    pending_parents = set(_pending_parent_lane_keys(snapshot))
+    geometry_keys = {_intent_geometry_key(intent)}
+    original_entry = _positive_float(
+        (intent.metadata or {}).get("gateway_passive_limit_original_entry")
+    )
+    if original_entry is not None:
+        geometry_keys.add(_intent_geometry_key(intent, entry=original_entry))
+    if geometry_keys & pending_geometry:
+        issues.append(
+            RiskIssue(
+                "PRE_POST_DUPLICATE_PENDING_GEOMETRY",
+                f"fresh broker truth already has trader pending geometry matching "
+                f"{intent.pair} {intent.side.value} {intent.order_type.value}; refuse a second POST",
+            )
+        )
+
+    lane_id = _gateway_lane_id(intent)
+    parent_lane_id = str((intent.metadata or {}).get("parent_lane_id") or "").strip()
+    if not parent_lane_id:
+        parent_lane_id = _parent_lane_id_from_lane_id(lane_id)
+    if parent_lane_id and parent_lane_id in pending_parents:
+        issues.append(
+            RiskIssue(
+                "PRE_POST_DUPLICATE_PENDING_PARENT_LANE",
+                f"fresh broker truth already has a trader pending entry for parent lane "
+                f"{parent_lane_id}; one timing variant cannot be posted twice",
+            )
+        )
+
+    occupancy = _trader_entry_occupancy(snapshot)
+    if occupancy >= portfolio_position_cap:
+        issues.append(
+            RiskIssue(
+                "PRE_POST_PORTFOLIO_POSITION_LIMIT",
+                f"fresh broker truth has {occupancy} trader positions/pending entries; "
+                f"portfolio cap is {portfolio_position_cap}",
+            )
+        )
+
+    return issues, {
+        "status": "BLOCKED" if any(issue.severity == "BLOCK" for issue in issues) else "PASSED",
+        "pending_entry_count": sum(
+            1 for order in snapshot.orders if _is_trader_pending_entry(order)
+        ),
+        "pending_geometry_count": len(pending_geometry),
+        "pending_parent_lane_count": len(pending_parents),
+        "candidate_parent_lane_id": parent_lane_id or None,
+        "trader_entry_occupancy": occupancy,
+        "portfolio_position_cap": portfolio_position_cap,
+        "issue_codes": [issue.code for issue in issues],
+    }
+
+
 def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, RiskIssue | None]:
     risk = 0.0
     margin = 0.0
@@ -2273,9 +3479,24 @@ def _pending_order_parent_lane_key(order) -> str | None:
         extension = raw.get(extension_key)
         if not isinstance(extension, dict):
             continue
+        parent_lane_id = _parent_lane_id_from_extension_comment(
+            extension.get("comment")
+        )
+        if parent_lane_id:
+            return parent_lane_id
         lane_id = _lane_id_from_extension_comment(extension.get("comment"))
         if lane_id:
             return _parent_lane_id_from_lane_id(lane_id)
+    return None
+
+
+def _parent_lane_id_from_extension_comment(comment: Any) -> str | None:
+    if not isinstance(comment, str):
+        return None
+    for token in comment.split():
+        if token.startswith("parent="):
+            parent_lane_id = token[len("parent="):].strip()
+            return parent_lane_id or None
     return None
 
 
@@ -2831,9 +4052,20 @@ def _attached_stop_loss_cap_jpy(intent: OrderIntent, policy_max_loss_jpy: float 
     """
 
     metadata = intent.metadata or {}
-    cap = _positive_float(metadata.get("max_loss_jpy"))
-    if cap is None:
-        cap = policy_max_loss_jpy if policy_max_loss_jpy is not None and policy_max_loss_jpy > 0 else None
+    caps = [
+        value
+        for value in (
+            _positive_float(metadata.get("max_loss_jpy")),
+            policy_max_loss_jpy
+            if policy_max_loss_jpy is not None and policy_max_loss_jpy > 0
+            else None,
+        )
+        if value is not None
+    ]
+    # A generated receipt may carry the cap that was current earlier in the
+    # cycle.  Fresh pre-POST reconciliation supplies the current policy cap;
+    # metadata may tighten that value but must never override it upward.
+    cap = min(caps) if caps else None
 
     asymmetry_cap = _loss_asymmetry_cap_from_metadata(metadata)
     if asymmetry_cap is not None:
@@ -4528,17 +5760,23 @@ def _comment(intent: OrderIntent) -> str:
     desk = str(intent.metadata.get("desk") or "vnext")
     role = str(intent.metadata.get("campaign_role") or "")
     lane_id = _gateway_lane_id(intent)
+    parent_lane_id = str(intent.metadata.get("parent_lane_id") or "").strip()
     role_part = f" role={role}" if role else ""
     vehicle_part = (
         f" vehicle={predictive_scout_vehicle_id(intent)}"
         if predictive_scout_intent_claimed(intent)
         else ""
     )
+    parent_part = (
+        f" parent={parent_lane_id}"
+        if parent_lane_id and parent_lane_id != lane_id
+        else ""
+    )
     lane_part = f" lane={lane_id}" if lane_id else ""
     # SCOUT concurrency is reconstructed from the broker's truncated comment.
     # Put the bounded campaign role before potentially long lane text so the
     # one-active-SCOUT guard cannot lose its identity at the 128-byte boundary.
-    text = f"qr-vnext{role_part}{vehicle_part}{lane_part} desk={desk}".strip()
+    text = f"qr-vnext{role_part}{vehicle_part}{parent_part}{lane_part} desk={desk}".strip()
     return text[:128]
 
 

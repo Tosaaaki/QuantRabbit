@@ -45,6 +45,10 @@ LEGACY_EVENT_BACKFILL_MIGRATION_KEY = (
 )
 LEGACY_EVENT_BACKFILL_MIGRATION_VERSION = "1"
 GATEWAY_INPUT_PACKET_ARCHIVE_SCHEMA = "gateway_input_packet_archive_v1"
+# Earliest UTC instant from which every later OANDA transaction is expected to
+# have been imported.  A cold-start baseline begins coverage *at* baseline
+# time; it does not retroactively prove earlier cash activity in that day.
+OANDA_TRANSACTION_COVERAGE_START_KEY = "oanda_transaction_coverage_start_utc"
 
 
 class TransactionClient(Protocol):
@@ -115,7 +119,17 @@ class ExecutionLedger:
                 account = client.account_summary(now_utc=datetime.now(timezone.utc))
                 baseline = account.last_transaction_id
                 if baseline:
+                    # Coverage begins only after the broker baseline response.
+                    # Using the pre-request timestamp could claim continuity
+                    # across a transaction that the baseline ID skipped.
+                    coverage_start = _now()
                     _set_state(conn, "last_oanda_transaction_id", baseline, now)
+                    _set_state(
+                        conn,
+                        OANDA_TRANSACTION_COVERAGE_START_KEY,
+                        coverage_start,
+                        coverage_start,
+                    )
                 reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
                 summary = ExecutionLedgerSummary(
                     db_path=self.db_path,

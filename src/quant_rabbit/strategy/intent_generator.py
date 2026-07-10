@@ -348,30 +348,43 @@ DYNAMIC_RR_FLOOR = float(os.environ.get("QR_DYNAMIC_RR_FLOOR", "1.5"))
 DYNAMIC_RR_CEILING = float(os.environ.get("QR_DYNAMIC_RR_CEILING", "5.0"))
 
 # High-impact macro follow-through sizing. These constants do not decide
-# direction; they only let a factual post-release event surprise use more of
-# the already equity-derived daily risk budget once the forecast layer has
-# produced same-direction event evidence.
+# direction; they map a factual post-release event surprise onto a fraction of
+# the fresh, equity-derived per-trade cap once the forecast layer has produced
+# same-direction event evidence.
 #
 # (a) Market reality: NFP/CPI/rate-decision beats can move 50-100 pips while a
 #     normal technical scalp cannot. Treating a confirmed surprise like a
 #     routine M5 setup leaves the account under-exposed to the few sessions
 #     that can realistically cover the daily target.
 # (b) Constants rather than derived: these are operator policy caps for the
-#     event campaign. The base loss cap is still equity-derived by
-#     daily_target_state; the daily-budget share prevents one event lane from
-#     consuming the whole day.
+#     event campaign. The absolute cap is recomputed from the same broker
+#     snapshot NAV used to build the intent and can only tighten the current
+#     daily-target cap; confidence never multiplies it above 1% of NAV.
 # (c) Replace with event-family calibration once the projection ledger has
 #     enough `event_surprise_followthrough` samples by event name/currency.
 MACRO_EVENT_SIZE_UP_SIGNAL_NAMES = frozenset({"event_surprise_followthrough"})
 MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONFIDENCE = _env_float(
     "QR_MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONF", 0.80, minimum=0.0
 )
-MACRO_EVENT_RISK_MULTIPLIER = _env_float(
-    "QR_MACRO_EVENT_RISK_MULT", 3.0, minimum=1.0
-)
-MACRO_EVENT_MAX_DAILY_RISK_SHARE = _env_float(
-    "QR_MACRO_EVENT_MAX_DAILY_RISK_SHARE", 0.50, minimum=0.0
-)
+# (a) Market reality: calibrated event confidence is ordered evidence, but not
+#     certainty. A weakly qualifying release follow-through should risk less
+#     than a strongly confirmed one even when SL geometry is identical.
+# (b) Constants rather than derived: these are bounded execution-policy bands,
+#     not forecasts. They preserve the existing 0.80 event-eligibility floor
+#     and only choose how much of the fresh absolute cap may be used.
+# (c) Replace with event-family posterior sizing once resolved live outcomes
+#     are sufficient by event name, currency, confidence bucket, and vehicle.
+MACRO_EVENT_MEDIUM_CONFIDENCE_MIN = 0.85
+MACRO_EVENT_HIGH_CONFIDENCE_MIN = 0.90
+MACRO_EVENT_SUB_THRESHOLD_RISK_FRACTION = 0.10
+MACRO_EVENT_LOW_RISK_FRACTION = 0.25
+MACRO_EVENT_MEDIUM_RISK_FRACTION = 0.50
+MACRO_EVENT_HIGH_RISK_FRACTION = 1.00
+# The operator's current absolute per-shot boundary. It is applied to the
+# current broker snapshot NAV and then tightened by the fresh daily-target cap
+# and gross-loss non-refill capacity. It is never read back from intent
+# metadata, so a stale packet cannot widen the calculation.
+MACRO_EVENT_MAX_RISK_PCT_NAV = 1.0
 
 # Recovery hedges are exposure management, not permission to auto-flatten the
 # whole trapped leg. Use current directional conviction to choose a tranche size;
@@ -1023,23 +1036,47 @@ def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) ->
     written by DailyTargetLedger. Falling back to `daily_risk_budget_jpy` (the
     whole-day total) would mean a single trade can burn the day's entire risk
     budget, which is exactly the failure mode this split was built to remove.
-    Per AGENT_CONTRACT §3.5: no silent literal fallback; if the file is missing
-    or the value is missing/zero, return None and let the caller raise.
+    When gross realized losses have exhausted the day, the final cap is zero.
+    Return the persisted base cap only so dry-run/gateway code can construct a
+    measurable candidate; `_daily_risk_budget_from_state()` returns the hard
+    zero portfolio capacity and blocks it before send. This avoids a resolver
+    crash without reopening risk.
     """
-    return _state_field(state_path, "per_trade_risk_budget_jpy")
+    return _state_field(state_path, "per_trade_risk_budget_jpy") or _state_field(
+        state_path,
+        "base_per_trade_risk_budget_jpy",
+    )
 
 
 def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
-    """Return whole-day JPY risk budget from the daily target ledger.
+    """Return loss capacity before open risk from the daily target ledger.
 
     Per AGENT_CONTRACT §3.5 the **portfolio** cap (open + candidate exposure)
-    must be the day's total budget, NOT the per-trade slice. Reusing the
+    must be the day's non-refillable loss capacity, NOT the per-trade slice.
+    The gateway subtracts fresh open/pending/candidate risk from this value;
+    reading `remaining_risk_budget_jpy` here would subtract open risk twice.
+    Reusing the
     per-trade cap as the portfolio cap silently blocks every additional shot
     once one position opens, because `open_risk + candidate_risk` immediately
     exceeds a per-shot limit. Returns None when the ledger is absent so the
     caller can decide whether to skip the portfolio gate (no-op) rather than
     invent a JPY literal.
     """
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    capacity_raw = payload.get("daily_loss_capacity_before_open_jpy")
+    if capacity_raw is not None:
+        try:
+            capacity = float(capacity_raw)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, capacity)
+    # Legacy state compatibility: before gross-loss accounting, the whole-day
+    # budget was the only portfolio-cap field available.
     return _state_field(state_path, "daily_risk_budget_jpy")
 
 
@@ -6424,12 +6461,15 @@ def _macro_event_sizing_plan(
     base_max_loss_jpy: float,
     portfolio_loss_cap: float | None,
     position_metadata: dict[str, Any],
+    sizing_nav_jpy: float | None = None,
 ) -> tuple[float, dict[str, Any]]:
-    """Return an event-specific loss cap and audit metadata for the lane.
+    """Return a confidence-sized event cap within fresh absolute risk.
 
     Only factual post-release macro surprises can size up. Pre-release nowcasts
     remain directional evidence but do not get extra risk because the actual
-    release is not known yet.
+    release is not known yet. ``base_max_loss_jpy`` is the current target-state
+    per-trade cap; current snapshot NAV and gross-loss capacity may only tighten
+    it. Confidence selects a fraction inside that boundary and never expands it.
     """
 
     if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
@@ -6438,34 +6478,58 @@ def _macro_event_sizing_plan(
     if signal is None or base_max_loss_jpy <= 0:
         return base_max_loss_jpy, {}
 
-    scaled_cap = base_max_loss_jpy * MACRO_EVENT_RISK_MULTIPLIER
-    daily_share_cap: float | None = None
-    if (
-        portfolio_loss_cap is not None
-        and portfolio_loss_cap > 0
-        and MACRO_EVENT_MAX_DAILY_RISK_SHARE > 0
-    ):
-        daily_share_cap = portfolio_loss_cap * MACRO_EVENT_MAX_DAILY_RISK_SHARE
-        if daily_share_cap > base_max_loss_jpy:
-            scaled_cap = min(scaled_cap, daily_share_cap)
-        else:
-            scaled_cap = base_max_loss_jpy
-
-    effective_cap = max(base_max_loss_jpy, scaled_cap)
-    if effective_cap <= base_max_loss_jpy:
-        return base_max_loss_jpy, {}
-
     confidence = _optional_float(signal.get("confidence")) or 0.0
+    confidence_band, risk_fraction = _macro_event_confidence_risk_fraction(confidence)
+    nav_cap: float | None = None
+    if (
+        sizing_nav_jpy is not None
+        and math.isfinite(float(sizing_nav_jpy))
+        and float(sizing_nav_jpy) > 0.0
+    ):
+        nav_cap = float(sizing_nav_jpy) * (MACRO_EVENT_MAX_RISK_PCT_NAV / 100.0)
+
+    absolute_caps = [float(base_max_loss_jpy)]
+    if nav_cap is not None:
+        absolute_caps.append(nav_cap)
+    # Zero is meaningful: it is the fail-closed result after gross realized
+    # losses consume the day's non-refillable capacity.
+    if portfolio_loss_cap is not None and math.isfinite(float(portfolio_loss_cap)):
+        absolute_caps.append(max(0.0, float(portfolio_loss_cap)))
+    fresh_absolute_cap = max(0.0, min(absolute_caps))
+    effective_cap = fresh_absolute_cap * risk_fraction
     return effective_cap, {
-        "macro_event_size_up": True,
+        # Compatibility label: MEDIUM/HIGH use more risk than the LOW event
+        # tranche, but never more than the fresh absolute per-trade cap.
+        "macro_event_size_up": confidence_band in {"MEDIUM", "HIGH"},
+        "macro_event_confidence_sizing": True,
         "macro_event_signal_name": signal.get("name"),
         "macro_event_signal_direction": signal.get("direction"),
         "macro_event_signal_confidence": round(confidence, 4),
+        "macro_event_confidence_band": confidence_band,
+        "macro_event_risk_fraction": risk_fraction,
         "macro_event_base_max_loss_jpy": round(base_max_loss_jpy, 4),
-        "macro_event_risk_multiplier": MACRO_EVENT_RISK_MULTIPLIER,
-        "macro_event_daily_risk_share_cap_jpy": round(daily_share_cap, 4) if daily_share_cap is not None else None,
+        "macro_event_sizing_nav_jpy": round(float(sizing_nav_jpy), 4) if nav_cap is not None else None,
+        "macro_event_nav_absolute_cap_jpy": round(nav_cap, 4) if nav_cap is not None else None,
+        "macro_event_fresh_absolute_cap_jpy": round(fresh_absolute_cap, 4),
+        "macro_event_daily_loss_capacity_cap_jpy": (
+            round(max(0.0, float(portfolio_loss_cap)), 4)
+            if portfolio_loss_cap is not None and math.isfinite(float(portfolio_loss_cap))
+            else None
+        ),
         "macro_event_loss_budget_target": True,
     }
+
+
+def _macro_event_confidence_risk_fraction(confidence: float) -> tuple[str, float]:
+    """Map factual macro confidence to an ordered bounded risk fraction."""
+
+    if confidence >= MACRO_EVENT_HIGH_CONFIDENCE_MIN:
+        return "HIGH", MACRO_EVENT_HIGH_RISK_FRACTION
+    if confidence >= MACRO_EVENT_MEDIUM_CONFIDENCE_MIN:
+        return "MEDIUM", MACRO_EVENT_MEDIUM_RISK_FRACTION
+    if confidence >= MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONFIDENCE:
+        return "LOW", MACRO_EVENT_LOW_RISK_FRACTION
+    return "SUB_THRESHOLD", MACRO_EVENT_SUB_THRESHOLD_RISK_FRACTION
 
 
 def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str, Any] | None:
@@ -6485,8 +6549,8 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
         direction = str(raw.get("direction") or "").upper()
         if direction != expected_direction:
             continue
-        confidence = _optional_float(raw.get("confidence")) or 0.0
-        if confidence < MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONFIDENCE:
+        confidence = _optional_float(raw.get("confidence"))
+        if confidence is None or confidence < 0.0:
             continue
         return raw
     return None
@@ -9398,6 +9462,7 @@ def _intent_from_lane(
         base_max_loss_jpy=max_loss_jpy,
         portfolio_loss_cap=portfolio_loss_cap,
         position_metadata=position_metadata,
+        sizing_nav_jpy=(snapshot.account.nav_jpy if snapshot.account is not None else None),
     )
     effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
         loss_asymmetry_guard,
@@ -9513,7 +9578,7 @@ def _intent_from_lane(
         position_intent=position_intent,
         target_units_override=recovery_target_units,
         loss_budget_target=bool(
-            macro_event_sizing_metadata.get("macro_event_size_up")
+            macro_event_sizing_metadata.get("macro_event_confidence_sizing")
             or lane.get("predictive_scout") is True
         ),
     )
@@ -15177,11 +15242,13 @@ def _risk_budgeted_units(
     # result must fit the equity-derived per-trade loss cap before it can be
     # LIVE_READY.
     # Sizing precedence (highest first):
-    #   1. QR_TRADER_POSITION_NAV_PCT — % of NAV used as margin per position.
+    #   1. Explicit loss-budget targeting or a positive target override.
+    #   2. A margin-free same-pair hedge target.
+    #   3. QR_TRADER_POSITION_NAV_PCT — % of NAV used as margin per position.
     #      Auto-scales with equity (user 2026-05-08「BaseUnitを決めると、
     #      資産が増えたときに追従できないよ。％で決めないといけなくない？」).
-    #   2. QR_TRADER_BASE_UNITS — legacy fixed-unit fallback.
-    #   3. Hard-coded 3000 unit fallback.
+    #   4. The current equity-derived loss-budget size when NAV-pct sizing is
+    #      unavailable. Never restore a stale fixed-unit target from the env.
     # Margin headroom (`_margin_budgeted_units`) still caps the result so the
     # 92% portfolio margin utilization gate is never breached. Explicit same-pair
     # HEDGE intents are the exception to NAV% sizing: they target the current
@@ -15200,10 +15267,7 @@ def _risk_budgeted_units(
             if nav_pct_units is not None:
                 target_units = nav_pct_units
             else:
-                try:
-                    target_units = float(os.environ.get("QR_TRADER_BASE_UNITS", "3000") or "3000")
-                except ValueError:
-                    target_units = 3000.0
+                target_units = loss_budget_units
         candidates = [target_units, loss_budget_units]
         if margin_budget_units is not None:
             candidates.append(margin_budget_units)
@@ -15311,7 +15375,7 @@ def _nav_pct_position_units(pair: str, entry: float, snapshot: BrokerSnapshot) -
     Returns the desired unit count when the env var is set to a valid
     positive number AND the broker snapshot carries a margin-eligible
     account/quote/spec. Returns None when the operator has not configured
-    NAV-pct sizing (caller falls back to QR_TRADER_BASE_UNITS).
+    NAV-pct sizing (caller remains on current loss-budget sizing).
 
     The percentage is consumed as MARGIN per position (not notional), so
     "30" means each new position locks ~30% of NAV. With OANDA Japan's

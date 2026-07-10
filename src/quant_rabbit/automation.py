@@ -2134,10 +2134,16 @@ class AutoTradeCycle:
                             live_enabled=self.live_enabled,
                             max_loss_jpy=resolved_max_loss_jpy,
                             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+                            target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
+                            target_report_path=self.target_report_path or DEFAULT_DAILY_TARGET_REPORT,
                             self_improvement_audit=self.gateway_self_improvement_audit_path,
                             verified_decision_path=self.gpt_decision_path,
-                            execution_ledger_db_path=self.execution_ledger_db_path,
-                            execution_ledger_report_path=self.execution_ledger_report_path,
+                            execution_ledger_db_path=(
+                                self.execution_ledger_db_path if self._execution_ledger_available() else None
+                            ),
+                            execution_ledger_report_path=(
+                                self.execution_ledger_report_path if self._execution_ledger_available() else None
+                            ),
                         )
                         order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
                             order_gateway=order_gateway,
@@ -2359,10 +2365,16 @@ class AutoTradeCycle:
                         live_enabled=self.live_enabled,
                         max_loss_jpy=resolved_max_loss_jpy,
                         portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+                        target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
+                        target_report_path=self.target_report_path or DEFAULT_DAILY_TARGET_REPORT,
                         self_improvement_audit=self.gateway_self_improvement_audit_path,
                         verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
-                        execution_ledger_db_path=self.execution_ledger_db_path,
-                        execution_ledger_report_path=self.execution_ledger_report_path,
+                        execution_ledger_db_path=(
+                            self.execution_ledger_db_path if self._execution_ledger_available() else None
+                        ),
+                        execution_ledger_report_path=(
+                            self.execution_ledger_report_path if self._execution_ledger_available() else None
+                        ),
                     )
                     order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
                         order_gateway=order_gateway,
@@ -3092,10 +3104,16 @@ class AutoTradeCycle:
             live_enabled=self.live_enabled,
             max_loss_jpy=resolved_max_loss_jpy,
             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+            target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
+            target_report_path=self.target_report_path or DEFAULT_DAILY_TARGET_REPORT,
             self_improvement_audit=self.gateway_self_improvement_audit_path,
             verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
-            execution_ledger_db_path=self.execution_ledger_db_path,
-            execution_ledger_report_path=self.execution_ledger_report_path,
+            execution_ledger_db_path=(
+                self.execution_ledger_db_path if self._execution_ledger_available() else None
+            ),
+            execution_ledger_report_path=(
+                self.execution_ledger_report_path if self._execution_ledger_available() else None
+            ),
         )
         if len(basket_lane_ids) > 1:
             order_summary = order_gateway.run_batch(
@@ -3696,7 +3714,11 @@ class AutoTradeCycle:
             state_path=self.target_state_path,
             report_path=report_path,
             pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
-            execution_ledger_path=self.execution_ledger_db_path,
+            execution_ledger_path=(
+                self.execution_ledger_db_path
+                if self._execution_ledger_available()
+                else None
+            ),
         )
         summary = ledger.run(snapshot=snapshot)
         if self._refresh_ai_test_bot_backtest_for_target_pace():
@@ -4978,6 +5000,7 @@ class AutoTradeCycle:
             return None
         candidates = (
             payload.get("per_trade_risk_budget_jpy"),
+            payload.get("base_per_trade_risk_budget_jpy"),
             payload.get("daily_risk_budget_jpy"),
         )
         for raw in candidates:
@@ -4992,19 +5015,22 @@ class AutoTradeCycle:
         return None
 
     def _portfolio_loss_cap_jpy_from_target_state(self) -> float | None:
-        """Return the whole-day cap used for open + pending + basket risk."""
+        """Return non-refillable capacity before open + pending + candidate risk."""
         if self.target_state_path is None or not self.target_state_path.exists():
             return None
         try:
             payload = json.loads(self.target_state_path.read_text())
         except (OSError, json.JSONDecodeError, ValueError):
             return None
-        raw = payload.get("daily_risk_budget_jpy")
+        raw = payload.get("daily_loss_capacity_before_open_jpy")
+        if raw is None:
+            # Compatibility for states written before gross-loss accounting.
+            raw = payload.get("daily_risk_budget_jpy")
         try:
             value = float(raw) if raw is not None else 0.0
         except (TypeError, ValueError):
             return None
-        return value if value > 0 else None
+        return max(0.0, value)
 
     def _risk_equity_jpy_for_pct(self, snapshot=None) -> float | None:
         if self.risk_equity_jpy is not None:

@@ -4,8 +4,8 @@ These tests pin down the contract that:
   1. RiskPolicy.max_loss_jpy may be None (caller must inject the cap).
   2. validate() emits LOSS_CAP_MISSING (rather than silently using a literal)
      when no per-trade cap is reachable from policy or intent metadata.
-  3. intent.metadata['max_loss_jpy'] overrides policy.max_loss_jpy so the
-     intent generator can pass an equity-derived cap per lane.
+  3. intent.metadata['max_loss_jpy'] and policy.max_loss_jpy are combined by
+     taking the tighter positive cap, so a stale lane cannot widen fresh risk.
   4. resolve_max_loss_jpy() raises (no silent literal fallback) when neither
      explicit value nor default is provided.
   5. DailyTargetLedger derives daily_risk_budget_jpy from start_balance and
@@ -87,16 +87,14 @@ class RiskNoHardcodeTest(unittest.TestCase):
         self.assertIn("LOSS_CAP_MISSING", codes)
         self.assertNotIn("LOSS_CAP_EXCEEDED", codes)
 
-    def test_intent_metadata_cap_overrides_policy_cap(self) -> None:
-        # Policy cap = 500 JPY would exceed the lane's worst-case risk;
-        # intent metadata cap = 5_000 JPY is more permissive and must win.
+    def test_intent_metadata_cap_cannot_widen_policy_cap(self) -> None:
+        # Policy cap = 500 JPY is the fresh gateway boundary.  An older intent
+        # metadata cap = 5_000 JPY must not widen it.
         engine = RiskEngine(policy=RiskPolicy(max_loss_jpy=500.0))
         intent = _intent(metadata={"max_loss_jpy": 5_000.0})
         decision = engine.validate(intent, _snapshot())
         codes = {issue.code for issue in decision.issues}
-        # With the equity-derived cap of 5000 JPY, the lane risk fits and the
-        # validator does not raise LOSS_CAP_EXCEEDED.
-        self.assertNotIn("LOSS_CAP_EXCEEDED", codes)
+        self.assertIn("LOSS_CAP_EXCEEDED", codes)
         self.assertNotIn("LOSS_CAP_MISSING", codes)
 
     def test_resolve_max_loss_jpy_raises_without_default(self) -> None:

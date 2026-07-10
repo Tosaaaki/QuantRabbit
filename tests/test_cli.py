@@ -430,6 +430,70 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("daily-target-state", help_text)
         self.assertIn("10% target", help_text)
 
+    def test_daily_target_cli_exposes_uncapped_pace_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "firepower": {
+                            "avg_selected_trade_jpy": 168.6658,
+                            "avg_selected_trades_per_day": 4.7955,
+                            "required_trades_per_day_at_observed_expectancy": 173,
+                            "trade_frequency_multiple_required": 36.0755,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 87,
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            stdout = io.StringIO()
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_AI_TEST_BOT_BACKTEST",
+                backtest,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "daily-target-state",
+                        "--start-balance",
+                        "291145.1432",
+                        "--daily-risk-budget",
+                        "29114.5143",
+                        "--state",
+                        str(root / "target.json"),
+                        "--report",
+                        str(root / "target.md"),
+                        "--capital-flows",
+                        str(root / "capital_flows.json"),
+                        "--execution-ledger-db",
+                        str(root / "missing_execution_ledger.db"),
+                    ]
+                )
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["uncapped_required_trades_per_day"], 173)
+        self.assertEqual(payload["uncapped_required_trades_per_day_basis_return_pct"], 10.0)
+        self.assertEqual(payload["selected_basis_uncapped_required_trades_per_day"], 87)
+        self.assertEqual(payload["selected_basis_return_pct"], 5.0)
+        self.assertEqual(payload["operating_pace_trades_per_day"], 30)
+        self.assertEqual(payload["automated_operating_cap_trades_per_day"], 30)
+        self.assertEqual(payload["stretch_required_minus_operating_gap_trades_per_day"], 143)
+        self.assertEqual(payload["selected_required_minus_operating_gap_trades_per_day"], 57)
+        self.assertEqual(payload["trade_pace_feasibility"], "INFEASIBLE_AT_OPERATING_PACE")
+
     def test_snapshot_json_preserves_pending_order_thesis_raw_fields(self) -> None:
         now = datetime.now(timezone.utc)
         snapshot = BrokerSnapshot(
@@ -5398,6 +5462,20 @@ class CliHelpTest(unittest.TestCase):
                     remaining_target_jpy=1000.0,
                     remaining_risk_budget_jpy=900.0,
                     per_trade_risk_budget_jpy=100.0,
+                    uncapped_required_trades_per_day=173,
+                    uncapped_required_trades_per_day_basis_return_pct=10.0,
+                    selected_basis_uncapped_required_trades_per_day=87,
+                    selected_basis_return_pct=5.0,
+                    operating_pace_trades_per_day=30,
+                    automated_operating_cap_trades_per_day=30,
+                    observed_trades_per_day=4.7955,
+                    observed_expectancy_jpy_per_trade=168.6658,
+                    frequency_multiple_required=36.0755,
+                    planned_reward_at_operating_pace_jpy=5059.974,
+                    stretch_required_minus_operating_gap_trades_per_day=143,
+                    selected_required_minus_operating_gap_trades_per_day=57,
+                    trade_pace_feasible_within_operating_pace=False,
+                    trade_pace_feasibility="INFEASIBLE_AT_OPERATING_PACE",
                 )
 
             def campaign_run(**_: object) -> SimpleNamespace:
@@ -5464,6 +5542,15 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["snapshot_refresh"]["status"], "REFRESHED")
         self.assertEqual(payload["daily_target_refresh"]["status"], "REFRESHED")
+        self.assertEqual(payload["daily_target_refresh"]["uncapped_required_trades_per_day"], 173)
+        self.assertEqual(
+            payload["daily_target_refresh"]["selected_basis_uncapped_required_trades_per_day"],
+            87,
+        )
+        self.assertEqual(
+            payload["daily_target_refresh"]["trade_pace_feasibility"],
+            "INFEASIBLE_AT_OPERATING_PACE",
+        )
         self.assertEqual(payload["campaign_refresh"]["status"], "REFRESHED")
         self.assertIn("daily_target_state_newer", payload["campaign_refresh"]["refresh_reasons"])
 
@@ -5914,7 +6001,6 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         "QR_GEOMETRY_SPREAD_FLOOR_MULT",
         "QR_MAX_PORTFOLIO_POSITIONS",
         "QR_TRADER_POSITION_NAV_PCT",
-        "QR_TRADER_BASE_UNITS",
         "QR_DISABLE_AUTO_CLOSE",
         # Added 2026-05-13 (feedback_broker_sl_noise_hunt.md): broker
         # SL on new entries and trailing SL are BOTH off by default

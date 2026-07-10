@@ -2166,8 +2166,9 @@ class RiskPolicy:
     #     where micro wins re-teach the backtest that 30+ micro trades are
     #     "required". At 1.0% of equity the floor funds a MIN-lot-multiple
     #     position with ATR-scale geometry, and the whole-day protection
-    #     stays intact because remaining_risk_budget_jpy still decrements
-    #     per shot (≈10 full-loss trades exhaust a 10% day).
+    #     stays intact because gross trader-attributed realized losses consume
+    #     non-refillable capacity and fresh open/candidate risk consumes the
+    #     remainder (≈10 full-loss trades exhaust a 10% day).
     # (b) constant rather than derived: this is operator policy preventing
     #     "math break" cycles where pace × budget drives per-trade into
     #     units the broker cannot honor — see
@@ -2658,20 +2659,15 @@ class RiskEngine:
             if risk_issue:
                 issues.append(risk_issue)
             elif portfolio_risk + metrics.risk_jpy > self.policy.max_portfolio_loss_jpy:
-                # Under SL-free the per-day loss budget is advisory only —
-                # margin-utilization is the real ceiling, not a JPY literal.
-                # User 2026-05-08「市況>リスク」+ `feedback_offense_sizing.md`
-                # 「loss cap撤廃」+ `feedback_market_over_risk_budget.md`
-                # 「含み損%/JPYは判断材料にしない」.
-                # Surface the gate as WARN under SL-free so the operator
-                # sees the exposure but the cycle isn't blocked.
-                severity = "WARN" if _trader_sl_repair_disabled() else "BLOCK"
+                # This cap is the equity-derived, non-refillable campaign-day
+                # loss capacity. It is a hard accounting boundary even under
+                # SL-free execution; margin capacity cannot restore loss budget.
                 issues.append(
                     RiskIssue(
                         "PORTFOLIO_LOSS_CAP_EXCEEDED",
                         f"open risk {portfolio_risk:.0f} JPY + candidate risk {metrics.risk_jpy:.0f} JPY "
                         f"exceeds portfolio cap {self.policy.max_portfolio_loss_jpy:.0f} JPY",
-                        severity=severity,
+                        severity="BLOCK",
                     )
                 )
 
@@ -2884,23 +2880,28 @@ class RiskEngine:
     def _resolved_loss_cap(self, intent: OrderIntent) -> float | None:
         """Return the per-trade loss cap to enforce.
 
-        Resolution order (no JPY literal fallback):
-            1. intent.metadata['max_loss_jpy'] — caller (intent generator) injected an
-               equity-derived cap for this specific lane.
-            2. policy.max_loss_jpy — explicit policy-wide cap from CLI / config.
-            3. None — validator emits LOSS_CAP_MISSING and refuses the trade.
+        Both the lane receipt and the policy/gateway may provide a cap.  The
+        receipt is allowed to tighten a later broker-truth cap, never widen it:
+        final pre-POST reconciliation can discover a same-day loss after the
+        intent packet was generated.  Treating the stale metadata value as an
+        override would let that old packet exceed the freshly reduced cap.
+        When neither source is available, return None so the validator emits
+        LOSS_CAP_MISSING rather than inventing a JPY fallback.
         """
         meta = intent.metadata or {}
-        cap = meta.get("max_loss_jpy")
-        if cap is not None:
+        caps: list[float] = []
+        metadata_cap = meta.get("max_loss_jpy")
+        if metadata_cap is not None:
             try:
-                cap_value = float(cap)
+                cap_value = float(metadata_cap)
             except (TypeError, ValueError):
                 return None
-            return cap_value if cap_value > 0 else None
+            if cap_value <= 0:
+                return None
+            caps.append(cap_value)
         if self.policy.max_loss_jpy is not None and self.policy.max_loss_jpy > 0:
-            return float(self.policy.max_loss_jpy)
-        return None
+            caps.append(float(self.policy.max_loss_jpy))
+        return min(caps) if caps else None
 
     def _entry_price(self, intent: OrderIntent, quote: Quote) -> float:
         if intent.order_type == OrderType.MARKET:

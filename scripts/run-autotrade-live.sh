@@ -62,9 +62,6 @@ export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
 # positions reach ~90% margin utilization, just inside the 92% cap.
 # Override per shell to dial conservative (15-20) or all-in (40-50).
 export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
-# Legacy fixed-units fallback used only when QR_TRADER_POSITION_NAV_PCT
-# is unset. Kept for backward compat with smoke scripts that pin units.
-export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 # Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.
 # Loss-side closes still need gpt_trader Gate A/B unless the operator
 # explicitly opts into structural deterministic auto-close with
@@ -79,8 +76,9 @@ export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # Bounded forward evidence for reproducible forecast-failure contrarian rules.
 # The environment flag is only the second half of a double gate: the canonical
 # rule digest and config/predictive_scout_policy.json must also pass, and the
-# gateway still enforces LIMIT/1000u/GTD/attached TP+SL, max-two active,
-# eight broker-POST reservations/day, post-loss cooldown, and
+# gateway still enforces LIMIT/GTD/attached TP+SL, current-NAV risk sizing to
+# positive integer units (including 1-999u), max-two active, thirty atomic
+# broker-POST reservations/day, post-loss cooldown, and
 # cumulative-negative quarantine.
 export QR_PREDICTIVE_SCOUT_LIVE_ENABLED="${QR_PREDICTIVE_SCOUT_LIVE_ENABLED:-1}"
 case "$QR_PREDICTIVE_SCOUT_LIVE_ENABLED" in

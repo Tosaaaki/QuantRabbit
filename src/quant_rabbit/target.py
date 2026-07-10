@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.capital_flows import funding_adjusted_equity, summarize_capital_flows
+from quant_rabbit.execution_ledger import OANDA_TRANSACTION_COVERAGE_START_KEY
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_CAPITAL_FLOWS, DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET_STATE
 from quant_rabbit.risk import RiskPolicy
@@ -42,6 +43,10 @@ ROLLING_30D_ACTIVE_DAYS = 22
 ROLLING_30D_TARGET_MULTIPLIER = 4.0
 ROLLING_30D_ON_PACE_TOLERANCE = 0.98
 ROLLING_30D_DANGER_DAILY_RETURN_PCT = 10.0
+# OANDA cash/financing fields are persisted to four decimal JPY precision.
+# One cent of JPY absorbs only representation/aggregation roundoff; any larger
+# gap means the account-wide delta is incomplete and must fail closed.
+ACCOUNT_CASH_RECONCILIATION_TOLERANCE_JPY = 0.01
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,12 @@ class TargetPositionRisk:
 class DailyTargetSnapshot:
     generated_at_utc: str
     start_balance_jpy: float
+    campaign_open_balance_status: str
+    campaign_open_balance_source: str
+    campaign_open_balance_audited_candidate_jpy: float | None
+    campaign_day_account_realized_jpy: float | None
+    campaign_day_capital_flows_jpy: float
+    campaign_day_broker_capital_flows_jpy: float | None
     target_return_pct: float
     target_jpy: float
     target_profit_jpy: float
@@ -107,11 +118,28 @@ class DailyTargetSnapshot:
     capital_flow_issues: tuple[str, ...]
     campaign_day_jst: str
     daily_risk_budget_jpy: float
+    realized_loss_spent_jpy: float
+    daily_loss_capacity_before_open_jpy: float
     daily_risk_pct: float | None
     target_trades_per_day: int
     target_trades_per_day_source: str
     target_trades_per_day_basis_return_pct: float | None
+    uncapped_required_trades_per_day: int | None
+    uncapped_required_trades_per_day_basis_return_pct: float | None
+    selected_basis_uncapped_required_trades_per_day: int | None
+    selected_basis_return_pct: float | None
+    operating_pace_trades_per_day: int
+    automated_operating_cap_trades_per_day: int | None
+    observed_trades_per_day: float | None
+    observed_expectancy_jpy_per_trade: float | None
+    frequency_multiple_required: float | None
+    planned_reward_at_operating_pace_jpy: float | None
+    stretch_required_minus_operating_gap_trades_per_day: int | None
+    selected_required_minus_operating_gap_trades_per_day: int | None
+    trade_pace_feasible_within_operating_pace: bool | None
+    trade_pace_feasibility: str
     sizing_nav_jpy: float
+    base_per_trade_risk_budget_jpy: float
     per_trade_risk_budget_jpy: float
     per_trade_risk_pct_nav: float
     open_risk_jpy: float
@@ -157,10 +185,27 @@ class DailyTargetSummary:
     remaining_minimum_jpy: float
     remaining_target_jpy: float
     remaining_risk_budget_jpy: float
+    realized_loss_spent_jpy: float
+    daily_loss_capacity_before_open_jpy: float
     target_trades_per_day: int
     target_trades_per_day_source: str
     target_trades_per_day_basis_return_pct: float | None
+    uncapped_required_trades_per_day: int | None
+    uncapped_required_trades_per_day_basis_return_pct: float | None
+    selected_basis_uncapped_required_trades_per_day: int | None
+    selected_basis_return_pct: float | None
+    operating_pace_trades_per_day: int
+    automated_operating_cap_trades_per_day: int | None
+    observed_trades_per_day: float | None
+    observed_expectancy_jpy_per_trade: float | None
+    frequency_multiple_required: float | None
+    planned_reward_at_operating_pace_jpy: float | None
+    stretch_required_minus_operating_gap_trades_per_day: int | None
+    selected_required_minus_operating_gap_trades_per_day: int | None
+    trade_pace_feasible_within_operating_pace: bool | None
+    trade_pace_feasibility: str
     sizing_nav_jpy: float
+    base_per_trade_risk_budget_jpy: float
     per_trade_risk_budget_jpy: float
     per_trade_risk_pct_nav: float
     unprotected_positions: int
@@ -171,6 +216,37 @@ class _BacktestPace:
     trades_per_day: int
     source: str
     basis_return_pct: float | None
+
+
+@dataclass(frozen=True)
+class _BacktestPaceEvidence:
+    """One atomic read of sizing pace plus uncapped firepower visibility."""
+
+    selected_pace: _BacktestPace | None
+    selected_basis_uncapped_pace: _BacktestPace | None
+    generated_at_utc: str | None
+    uncapped_required_trades_per_day: int | None
+    uncapped_required_trades_per_day_basis_return_pct: float | None
+    observed_trades_per_day: float | None
+    observed_expectancy_jpy_per_trade: float | None
+    frequency_multiple_required: float | None
+
+
+@dataclass(frozen=True)
+class _AttributedRealized:
+    net_jpy: float
+    gross_loss_spent_jpy: float
+    account_net_jpy: float
+    account_capital_flows_jpy: float
+
+
+@dataclass(frozen=True)
+class _CampaignOpenBalance:
+    value_jpy: float
+    status: str
+    source: str
+    audited_candidate_jpy: float | None
+    blocker: str | None
 
 
 _TARGET_SIZING_MULTIPLIER_LIMITS = {
@@ -219,52 +295,78 @@ class DailyTargetLedger:
         campaign_day_jst = _campaign_day_key(reference_time)
         previous_day = _coalesce_campaign_day(previous)
         is_new_campaign_day = previous_day is not None and previous_day != campaign_day_jst
-        ledger_realized = (
-            None
-            if realized_pl_jpy is not None
-            else _realized_pl_from_execution_ledger(self.execution_ledger_path, campaign_day_jst)
+        ledger_realized = _attributed_realized_from_execution_ledger(
+            self.execution_ledger_path,
+            campaign_day_jst,
+            broker_last_transaction_id=(
+                snapshot.account.last_transaction_id
+                if snapshot is not None and snapshot.account is not None
+                else None
+            ),
         )
-
-        # Priority order:
-        # 1. Explicit --start-balance argument (caller override).
-        # 2. Snapshot.account plus an auditable realized figure (explicit arg or
-        #    execution-ledger truth): derive `balance - realized_today` on EVERY
-        #    cycle, not only on campaign-day transitions. This makes the start
-        #    balance self-healing per §3.5 "no stale persistence": a poisoned
-        #    persisted value cannot survive a cycle that has broker truth.
-        #    (2026-06-08 incident: start_balance_jpy=222,781 persisted from
-        #    ~2026-05-12 while the broker balance was 184,962, so the state
-        #    reported -37,818 JPY / -169% "today's" progress even though the
-        #    execution ledger truth for the campaign day was +92 JPY.)
-        # 3. New campaign day without snapshot.account: roll over previous current_equity.
-        # 4. Otherwise reuse previous start_balance.
-        snapshot_start_balance = _start_balance_from_snapshot(
-            snapshot=snapshot,
-            realized_pl_jpy=realized_pl_jpy if realized_pl_jpy is not None else ledger_realized,
+        campaign_day_start_utc = datetime.fromisoformat(
+            f"{campaign_day_jst}T00:00:00+00:00"
         )
-        has_audited_realized = realized_pl_jpy is not None or ledger_realized is not None
-        start_balance = _coalesce_float(start_balance_jpy)
-        if (
-            start_balance is None
-            and snapshot_start_balance is not None
-            and (is_new_campaign_day or has_audited_realized)
-        ):
-            # Same-day re-derivation requires an audited realized figure;
-            # without one, `balance - 0` would wrongly re-anchor the day's
-            # target to the current balance and erase visible progress.
-            start_balance = snapshot_start_balance
-        if start_balance is None and is_new_campaign_day:
-            start_balance = _coalesce_float(previous.get("current_equity_jpy"), previous.get("start_balance_jpy"))
-        if start_balance is None:
-            start_balance = _coalesce_float(previous.get("start_balance_jpy"))
-        # First-ever run with no previous state: prefer snapshot-derived value when available.
-        if start_balance is None and snapshot_start_balance is not None:
-            start_balance = snapshot_start_balance
-        if start_balance is None:
-            raise ValueError(
-                "daily target state requires --start-balance, a previous state file, "
-                "or a broker snapshot with account summary on first run"
+        campaign_day_capital_flows = summarize_capital_flows(
+            self.capital_flows_path,
+            start_utc=campaign_day_start_utc,
+            end_utc=reference_time,
+        )
+        capital_flows_reconciled = (
+            ledger_realized is not None
+            and not campaign_day_capital_flows.issues
+            and abs(
+                ledger_realized.account_capital_flows_jpy
+                - campaign_day_capital_flows.net_amount_jpy
             )
+            <= ACCOUNT_CASH_RECONCILIATION_TOLERANCE_JPY
+        )
+        account_delta_blocker: str | None = None
+        if (
+            snapshot is not None
+            and snapshot.account is not None
+            and self.execution_ledger_path is not None
+        ):
+            if ledger_realized is None:
+                account_delta_blocker = (
+                    "CAMPAIGN_ACCOUNT_DELTA_AUDIT_UNAVAILABLE: execution-ledger coverage, "
+                    "transaction alignment, financing attribution, or supported cash-delta "
+                    "evidence is incomplete; fresh-entry capacity stays zero"
+                )
+            elif campaign_day_capital_flows.issues:
+                account_delta_blocker = (
+                    "CAMPAIGN_CAPITAL_FLOW_AUDIT_UNAVAILABLE: capital-flow evidence is invalid; "
+                    "fresh-entry capacity stays zero"
+                )
+            elif not capital_flows_reconciled:
+                account_delta_blocker = (
+                    "CAMPAIGN_CAPITAL_FLOW_MISMATCH: broker TRANSFER_FUNDS total "
+                    f"{ledger_realized.account_capital_flows_jpy:.4f} JPY differs from recorded "
+                    f"capital flows {campaign_day_capital_flows.net_amount_jpy:.4f} JPY; "
+                    "fresh-entry capacity stays zero"
+                )
+        audited_open_candidate = (
+            round(
+                float(snapshot.account.balance_jpy)
+                - ledger_realized.account_net_jpy
+                - campaign_day_capital_flows.net_amount_jpy,
+                4,
+            )
+            if snapshot is not None
+            and snapshot.account is not None
+            and ledger_realized is not None
+            and capital_flows_reconciled
+            else None
+        )
+        campaign_open = _resolve_campaign_open_balance(
+            explicit_start_balance_jpy=_coalesce_float(start_balance_jpy),
+            previous=previous,
+            previous_day=previous_day,
+            campaign_day_jst=campaign_day_jst,
+            snapshot=snapshot,
+            audited_candidate_jpy=audited_open_candidate,
+        )
+        start_balance = campaign_open.value_jpy
         # Sizing is an instantaneous portfolio decision, so its percentage
         # denominator must be the latest broker NAV rather than the campaign
         # day's opening balance. The opening balance remains the denominator
@@ -292,9 +394,17 @@ class DailyTargetLedger:
             # start-balance poisoning into "today's realized", which both
             # violates feedback_manual_excluded_from_trader_pnl and propagates
             # stale state (§3.5).
-            realized = ledger_realized
+            realized = ledger_realized.net_jpy
         elif is_new_campaign_day:
             realized = 0.0
+        elif campaign_open.blocker is not None or account_delta_blocker is not None:
+            # A balance difference is account-wide, not trader-attributed: it
+            # can contain manual P/L, daily financing, fees, and funding.  If
+            # the complete transaction delta is unavailable, preserve the last
+            # reported system value for visibility but never relabel the new
+            # cash-balance movement as autonomous trader progress.  The opening
+            # audit blocker below keeps fresh-entry capacity at zero.
+            realized = _coalesce_float(previous.get("realized_pl_jpy"), 0.0)
         else:
             realized = (
                 _realized_pl_from_snapshot(snapshot=snapshot, start_balance_jpy=start_balance)
@@ -303,6 +413,24 @@ class DailyTargetLedger:
             )
             if realized is None:
                 realized = _coalesce_float(previous.get("realized_pl_jpy"), 0.0)
+        previous_loss_spent = (
+            0.0
+            if is_new_campaign_day
+            else float(previous.get("realized_loss_spent_jpy") or 0.0)
+        )
+        if ledger_realized is not None:
+            # Broker events are authoritative when attribution is available.
+            # Sum each losing close/reduction independently so a later winner
+            # cannot refill risk already spent earlier in the campaign day.
+            realized_loss_spent = max(
+                previous_loss_spent,
+                ledger_realized.gross_loss_spent_jpy,
+            )
+        else:
+            # A net-only explicit/snapshot value cannot reconstruct losing and
+            # winning partials. Preserve the same-day high-water mark and add
+            # any currently visible net loss rather than silently refilling it.
+            realized_loss_spent = max(previous_loss_spent, max(0.0, -float(realized)))
         # Equity-derived risk budget: per-trade worst-case loss cap is sized to the day's
         # starting equity, not a hardcoded JPY literal. Default uses RiskPolicy.daily_risk_pct
         # (% of starting equity); explicit caller override and previous-day persistence
@@ -350,6 +478,11 @@ class DailyTargetLedger:
         # behave like that operationally. Per AGENT_CONTRACT §3.5 there is no
         # silent JPY fallback: the trade pace must come from CLI, persisted
         # state, or the documented policy default (RiskPolicy.target_trades_per_day).
+        # Read the source packet once even when CLI/previous pace wins. The
+        # uncapped expectancy requirement is advisory visibility, so hiding it
+        # behind pace-selection precedence would recreate the capped-30-only
+        # report that made a 173-trade stretch requirement invisible.
+        backtest_pace_evidence = _pace_evidence_from_backtest(self.pace_backtest_path)
         explicit_pace = _coalesce_int(target_trades_per_day)
         pace_source = "cli" if explicit_pace is not None else ""
         pace_basis_return_pct: float | None = None
@@ -372,7 +505,10 @@ class DailyTargetLedger:
             # A new day gets a fresh ai-test-bot firepower read when available,
             # otherwise yesterday's CLI pace can silently become a stale fixed
             # risk divisor and violate the no-default-to-yesterday contract.
-            fresh_backtest_after_previous = _backtest_newer_than_previous_state(self.pace_backtest_path, previous)
+            fresh_backtest_after_previous = _backtest_evidence_newer_than_previous_state(
+                backtest_pace_evidence,
+                previous,
+            )
             previous_was_cli = (
                 previous_pace_source == "cli"
                 or (previous_pace_source == "previous_cli" and not fresh_backtest_after_previous)
@@ -381,7 +517,7 @@ class DailyTargetLedger:
                 explicit_pace = previous_pace
                 pace_source = "previous_cli"
             else:
-                backtest_pace = _pace_from_backtest(self.pace_backtest_path)
+                backtest_pace = backtest_pace_evidence.selected_pace
                 if backtest_pace is not None:
                     target_sizing_pace = backtest_pace.source.startswith("ai_test_bot_target_sizing_")
                     explicit_pace = (
@@ -432,6 +568,45 @@ class DailyTargetLedger:
                 )
             explicit_pace = int(policy.target_trades_per_day)
             pace_source = "risk_policy_default"
+        selected_basis_uncapped_required_trades_per_day = (
+            backtest_pace_evidence.selected_basis_uncapped_pace.trades_per_day
+            if backtest_pace_evidence.selected_basis_uncapped_pace is not None
+            else None
+        )
+        selected_basis_return_pct = (
+            backtest_pace_evidence.selected_basis_uncapped_pace.basis_return_pct
+            if backtest_pace_evidence.selected_basis_uncapped_pace is not None
+            else None
+        )
+        automated_operating_cap_trades_per_day = (
+            int(policy.max_target_trades_per_day)
+            if policy.max_target_trades_per_day is not None
+            and policy.max_target_trades_per_day > 0
+            else None
+        )
+        stretch_gap = (
+            max(0, backtest_pace_evidence.uncapped_required_trades_per_day - explicit_pace)
+            if backtest_pace_evidence.uncapped_required_trades_per_day is not None
+            else None
+        )
+        selected_gap = (
+            max(0, selected_basis_uncapped_required_trades_per_day - explicit_pace)
+            if selected_basis_uncapped_required_trades_per_day is not None
+            else None
+        )
+        planned_reward_at_operating_pace_jpy = (
+            round(backtest_pace_evidence.observed_expectancy_jpy_per_trade * explicit_pace, 4)
+            if backtest_pace_evidence.observed_expectancy_jpy_per_trade is not None
+            else None
+        )
+        pace_feasible, pace_feasibility = _trade_pace_feasibility(
+            required_trades_per_day=backtest_pace_evidence.uncapped_required_trades_per_day,
+            operating_pace_trades_per_day=explicit_pace,
+            observed_trades_per_day=backtest_pace_evidence.observed_trades_per_day,
+            observed_expectancy_jpy_per_trade=(
+                backtest_pace_evidence.observed_expectancy_jpy_per_trade
+            ),
+        )
         per_trade_risk_budget = round(risk_budget / explicit_pace, 4)
         # Per AGENT_CONTRACT §3.5 + feedback_high_conviction_execution.md:
         # if pace × budget drives per-trade below an equity-derived floor,
@@ -459,6 +634,21 @@ class DailyTargetLedger:
                     if pace_source
                     else "min_per_trade_pct_floor"
                 )
+        base_per_trade_risk_budget = per_trade_risk_budget
+        daily_loss_capacity_before_open = round(
+            max(0.0, risk_budget - realized_loss_spent),
+            4,
+        )
+        if campaign_open.blocker is not None or account_delta_blocker is not None:
+            # An unverified/mismatched opening balance cannot authorize a JPY
+            # loss allowance.  Keep the provisional target visible for
+            # first-run compatibility, but fail closed on fresh-entry capacity
+            # until the account-wide delta proves the campaign anchor.
+            daily_loss_capacity_before_open = 0.0
+        per_trade_risk_budget = round(
+            min(base_per_trade_risk_budget, daily_loss_capacity_before_open),
+            4,
+        )
         per_trade_risk_pct_nav = round(
             (per_trade_risk_budget / sizing_nav) * 100.0,
             6,
@@ -501,7 +691,11 @@ class DailyTargetLedger:
         minimum_target_jpy = round(start_balance * (minimum_pct / 100.0), 2)
         remaining_target = round(max(0.0, target_jpy - progress), 4)
         remaining_minimum = round(max(0.0, minimum_target_jpy - progress), 4)
-        remaining_risk_budget = 0.0 if unprotected else round(max(0.0, risk_budget - open_risk), 4)
+        remaining_risk_budget = (
+            0.0
+            if unprotected
+            else round(max(0.0, daily_loss_capacity_before_open - open_risk), 4)
+        )
         current_equity = _current_equity_jpy(
             snapshot=snapshot,
             start_balance_jpy=start_balance,
@@ -524,7 +718,17 @@ class DailyTargetLedger:
             if minimum_target_jpy
             else 0.0
         )
-        blockers = tuple(_blockers(positions, open_risk=open_risk, risk_budget=risk_budget, remaining_target=remaining_target))
+        blocker_list = _blockers(
+            positions,
+            open_risk=open_risk,
+            risk_budget=daily_loss_capacity_before_open,
+            remaining_target=remaining_target,
+        )
+        if campaign_open.blocker is not None:
+            blocker_list.insert(0, campaign_open.blocker)
+        if account_delta_blocker is not None:
+            blocker_list.insert(0, account_delta_blocker)
+        blockers = tuple(blocker_list)
         status = _status(
             progress_jpy=progress,
             target_jpy=target_jpy,
@@ -535,6 +739,27 @@ class DailyTargetLedger:
         state = DailyTargetSnapshot(
             generated_at_utc=datetime.now(timezone.utc).isoformat(),
             start_balance_jpy=round(start_balance, 4),
+            campaign_open_balance_status=campaign_open.status,
+            campaign_open_balance_source=campaign_open.source,
+            campaign_open_balance_audited_candidate_jpy=(
+                round(campaign_open.audited_candidate_jpy, 4)
+                if campaign_open.audited_candidate_jpy is not None
+                else None
+            ),
+            campaign_day_account_realized_jpy=(
+                round(ledger_realized.account_net_jpy, 4)
+                if ledger_realized is not None
+                else None
+            ),
+            campaign_day_capital_flows_jpy=round(
+                campaign_day_capital_flows.net_amount_jpy,
+                4,
+            ),
+            campaign_day_broker_capital_flows_jpy=(
+                round(ledger_realized.account_capital_flows_jpy, 4)
+                if ledger_realized is not None
+                else None
+            ),
             target_return_pct=round(target_pct, 4),
             target_jpy=target_jpy,
             target_profit_jpy=target_jpy,
@@ -585,13 +810,55 @@ class DailyTargetLedger:
             capital_flow_issues=rolling_30d["capital_flow_issues"],
             campaign_day_jst=campaign_day_jst,
             daily_risk_budget_jpy=round(risk_budget, 4),
+            realized_loss_spent_jpy=round(realized_loss_spent, 4),
+            daily_loss_capacity_before_open_jpy=daily_loss_capacity_before_open,
             daily_risk_pct=round(active_pct, 4) if active_pct is not None else None,
             target_trades_per_day=explicit_pace,
             target_trades_per_day_source=pace_source,
             target_trades_per_day_basis_return_pct=round(pace_basis_return_pct, 4)
             if pace_basis_return_pct is not None
             else None,
+            uncapped_required_trades_per_day=(
+                backtest_pace_evidence.uncapped_required_trades_per_day
+            ),
+            uncapped_required_trades_per_day_basis_return_pct=(
+                round(backtest_pace_evidence.uncapped_required_trades_per_day_basis_return_pct, 4)
+                if backtest_pace_evidence.uncapped_required_trades_per_day_basis_return_pct
+                is not None
+                else None
+            ),
+            selected_basis_uncapped_required_trades_per_day=(
+                selected_basis_uncapped_required_trades_per_day
+            ),
+            selected_basis_return_pct=(
+                round(selected_basis_return_pct, 4)
+                if selected_basis_return_pct is not None
+                else None
+            ),
+            operating_pace_trades_per_day=explicit_pace,
+            automated_operating_cap_trades_per_day=automated_operating_cap_trades_per_day,
+            observed_trades_per_day=(
+                round(backtest_pace_evidence.observed_trades_per_day, 4)
+                if backtest_pace_evidence.observed_trades_per_day is not None
+                else None
+            ),
+            observed_expectancy_jpy_per_trade=(
+                round(backtest_pace_evidence.observed_expectancy_jpy_per_trade, 4)
+                if backtest_pace_evidence.observed_expectancy_jpy_per_trade is not None
+                else None
+            ),
+            frequency_multiple_required=(
+                round(backtest_pace_evidence.frequency_multiple_required, 4)
+                if backtest_pace_evidence.frequency_multiple_required is not None
+                else None
+            ),
+            planned_reward_at_operating_pace_jpy=planned_reward_at_operating_pace_jpy,
+            stretch_required_minus_operating_gap_trades_per_day=stretch_gap,
+            selected_required_minus_operating_gap_trades_per_day=selected_gap,
+            trade_pace_feasible_within_operating_pace=pace_feasible,
+            trade_pace_feasibility=pace_feasibility,
             sizing_nav_jpy=round(sizing_nav, 4),
+            base_per_trade_risk_budget_jpy=base_per_trade_risk_budget,
             per_trade_risk_budget_jpy=per_trade_risk_budget,
             per_trade_risk_pct_nav=per_trade_risk_pct_nav,
             open_risk_jpy=open_risk,
@@ -637,10 +904,39 @@ class DailyTargetLedger:
             remaining_minimum_jpy=state.remaining_minimum_jpy,
             remaining_target_jpy=state.remaining_target_jpy,
             remaining_risk_budget_jpy=state.remaining_risk_budget_jpy,
+            realized_loss_spent_jpy=state.realized_loss_spent_jpy,
+            daily_loss_capacity_before_open_jpy=state.daily_loss_capacity_before_open_jpy,
             target_trades_per_day=state.target_trades_per_day,
             target_trades_per_day_source=state.target_trades_per_day_source,
             target_trades_per_day_basis_return_pct=state.target_trades_per_day_basis_return_pct,
+            uncapped_required_trades_per_day=state.uncapped_required_trades_per_day,
+            uncapped_required_trades_per_day_basis_return_pct=(
+                state.uncapped_required_trades_per_day_basis_return_pct
+            ),
+            selected_basis_uncapped_required_trades_per_day=(
+                state.selected_basis_uncapped_required_trades_per_day
+            ),
+            selected_basis_return_pct=state.selected_basis_return_pct,
+            operating_pace_trades_per_day=state.operating_pace_trades_per_day,
+            automated_operating_cap_trades_per_day=(
+                state.automated_operating_cap_trades_per_day
+            ),
+            observed_trades_per_day=state.observed_trades_per_day,
+            observed_expectancy_jpy_per_trade=state.observed_expectancy_jpy_per_trade,
+            frequency_multiple_required=state.frequency_multiple_required,
+            planned_reward_at_operating_pace_jpy=state.planned_reward_at_operating_pace_jpy,
+            stretch_required_minus_operating_gap_trades_per_day=(
+                state.stretch_required_minus_operating_gap_trades_per_day
+            ),
+            selected_required_minus_operating_gap_trades_per_day=(
+                state.selected_required_minus_operating_gap_trades_per_day
+            ),
+            trade_pace_feasible_within_operating_pace=(
+                state.trade_pace_feasible_within_operating_pace
+            ),
+            trade_pace_feasibility=state.trade_pace_feasibility,
             sizing_nav_jpy=state.sizing_nav_jpy,
+            base_per_trade_risk_budget_jpy=state.base_per_trade_risk_budget_jpy,
             per_trade_risk_budget_jpy=state.per_trade_risk_budget_jpy,
             per_trade_risk_pct_nav=state.per_trade_risk_pct_nav,
             unprotected_positions=state.unprotected_positions,
@@ -667,6 +963,19 @@ class DailyTargetLedger:
             f"- Status: `{state.status}`",
             f"- Start equity: `{state.start_balance_jpy:.0f} JPY`",
             f"- Campaign day (JST9): `{state.campaign_day_jst}`",
+            f"- Campaign opening audit: `{state.campaign_open_balance_status}` "
+            f"(`{state.campaign_open_balance_source}`)",
+            "- Campaign opening reconstruction: "
+            + (
+                f"account realized/financing `{state.campaign_day_account_realized_jpy:.0f} JPY`, "
+                f"recorded capital flows `{state.campaign_day_capital_flows_jpy:.0f} JPY`, "
+                f"broker capital flows `{state.campaign_day_broker_capital_flows_jpy:.0f} JPY`, "
+                f"candidate `{state.campaign_open_balance_audited_candidate_jpy:.0f} JPY`"
+                if state.campaign_day_account_realized_jpy is not None
+                and state.campaign_day_broker_capital_flows_jpy is not None
+                and state.campaign_open_balance_audited_candidate_jpy is not None
+                else "`pending account-wide delta evidence`"
+            ),
             f"- Target: `{state.target_jpy:.0f} JPY` (`{state.target_return_pct:.1f}%`)",
             f"- Minimum daily floor: `{state.minimum_target_jpy:.0f} JPY` (`{state.minimum_return_pct:.1f}%`)",
             f"- Realized PnL: `{state.realized_pl_jpy:.0f} JPY`",
@@ -733,6 +1042,8 @@ class DailyTargetLedger:
             "",
             f"- Minimum-floor progress: `{state.minimum_progress_pct:.1f}%`; remaining floor `{state.remaining_minimum_jpy:.0f} JPY`",
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
+            f"- Gross realized loss spent: `{state.realized_loss_spent_jpy:.0f} JPY` (wins do not refill it)",
+            f"- Loss capacity before open risk: `{state.daily_loss_capacity_before_open_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
             f"- Remaining risk budget: `{state.remaining_risk_budget_jpy:.0f} JPY`",
             f"- Target trades per day: `{state.target_trades_per_day}` (`{state.target_trades_per_day_source}`)",
@@ -742,7 +1053,69 @@ class DailyTargetLedger:
                 if state.target_trades_per_day_basis_return_pct is not None
                 else "`n/a`"
             ),
+            f"- Operating pace: `{state.operating_pace_trades_per_day} trades/day`",
+            "- Automated operating cap: "
+            + (
+                f"`{state.automated_operating_cap_trades_per_day} trades/day`"
+                if state.automated_operating_cap_trades_per_day is not None
+                else "`n/a`"
+            ),
+            "- Stretch uncapped required pace: "
+            + (
+                f"`{state.uncapped_required_trades_per_day} trades/day` "
+                f"(basis `{state.uncapped_required_trades_per_day_basis_return_pct:.1f}%`)"
+                if state.uncapped_required_trades_per_day is not None
+                and state.uncapped_required_trades_per_day_basis_return_pct is not None
+                else "`n/a`"
+            ),
+            "- Selected-basis uncapped required pace: "
+            + (
+                f"`{state.selected_basis_uncapped_required_trades_per_day} trades/day` "
+                f"(basis `{state.selected_basis_return_pct:.1f}%`)"
+                if state.selected_basis_uncapped_required_trades_per_day is not None
+                and state.selected_basis_return_pct is not None
+                else "`n/a`"
+            ),
+            "- Observed selected pace: "
+            + (
+                f"`{state.observed_trades_per_day:.4f} trades/day`"
+                if state.observed_trades_per_day is not None
+                else "`n/a`"
+            ),
+            "- Observed expectancy: "
+            + (
+                f"`{state.observed_expectancy_jpy_per_trade:+.4f} JPY/trade`"
+                if state.observed_expectancy_jpy_per_trade is not None
+                else "`n/a`"
+            ),
+            "- Required frequency multiple vs observed: "
+            + (
+                f"`{state.frequency_multiple_required:.4f}x`"
+                if state.frequency_multiple_required is not None
+                else "`n/a`"
+            ),
+            "- Planned reward at operating pace: "
+            + (
+                f"`{state.planned_reward_at_operating_pace_jpy:.4f} JPY/day`"
+                if state.planned_reward_at_operating_pace_jpy is not None
+                else "`n/a`"
+            ),
+            "- Stretch required-minus-operating gap: "
+            + (
+                f"`{state.stretch_required_minus_operating_gap_trades_per_day} trades/day`"
+                if state.stretch_required_minus_operating_gap_trades_per_day is not None
+                else "`n/a`"
+            ),
+            "- Selected required-minus-operating gap: "
+            + (
+                f"`{state.selected_required_minus_operating_gap_trades_per_day} trades/day`"
+                if state.selected_required_minus_operating_gap_trades_per_day is not None
+                else "`n/a`"
+            ),
+            f"- Trade pace feasibility: `{state.trade_pace_feasibility}` "
+            f"(within operating pace=`{state.trade_pace_feasible_within_operating_pace}`)",
             f"- Sizing NAV: `{state.sizing_nav_jpy:.0f} JPY` (latest broker raw NAV)",
+            f"- Base per-trade risk cap: `{state.base_per_trade_risk_budget_jpy:.0f} JPY`",
             f"- Per-trade risk cap: `{state.per_trade_risk_budget_jpy:.0f} JPY` "
             f"(`{state.per_trade_risk_pct_nav:.4f}%` of sizing NAV)",
             f"- Current equity estimate: `{state.current_equity_jpy:.0f} JPY`",
@@ -1086,20 +1459,146 @@ def _status(
     return "PURSUE_TARGET"
 
 
-def _start_balance_from_snapshot(
-    *, snapshot: BrokerSnapshot | None, realized_pl_jpy: float | None
-) -> float | None:
-    """Today's start balance derived from OANDA broker truth.
+def _resolve_campaign_open_balance(
+    *,
+    explicit_start_balance_jpy: float | None,
+    previous: dict[str, Any],
+    previous_day: str | None,
+    campaign_day_jst: str,
+    snapshot: BrokerSnapshot | None,
+    audited_candidate_jpy: float | None,
+) -> _CampaignOpenBalance:
+    """Resolve one immutable campaign-day opening balance.
 
-    `balance` is cash (excludes unrealized PnL), so on a new campaign day with zero
-    realized PnL it equals today's opening cash. When realized PnL is non-zero we
-    subtract it so the figure represents the value before today's closed trades.
+    A same-day broker balance includes every later system/manual close,
+    financing posting, and funding flow.  It must therefore never replace an
+    already fixed opening balance.  A new day may be reconstructed only from a
+    complete account-wide realized/financing delta plus the recorded capital
+    flows.  Before that evidence is available, preserve first-run compatibility
+    with a provisional value but publish a hard audit blocker; the next
+    post-ledger-sync refresh may replace that provisional value exactly once.
     """
 
-    if snapshot is None or snapshot.account is None:
-        return None
-    realized = float(realized_pl_jpy) if realized_pl_jpy is not None else 0.0
-    return float(snapshot.account.balance_jpy) - realized
+    if explicit_start_balance_jpy is not None:
+        return _CampaignOpenBalance(
+            value_jpy=float(explicit_start_balance_jpy),
+            status="EXPLICIT",
+            source="explicit_start_balance",
+            audited_candidate_jpy=audited_candidate_jpy,
+            blocker=None,
+        )
+
+    previous_start = _coalesce_float(previous.get("start_balance_jpy"))
+    previous_status = str(previous.get("campaign_open_balance_status") or "").upper()
+    previous_source = str(previous.get("campaign_open_balance_source") or "")
+    same_campaign_day = previous_day == campaign_day_jst
+    previous_is_provisional = previous_status == "PROVISIONAL_UNAUDITED"
+    previous_is_explicit = previous_status == "EXPLICIT" or previous_source == "explicit_start_balance"
+
+    # A legacy state without a campaign-day marker is preserved rather than
+    # guessed from today's balance.  Once account-wide evidence exists, compare
+    # it for audit, but do not silently mutate the legacy opening.
+    fixed_previous = previous_start is not None and (
+        (same_campaign_day and not previous_is_provisional)
+        or previous_day is None
+    )
+    if fixed_previous:
+        if (
+            audited_candidate_jpy is not None
+            and round(previous_start, 4) != round(audited_candidate_jpy, 4)
+        ):
+            return _CampaignOpenBalance(
+                value_jpy=previous_start,
+                status="AUDITED_MISMATCH",
+                source="same_campaign_day_previous_preserved",
+                audited_candidate_jpy=audited_candidate_jpy,
+                blocker=(
+                    "CAMPAIGN_OPEN_BALANCE_MISMATCH: persisted same-day opening "
+                    f"{previous_start:.4f} JPY differs from account-wide reconstructed "
+                    f"opening {audited_candidate_jpy:.4f} JPY; explicit repair is required"
+                ),
+            )
+        if previous_is_explicit:
+            return _CampaignOpenBalance(
+                value_jpy=previous_start,
+                status="EXPLICIT",
+                source="same_campaign_day_previous_explicit",
+                audited_candidate_jpy=audited_candidate_jpy,
+                blocker=None,
+            )
+        if audited_candidate_jpy is not None:
+            return _CampaignOpenBalance(
+                value_jpy=previous_start,
+                status="AUDITED_ACCOUNT_DELTA",
+                source="same_campaign_day_previous_verified",
+                audited_candidate_jpy=audited_candidate_jpy,
+                blocker=None,
+            )
+        if previous_status == "AUDITED_MISMATCH":
+            return _CampaignOpenBalance(
+                value_jpy=previous_start,
+                status="AUDITED_MISMATCH",
+                source=previous_source or "same_campaign_day_previous_preserved",
+                audited_candidate_jpy=None,
+                blocker=(
+                    "CAMPAIGN_OPEN_BALANCE_MISMATCH: the persisted opening remains under "
+                    "explicit repair; current account-wide delta evidence is unavailable"
+                ),
+            )
+        return _CampaignOpenBalance(
+            value_jpy=previous_start,
+            status="AUDIT_UNAVAILABLE",
+            source="same_campaign_day_previous_preserved_pending_account_delta",
+            audited_candidate_jpy=None,
+            blocker=(
+                "CAMPAIGN_OPEN_BALANCE_AUDIT_UNAVAILABLE: persisted same-day opening "
+                "was preserved, but complete current account-wide delta evidence is unavailable; "
+                "fresh-entry capacity stays zero"
+            ),
+        )
+
+    # This is the only implicit path allowed to establish or replace an
+    # opening balance: a new day, first run, or a same-day provisional state.
+    if audited_candidate_jpy is not None:
+        return _CampaignOpenBalance(
+            value_jpy=audited_candidate_jpy,
+            status="AUDITED_ACCOUNT_DELTA",
+            source="broker_balance_minus_account_realized_financing_and_capital_flows",
+            audited_candidate_jpy=audited_candidate_jpy,
+            blocker=None,
+        )
+
+    snapshot_balance = (
+        float(snapshot.account.balance_jpy)
+        if snapshot is not None and snapshot.account is not None
+        else None
+    )
+    provisional = snapshot_balance
+    provisional_source = "broker_snapshot_pending_account_delta"
+    if provisional is None and same_campaign_day and previous_start is not None:
+        provisional = previous_start
+        provisional_source = "same_campaign_day_provisional_preserved"
+    if provisional is None and previous_day is not None and previous_day != campaign_day_jst:
+        provisional = _coalesce_float(
+            previous.get("current_equity_jpy"),
+            previous.get("start_balance_jpy"),
+        )
+        provisional_source = "previous_equity_pending_account_delta"
+    if provisional is None:
+        raise ValueError(
+            "daily target state requires --start-balance, a previous state file, "
+            "or a broker snapshot with account summary on first run"
+        )
+    return _CampaignOpenBalance(
+        value_jpy=float(provisional),
+        status="PROVISIONAL_UNAUDITED",
+        source=provisional_source,
+        audited_candidate_jpy=None,
+        blocker=(
+            "CAMPAIGN_OPEN_BALANCE_UNAUDITED: account-wide realized/financing and "
+            "current-day capital-flow evidence is incomplete; fresh-entry capacity stays zero"
+        ),
+    )
 
 
 def _realized_pl_from_snapshot(
@@ -1119,19 +1618,90 @@ def _realized_pl_from_snapshot(
     return float(snapshot.account.balance_jpy) - float(start_balance_jpy)
 
 
-def _realized_pl_from_execution_ledger(path: Path | None, campaign_day_jst: str) -> float | None:
-    """Read closed-trade P/L for the current JST9 campaign day.
+def _execution_ledger_covers_campaign_day(
+    conn: sqlite3.Connection,
+    campaign_day_jst: str,
+) -> bool:
+    """Prove transaction continuity from at or before the campaign boundary.
+
+    A same-day cold-start baseline updates ``last_oanda_transaction_id`` but
+    imports no earlier same-day transactions.  Freshness alone therefore
+    cannot prove an account-wide zero delta.  New ledgers persist an explicit
+    coverage start; legacy ledgers may be accepted only when durable OANDA
+    transaction/event rows predate the boundary.
+    """
+
+    campaign_start = datetime.fromisoformat(f"{campaign_day_jst}T00:00:00+00:00")
+    marker_row = conn.execute(
+        "SELECT value FROM sync_state WHERE key = ?",
+        (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+    ).fetchone()
+    if marker_row is not None:
+        coverage_start = _parse_utc_timestamp(marker_row[0])
+        # An invalid durable marker is corruption, not permission to use a
+        # weaker heuristic.  Likewise a same-day baseline after 00:00 cannot
+        # establish what happened between day-open and baseline time.
+        return coverage_start is not None and coverage_start <= campaign_start
+
+    candidates: list[datetime] = []
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    if "oanda_transactions" in tables:
+        row = conn.execute(
+            "SELECT MIN(time_utc) FROM oanda_transactions WHERE NULLIF(time_utc, '') IS NOT NULL"
+        ).fetchone()
+        parsed = _parse_utc_timestamp(row[0] if row else None)
+        if parsed is not None:
+            candidates.append(parsed)
+
+    event_columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+    }
+    if {"source", "oanda_transaction_id", "ts_utc"}.issubset(event_columns):
+        row = conn.execute(
+            """
+            SELECT MIN(ts_utc)
+            FROM execution_events
+            WHERE source = 'oanda'
+              AND NULLIF(oanda_transaction_id, '') IS NOT NULL
+            """
+        ).fetchone()
+        parsed = _parse_utc_timestamp(row[0] if row else None)
+        if parsed is not None:
+            candidates.append(parsed)
+
+    return bool(candidates) and min(candidates) <= campaign_start
+
+
+def _attributed_realized_from_execution_ledger(
+    path: Path | None,
+    campaign_day_jst: str,
+    *,
+    broker_last_transaction_id: str | None = None,
+) -> _AttributedRealized | None:
+    """Read system P/L/loss spend plus account-wide realized/financing.
+
+    System-attributed values drive trader progress and loss capacity.  The
+    account-wide net deliberately includes manual/tagless closes and is used
+    only to reverse all cash-P/L changes out of broker balance when proving a
+    new campaign-day opening.  Mixing these two scopes is what let manual
+    profit silently increase the autonomous trader's daily allowance.
 
     `_campaign_day_key()` is equivalent to the UTC calendar date because the
     campaign resets at 09:00 JST. The execution ledger stores UTC timestamps,
     so filtering by the first 10 chars of `ts_utc` matches the same boundary.
 
     The figure is authoritative only when the ledger has actually been synced
-    during the current campaign day (`sync_state.updated_at_utc`). A ledger
-    last synced on an earlier day cannot distinguish "no closes today" from
-    "today's closes not yet imported", so it returns None and the caller falls
-    back to snapshot/previous-state derivation instead of treating a stale
-    zero as broker truth.
+    during the current campaign day (`sync_state.updated_at_utc`), covers the
+    day boundary, and (when supplied) has the same last transaction ID as the
+    broker snapshot whose balance is being reversed. A stale, cold-baselined,
+    or snapshot-mismatched ledger returns None rather than treating an
+    incomplete zero/delta as broker truth.
     """
 
     if path is None or not path.exists():
@@ -1139,30 +1709,329 @@ def _realized_pl_from_execution_ledger(path: Path | None, campaign_day_jst: str)
     try:
         with sqlite3.connect(path) as conn:
             sync_row = conn.execute(
-                "SELECT updated_at_utc FROM sync_state WHERE key = 'last_oanda_transaction_id'"
+                "SELECT value, updated_at_utc FROM sync_state WHERE key = 'last_oanda_transaction_id'"
             ).fetchone()
-            if sync_row is None or not isinstance(sync_row[0], str):
+            if sync_row is None or not isinstance(sync_row[1], str):
+                return None
+            broker_transaction_id = str(broker_last_transaction_id or "").strip()
+            if broker_transaction_id and str(sync_row[0] or "").strip() != broker_transaction_id:
                 return None
             try:
-                synced_day = _campaign_day_key(datetime.fromisoformat(sync_row[0]))
+                synced_day = _campaign_day_key(datetime.fromisoformat(sync_row[1]))
             except ValueError:
                 return None
             if synced_day < campaign_day_jst:
                 return None
+            if not _execution_ledger_covers_campaign_day(conn, campaign_day_jst):
+                return None
             row = conn.execute(
                 """
-                SELECT COALESCE(SUM(COALESCE(realized_pl_jpy, 0.0)), 0.0)
-                FROM execution_events
-                WHERE event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
-                  AND substr(ts_utc, 1, 10) = ?
+                WITH gateway_entries AS (
+                    SELECT
+                        NULLIF(trade_id, '') AS trade_id,
+                        NULLIF(order_id, '') AS order_id,
+                        NULLIF(lane_id, '') AS lane_id
+                    FROM execution_events
+                    WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+                      AND NULLIF(lane_id, '') IS NOT NULL
+                ),
+                entries AS (
+                    SELECT
+                        e.trade_id AS trade_id,
+                        COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS lane_id,
+                        MAX(
+                            CASE
+                                WHEN LOWER(
+                                    COALESCE(
+                                        json_extract(e.raw_json, '$.clientExtensions.tag'),
+                                        json_extract(e.raw_json, '$.tradeClientExtensions.tag'),
+                                        json_extract(e.raw_json, '$.tradeOpened.clientExtensions.tag'),
+                                        json_extract(e.raw_json, '$.tradeOpened.tradeClientExtensions.tag'),
+                                        ''
+                                    )
+                                ) IN ('manual', 'operator_manual', 'unknown', 'external')
+                                THEN 1 ELSE 0
+                            END
+                        ) AS manual_owner_marker
+                    FROM execution_events AS e
+                    LEFT JOIN gateway_entries AS g
+                      ON (g.trade_id IS NOT NULL AND g.trade_id = e.trade_id)
+                      OR (g.order_id IS NOT NULL AND g.order_id = e.order_id)
+                    WHERE e.event_type = 'ORDER_FILLED'
+                      AND NULLIF(e.trade_id, '') IS NOT NULL
+                    GROUP BY e.trade_id
+                    HAVING COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) IS NOT NULL
+                       AND manual_owner_marker = 0
+                       AND LOWER(COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)))
+                           NOT IN ('manual', 'operator_manual', 'unknown', 'external')
+                       AND LOWER(COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)))
+                           NOT LIKE 'manual:%'
+                       AND LOWER(COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)))
+                           NOT LIKE 'operator_manual:%'
+                       AND LOWER(COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)))
+                           NOT LIKE 'unknown:%'
+                       AND LOWER(COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)))
+                           NOT LIKE 'external:%'
+                ),
+                close_raw_reconciliation AS (
+                    SELECT
+                        e.rowid AS event_rowid,
+                        e.event_type AS event_type,
+                        e.trade_id AS trade_id,
+                        e.raw_json AS raw_json,
+                        COALESCE(e.realized_pl_jpy, 0.0) AS normalized_realized_jpy,
+                        COALESCE(e.financing_jpy, 0.0) AS normalized_financing_jpy,
+                        CASE
+                            WHEN e.event_type = 'TRADE_CLOSED' THEN (
+                                SELECT COUNT(*)
+                                FROM json_each(e.raw_json, '$.tradesClosed') AS closed
+                                WHERE CAST(json_extract(closed.value, '$.tradeID') AS TEXT) = e.trade_id
+                            )
+                            WHEN CAST(json_extract(e.raw_json, '$.tradeReduced.tradeID') AS TEXT) = e.trade_id
+                                THEN 1
+                            ELSE 0
+                        END AS matching_component_count,
+                        CASE
+                            WHEN e.event_type = 'TRADE_CLOSED' THEN COALESCE(
+                                (
+                                    SELECT CAST(
+                                        COALESCE(
+                                            json_extract(closed.value, '$.realizedPL'),
+                                            CASE
+                                                WHEN json_array_length(e.raw_json, '$.tradesClosed') = 1
+                                                THEN json_extract(e.raw_json, '$.pl')
+                                            END,
+                                            0.0
+                                        ) AS REAL
+                                    )
+                                    FROM json_each(e.raw_json, '$.tradesClosed') AS closed
+                                    WHERE CAST(json_extract(closed.value, '$.tradeID') AS TEXT) = e.trade_id
+                                    LIMIT 1
+                                ),
+                                0.0
+                            )
+                            ELSE CAST(
+                                COALESCE(
+                                    json_extract(e.raw_json, '$.tradeReduced.realizedPL'),
+                                    json_extract(e.raw_json, '$.pl'),
+                                    0.0
+                                ) AS REAL
+                            )
+                        END AS raw_realized_jpy,
+                        CASE
+                            WHEN e.event_type = 'TRADE_CLOSED' THEN COALESCE(
+                                (
+                                    SELECT CAST(
+                                        COALESCE(
+                                            json_extract(closed.value, '$.financing'),
+                                            CASE
+                                                WHEN json_array_length(e.raw_json, '$.tradesClosed') = 1
+                                                THEN json_extract(e.raw_json, '$.financing')
+                                            END,
+                                            0.0
+                                        ) AS REAL
+                                    )
+                                    FROM json_each(e.raw_json, '$.tradesClosed') AS closed
+                                    WHERE CAST(json_extract(closed.value, '$.tradeID') AS TEXT) = e.trade_id
+                                    LIMIT 1
+                                ),
+                                0.0
+                            )
+                            ELSE CAST(
+                                COALESCE(
+                                    json_extract(e.raw_json, '$.tradeReduced.financing'),
+                                    json_extract(e.raw_json, '$.financing'),
+                                    0.0
+                                ) AS REAL
+                            )
+                        END AS raw_financing_jpy
+                    FROM execution_events AS e
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND substr(e.ts_utc, 1, 10) = ?
+                ),
+                close_raw_audit AS (
+                    SELECT COUNT(*) AS invalid_event_count
+                    FROM close_raw_reconciliation
+                    WHERE json_valid(raw_json) != 1
+                       OR COALESCE(json_extract(raw_json, '$.type'), '') != 'ORDER_FILL'
+                       OR matching_component_count != 1
+                       OR ABS(normalized_realized_jpy - raw_realized_jpy) > ?
+                       OR ABS(normalized_financing_jpy - raw_financing_jpy) > ?
+                ),
+                account_close_events AS (
+                    SELECT
+                        e.trade_id AS trade_id,
+                        COALESCE(e.realized_pl_jpy, 0.0)
+                            + COALESCE(e.financing_jpy, 0.0) AS event_pl_jpy
+                    FROM execution_events AS e
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND substr(e.ts_utc, 1, 10) = ?
+                ),
+                financing_transactions AS (
+                    SELECT
+                        e.rowid AS event_rowid,
+                        COALESCE(e.financing_jpy, 0.0) AS account_financing_jpy,
+                        e.raw_json AS raw_json
+                    FROM execution_events AS e
+                    WHERE e.event_type = 'OANDA_TRANSACTION'
+                      AND substr(e.ts_utc, 1, 10) = ?
+                      AND COALESCE(e.financing_jpy, 0.0) != 0.0
+                ),
+                transfer_transactions AS (
+                    SELECT
+                        e.rowid AS event_rowid,
+                        CAST(json_extract(e.raw_json, '$.amount') AS REAL) AS amount_jpy
+                    FROM execution_events AS e
+                    WHERE e.event_type = 'OANDA_TRANSACTION'
+                      AND substr(e.ts_utc, 1, 10) = ?
+                      AND json_extract(e.raw_json, '$.type') = 'TRANSFER_FUNDS'
+                      AND json_type(e.raw_json, '$.amount') IN ('integer', 'real', 'text')
+                ),
+                financing_components AS (
+                    SELECT
+                        financing_transactions.event_rowid AS event_rowid,
+                        NULLIF(json_extract(open_trade.value, '$.tradeID'), '') AS trade_id,
+                        CAST(json_extract(open_trade.value, '$.financing') AS REAL) AS event_pl_jpy
+                    FROM financing_transactions
+                    JOIN json_each(financing_transactions.raw_json, '$.positionFinancings') AS position
+                    JOIN json_each(position.value, '$.openTradeFinancings') AS open_trade
+                    WHERE json_type(open_trade.value, '$.tradeID') = 'text'
+                      AND json_type(open_trade.value, '$.financing') IN ('integer', 'real', 'text')
+                ),
+                financing_audit AS (
+                    SELECT
+                        financing_transactions.event_rowid AS event_rowid,
+                        financing_transactions.account_financing_jpy AS account_financing_jpy,
+                        COUNT(financing_components.trade_id) AS component_count,
+                        COALESCE(SUM(financing_components.event_pl_jpy), 0.0) AS component_financing_jpy
+                    FROM financing_transactions
+                    LEFT JOIN financing_components
+                      ON financing_components.event_rowid = financing_transactions.event_rowid
+                    GROUP BY financing_transactions.event_rowid
+                ),
+                unsupported_cash_event_audit AS (
+                    SELECT COUNT(DISTINCT e.rowid) AS unsupported_event_count
+                    FROM execution_events AS e
+                    WHERE substr(e.ts_utc, 1, 10) = ?
+                      AND e.event_type IN (
+                          'ORDER_FILLED',
+                          'TRADE_CLOSED',
+                          'TRADE_REDUCED',
+                          'OANDA_TRANSACTION'
+                      )
+                      AND (
+                          ABS(COALESCE(CAST(json_extract(e.raw_json, '$.commission') AS REAL), 0.0)) > 0.0
+                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.guaranteedExecutionFee') AS REAL), 0.0)) > 0.0
+                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.dividendAdjustment') AS REAL), 0.0)) > 0.0
+                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.quoteDividendAdjustment') AS REAL), 0.0)) > 0.0
+                          OR (
+                              e.event_type = 'OANDA_TRANSACTION'
+                              AND (
+                                  json_valid(e.raw_json) != 1
+                                  OR NULLIF(json_extract(e.raw_json, '$.type'), '') IS NULL
+                                  OR (
+                                      json_extract(e.raw_json, '$.type') NOT IN (
+                                          'DAILY_FINANCING',
+                                          'TRANSFER_FUNDS',
+                                          'TRADE_CLIENT_EXTENSIONS_MODIFY',
+                                          'ORDER_CLIENT_EXTENSIONS_MODIFY'
+                                      )
+                                      AND (
+                                          json_extract(e.raw_json, '$.accountBalance') IS NOT NULL
+                                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.amount') AS REAL), 0.0)) > 0.0
+                                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.pl') AS REAL), 0.0)) > 0.0
+                                          OR ABS(COALESCE(CAST(json_extract(e.raw_json, '$.financing') AS REAL), 0.0)) > 0.0
+                                      )
+                                  )
+                                  OR (
+                                      json_extract(e.raw_json, '$.type') = 'TRANSFER_FUNDS'
+                                      AND COALESCE(json_type(e.raw_json, '$.amount'), '')
+                                          NOT IN ('integer', 'real', 'text')
+                                  )
+                              )
+                          )
+                      )
+                ),
+                system_close_events AS (
+                    SELECT account_close_events.event_pl_jpy
+                    FROM account_close_events
+                    INNER JOIN entries
+                      ON entries.trade_id = account_close_events.trade_id
+                ),
+                system_financing_events AS (
+                    SELECT financing_components.event_pl_jpy
+                    FROM financing_components
+                    INNER JOIN entries
+                      ON entries.trade_id = financing_components.trade_id
+                ),
+                system_realized_events AS (
+                    SELECT event_pl_jpy FROM system_close_events
+                    UNION ALL
+                    SELECT event_pl_jpy FROM system_financing_events
+                )
+                SELECT
+                    COALESCE(SUM(event_pl_jpy), 0.0),
+                    COALESCE(SUM(CASE WHEN event_pl_jpy < 0.0 THEN -event_pl_jpy ELSE 0.0 END), 0.0),
+                    COALESCE((SELECT SUM(event_pl_jpy) FROM account_close_events), 0.0)
+                        + COALESCE((SELECT SUM(account_financing_jpy) FROM financing_transactions), 0.0),
+                    COALESCE((SELECT SUM(amount_jpy) FROM transfer_transactions), 0.0),
+                    COALESCE(
+                        (
+                            SELECT SUM(
+                                CASE
+                                    WHEN component_count = 0
+                                      OR ABS(account_financing_jpy - component_financing_jpy) > ?
+                                    THEN 1 ELSE 0
+                                END
+                            )
+                            FROM financing_audit
+                        ),
+                        0
+                    ),
+                    COALESCE(
+                        (SELECT unsupported_event_count FROM unsupported_cash_event_audit),
+                        0
+                    ) + COALESCE(
+                        (SELECT invalid_event_count FROM close_raw_audit),
+                        0
+                    )
+                FROM system_realized_events
                 """,
-                (campaign_day_jst,),
+                (
+                    campaign_day_jst,
+                    ACCOUNT_CASH_RECONCILIATION_TOLERANCE_JPY,
+                    ACCOUNT_CASH_RECONCILIATION_TOLERANCE_JPY,
+                    campaign_day_jst,
+                    campaign_day_jst,
+                    campaign_day_jst,
+                    campaign_day_jst,
+                    ACCOUNT_CASH_RECONCILIATION_TOLERANCE_JPY,
+                ),
             ).fetchone()
     except sqlite3.Error:
         return None
     if row is None:
-        return 0.0
-    return float(row[0] or 0.0)
+        return _AttributedRealized(0.0, 0.0, 0.0, 0.0)
+    # Every non-zero daily-financing transaction must enumerate/reconcile its
+    # trade components, and every close/reduction must reconcile normalized
+    # values to valid raw ORDER_FILL cash fields with no unsupported non-zero
+    # adjustment. Otherwise attribution is unknowable: do not guess an opening
+    # balance or loss allowance.
+    if int(row[4] or 0) > 0 or int(row[5] or 0) > 0:
+        return None
+    return _AttributedRealized(
+        net_jpy=float(row[0] or 0.0),
+        gross_loss_spent_jpy=float(row[1] or 0.0),
+        account_net_jpy=float(row[2] or 0.0),
+        account_capital_flows_jpy=float(row[3] or 0.0),
+    )
+
+
+def _realized_pl_from_execution_ledger(path: Path | None, campaign_day_jst: str) -> float | None:
+    """Compatibility reader for callers that only need attributed net P/L."""
+
+    realized = _attributed_realized_from_execution_ledger(path, campaign_day_jst)
+    return realized.net_jpy if realized is not None else None
 
 
 def _coalesce_float(*values: object) -> float | None:
@@ -1186,28 +2055,20 @@ def _coalesce_int(*values: object) -> int | None:
     return None
 
 
-def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
-    """Read required daily trade pace from ai-test-bot firepower evidence.
+def _empty_pace_evidence() -> _BacktestPaceEvidence:
+    return _BacktestPaceEvidence(
+        selected_pace=None,
+        selected_basis_uncapped_pace=None,
+        generated_at_utc=None,
+        uncapped_required_trades_per_day=None,
+        uncapped_required_trades_per_day_basis_return_pct=None,
+        observed_trades_per_day=None,
+        observed_expectancy_jpy_per_trade=None,
+        frequency_multiple_required=None,
+    )
 
-    This is the wiring promised in RiskPolicy's documentation: when observed
-    expectancy says the target needs far more attempts than the policy default,
-    the ledger records that market/backtest-derived pace instead of carrying a
-    stale "10 trades/day" operator default forward. Missing or non-positive
-    evidence returns None so the caller can fall back loudly to previous/CLI/
-    policy source labels.
-    """
-    if path is None or not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    target_sizing_pace = _pace_from_target_sizing(payload)
-    if target_sizing_pace is not None:
-        return target_sizing_pace
-    target_band_pace = _pace_from_target_band(payload)
-    if target_band_pace is not None:
-        return target_band_pace
+
+def _pace_from_firepower_payload(payload: dict[str, Any]) -> _BacktestPace | None:
     firepower = payload.get("firepower")
     if not isinstance(firepower, dict):
         return None
@@ -1221,18 +2082,105 @@ def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
     )
 
 
-def _backtest_newer_than_previous_state(path: Path | None, previous: dict[str, Any]) -> bool:
-    """Return True when a freshly regenerated backtest should refresh carried pace."""
+def _pace_evidence_from_backtest(path: Path | None) -> _BacktestPaceEvidence:
+    """Atomically load selected sizing pace and uncapped stretch firepower.
+
+    The selected pace may target a nearer 5-10% band while top-level firepower
+    describes the full stretch target. They remain separate so a bounded
+    operating pace cannot hide either the selected-band gap or the stretch gap.
+    None of these visibility fields grants or blocks execution.
+    """
 
     if path is None or not path.exists():
-        return False
+        return _empty_pace_evidence()
     try:
         payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return False
-    backtest_generated = _parse_utc_timestamp(payload.get("generated_at_utc"))
+        if not isinstance(payload, dict):
+            return _empty_pace_evidence()
+        target_sizing_pace = _pace_from_target_sizing(payload)
+        target_band_pace = _pace_from_target_band(payload)
+        selected_pace = (
+            target_sizing_pace
+            or target_band_pace
+            or _pace_from_firepower_payload(payload)
+        )
+        firepower = payload.get("firepower")
+        firepower = firepower if isinstance(firepower, dict) else {}
+        return _BacktestPaceEvidence(
+            selected_pace=selected_pace,
+            selected_basis_uncapped_pace=target_band_pace,
+            generated_at_utc=(
+                str(payload.get("generated_at_utc"))
+                if payload.get("generated_at_utc") not in (None, "")
+                else None
+            ),
+            uncapped_required_trades_per_day=_coalesce_int(
+                firepower.get("required_trades_per_day_at_observed_expectancy")
+            ),
+            uncapped_required_trades_per_day_basis_return_pct=_coalesce_float(
+                payload.get("target_return_pct")
+            ),
+            observed_trades_per_day=_coalesce_float(
+                firepower.get("avg_selected_trades_per_day")
+            ),
+            observed_expectancy_jpy_per_trade=_coalesce_float(
+                firepower.get("avg_selected_trade_jpy")
+            ),
+            frequency_multiple_required=_coalesce_float(
+                firepower.get("trade_frequency_multiple_required")
+            ),
+        )
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return _empty_pace_evidence()
+
+
+def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
+    """Compatibility reader for the selected pre-cap pace."""
+
+    return _pace_evidence_from_backtest(path).selected_pace
+
+
+def _backtest_evidence_newer_than_previous_state(
+    evidence: _BacktestPaceEvidence,
+    previous: dict[str, Any],
+) -> bool:
+    backtest_generated = _parse_utc_timestamp(evidence.generated_at_utc)
     previous_generated = _parse_utc_timestamp(previous.get("generated_at_utc"))
     return backtest_generated is not None and previous_generated is not None and backtest_generated > previous_generated
+
+
+def _backtest_newer_than_previous_state(path: Path | None, previous: dict[str, Any]) -> bool:
+    """Compatibility wrapper for callers that have only a path."""
+
+    return _backtest_evidence_newer_than_previous_state(
+        _pace_evidence_from_backtest(path),
+        previous,
+    )
+
+
+def _trade_pace_feasibility(
+    *,
+    required_trades_per_day: int | None,
+    operating_pace_trades_per_day: int,
+    observed_trades_per_day: float | None,
+    observed_expectancy_jpy_per_trade: float | None,
+) -> tuple[bool | None, str]:
+    """Classify pace evidence without turning it into a trade blocker."""
+
+    if (
+        observed_expectancy_jpy_per_trade is not None
+        and observed_expectancy_jpy_per_trade <= 0.0
+    ):
+        return False, "INFEASIBLE_NON_POSITIVE_EXPECTANCY"
+    if required_trades_per_day is None:
+        return None, "UNKNOWN_MISSING_FIREPOWER_EVIDENCE"
+    if required_trades_per_day > operating_pace_trades_per_day:
+        return False, "INFEASIBLE_AT_OPERATING_PACE"
+    if observed_trades_per_day is None:
+        return True, "OPERATING_PACE_FEASIBLE_OBSERVED_UNKNOWN"
+    if observed_trades_per_day + 1e-9 >= required_trades_per_day:
+        return True, "OBSERVED_PACE_MEETS_REQUIRED"
+    return True, "OPERATING_PACE_FEASIBLE_OBSERVED_SHORT"
 
 
 def _pace_from_target_band(payload: dict[str, Any]) -> _BacktestPace | None:

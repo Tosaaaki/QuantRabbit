@@ -6051,7 +6051,10 @@ class IntentGeneratorTest(unittest.TestCase):
         event = event_items[0]
         metadata = event["intent"]["metadata"]
         self.assertEqual(metadata["macro_event_signal_name"], "event_surprise_followthrough")
-        self.assertEqual(metadata["max_loss_jpy"], 1500.0)
+        self.assertEqual(metadata["max_loss_jpy"], 500.0)
+        self.assertEqual(metadata["macro_event_confidence_band"], "HIGH")
+        self.assertEqual(metadata["macro_event_risk_fraction"], 1.0)
+        self.assertLessEqual(metadata["max_loss_jpy"], metadata["macro_event_fresh_absolute_cap_jpy"])
         self.assertTrue(metadata["macro_event_loss_budget_target"])
         self.assertLessEqual(event["risk_metrics"]["risk_jpy"], metadata["max_loss_jpy"])
 
@@ -13927,34 +13930,124 @@ class RegimeAwareGeometryHelpersTest(unittest.TestCase):
 
 
 class MacroEventSizingPlanTest(unittest.TestCase):
-    def test_same_direction_event_surprise_expands_loss_budget_with_daily_cap(self) -> None:
+    @staticmethod
+    def _lane(confidence: float) -> dict[str, object]:
+        return {
+            "forecast_direction": "UP",
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "UP",
+                "signals": [
+                    {
+                        "name": "event_surprise_followthrough",
+                        "direction": "UP",
+                        "confidence": confidence,
+                    }
+                ],
+            },
+        }
+
+    def test_same_direction_event_surprise_uses_high_band_inside_fresh_cap(self) -> None:
         from quant_rabbit.models import Side
         from quant_rabbit.strategy.intent_generator import _macro_event_sizing_plan
 
         effective, metadata = _macro_event_sizing_plan(
-            {
-                "forecast_direction": "UP",
-                "forecast_market_support": {
-                    "ok": True,
-                    "direction": "UP",
-                    "signals": [
-                        {
-                            "name": "event_surprise_followthrough",
-                            "direction": "UP",
-                            "confidence": 0.9,
-                        }
-                    ],
-                },
-            },
+            self._lane(0.9),
             side=Side.LONG,
             base_max_loss_jpy=100.0,
             portfolio_loss_cap=400.0,
             position_metadata={},
+            sizing_nav_jpy=20_000.0,
         )
 
-        self.assertEqual(effective, 200.0)
+        self.assertEqual(effective, 100.0)
         self.assertTrue(metadata["macro_event_size_up"])
+        self.assertTrue(metadata["macro_event_confidence_sizing"])
+        self.assertEqual(metadata["macro_event_confidence_band"], "HIGH")
+        self.assertEqual(metadata["macro_event_risk_fraction"], 1.0)
+        self.assertEqual(metadata["macro_event_fresh_absolute_cap_jpy"], 100.0)
         self.assertEqual(metadata["macro_event_signal_name"], "event_surprise_followthrough")
+
+    def test_low_medium_high_confidence_increases_cap_and_units_without_exceeding_fresh_policy(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import (
+            _macro_event_sizing_plan,
+            _risk_budgeted_units,
+        )
+
+        now = datetime.now(timezone.utc)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote("EUR_USD", bid=1.17322, ask=1.17330, timestamp_utc=now),
+                "USD_JPY": Quote("USD_JPY", bid=156.64, ask=156.648, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=50_000.0,
+                balance_jpy=50_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=50_000.0,
+                fetched_at_utc=now,
+            ),
+        )
+        results: list[tuple[str, float, int]] = []
+        for confidence in (0.79, 0.82, 0.87, 0.92):
+            effective, metadata = _macro_event_sizing_plan(
+                self._lane(confidence),
+                side=Side.LONG,
+                base_max_loss_jpy=500.0,
+                portfolio_loss_cap=1_000.0,
+                position_metadata={},
+                sizing_nav_jpy=snapshot.account.nav_jpy,
+            )
+            units = _risk_budgeted_units(
+                "EUR_USD",
+                1.17330,
+                1.17230,
+                max_loss_jpy=effective,
+                snapshot=snapshot,
+                side=Side.LONG,
+                loss_budget_target=True,
+            )
+            results.append((metadata["macro_event_confidence_band"], effective, units))
+
+        self.assertEqual(
+            [item[0] for item in results],
+            ["SUB_THRESHOLD", "LOW", "MEDIUM", "HIGH"],
+        )
+        self.assertEqual([item[1] for item in results], [50.0, 125.0, 250.0, 500.0])
+        self.assertLess(results[0][2], results[1][2])
+        self.assertLess(results[1][2], results[2][2])
+        self.assertLess(results[2][2], results[3][2])
+        self.assertLessEqual(results[3][1], 500.0)
+
+    def test_fresh_nav_and_non_refill_capacity_only_tighten_macro_absolute_cap(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _macro_event_sizing_plan
+
+        nav_capped, nav_metadata = _macro_event_sizing_plan(
+            self._lane(0.95),
+            side=Side.LONG,
+            base_max_loss_jpy=3_000.0,
+            portfolio_loss_cap=10_000.0,
+            position_metadata={},
+            sizing_nav_jpy=200_000.0,
+        )
+        loss_capped, loss_metadata = _macro_event_sizing_plan(
+            self._lane(0.95),
+            side=Side.LONG,
+            base_max_loss_jpy=3_000.0,
+            portfolio_loss_cap=300.0,
+            position_metadata={},
+            sizing_nav_jpy=200_000.0,
+        )
+
+        self.assertEqual(nav_capped, 2_000.0)
+        self.assertEqual(nav_metadata["macro_event_nav_absolute_cap_jpy"], 2_000.0)
+        self.assertEqual(loss_capped, 300.0)
+        self.assertEqual(loss_metadata["macro_event_daily_loss_capacity_cap_jpy"], 300.0)
 
     def test_macro_event_sizing_does_not_expand_hedge_or_opposed_signal(self) -> None:
         from quant_rabbit.models import Side
@@ -14575,7 +14668,10 @@ class IntegerUnitSizingIntentTest(unittest.TestCase):
             if prior_nav_pct is not None:
                 os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior_nav_pct
 
-        self.assertEqual(units, 3_000)
+        # The 22,000u opposing broker exposure offsets the existing 8,400u
+        # short, so margin headroom permits 13,600u. A stale 3,000u base-unit
+        # target must not suppress that current loss/margin-budgeted result.
+        self.assertEqual(units, 13_600)
 
     def test_position_intent_metadata_marks_underwater_opposite_side_as_recovery_hedge(self) -> None:
         from quant_rabbit.models import BrokerPosition, Owner, Side
@@ -14778,7 +14874,7 @@ class IntegerUnitSizingIntentTest(unittest.TestCase):
         )
         self.assertEqual(units, 6369)
 
-    def test_loss_budget_target_can_exceed_base_units_under_sl_free(self) -> None:
+    def test_sl_free_without_nav_pct_uses_current_loss_budget(self) -> None:
         import os
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
 
@@ -14809,8 +14905,32 @@ class IntegerUnitSizingIntentTest(unittest.TestCase):
             if prior_nav_pct is not None:
                 os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior_nav_pct
 
-        self.assertEqual(normal_units, 3000)
+        self.assertEqual(normal_units, 6369)
         self.assertEqual(event_units, 6369)
+
+    def test_sl_free_ignores_legacy_base_units_when_nav_pct_is_unavailable(self) -> None:
+        import os
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        for legacy_units in ("3000", "9999"):
+            with self.subTest(legacy_units=legacy_units):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "QR_TRADER_DISABLE_SL_REPAIR": "1",
+                        "QR_TRADER_BASE_UNITS": legacy_units,
+                    },
+                ):
+                    os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+                    units = _risk_budgeted_units(
+                        "EUR_USD",
+                        entry=1.17290,
+                        sl=1.17490,
+                        max_loss_jpy=2000.0,
+                        snapshot=self._stub_snapshot(),
+                    )
+
+                self.assertEqual(units, 6369)
 
     def test_legacy_micro_lot_env_does_not_change_integer_sizing(self) -> None:
         import os

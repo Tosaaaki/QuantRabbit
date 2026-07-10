@@ -81,10 +81,6 @@ export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
 # Mirrors scripts/run-autotrade-live.sh so direct CLI invocations and the
 # wrapper produce equivalent sizing.
 export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
-# Legacy fixed-units fallback used only when QR_TRADER_POSITION_NAV_PCT
-# is unset. Do NOT remove — backstops smoke scripts that pin units. The
-# NAV-pct path above takes precedence whenever set.
-export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 # Deterministic loss-side REVIEW_EXIT is advisory by default in SL-free live
 # mode. Loss closes must pass the gpt_trader close discipline and operator
 # token; profit-only TAKE_PROFIT_MARKET remains a separate harvest path.
@@ -113,7 +109,8 @@ export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # Predictive SCOUT is a double gate. This env flag alone grants nothing;
 # config/predictive_scout_policy.json, canonical digest, current bucket,
-# LIMIT/1000u/GTD/attached TP+SL, atomic signal claim, concurrency and loss quarantine must pass.
+# LIMIT/GTD/attached TP+SL, current-NAV risk sizing to positive integer units
+# (including 1-999u), atomic signal claim, concurrency and loss quarantine must pass.
 export QR_PREDICTIVE_SCOUT_LIVE_ENABLED="${QR_PREDICTIVE_SCOUT_LIVE_ENABLED:-1}"
 # Controlled target-path live is an extra gate. Leave it off unless the
 # operator intentionally wants a LIVE-LEARNING target-path send through
@@ -836,10 +833,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # - predictive-scout-proof is read-only and runs after execution-ledger-sync.
 #   The S5 contrarian replay is a forecast-failure hypothesis, not proof of the
 #   passive LIMIT retest. Live evidence collection is canonical-digest bound,
-#   LIMIT-only, exactly 1000u, GTD no later than forecast horizon (max 90m),
-#   actual attached TP+intent SL, canonical TP/SL distances, at most two active
-#   SCOUTs, failure_trader/BREAKOUT_FAILURE identity, no basket/reprice/chase,
-#   and eight pre-POST reservations/day maximum.
+#   LIMIT-only, current-NAV risk-sized positive integer units (including
+#   1-999u), GTD no later than forecast horizon (max 90m), actual attached
+#   TP+intent SL, canonical TP/SL distances, at most two active SCOUTs and 2%
+#   NAV aggregate tier risk, failure_trader/BREAKOUT_FAILURE identity, no
+#   basket/reprice/chase, and thirty atomic pre-POST reservations/day maximum.
 #   TraderBrain/AutoTradeCycle fix the size multiplier at 1.0; SQLite atomically
 #   claims one vehicle+forecast-cycle signal, so retrying the same intent cannot
 #   duplicate exposure or proof. Filled SCOUT TP/SL is frozen across position

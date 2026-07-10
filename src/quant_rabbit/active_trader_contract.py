@@ -180,6 +180,7 @@ class ActiveTraderContract:
         portfolio = _portfolio_contract_state(artifacts["portfolio_4x_path_planner"])
         live_order = _live_order_contract_state(artifacts["live_order_request"])
         goal_loop = _goal_loop_contract_state(artifacts["trader_goal_loop_orchestrator"])
+        daily_target = _daily_target_contract_state(artifacts["daily_target_state"])
         proof_floor = _proof_floor_contract_state(
             artifacts["eurusd_short_breakout_failure_proof_floor_update"]
         )
@@ -370,6 +371,7 @@ class ActiveTraderContract:
                 "portfolio": portfolio,
                 "live_order": live_order,
                 "goal_loop": goal_loop,
+                "daily_target": daily_target,
                 "proof_floor": proof_floor,
                 "limit_s5_bidask_replay": replay,
                 "limit_sample_mining": limit_sample_mining,
@@ -427,6 +429,53 @@ def _artifact_index(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         json.dumps(entries, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return {"artifacts": entries, "combined_sha256": combined}
+
+
+def _daily_target_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    """Expose pace economics without letting them alter active-path routing."""
+
+    if artifact.get("_artifact_status") == "missing":
+        return {"artifact_status": "missing", "trade_pace_feasibility": None}
+    return {
+        "artifact_status": "present",
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "status": artifact.get("status"),
+        "target_jpy": artifact.get("target_jpy"),
+        "target_trades_per_day": artifact.get("target_trades_per_day"),
+        "uncapped_required_trades_per_day": artifact.get(
+            "uncapped_required_trades_per_day"
+        ),
+        "uncapped_required_trades_per_day_basis_return_pct": artifact.get(
+            "uncapped_required_trades_per_day_basis_return_pct"
+        ),
+        "selected_basis_uncapped_required_trades_per_day": artifact.get(
+            "selected_basis_uncapped_required_trades_per_day"
+        ),
+        "selected_basis_return_pct": artifact.get("selected_basis_return_pct"),
+        "operating_pace_trades_per_day": artifact.get("operating_pace_trades_per_day"),
+        "automated_operating_cap_trades_per_day": artifact.get(
+            "automated_operating_cap_trades_per_day"
+        ),
+        "observed_trades_per_day": artifact.get("observed_trades_per_day"),
+        "observed_expectancy_jpy_per_trade": artifact.get(
+            "observed_expectancy_jpy_per_trade"
+        ),
+        "frequency_multiple_required": artifact.get("frequency_multiple_required"),
+        "planned_reward_at_operating_pace_jpy": artifact.get(
+            "planned_reward_at_operating_pace_jpy"
+        ),
+        "stretch_required_minus_operating_gap_trades_per_day": artifact.get(
+            "stretch_required_minus_operating_gap_trades_per_day"
+        ),
+        "selected_required_minus_operating_gap_trades_per_day": artifact.get(
+            "selected_required_minus_operating_gap_trades_per_day"
+        ),
+        "trade_pace_feasible_within_operating_pace": artifact.get(
+            "trade_pace_feasible_within_operating_pace"
+        ),
+        "trade_pace_feasibility": artifact.get("trade_pace_feasibility"),
+        "advisory_only": True,
+    }
 
 
 def _harvest_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:

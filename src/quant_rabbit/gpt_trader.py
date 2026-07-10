@@ -6823,11 +6823,44 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
         "remaining_target_jpy": target.get("remaining_target_jpy"),
         "remaining_risk_budget_jpy": target.get("remaining_risk_budget_jpy"),
+        "realized_loss_spent_jpy": target.get("realized_loss_spent_jpy"),
+        "daily_loss_capacity_before_open_jpy": target.get("daily_loss_capacity_before_open_jpy"),
         "open_risk_jpy": target.get("open_risk_jpy"),
         "sizing_nav_jpy": target.get("sizing_nav_jpy"),
+        "base_per_trade_risk_budget_jpy": target.get("base_per_trade_risk_budget_jpy"),
         "per_trade_risk_budget_jpy": target.get("per_trade_risk_budget_jpy"),
         "per_trade_risk_pct_nav": target.get("per_trade_risk_pct_nav"),
         "target_trades_per_day": target.get("target_trades_per_day"),
+        "uncapped_required_trades_per_day": target.get("uncapped_required_trades_per_day"),
+        "uncapped_required_trades_per_day_basis_return_pct": target.get(
+            "uncapped_required_trades_per_day_basis_return_pct"
+        ),
+        "selected_basis_uncapped_required_trades_per_day": target.get(
+            "selected_basis_uncapped_required_trades_per_day"
+        ),
+        "selected_basis_return_pct": target.get("selected_basis_return_pct"),
+        "operating_pace_trades_per_day": target.get("operating_pace_trades_per_day"),
+        "automated_operating_cap_trades_per_day": target.get(
+            "automated_operating_cap_trades_per_day"
+        ),
+        "observed_trades_per_day": target.get("observed_trades_per_day"),
+        "observed_expectancy_jpy_per_trade": target.get(
+            "observed_expectancy_jpy_per_trade"
+        ),
+        "frequency_multiple_required": target.get("frequency_multiple_required"),
+        "planned_reward_at_operating_pace_jpy": target.get(
+            "planned_reward_at_operating_pace_jpy"
+        ),
+        "stretch_required_minus_operating_gap_trades_per_day": target.get(
+            "stretch_required_minus_operating_gap_trades_per_day"
+        ),
+        "selected_required_minus_operating_gap_trades_per_day": target.get(
+            "selected_required_minus_operating_gap_trades_per_day"
+        ),
+        "trade_pace_feasible_within_operating_pace": target.get(
+            "trade_pace_feasible_within_operating_pace"
+        ),
+        "trade_pace_feasibility": target.get("trade_pace_feasibility"),
     }
 
 

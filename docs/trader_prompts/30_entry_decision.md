@@ -67,8 +67,14 @@ substitute for current risk geometry or contract gates:
   only when thesis is alive, prefer bounded adverse add over with-move pyramid,
   avoid tight SL in noise, harvest actively, and forbid margin closeout /
   unattended carry.
-- Fewer, larger, faster: ~10 exit events/day at meaningful size, payoff 1.30,
-  median hold 29 minutes - not 30 micro-trades across 8 pairs.
+- Historical source shape: ~10 exit events/day at the source account's
+  meaningful size, payoff 1.30, median hold 29 minutes. This is evidence about
+  that sample, not a fixed lot or low-frequency production rule. Current live
+  sizing is current-NAV/SL-risk based at one-integer-unit precision: valid
+  1-999u lanes may be taken, and their smaller absolute contribution requires
+  more independent signals across pairs. Do not manufacture that frequency by
+  duplicating one signal, bypassing cooldown, or multiplying negative post-cost
+  expectancy.
 - Bounded replay is the usable precedent, not the raw long-hold tail. Exclude
   >=12h holds and margin closeouts before copying the shape.
 - Technical shape: current cleanest theme expression, 24h location,

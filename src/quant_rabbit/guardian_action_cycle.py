@@ -26,6 +26,8 @@ from quant_rabbit.paths import (
     ROOT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_LEDGER_REPORT,
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_ACTION_REVIEW,
     DEFAULT_GUARDIAN_ESCALATION,
@@ -205,6 +207,10 @@ def run_guardian_action_cycle(
                 lane_id,
                 True,
                 intents_path=paths.order_intents,
+                target_state_path=paths.daily_target_state,
+                target_report_path=paths.root / "docs" / "daily_target_report.md",
+                execution_ledger_db_path=paths.root / "data" / "execution_ledger.db",
+                execution_ledger_report_path=paths.root / "docs" / "execution_ledger_report.md",
                 live_enabled=flags["live_enabled"],
             )
         )
@@ -440,6 +446,10 @@ def _run_live_order_gateway(
     send: bool,
     *,
     intents_path: Path = DEFAULT_ORDER_INTENTS,
+    target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+    target_report_path: Path | None = None,
+    execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+    execution_ledger_report_path: Path = DEFAULT_EXECUTION_LEDGER_REPORT,
     live_enabled: bool | None = None,
 ) -> dict[str, Any]:
     from quant_rabbit.broker.execution import LiveOrderGateway
@@ -451,6 +461,10 @@ def _run_live_order_gateway(
         output_path=DEFAULT_LIVE_ORDER_REQUEST,
         report_path=DEFAULT_LIVE_ORDER_STAGE_REPORT,
         live_enabled=(os.environ.get("QR_LIVE_ENABLED") == "1") if live_enabled is None else live_enabled,
+        target_state_path=target_state_path,
+        target_report_path=target_report_path,
+        execution_ledger_db_path=execution_ledger_db_path,
+        execution_ledger_report_path=execution_ledger_report_path,
     ).run(intents_path=intents_path, lane_id=lane_id, send=send, confirm_live=send)
     return {
         "status": summary.status,

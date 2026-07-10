@@ -64,8 +64,8 @@ DEFAULT_FRESH_ACTION_THROTTLE_SECONDS = 60 * 60
 DEFAULT_STALE_PENDING_SECONDS = 3 * 20 * 60
 
 # Early margin pressure uses the existing gateway cap as its anchor. At 90% of
-# the cap, the next 1000u order can easily fail after quote drift; gateway still
-# makes the final broker-truth decision.
+# the cap, the next dynamically sized order can easily fail after quote drift;
+# the gateway still makes the final broker-truth decision.
 MARGIN_PRESSURE_WARNING_CAP_FRACTION = 0.90
 
 # Statistical rail touch bands; they describe where price is at the tail of the

@@ -15,6 +15,7 @@ from unittest.mock import patch
 from quant_rabbit.execution_ledger import (
     LEGACY_EVENT_BACKFILL_MIGRATION_KEY,
     LEGACY_EVENT_BACKFILL_MIGRATION_VERSION,
+    OANDA_TRANSACTION_COVERAGE_START_KEY,
     ExecutionLedger,
     _events_from_transaction,
 )
@@ -661,6 +662,25 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(accepted_row[0], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(accepted_row[1], "qrv1-EURUSD-L-test")
             self.assertEqual(last_id, "104")
+
+    def test_cold_baseline_persists_nonretroactive_transaction_coverage_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            baseline_at = "2026-07-11T02:00:00+00:00"
+
+            with patch.object(execution_ledger_module, "_now", return_value=baseline_at):
+                summary = ledger.sync_oanda_transactions(FakeTransactionClient())
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                coverage = conn.execute(
+                    "SELECT value, updated_at_utc FROM sync_state WHERE key = ?",
+                    (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+                ).fetchone()
+
+            self.assertEqual(summary.status, "BASELINED")
+            self.assertEqual(summary.baseline_transaction_id, "100")
+            self.assertEqual(coverage, (baseline_at, baseline_at))
 
     def test_sync_recovers_legacy_qrvnext_comment_lane_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -21,6 +21,9 @@ class ScoutModeContractTests(unittest.TestCase):
             "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
         )
         self.assertEqual(payload["mode"], "proof-collection scout")
+        self.assertFalse(payload["active"])
+        self.assertTrue(payload["historical_only"])
+        self.assertEqual(payload["superseded_by_schema_v2"], "config/predictive_scout_policy.json")
         self.assertEqual(payload["order_contract"]["allowed_order_types"], ["LIMIT"])
         self.assertIn("MARKET", payload["order_contract"]["prohibited_order_types"])
         self.assertTrue(payload["order_contract"]["no_market_chase"])
@@ -113,6 +116,9 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertTrue(payload["expected_outcome"]["no_execution_flags"])
         self.assertTrue(payload["expected_outcome"]["no_LIVE_READY"])
         self.assertTrue(payload["expected_outcome"]["normal_routing_remains_BLOCKED"])
+        self.assertFalse(payload["active"])
+        self.assertTrue(payload["historical_only"])
+        self.assertEqual(payload["superseded_by_schema_v2"], "config/predictive_scout_policy.json")
 
     def test_markdown_reports_approval_boundary(self) -> None:
         contract = (ROOT / "docs/operator_approved_scout_mode_contract.md").read_text(encoding="utf-8")
@@ -143,9 +149,34 @@ class ScoutModeContractTests(unittest.TestCase):
         self.assertFalse(payload["execution_decision"]["execution_flags_enabled"])
         self.assertTrue(payload["safety_constraints"]["limit_only"])
         self.assertFalse(payload["safety_constraints"]["market_order_allowed"])
+        self.assertFalse(payload["active"])
+        self.assertTrue(payload["historical_only"])
+        self.assertEqual(payload["superseded_by_schema_v2"], "config/predictive_scout_policy.json")
         self.assertEqual(payload["preflight"]["candidate_id_status"], "ABSENT_FROM_CURRENT_ORDER_INTENTS")
         self.assertEqual(payload["preflight"]["last_transaction_id_expected"], "472998")
         self.assertEqual(payload["local_broker_evidence"]["tp_472998"]["state"], "PENDING")
+
+    def test_active_eurusd_scout_plan_uses_schema_v2_current_nav_integer_sizing(self) -> None:
+        payload = load_json("data/eurusd_short_breakout_failure_scout_plan.json")
+
+        self.assertEqual(payload["schema_version"], "eurusd_short_breakout_failure_scout_plan_v2")
+        self.assertIsNone(payload["max_loss_jpy_cap"])
+        self.assertEqual(payload["max_loss_jpy_cap_mode"], "DYNAMIC_CURRENT_NAV_EXACT_VEHICLE_TIER")
+        sizing = payload["risk_sizing_contract"]
+        self.assertEqual(sizing["schema_version"], 2)
+        self.assertEqual(sizing["min_production_lot_units"], 1)
+        self.assertTrue(sizing["positive_integer_units_allowed"])
+        self.assertTrue(sizing["sub_1000_units_allowed"])
+        self.assertTrue(sizing["fresh_regeneration_required"])
+        self.assertIsNone(sizing["current_executable_units"])
+        min_lot = payload["min_lot_feasibility"]
+        self.assertEqual(min_lot["min_production_lot_units"], 1)
+        self.assertEqual(min_lot["units_mode"], "DYNAMIC_CURRENT_NAV_SL_RISK")
+        self.assertIsNone(min_lot["proposed_scout_units"])
+        historical = payload["historical_reference"]
+        self.assertEqual(historical["legacy_proposed_scout_units"], 3000)
+        self.assertEqual(historical["legacy_min_production_lot_units"], 1000)
+        self.assertFalse(historical["execution_eligible"])
 
 
 if __name__ == "__main__":

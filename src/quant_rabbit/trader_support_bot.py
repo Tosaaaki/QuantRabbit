@@ -2068,6 +2068,42 @@ def _target_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "performance_basis": payload.get("performance_basis"),
         "sizing_basis": payload.get("sizing_basis"),
         "target_trades_per_day": payload.get("target_trades_per_day"),
+        "uncapped_required_trades_per_day": payload.get("uncapped_required_trades_per_day"),
+        "uncapped_required_trades_per_day_basis_return_pct": _round_optional(
+            payload.get("uncapped_required_trades_per_day_basis_return_pct"),
+            4,
+        ),
+        "selected_basis_uncapped_required_trades_per_day": payload.get(
+            "selected_basis_uncapped_required_trades_per_day"
+        ),
+        "selected_basis_return_pct": _round_optional(payload.get("selected_basis_return_pct"), 4),
+        "operating_pace_trades_per_day": payload.get("operating_pace_trades_per_day"),
+        "automated_operating_cap_trades_per_day": payload.get(
+            "automated_operating_cap_trades_per_day"
+        ),
+        "observed_trades_per_day": _round_optional(payload.get("observed_trades_per_day"), 4),
+        "observed_expectancy_jpy_per_trade": _round_optional(
+            payload.get("observed_expectancy_jpy_per_trade"),
+            4,
+        ),
+        "frequency_multiple_required": _round_optional(
+            payload.get("frequency_multiple_required"),
+            4,
+        ),
+        "planned_reward_at_operating_pace_jpy": _round_optional(
+            payload.get("planned_reward_at_operating_pace_jpy"),
+            4,
+        ),
+        "stretch_required_minus_operating_gap_trades_per_day": payload.get(
+            "stretch_required_minus_operating_gap_trades_per_day"
+        ),
+        "selected_required_minus_operating_gap_trades_per_day": payload.get(
+            "selected_required_minus_operating_gap_trades_per_day"
+        ),
+        "trade_pace_feasible_within_operating_pace": payload.get(
+            "trade_pace_feasible_within_operating_pace"
+        ),
+        "trade_pace_feasibility": payload.get("trade_pace_feasibility"),
     }
 
 

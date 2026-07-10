@@ -9,7 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.guardian_action_cycle import GuardianActionCyclePaths, run_guardian_action_cycle
+from quant_rabbit.guardian_action_cycle import (
+    GuardianActionCyclePaths,
+    _run_live_order_gateway,
+    run_guardian_action_cycle,
+)
 
 
 NOW = datetime(2026, 6, 30, 4, 0, tzinfo=timezone.utc)
@@ -18,6 +22,47 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GuardianActionCycleTest(unittest.TestCase):
+    def test_guardian_gateway_handoff_configures_pre_post_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "data" / "order_intents.json"
+            target = root / "data" / "daily_target_state.json"
+            target_report = root / "docs" / "daily_target_report.md"
+            ledger = root / "data" / "execution_ledger.db"
+            ledger_report = root / "docs" / "execution_ledger_report.md"
+            gateway_summary = SimpleNamespace(
+                status="BLOCKED",
+                lane_id=LANE_ID,
+                sent=False,
+                risk_issues=1,
+                strategy_issues=0,
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            )
+
+            with patch(
+                "quant_rabbit.broker.oanda.OandaExecutionClient",
+                return_value=object(),
+            ), patch("quant_rabbit.broker.execution.LiveOrderGateway") as gateway_cls:
+                gateway_cls.return_value.run.return_value = gateway_summary
+                result = _run_live_order_gateway(
+                    LANE_ID,
+                    True,
+                    intents_path=intents,
+                    target_state_path=target,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                )
+
+            kwargs = gateway_cls.call_args.kwargs
+            self.assertEqual(kwargs["target_state_path"], target)
+            self.assertEqual(kwargs["target_report_path"], target_report)
+            self.assertEqual(kwargs["execution_ledger_db_path"], ledger)
+            self.assertEqual(kwargs["execution_ledger_report_path"], ledger_report)
+            self.assertEqual(result["status"], "BLOCKED")
+
     def test_default_flags_off_verifies_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))

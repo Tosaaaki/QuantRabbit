@@ -1,6 +1,7 @@
 # Scout Mode Readiness Check
 
 - Generated: `2026-07-06T15:07:56Z`
+- Active: `false`; historical evidence only, superseded by schema v2 in `config/predictive_scout_policy.json`.
 - Candidate: `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT`
 
 ## Classification

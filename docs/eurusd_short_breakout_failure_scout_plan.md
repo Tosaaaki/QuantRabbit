@@ -1,6 +1,8 @@
 # EUR_USD SHORT BREAKOUT_FAILURE SCOUT Plan
 
-Generated: 2026-07-07T12:59:09Z
+Generated: 2026-07-10T15:45:59Z
+
+Schema: `eurusd_short_breakout_failure_scout_plan_v2`
 
 ## Verdict
 
@@ -44,7 +46,7 @@ Fresh gateway packet:
 
 Design value exists, but current execution permission does not.
 
-The reason to keep the design is narrow: this is the shortest current HARVEST proof path (`17/0`, proof gap `3`), min-lot is numerically feasible, and no direct target month-scale blocker is shown. The reason not to execute is stronger right now: guardian/operator review, current forecast and self-improvement blockers, market-close leakage, stale/freshness gaps, and missing spread/slippage proof all remain.
+The reason to keep the design is narrow: this is the shortest current HARVEST proof path (`17/0`, proof gap `3`), the broker floor is one positive integer unit, and no direct target month-scale blocker is shown. Current executable size is intentionally unknown until fresh broker NAV, exact-vehicle forward tier, canonical SL loss per unit, margin, and ordinary risk caps are recomputed. The reason not to execute is stronger right now: guardian/operator review, current forecast and self-improvement blockers, market-close leakage, stale/freshness gaps, and missing spread/slippage proof all remain.
 
 ## Proposed Contract If Unblocked
 
@@ -55,12 +57,13 @@ The reason to keep the design is narrow: this is the shortest current HARVEST pr
 - No `MARKET` scout.
 - No failed-side `STOP` chase.
 - No runner permission.
-- `max_loss_jpy_cap`: `418.0`
-- Normal live risk reference in the current intent packet: `2871.8597`; scout cap is deliberately smaller.
-- Units: current feasible proof size `3000`, only if still above the `1000` unit production floor and still valid under fresh broker truth.
+- `max_loss_jpy_cap`: no fixed JPY value. Regenerate as `fresh broker raw NAV × exact-vehicle forward risk tier`, then apply the tighter ordinary per-trade, remaining-day, portfolio, margin, spread, guardian, verifier, and gateway cap.
+- Risk tier source: normalized forward outcomes for the exact stable vehicle under `config/predictive_scout_policy.json`; a vehicle with no normalized exits starts at `DISCOVERY`.
+- Units: `floor(effective_max_loss_jpy / canonical_SL_loss_jpy_per_unit)` at one-unit precision. `1-999u` is valid when every cost and risk gate passes; only a result below `1u` is non-executable.
+- Current executable units/max loss: `null` until the plan is regenerated against fresh broker truth and bound by `predictive_scout_sizing_digest`.
 - Sizing must not be derived from `remaining_to_4x`.
 
-This cap comes from the current loss-asymmetry guard / observed average-winner cap, not from the 4x deficit.
+Historical reference only: the v1 plan carried `3000u`, a `1000u` floor, `418.0 JPY` max loss, and `2871.8597 JPY` normal-risk reference as of `2026-07-07T12:59:09Z`. Those values are `execution_eligible=false` and are superseded by schema-v2 current-NAV exact-vehicle sizing.
 
 ## Invalid Conditions
 
@@ -70,7 +73,7 @@ This cap comes from the current loss-asymmetry guard / observed average-winner c
 - Fresh broker truth or a fresh GPT proof receipt is missing.
 - Current blockers remain: `RANGE_FORECAST_REQUIRES_RANGE_ROTATION`, `SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH`, `OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED`, or unresolved chart-direction conflict.
 - Vehicle is `MARKET`, failed-side `STOP`, runner, or not exact attached-TP HARVEST.
-- `max_loss_jpy > 418.0`, units below `1000`, or lot derived from 4x shortfall.
+- Fresh current-NAV/tier/SL sizing resolves below one integer unit, exceeds the tighter signed/current risk cap, lacks the matching sizing digest, or derives lot from the 4x shortfall.
 - Spread/slippage or bid/ask replay is negative or missing.
 - Direct month-scale residual blocker appears for this shape.
 - Any planned proof depends on market close leakage.
@@ -84,7 +87,7 @@ This cap comes from the current loss-asymmetry guard / observed average-winner c
 - Stop pursuing SCOUT if market-close leakage cannot be contained without cancel/close/market-exit behavior.
 - Stop pursuing SCOUT if a direct month-scale residual blocker appears for this target, or if global month-scale replay remains negative with no target-specific containment path.
 - Stop pursuing SCOUT if guardian/operator review cannot set `normal_routing_allowed=true`.
-- Stop pursuing SCOUT if fresh broker truth reprices the vehicle below `1000` units, above `418.0 JPY` max loss, or into adverse spread/slippage.
+- Stop pursuing SCOUT if fresh broker truth and exact-vehicle tier sizing cannot fund one positive integer unit inside current NAV-risk, ordinary risk, margin, spread, and slippage caps.
 - Stop pursuing SCOUT if current market evidence keeps `RANGE` forecast without valid HARVEST geometry, `LONG` chart bias, or `SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH` as hard blockers.
 - Stop pursuing SCOUT if proof collection would require deriving lot from `remaining_to_4x` or relaxing any gate.
 

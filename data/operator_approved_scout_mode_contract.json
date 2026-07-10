@@ -1,5 +1,8 @@
 {
   "generated_at_utc": "2026-07-06T15:07:56Z",
+  "active": false,
+  "historical_only": true,
+  "superseded_by_schema_v2": "config/predictive_scout_policy.json",
   "mode": "proof-collection scout",
   "status": "STALE_CONTRACT_NOT_EXECUTION",
   "candidate": {

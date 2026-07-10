@@ -57,6 +57,21 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertEqual(payload["live_side_effects"], [])
         self.assertEqual(payload["contract_goal"], "monthly_funding_adjusted_equity_4x")
         self.assertEqual(payload["current_state"]["proof_floor"]["wins"], 20)
+        self.assertEqual(
+            payload["current_state"]["daily_target"]["uncapped_required_trades_per_day"],
+            173,
+        )
+        self.assertEqual(
+            payload["current_state"]["daily_target"][
+                "selected_basis_uncapped_required_trades_per_day"
+            ],
+            87,
+        )
+        self.assertEqual(
+            payload["current_state"]["daily_target"]["trade_pace_feasibility"],
+            "INFEASIBLE_AT_OPERATING_PACE",
+        )
+        self.assertTrue(payload["current_state"]["daily_target"]["advisory_only"])
         self.assertTrue(payload["current_state"]["proof_floor"]["proof_floor_reached"])
         self.assertEqual(payload["current_state"]["limit_s5_bidask_replay"]["replay_wins"], 4)
         self.assertTrue(payload["current_state"]["limit_s5_bidask_replay"]["passed"])
@@ -3240,7 +3255,30 @@ def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
     )
     _write_json(paths["live_order"], {"generated_at_utc": now.isoformat(), "status": "NO_ACTION", "send_requested": False, "sent": False})
     _write_json(paths["broker"], {"fetched_at_utc": now.isoformat(), "account": {}, "positions": [], "orders": []})
-    _write_json(paths["daily"], {"generated_at_utc": now.isoformat(), "funding_adjusted_equity": 100000})
+    _write_json(
+        paths["daily"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "PURSUE_TARGET",
+            "target_jpy": 29_114.51,
+            "funding_adjusted_equity": 100000,
+            "target_trades_per_day": 30,
+            "uncapped_required_trades_per_day": 173,
+            "uncapped_required_trades_per_day_basis_return_pct": 10.0,
+            "selected_basis_uncapped_required_trades_per_day": 87,
+            "selected_basis_return_pct": 5.0,
+            "operating_pace_trades_per_day": 30,
+            "automated_operating_cap_trades_per_day": 30,
+            "observed_trades_per_day": 4.7955,
+            "observed_expectancy_jpy_per_trade": 168.6658,
+            "frequency_multiple_required": 36.0755,
+            "planned_reward_at_operating_pace_jpy": 5059.974,
+            "stretch_required_minus_operating_gap_trades_per_day": 143,
+            "selected_required_minus_operating_gap_trades_per_day": 57,
+            "trade_pace_feasible_within_operating_pace": False,
+            "trade_pace_feasibility": "INFEASIBLE_AT_OPERATING_PACE",
+        },
+    )
     _write_json(
         paths["proof_floor"],
         {

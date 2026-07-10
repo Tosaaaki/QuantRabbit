@@ -1,6 +1,6 @@
 {
-  "schema_version": "eurusd_short_breakout_failure_scout_plan_v1",
-  "generated_at_utc": "2026-07-07T12:59:09Z",
+  "schema_version": "eurusd_short_breakout_failure_scout_plan_v2",
+  "generated_at_utc": "2026-07-10T15:45:59Z",
   "status": "SCOUT_BLOCKED_OPERATOR_REVIEW",
   "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE",
   "source_artifacts": [
@@ -145,22 +145,57 @@
     }
   ],
   "scout_mode_allowed": false,
-  "scout_mode_reason": "SCOUT design is worth keeping as a future proof-collection contract because the exact attached-TP HARVEST sample is 17 wins / 0 TP losses with only 3 samples to the proof floor, min-lot is numerically feasible, and harvest_live_grade_path finds no direct target month-scale blocker. It is not currently allowed because guardian/operator review blocks normal routing, current intent gates are BLOCK, proof_queue_count=0 is not permission, and fresh broker truth plus a fresh GPT proof receipt are missing.",
+  "scout_mode_reason": "SCOUT design is worth keeping as a future proof-collection contract because the exact attached-TP HARVEST sample is 17 wins / 0 TP losses with only 3 samples to the proof floor and harvest_live_grade_path finds no direct target month-scale blocker. Broker size now permits any positive integer unit, but executable units and JPY risk must be regenerated from fresh current NAV, the exact-vehicle forward tier, canonical SL loss per unit, margin, and ordinary risk caps. It is not currently allowed because guardian/operator review blocks normal routing, current intent gates are BLOCK, proof_queue_count=0 is not permission, and fresh broker truth plus a fresh GPT proof receipt are missing.",
   "operator_approval_required": true,
-  "max_loss_jpy_cap": 418.0,
-  "normal_live_risk_reference_jpy": 2871.8597,
-  "max_loss_cap_is_below_normal_live_risk": true,
-  "max_loss_jpy_cap_basis": "Use the current loss_asymmetry_guard_effective_max_loss_jpy / observed average winner cap from order_intents for this exact shape. This is below the current normal live base max_loss_jpy reference of 2871.8597. Do not derive lot or loss cap from remaining_to_4x.",
+  "max_loss_jpy_cap": null,
+  "max_loss_jpy_cap_mode": "DYNAMIC_CURRENT_NAV_EXACT_VEHICLE_TIER",
+  "max_loss_jpy_cap_basis": "Regenerate from fresh broker raw NAV multiplied by the exact-vehicle forward risk tier in config/predictive_scout_policy.json, then take the tighter ordinary per-trade, remaining-day, portfolio, margin, spread, guardian, verifier, and gateway cap. No stale JPY literal or remaining_to_4x backsolve is executable.",
+  "risk_sizing_contract": {
+    "schema_version": 2,
+    "policy_path": "config/predictive_scout_policy.json",
+    "sizing_nav_source": "fresh broker raw NAV",
+    "risk_tier_source": "normalized exact-vehicle forward outcomes",
+    "initial_tier_when_no_normalized_forward_exits": "DISCOVERY",
+    "max_per_trade_risk_pct_nav_ceiling": 1.0,
+    "max_concurrent_risk_pct_nav": 2.0,
+    "units_formula": "floor(effective_max_loss_jpy / canonical_SL_loss_jpy_per_unit)",
+    "unit_granularity": 1,
+    "min_production_lot_units": 1,
+    "positive_integer_units_allowed": true,
+    "sub_1000_units_allowed": true,
+    "current_sizing_nav_jpy": null,
+    "current_risk_tier": null,
+    "current_max_loss_jpy": null,
+    "current_executable_units": null,
+    "fresh_regeneration_required": true,
+    "predictive_scout_sizing_digest_required": true,
+    "no_4x_deficit_lot_backsolve": true
+  },
   "min_lot_feasibility": {
-    "status": "MIN_LOT_NUMERICALLY_FEASIBLE_BUT_OTHER_GATES_BLOCK",
-    "min_production_lot_units": 1000,
-    "proposed_scout_units": 3000,
-    "intent_units": 3000,
-    "planner_realistic_units": 3000,
-    "estimated_margin_jpy": 22305.367,
-    "loss_budget_min_lot_blocker_present": false,
+    "status": "BROKER_INTEGER_FLOOR_1U_FRESH_REGENERATION_REQUIRED",
+    "min_production_lot_units": 1,
+    "units_mode": "DYNAMIC_CURRENT_NAV_SL_RISK",
+    "proposed_scout_units": null,
+    "intent_units": null,
+    "planner_realistic_units": null,
+    "estimated_margin_jpy": null,
+    "loss_budget_min_lot_blocker_present": null,
     "no_4x_deficit_lot_backsolve": true,
-    "feasible_if_all_non_lot_gates_clear": true
+    "feasibility_proven_current": false,
+    "feasible_if_all_non_lot_gates_clear": false
+  },
+  "historical_reference": {
+    "as_of_utc": "2026-07-07T12:59:09Z",
+    "source_schema_version": "eurusd_short_breakout_failure_scout_plan_v1",
+    "legacy_max_loss_jpy_cap": 418.0,
+    "legacy_normal_live_risk_reference_jpy": 2871.8597,
+    "legacy_min_production_lot_units": 1000,
+    "legacy_proposed_scout_units": 3000,
+    "legacy_intent_units": 3000,
+    "legacy_planner_realistic_units": 3000,
+    "legacy_estimated_margin_jpy": 22305.367,
+    "execution_eligible": false,
+    "superseded_by": "schema-v2 current-NAV exact-vehicle risk sizing"
   },
   "scout_contract_if_unblocked": {
     "mode": "HARVEST_PROOF_COLLECTION_SCOUT",
@@ -168,8 +203,9 @@
     "live_permission": false,
     "proof_queue_permission": "only after evidence_success_conditions pass on fresh artifacts",
     "risk_controls": [
-      "max_loss_jpy <= 418.0",
-      "units must remain >= 1000 and must not be calculated from remaining_to_4x",
+      "max_loss_jpy must be regenerated from fresh current NAV and the exact-vehicle forward risk tier, then tightened by every ordinary risk cap",
+      "units must be the positive integer result of current-NAV tier risk divided by canonical SL loss per unit; 1-999u is valid when every cost and risk gate passes",
+      "verified units, planned initial risk, and predictive_scout_sizing_digest must bind the same fresh packet and must not be calculated from remaining_to_4x",
       "attach_take_profit_on_fill=true",
       "tp_execution_mode=ATTACHED_TECHNICAL_TP",
       "tp_target_intent=HARVEST",
@@ -182,7 +218,7 @@
     "Fresh broker truth and a fresh GPT TRADE/SCOUT proof receipt are missing.",
     "The current target lane remains DRY_RUN_BLOCKED by RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED, or chart-direction conflict that has not been resolved by fresh evidence.",
     "The vehicle is MARKET, a failed-side STOP chase, RUNNER_NO_BROKER_TP, or any shape other than exact EUR_USD SHORT BREAKOUT_FAILURE attached-TP HARVEST.",
-    "max_loss_jpy would exceed 418.0, units would fall below 1000, or sizing is derived from remaining_to_4x instead of current equity/risk evidence.",
+    "Fresh current-NAV/tier/SL sizing resolves below one broker integer unit, exceeds the tighter signed/current risk cap, lacks its sizing digest, or is derived from remaining_to_4x instead of current equity/risk evidence.",
     "Spread/slippage or bid/ask replay is negative or missing for the exact current vehicle.",
     "A direct month-scale residual blocker appears for EUR_USD SHORT BREAKOUT_FAILURE, or the current month-scale replay remains unresolvable.",
     "Market-close leakage is used as a proof path or any planned proof requires a market close instead of broker attached TP.",
@@ -195,7 +231,7 @@
     "Stop pursuing SCOUT if market-close leakage cannot be contained without using cancel/close/market-exit behavior.",
     "Stop pursuing SCOUT if a direct month-scale residual blocker appears for EUR_USD SHORT BREAKOUT_FAILURE or if global month-scale replay remains negative with no target-specific containment path.",
     "Stop pursuing SCOUT if guardian/operator review cannot set normal_routing_allowed=true or current P0/P1 guardian issues remain.",
-    "Stop pursuing SCOUT if fresh broker truth reprices the vehicle below the 1000-unit production floor, above the 418.0 JPY max-loss cap, or into adverse spread/slippage.",
+    "Stop pursuing SCOUT if fresh broker truth and exact-vehicle tier sizing cannot fund one positive integer unit inside the current NAV-risk, ordinary risk, margin, spread, and slippage caps.",
     "Stop pursuing SCOUT if current market evidence keeps RANGE forecast without valid BREAKOUT_FAILURE HARVEST geometry, LONG chart bias, or SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH as hard blockers.",
     "Stop pursuing SCOUT if proof acquisition would require deriving lot from remaining_to_4x or relaxing any existing gate."
   ],
@@ -285,7 +321,7 @@
       "action": "targeted_read_only_verification",
       "commands": [
         "python3 -m json.tool data/eurusd_short_breakout_failure_scout_plan.json >/dev/null",
-        "python3 - <<'PY'\nimport json\np=json.load(open('data/eurusd_short_breakout_failure_scout_plan.json'))\nassert p['status']=='SCOUT_BLOCKED_OPERATOR_REVIEW'\nassert p['scout_mode_allowed'] is False\nassert p['operator_approval_required'] is True\nassert p['live_side_effects']==[]\nassert p['max_loss_jpy_cap']==418.0\nPY"
+        "python3 - <<'PY'\nimport json\np=json.load(open('data/eurusd_short_breakout_failure_scout_plan.json'))\nassert p['schema_version']=='eurusd_short_breakout_failure_scout_plan_v2'\nassert p['status']=='SCOUT_BLOCKED_OPERATOR_REVIEW'\nassert p['scout_mode_allowed'] is False\nassert p['operator_approval_required'] is True\nassert p['live_side_effects']==[]\nassert p['max_loss_jpy_cap'] is None\nassert p['risk_sizing_contract']['min_production_lot_units']==1\nassert p['risk_sizing_contract']['current_executable_units'] is None\nassert p['historical_reference']['legacy_proposed_scout_units']==3000\nassert p['historical_reference']['execution_eligible'] is False\nPY"
       ],
       "live_side_effects": []
     }

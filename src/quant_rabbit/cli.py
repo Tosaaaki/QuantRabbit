@@ -286,7 +286,6 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # position lands ≈10000u for EUR_USD at NAV ~227k — three concurrent
     # positions reach ~90% margin utilization, just inside the 92% cap.
     "QR_TRADER_POSITION_NAV_PCT": "30",
-    "QR_TRADER_BASE_UNITS": "3000",
     # A losing REVIEW_EXIT must not become an automatic broker close in the
     # SL-free runtime. Loss-side CLOSE requires the explicit gpt_trader Gate A/B
     # path; PositionManager keeps deterministic reviews advisory unless
@@ -688,6 +687,64 @@ def _refresh_daily_target_after_snapshot_refresh_if_required(
         "sizing_nav_jpy": getattr(summary, "sizing_nav_jpy", None),
         "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
         "per_trade_risk_pct_nav": getattr(summary, "per_trade_risk_pct_nav", None),
+        "uncapped_required_trades_per_day": getattr(
+            summary,
+            "uncapped_required_trades_per_day",
+            None,
+        ),
+        "uncapped_required_trades_per_day_basis_return_pct": getattr(
+            summary,
+            "uncapped_required_trades_per_day_basis_return_pct",
+            None,
+        ),
+        "selected_basis_uncapped_required_trades_per_day": getattr(
+            summary,
+            "selected_basis_uncapped_required_trades_per_day",
+            None,
+        ),
+        "selected_basis_return_pct": getattr(summary, "selected_basis_return_pct", None),
+        "operating_pace_trades_per_day": getattr(
+            summary,
+            "operating_pace_trades_per_day",
+            None,
+        ),
+        "automated_operating_cap_trades_per_day": getattr(
+            summary,
+            "automated_operating_cap_trades_per_day",
+            None,
+        ),
+        "observed_trades_per_day": getattr(summary, "observed_trades_per_day", None),
+        "observed_expectancy_jpy_per_trade": getattr(
+            summary,
+            "observed_expectancy_jpy_per_trade",
+            None,
+        ),
+        "frequency_multiple_required": getattr(
+            summary,
+            "frequency_multiple_required",
+            None,
+        ),
+        "planned_reward_at_operating_pace_jpy": getattr(
+            summary,
+            "planned_reward_at_operating_pace_jpy",
+            None,
+        ),
+        "stretch_required_minus_operating_gap_trades_per_day": getattr(
+            summary,
+            "stretch_required_minus_operating_gap_trades_per_day",
+            None,
+        ),
+        "selected_required_minus_operating_gap_trades_per_day": getattr(
+            summary,
+            "selected_required_minus_operating_gap_trades_per_day",
+            None,
+        ),
+        "trade_pace_feasible_within_operating_pace": getattr(
+            summary,
+            "trade_pace_feasible_within_operating_pace",
+            None,
+        ),
+        "trade_pace_feasibility": getattr(summary, "trade_pace_feasibility", None),
         "snapshot_fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
     }
 
@@ -4961,6 +5018,8 @@ def main(argv: list[str] | None = None) -> int:
     p_stage.add_argument("--confirm-live", action="store_true")
     p_stage.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_stage.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
+    p_stage.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_stage.add_argument("--target-report", type=Path, default=DEFAULT_DAILY_TARGET_REPORT)
 
     p_auto = sub.add_parser("autotrade-cycle", help="Run one safe automated trading cycle.")
     p_auto.add_argument("--send", action="store_true")
@@ -5114,12 +5173,11 @@ def main(argv: list[str] | None = None) -> int:
     # risk geometry must see the same env knobs as the wrapper exports.
     # Previously the bootstrap fired only for `autotrade-cycle`, so a
     # `generate-intents` or `stage-live-order` invocation that bypassed
-    # the wrapper got 3000u BASE_UNITS instead of POSITION_NAV_PCT-derived
-    # sizing (≈9,200u at NAV 226k × 30%). 2026-05-08 14:56 incident: a
-    # routine cycle opened a 3-pair LONG basket at 3000u/pair instead of
-    # the operator-anchored attack-mode size because intents had been
-    # generated under stale env. Move the bootstrap to the top of main()
-    # so every command sees the same defaults the wrapper would set.
+    # the wrapper missed POSITION_NAV_PCT-derived sizing. 2026-05-08 14:56
+    # incident: a routine cycle opened a 3-pair LONG basket at a stale fixed
+    # 3000u/pair instead of the operator-anchored NAV/SL-risk size. Move the
+    # bootstrap to the top of main() so every command sees the same dynamic
+    # defaults the wrapper would set; there is no fixed-unit fallback.
     #
     # Bootstrap fires when either QR_LIVE_ENABLED=1 (wrapper path) or the
     # subcommand is a known live-runtime command. 2026-05-11 incident:
@@ -5670,6 +5728,8 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 execution_ledger_db_path=args.execution_ledger_db,
                 execution_ledger_report_path=args.execution_ledger_report,
+                target_state_path=args.target_state,
+                target_report_path=args.target_report,
             ).run(intents_path=args.intents, lane_id=args.lane_id, send=args.send, confirm_live=args.confirm_live)
             ledger.record_gateway_receipt(kind="live_order", receipt_path=args.output)
             ledger.sync_oanda_transactions(client)
@@ -6628,10 +6688,27 @@ def main(argv: list[str] | None = None) -> int:
                     "sizing_basis": summary.sizing_basis,
                     "remaining_target_jpy": summary.remaining_target_jpy,
                     "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
+                    "realized_loss_spent_jpy": summary.realized_loss_spent_jpy,
+                    "daily_loss_capacity_before_open_jpy": summary.daily_loss_capacity_before_open_jpy,
                     "target_trades_per_day": summary.target_trades_per_day,
                     "target_trades_per_day_source": summary.target_trades_per_day_source,
                     "target_trades_per_day_basis_return_pct": summary.target_trades_per_day_basis_return_pct,
+                    "uncapped_required_trades_per_day": summary.uncapped_required_trades_per_day,
+                    "uncapped_required_trades_per_day_basis_return_pct": summary.uncapped_required_trades_per_day_basis_return_pct,
+                    "selected_basis_uncapped_required_trades_per_day": summary.selected_basis_uncapped_required_trades_per_day,
+                    "selected_basis_return_pct": summary.selected_basis_return_pct,
+                    "operating_pace_trades_per_day": summary.operating_pace_trades_per_day,
+                    "automated_operating_cap_trades_per_day": summary.automated_operating_cap_trades_per_day,
+                    "observed_trades_per_day": summary.observed_trades_per_day,
+                    "observed_expectancy_jpy_per_trade": summary.observed_expectancy_jpy_per_trade,
+                    "frequency_multiple_required": summary.frequency_multiple_required,
+                    "planned_reward_at_operating_pace_jpy": summary.planned_reward_at_operating_pace_jpy,
+                    "stretch_required_minus_operating_gap_trades_per_day": summary.stretch_required_minus_operating_gap_trades_per_day,
+                    "selected_required_minus_operating_gap_trades_per_day": summary.selected_required_minus_operating_gap_trades_per_day,
+                    "trade_pace_feasible_within_operating_pace": summary.trade_pace_feasible_within_operating_pace,
+                    "trade_pace_feasibility": summary.trade_pace_feasibility,
                     "sizing_nav_jpy": summary.sizing_nav_jpy,
+                    "base_per_trade_risk_budget_jpy": summary.base_per_trade_risk_budget_jpy,
                     "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
                     "per_trade_risk_pct_nav": summary.per_trade_risk_pct_nav,
                     "unprotected_positions": summary.unprotected_positions,

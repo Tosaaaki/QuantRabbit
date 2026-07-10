@@ -25,13 +25,31 @@ from quant_rabbit.automation import (
     _snapshot_to_json,
 )
 from quant_rabbit.broker.execution import LiveOrderStageSummary
+import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit import forecast_precision
 from quant_rabbit.gpt_trader import StaticTraderProvider
+from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 from tests.support_bidask_rules import write_nonmatching_bidask_rules
+
+
+def _bypass_pre_post_reconciliation(self, **kwargs):
+    return execution_module._PrePostReconciliationResult(
+        intent=kwargs["intent"],
+        snapshot=kwargs["snapshot"],
+        risk=kwargs["risk"],
+        order_request=kwargs["order_request"],
+        attached_stop_metrics=kwargs["attached_stop_metrics"],
+        max_loss_jpy=kwargs["max_loss_jpy"],
+        portfolio_loss_cap_jpy=kwargs["portfolio_loss_cap_jpy"],
+        size_multiple=kwargs["size_multiple"],
+        order_build_issues=kwargs["order_build_issues"],
+        issues=(),
+        evidence={"status": "TEST_BYPASS"},
+    )
 
 
 def _accepted_gpt_close_receipt(
@@ -137,6 +155,13 @@ class AutoTradeCycleTest(unittest.TestCase):
         )
         self._default_settings_patch.start()
         self._default_target_state_patch.start()
+        self._original_pre_post_reconcile = execution_module.LiveOrderGateway._pre_post_reconcile
+        self._pre_post_reconcile_patch = mock.patch.object(
+            execution_module.LiveOrderGateway,
+            "_pre_post_reconcile",
+            _bypass_pre_post_reconciliation,
+        )
+        self._pre_post_reconcile_patch.start()
         self._oanda_rules_env_prior = os.environ.get(forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV)
         os.environ[forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV] = str(
             tmp_root / "missing_oanda_universal_rotation_rules.json"
@@ -147,6 +172,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         forecast_precision._load_bidask_replay_rule_sets.cache_clear()
 
     def tearDown(self) -> None:
+        self._pre_post_reconcile_patch.stop()
         if self._bidask_rules_env_prior is None:
             os.environ.pop(forecast_precision.BIDASK_REPLAY_RULES_ENV, None)
         else:
@@ -5152,46 +5178,76 @@ class AutoTradeCycleTest(unittest.TestCase):
             intents_path = root / "intents.json"
             _write_live_ready_intents(intents_path)
             target_state = _open_target_state(root)
+            target_payload = json.loads(target_state.read_text())
+            target_payload["start_balance_jpy"] = 200_000.0
+            target_payload["current_equity_jpy"] = 200_000.0
+            target_state.write_text(json.dumps(target_payload) + "\n")
             client = LedgerCycleClient(snapshot)
             ledger_path = root / "execution_ledger.db"
+            ExecutionLedger(
+                db_path=ledger_path,
+                report_path=root / "execution_ledger.md",
+            )._init_db()
+            with sqlite3.connect(ledger_path) as conn:
+                stamp = datetime.now(timezone.utc).isoformat()
+                conn.executemany(
+                    "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
+                    [
+                        ("last_oanda_transaction_id", "100", stamp),
+                        (
+                            "oanda_transaction_coverage_start_utc",
+                            (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                            stamp,
+                        ),
+                    ],
+                )
 
-            summary = AutoTradeCycle(
-                client=client,
-                snapshot_path=snapshot_path,
-                intents_path=intents_path,
-                intent_report_path=root / "intents.md",
-                decision_path=root / "decision.json",
-                decision_report_path=root / "decision.md",
-                gpt_decision_path=root / "gpt_decision.json",
-                gpt_decision_report_path=root / "gpt_decision.md",
-                gpt_attack_advice_path=root / "attack_missing.json",
-                position_management_path=root / "pm.json",
-                position_management_report_path=root / "pm.md",
-                position_execution_path=root / "pe.json",
-                position_execution_report_path=root / "pe.md",
-                live_order_output_path=root / "live_order.json",
-                live_order_report_path=root / "live_order.md",
-                trader_journal_path=root / "trader_journal.jsonl",
-                execution_ledger_db_path=ledger_path,
-                execution_ledger_report_path=root / "execution_ledger.md",
-                report_path=root / "report.md",
-                campaign_plan_path=_campaign(root),
-                strategy_profile_path=_candidate_profile(root),
-                market_story_profile_path=_stories(root),
-                receipt_promotion_report_path=root / "promotion.md",
-                target_state_path=target_state,
-                target_report_path=root / "target.md",
-                gpt_target_state_path=target_state,
-                use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
-                reuse_market_artifacts=True,
-                refresh_market_story=False,
-                live_enabled=True,
-                max_loss_jpy=1_500,
-            ).run(send=True)
+            with mock.patch.object(
+                execution_module.LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ):
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    trader_journal_path=root / "trader_journal.jsonl",
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=root / "execution_ledger.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
 
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(client.transaction_sync_calls, ["100"])
+            # Gateway performs its own final sync before POST, then the cycle
+            # syncs once more after recording the send receipt.
+            self.assertEqual(client.transaction_sync_calls, ["100", "100", "100"])
+            live_order = json.loads((root / "live_order.json").read_text())
+            self.assertEqual(live_order["pre_post_reconciliation"]["status"], "PASSED")
             with sqlite3.connect(ledger_path) as conn:
                 event_types = {
                     row[0] for row in conn.execute("SELECT event_type FROM execution_events").fetchall()
@@ -6594,17 +6650,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
             intents_path = root / "intents.json"
             _write_live_ready_intents(intents_path)
-            target_state = root / "target.json"
-            target_state.write_text(
-                json.dumps(
-                    {
-                        "start_balance_jpy": 100_000,
-                        "target_return_pct": 10.0,
-                        "daily_risk_budget_jpy": 2_000,
-                        "target_trades_per_day": 10,
-                    }
-                )
-            )
+            target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
             summary = AutoTradeCycle(
@@ -6670,17 +6716,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             intents_payload = json.loads(intents_path.read_text())
             intents_payload["generated_at_utc"] = intents_ts.isoformat()
             intents_path.write_text(json.dumps(intents_payload) + "\n")
-            target_state = root / "target.json"
-            target_state.write_text(
-                json.dumps(
-                    {
-                        "start_balance_jpy": 100_000,
-                        "target_return_pct": 10.0,
-                        "daily_risk_budget_jpy": 2_000,
-                        "target_trades_per_day": 10,
-                    }
-                )
-            )
+            target_state = _open_target_state(root)
             response_path = root / "codex_trader_decision_response.json"
             decision = _gpt_trade_decision()
             decision["generated_at_utc"] = decision_ts.isoformat()
@@ -6992,17 +7028,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             _write_live_ready_intents(intents_path)
             pinned_intents = intents_path.read_text()
             profile = _repair_then_candidate_profile(root)
-            target_state = root / "target.json"
-            target_state.write_text(
-                json.dumps(
-                    {
-                        "start_balance_jpy": 100_000,
-                        "target_return_pct": 10.0,
-                        "daily_risk_budget_jpy": 2_000,
-                        "target_trades_per_day": 10,
-                    }
-                )
-            )
+            target_state = _open_target_state(root)
             client = FakeCycleClient(
                 BrokerSnapshot(
                     fetched_at_utc=now,
@@ -7250,6 +7276,12 @@ class SequenceTraderProvider:
 class LedgerCycleClient(FakeCycleClient):
     def __init__(self, snapshot: BrokerSnapshot) -> None:
         super().__init__(snapshot)
+        account = self.snapshot_value.account
+        assert account is not None
+        self.snapshot_value = replace(
+            self.snapshot_value,
+            account=replace(account, last_transaction_id="100"),
+        )
         self.transaction_sync_calls: list[str] = []
 
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
@@ -7305,8 +7337,14 @@ def _open_target_state(root: Path) -> Path:
         json.dumps(
             {
                 "start_balance_jpy": 100_000,
+                "campaign_open_balance_status": "EXPLICIT",
+                "campaign_open_balance_source": "explicit_start_balance",
                 "target_return_pct": 10.0,
                 "daily_risk_budget_jpy": 2_000,
+                "realized_loss_spent_jpy": 0.0,
+                "daily_loss_capacity_before_open_jpy": 2_000.0,
+                "base_per_trade_risk_budget_jpy": 200.0,
+                "per_trade_risk_budget_jpy": 200.0,
                 "target_trades_per_day": 10,
                 "target_trades_per_day_source": "cli",
                 "status": "PURSUE_TARGET",
@@ -7801,6 +7839,7 @@ def _write_ok_news_artifacts(root: Path) -> None:
 
 def _write_live_ready_intents(path: Path) -> None:
     lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+    forecast_cycle_id = f"fixture-forecast-cycle:{datetime.now(timezone.utc).isoformat()}"
     path.write_text(
         json.dumps(
             {
@@ -7828,7 +7867,11 @@ def _write_live_ready_intents(path: Path) -> None:
                                 "event_risk": "none",
                                 "session": "test",
                             },
-                            "metadata": {"max_loss_jpy": 1_500},
+                            "metadata": {
+                                "max_loss_jpy": 1_500,
+                                "parent_lane_id": lane_id,
+                                "forecast_cycle_id": forecast_cycle_id,
+                            },
                         },
                         "risk_metrics": {
                             "risk_jpy": 1_099,
