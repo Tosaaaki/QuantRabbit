@@ -969,11 +969,15 @@ class SelfImprovementAuditor:
             if "## Execution Quality" not in lines:
                 lines.extend(["", "## Execution Quality", ""])
             cancel_ids = pending_reconcile.get("cancel_review_order_ids") or []
+            preserved_ids = pending_reconcile.get("preserved_order_ids") or []
             lines.append(
                 "- Pending entry reconcile: "
                 f"reviewed `{pending_reconcile.get('reviewed_open_pending_orders', 0)}`, "
                 f"cancel_review `{pending_reconcile.get('cancel_review_orders', 0)}`, "
-                f"ids `{', '.join(str(item) for item in cancel_ids) if cancel_ids else 'none'}`"
+                f"ids `{', '.join(str(item) for item in cancel_ids) if cancel_ids else 'none'}`, "
+                f"preserved `{len(preserved_ids)}`, "
+                f"preserved_ids "
+                f"`{', '.join(str(item) for item in preserved_ids) if preserved_ids else 'none'}`"
             )
         if root_primary:
             lines.extend(
@@ -2632,6 +2636,8 @@ def _pending_entry_reconcile_metrics(
         "cancel_review_orders": 0,
         "cancel_review_order_ids": [],
         "cancel_review_groups": [],
+        "monitored_orders": [],
+        "preserved_order_ids": [],
         "orders": [],
         "error": None,
     }
@@ -2649,6 +2655,7 @@ def _pending_entry_reconcile_metrics(
     attack_generated_at = _parse_utc(attack_advice.get("generated_at_utc"))
 
     reviews: list[dict[str, Any]] = []
+    monitored: list[dict[str, Any]] = []
     cumulative_attached_risk = 0.0
     for order in orders:
         review = _pending_entry_order_reconcile(
@@ -2666,11 +2673,17 @@ def _pending_entry_reconcile_metrics(
             cumulative_attached_risk += max(0.0, risk_jpy)
         if review.get("review_reasons"):
             reviews.append(review)
+        elif review.get("monitor_reasons"):
+            monitored.append(review)
 
     metrics["orders"] = reviews
     metrics["cancel_review_orders"] = len(reviews)
     metrics["cancel_review_order_ids"] = [item.get("order_id") for item in reviews if item.get("order_id")]
     metrics["cancel_review_groups"] = _pending_reconcile_groups(reviews)
+    metrics["monitored_orders"] = monitored
+    metrics["preserved_order_ids"] = [
+        item.get("order_id") for item in monitored if item.get("order_id")
+    ]
     return metrics
 
 
@@ -2703,6 +2716,7 @@ def _pending_entry_order_reconcile(
     )
 
     reasons: list[dict[str, Any]] = []
+    monitor_reasons: list[dict[str, Any]] = []
     portfolio_remaining_before_order = None
     if portfolio_remaining is not None:
         portfolio_remaining_before_order = max(0.0, portfolio_remaining - max(0.0, cumulative_attached_risk))
@@ -2746,18 +2760,30 @@ def _pending_entry_order_reconcile(
                     }
                 )
 
+    # Current intent/advice state governs a new send. It must not erase an
+    # already broker-anchored GTC thesis: temporary forecast, spread, session,
+    # or ranking drift can make the same lane non-LIVE_READY without proving
+    # broker-side invalidation. TraderBrain and the gateway own hard thesis
+    # cancellation; this audit keeps the drift visible as monitor-only evidence.
     if parent_lane_id and not candidates:
-        reasons.append(
+        monitor_reasons.append(
             {
                 "code": "PENDING_CURRENT_CANDIDATE_MISSING",
-                "message": "pending order parent lane is absent from current order_intents",
+                "message": (
+                    "pending order parent lane is absent from current order_intents; preserve the "
+                    "broker-anchored thesis unless TraderBrain or broker-side invalidation supplies "
+                    "a hard cancellation veto"
+                ),
             }
         )
     elif candidates and not any(str(item.get("status") or "") == "LIVE_READY" for item in candidates):
-        reasons.append(
+        monitor_reasons.append(
             {
                 "code": "PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY",
-                "message": "pending order parent lane is present but no current candidate is LIVE_READY",
+                "message": (
+                    "pending order parent lane is present but no current candidate is LIVE_READY; "
+                    "this blocks a fresh send but does not invalidate an already broker-anchored GTC thesis"
+                ),
                 "candidate_statuses": sorted({str(item.get("status") or "UNKNOWN") for item in candidates}),
                 "candidate_blockers": _pending_candidate_blockers(candidates),
             }
@@ -2770,12 +2796,21 @@ def _pending_entry_order_reconcile(
         and attack_generated_at is not None
         and (created_at is None or attack_generated_at >= created_at)
     ):
-        reasons.append(
+        monitor_reasons.append(
             {
                 "code": "PENDING_ATTACK_ADVICE_NOT_CURRENT",
-                "message": "current ai_attack_advice no longer recommends the pending order parent lane",
+                "message": (
+                    "current ai_attack_advice no longer recommends the pending order parent lane; "
+                    "ranking drift alone is not a cancellation veto for an existing GTC order"
+                ),
             }
         )
+
+    reconcile_status = "CURRENT"
+    if reasons:
+        reconcile_status = "CANCEL_REVIEW_REQUIRED"
+    elif monitor_reasons:
+        reconcile_status = "PRESERVE_BROKER_ANCHORED_THESIS"
 
     return {
         "order_id": order.get("order_id"),
@@ -2795,7 +2830,9 @@ def _pending_entry_order_reconcile(
         "attached_sl_risk_jpy": risk.get("risk_jpy"),
         "current_candidate_count": len(candidates),
         "current_live_ready_candidate_count": sum(1 for item in candidates if str(item.get("status") or "") == "LIVE_READY"),
+        "reconcile_status": reconcile_status,
         "review_reasons": reasons,
+        "monitor_reasons": monitor_reasons,
     }
 
 

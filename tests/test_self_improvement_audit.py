@@ -1790,11 +1790,116 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(review["cancel_review_order_ids"], ["risk-pending"])
         order_review = review["orders"][0]
         reason_codes = {item["code"] for item in order_review["review_reasons"]}
+        monitor_codes = {item["code"] for item in order_review["monitor_reasons"]}
         self.assertIn("PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP", reason_codes)
-        self.assertIn("PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY", reason_codes)
-        self.assertIn("PENDING_ATTACK_ADVICE_NOT_CURRENT", reason_codes)
+        self.assertIn("PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY", monitor_codes)
+        self.assertIn("PENDING_ATTACK_ADVICE_NOT_CURRENT", monitor_codes)
+        self.assertEqual(order_review["reconcile_status"], "CANCEL_REVIEW_REQUIRED")
         self.assertGreater(order_review["attached_sl_risk_jpy"], 100.0)
         self.assertIn("Pending entry reconcile", report)
+
+    def test_current_pending_reconcile_preserves_transiently_blocked_broker_thesis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["home_conversions"] = {"USD": 150.0}
+            snapshot["orders"] = [
+                {
+                    "order_id": "safe-pending",
+                    "pair": "EUR_USD",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": 2000,
+                    "price": 1.171,
+                    "owner": "trader",
+                    "trade_id": None,
+                    "raw": {
+                        "createTime": (_NOW - timedelta(minutes=40)).isoformat(),
+                        "clientExtensions": {
+                            "comment": (
+                                "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION "
+                                "desk=trend_trader"
+                            ),
+                            "tag": "trader",
+                        },
+                        "stopLossOnFill": {"price": "1.1705"},
+                    },
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "per_trade_risk_budget_jpy": 1000.0,
+                        "remaining_risk_budget_jpy": 10_000.0,
+                    }
+                )
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "STOP-ENTRY",
+                                },
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "live_blockers": [
+                                    "temporary forecast confidence below entry grade"
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "ATTACK_ADVICE_READY",
+                        "recommended_now_lane_ids": [
+                            "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertNotIn("PENDING_ENTRY_CANCEL_REVIEW_REQUIRED", codes)
+        review = payload["execution_quality"]["pending_entry_reconcile"]
+        self.assertEqual(review["cancel_review_order_ids"], [])
+        self.assertEqual(review["preserved_order_ids"], ["safe-pending"])
+        preserved = review["monitored_orders"][0]
+        reason_codes = {item["code"] for item in preserved["monitor_reasons"]}
+        self.assertIn("PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY", reason_codes)
+        self.assertIn("PENDING_ATTACK_ADVICE_NOT_CURRENT", reason_codes)
+        self.assertEqual(
+            preserved["reconcile_status"],
+            "PRESERVE_BROKER_ANCHORED_THESIS",
+        )
+        self.assertIn("preserved `1`", report)
 
     def test_gateway_pending_tail_risk_uses_portfolio_cap_not_per_trade_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
