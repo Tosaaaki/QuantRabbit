@@ -94,6 +94,29 @@ class OperatorReviewReportTests(unittest.TestCase):
             guardian_review_before = paths["guardian_review"].read_text()
             _write_json(paths["watchdog"], {"status": "OK", "runtime_status": "OK", "issues": []})
             _write_json(paths["broker"], {"generated_at_utc": now.isoformat(), "positions": [], "orders": []})
+            _write_json(
+                paths["scout_proof"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "PROOF_ELIGIBLE_FOR_OPERATOR_REVIEW",
+                    "promotion_allowed": False,
+                    "requirements": {"minimum_resolved_exits": 30},
+                    "vehicles": [
+                        {
+                            "predictive_scout_vehicle_id": "psv-ready",
+                            "pair": "USD_CAD",
+                            "side": "LONG",
+                            "resolved_count": 30,
+                            "net_jpy": 3000.0,
+                            "profit_factor": 2.0,
+                            "one_sided_95_mean_lower_jpy": 10.0,
+                            "positive_day_rate": 0.8,
+                            "duplicate_signal_count": 0,
+                            "statistically_eligible_for_operator_review": True,
+                        }
+                    ],
+                },
+            )
 
             summary = OperatorReviewReport(
                 active_trader_contract_path=paths["contract"],
@@ -104,6 +127,7 @@ class OperatorReviewReportTests(unittest.TestCase):
                 guardian_receipt_operator_review_path=paths["guardian_review"],
                 qr_trader_run_watchdog_path=paths["watchdog"],
                 broker_snapshot_path=paths["broker"],
+                predictive_scout_forward_proof_path=paths["scout_proof"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -121,6 +145,12 @@ class OperatorReviewReportTests(unittest.TestCase):
         self.assertTrue(payload["success_condition_evaluation"]["target_shape_matches_active_board_top"])
         self.assertFalse(payload["success_condition_evaluation"]["guardian_consumption_normal_routing_allowed"])
         self.assertTrue(payload["success_condition_evaluation"]["explicit_operator_review_not_inferred"])
+        self.assertEqual(
+            payload["predictive_scout_forward_proof"]["eligible_vehicle_count"], 1
+        )
+        self.assertFalse(
+            payload["predictive_scout_forward_proof"]["promotion_allowed"]
+        )
         self.assertEqual(guardian_review_after, guardian_review_before)
         self.assertIn("USD_JPY", report)
         self.assertIn("Live permission allowed: `False`", report)
@@ -135,6 +165,7 @@ class OperatorReviewReportTests(unittest.TestCase):
             _write_json(paths["guardian_review"], {})
             _write_json(paths["watchdog"], {})
             _write_json(paths["broker"], {})
+            _write_json(paths["scout_proof"], {})
 
             OperatorReviewReport(
                 active_trader_contract_path=paths["contract"],
@@ -145,6 +176,7 @@ class OperatorReviewReportTests(unittest.TestCase):
                 guardian_receipt_operator_review_path=paths["guardian_review"],
                 qr_trader_run_watchdog_path=paths["watchdog"],
                 broker_snapshot_path=paths["broker"],
+                predictive_scout_forward_proof_path=paths["scout_proof"],
                 output_path=paths["output"],
                 report_path=paths["report"],
                 now_utc=now,
@@ -165,6 +197,7 @@ def _paths(root: Path) -> dict[str, Path]:
         "guardian_review": root / "data" / "guardian_receipt_operator_review.json",
         "watchdog": root / "data" / "qr_trader_run_watchdog.json",
         "broker": root / "data" / "broker_snapshot.json",
+        "scout_proof": root / "data" / "predictive_scout_forward_proof.json",
         "output": root / "data" / "operator_review_report.json",
         "report": root / "docs" / "operator_review_report.md",
     }

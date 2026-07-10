@@ -515,6 +515,7 @@ from quant_rabbit.forecast_precision import (
     oanda_universal_rotation_precision_assessment,
     technical_harvest_precision_assessment,
 )
+from quant_rabbit.predictive_scout import predictive_scout_geometry_claimed
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     record_forecast,
 )
@@ -2022,7 +2023,19 @@ class TraderBrain:
             pass
 
         adjusted_score = round(score + settings.score_bias, 2)
-        size_multiple = _size_multiple(adjusted_score, settings)
+        is_predictive_scout = predictive_scout_geometry_claimed(
+            metadata,
+            pair=pair,
+            side=direction,
+            order_type=order_type,
+            method=method,
+        )
+        # SCOUT evidence is defined at exactly 1,000 units.  The score still
+        # ranks the candidate, but it must not mutate the experimental vehicle
+        # into a gateway-rejected or statistically different lot size.
+        size_multiple = 1.0 if is_predictive_scout else _size_multiple(adjusted_score, settings)
+        if is_predictive_scout:
+            rationale.insert(0, "predictive SCOUT fixes score sizing at the 1,000-unit vehicle")
         action = ACTION_SEND_ENTRY if status == "LIVE_READY" and not blockers else ACTION_NO_TRADE
         estimated_margin_jpy = _optional_float(risk_metrics.get("estimated_margin_jpy"))
         return LaneScore(

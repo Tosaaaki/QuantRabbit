@@ -25,6 +25,44 @@ from quant_rabbit.strategy.position_manager import (
 
 
 class PositionManagerTest(unittest.TestCase):
+    def test_predictive_scout_freezes_all_adaptive_exit_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=80, short_score=220)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="scout-position-1",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.1729,
+                    unrealized_pl_jpy=250,
+                    take_profit=1.1741,
+                    stop_loss=1.1721,
+                    raw={
+                        "tradeClientExtensions": {
+                            "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                        }
+                    },
+                ),
+                bid=1.1738,
+                ask=1.1739,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+        managed = result.positions[0]
+        self.assertEqual(managed.action, ACTION_HOLD_PROTECTED)
+        self.assertIsNone(managed.recommended_stop_loss)
+        self.assertIsNone(managed.recommended_take_profit)
+        self.assertIsNone(managed.close_review_action)
+        self.assertIn("exact TP/SL vehicle", " ".join(managed.reasons))
+
     def test_holds_protected_position_when_not_contradicted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

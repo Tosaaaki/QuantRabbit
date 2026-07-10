@@ -638,10 +638,90 @@ class DailyReviewTest(unittest.TestCase):
             self.assertEqual(review["accuracy_2h_pct"], 50.0)
             self.assertEqual(review["blocked_but_correct_read_count"], 1)
             self.assertEqual(review["wrong_read_traded_count"], 1)
-            self.assertIn("market-read: 2/2 resolved full_accuracy=50.0", report.narrative_summary)
+            self.assertIn(
+                "market-read: 2/2 score-eligible resolved excluded_geometry=0 full_accuracy=50.0",
+                report.narrative_summary,
+            )
             self.assertEqual(
                 report.to_dict()["_diagnostics"]["market_read_review"]["verdict_counts"],
                 {"CORRECT": 1, "WRONG": 1},
+            )
+
+    def test_market_read_review_excludes_legacy_inverted_geometry_from_accuracy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+            rows = [
+                {
+                    "generated_at_utc": self._ts(3),
+                    "pair": "EUR_USD",
+                    "direction": "LONG",
+                    "start_price": 1.1000,
+                    "action": "WAIT",
+                    "verification_status": "ACCEPTED",
+                    "next_30m_prediction": {
+                        "direction": "LONG",
+                        "target_zone": "1.1100",
+                        "invalidation": "1.0900",
+                    },
+                    "next_2h_prediction": {
+                        "direction": "LONG",
+                        "target_zone": "1.1150",
+                        "invalidation": "1.0900",
+                    },
+                    "best_trade_if_forced": {
+                        "direction": "LONG",
+                        "entry": "1.1000",
+                        "tp": "1.1100",
+                        "sl": "1.0900",
+                    },
+                    "verdict": "CORRECT",
+                    "thirty_minute_verdict": "CORRECT",
+                    "two_hour_verdict": "CORRECT",
+                },
+                {
+                    "generated_at_utc": self._ts(2),
+                    "pair": "AUD_JPY",
+                    "direction": "SHORT",
+                    "start_price": 112.324,
+                    "action": "REQUEST_EVIDENCE",
+                    "verification_status": "ACCEPTED",
+                    "next_30m_prediction": {
+                        "direction": "SHORT",
+                        "target_zone": "112.444",
+                        "invalidation": "112.203",
+                    },
+                    "next_2h_prediction": {
+                        "direction": "SHORT",
+                        "target_zone": "112.444",
+                        "invalidation": "112.203",
+                    },
+                    "best_trade_if_forced": {
+                        "direction": "SHORT",
+                        "entry": "112.284",
+                        "tp": "112.444",
+                        "sl": "112.203",
+                    },
+                    "verdict": "INVALIDATED_FIRST",
+                    "thirty_minute_verdict": "INVALIDATED_FIRST",
+                    "two_hour_verdict": "INVALIDATED_FIRST",
+                },
+            ]
+            score_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+            report = compute_daily_review(db_path, now=self.now, market_read_score_path=score_path)
+            review = report.market_read_review
+
+            self.assertEqual(review["total_predictions"], 2)
+            self.assertEqual(review["score_eligible_predictions"], 1)
+            self.assertEqual(review["geometry_ineligible_predictions"], 1)
+            self.assertEqual(review["resolved_predictions"], 1)
+            self.assertEqual(review["full_read_accuracy_pct"], 100.0)
+            self.assertEqual(review["verdict_counts"], {"CORRECT": 1})
+            self.assertIn(
+                "market-read: 1/1 score-eligible resolved excluded_geometry=1 full_accuracy=100.0",
+                report.narrative_summary,
             )
 
 

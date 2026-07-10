@@ -9,10 +9,12 @@ from unittest import mock
 
 import quant_rabbit.forecast_precision as forecast_precision
 from quant_rabbit.forecast_precision import (
+    bidask_replay_precision_rule_digest,
     bidask_replay_negative_precision_issue,
     bidask_replay_precision_assessment,
     bidask_replay_precision_geometry_candidate,
     bidask_replay_precision_support,
+    canonical_bidask_replay_precision_rule,
     oanda_universal_rotation_precision_assessment,
     projection_precision_edge_summary,
     projection_precision_gap_summary,
@@ -24,6 +26,29 @@ from quant_rabbit.forecast_precision import (
 
 
 class ForecastPrecisionConfluenceTest(unittest.TestCase):
+    def test_bidask_rule_digest_ignores_packaging_only_provenance(self) -> None:
+        name = (
+            "USD_CAD_DOWN_H31_60m_C0p50_0p65_FADE_TO_UP_"
+            "S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7"
+        )
+        rule = canonical_bidask_replay_precision_rule(name)
+        self.assertIsNotNone(rule)
+        assert rule is not None
+        repackaged = dict(rule)
+        repackaged.update(
+            {
+                "rule_set_generated_at_utc": "2099-01-01T00:00:00Z",
+                "rule_set_source": "repackaged/same-rule.json",
+                "audit_report": "repackaged/audit.json",
+                "first_day": "2098-12-01",
+                "last_day": "2098-12-31",
+            }
+        )
+        self.assertEqual(
+            bidask_replay_precision_rule_digest(rule),
+            bidask_replay_precision_rule_digest(repackaged),
+        )
+
     def test_support_signal_rejects_high_headline_low_economic_precision(self) -> None:
         self.assertFalse(
             support_signal_clears_live_precision(

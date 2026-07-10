@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import OrderIntent, OrderType, RiskIssue
+from quant_rabbit.predictive_scout import predictive_scout_metadata_supported
 from quant_rabbit.risk import (
     LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES,
+    MIN_PRODUCTION_LOT_UNITS,
     _forecast_range_unselected_projection_support_allows_side,
 )
 
@@ -170,6 +172,7 @@ class StrategyProfile:
             intent.pair,
             intent.side.value,
         ):
+            scout_severity = "WARN" if _predictive_scout_profile_supported(intent) else strict_live_severity
             return (
                 RiskIssue(
                     "STRATEGY_METHOD_PROFILE_MISSING",
@@ -177,7 +180,7 @@ class StrategyProfile:
                         f"{intent.pair} {intent.side.value} {method} has no method-specific mined profile; "
                         "do not reuse another strategy method's evidence for this lane"
                     ),
-                    severity=strict_live_severity,
+                    severity=scout_severity,
                 ),
             )
         if entry is None:
@@ -376,6 +379,8 @@ def _synthetic_missing_profile_severity(
     metadata = intent.metadata or {}
     if _is_reversal_recovery_hedge(metadata):
         return "WARN"
+    if _predictive_scout_profile_supported(intent):
+        return "WARN"
     if metadata.get("forecast_seed"):
         return _forecast_seed_missing_profile_severity(intent)
     if _oanda_campaign_firepower_new_vehicle_supported(intent):
@@ -460,6 +465,8 @@ def _blocked_profile_market_structure_scout_severity(
     if intent.order_type == OrderType.MARKET:
         return None
     metadata = intent.metadata or {}
+    if _predictive_scout_profile_supported(intent):
+        return "WARN"
     if _tp_proof_collection_new_vehicle_supported(intent, metadata):
         return "WARN"
     if _oanda_campaign_firepower_new_vehicle_supported(intent):
@@ -734,6 +741,19 @@ def _forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -
             return False
 
     return True
+
+
+def _predictive_scout_profile_supported(intent: OrderIntent) -> bool:
+    metadata = intent.metadata or {}
+    if not predictive_scout_metadata_supported(metadata):
+        return False
+    if intent.order_type != OrderType.LIMIT or intent.entry is None:
+        return False
+    if abs(int(intent.units)) != MIN_PRODUCTION_LOT_UNITS:
+        return False
+    if intent.side.value == "LONG":
+        return intent.tp > intent.entry > intent.sl
+    return intent.tp < intent.entry < intent.sl
 
 
 def _range_rotation_rail_side_matches(

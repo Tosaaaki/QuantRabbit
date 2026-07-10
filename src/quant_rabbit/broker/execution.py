@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
@@ -30,6 +31,8 @@ from quant_rabbit.paths import (
     ROOT as _QR_ROOT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_LEDGER_REPORT,
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -38,6 +41,16 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_STRATEGY_PROFILE,
+)
+from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.predictive_scout import (
+    predictive_scout_experiment_id,
+    predictive_scout_geometry_claimed,
+    predictive_scout_intent_claimed,
+    predictive_scout_intent_issues,
+    predictive_scout_metadata_supported,
+    predictive_scout_signal_id,
+    predictive_scout_vehicle_id,
 )
 from quant_rabbit.guardian_events import guardian_action_gateway_issues
 from quant_rabbit.guardian_receipt_consumption import (
@@ -132,6 +145,9 @@ class LiveOrderGateway:
         guardian_receipt_consumption_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         broker_snapshot_path: Path | None = DEFAULT_BROKER_SNAPSHOT,
+        execution_ledger_db_path: Path | None = None,
+        execution_ledger_report_path: Path | None = None,
+        predictive_scout_canonical_ledger_db_path: Path | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -142,6 +158,11 @@ class LiveOrderGateway:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self.portfolio_loss_cap_jpy = portfolio_loss_cap_jpy
+        self.execution_ledger_db_path = execution_ledger_db_path
+        self.execution_ledger_report_path = execution_ledger_report_path
+        self.predictive_scout_canonical_ledger_db_path = (
+            predictive_scout_canonical_ledger_db_path
+        )
         self.self_improvement_audit = self_improvement_audit
         # When the automation cycle stages a receipt that gpt-trader-decision
         # just verified, this points at the ACCEPTED verification artifact so
@@ -286,6 +307,9 @@ class LiveOrderGateway:
             order_build_issues=order_build_issues,
         )
         scale_issues.extend(attached_stop_scale_issues)
+        order_build_issues.extend(
+            _predictive_scout_built_order_issues(intent, order_request)
+        )
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -316,6 +340,27 @@ class LiveOrderGateway:
             action_receipt_path=self.guardian_action_receipt_path,
         )
         guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
+        predictive_scout_issues = predictive_scout_intent_issues(
+            intent,
+            snapshot=snapshot,
+            data_root=intents_path.parent,
+            validation_time_utc=datetime.now(timezone.utc),
+            execution_ledger_db_path=self._predictive_scout_canonical_ledger_path(
+                intents_path,
+                live_send=send,
+            ),
+        )
+        predictive_scout_issues.extend(
+            _predictive_scout_ledger_path_issues(
+                intent,
+                intents_path=intents_path,
+                configured_db_path=self.execution_ledger_db_path,
+                canonical_db_path=self._predictive_scout_canonical_ledger_path(
+                    intents_path,
+                    live_send=send,
+                ),
+            )
+        )
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -334,6 +379,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_receipt_consumption_issues)
+            or any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -343,6 +389,27 @@ class LiveOrderGateway:
         entry_thesis_record = None
         entry_thesis_issues: list[dict[str, str]] = []
         status = "BLOCKED" if all_blocked else "STAGED"
+        if send and order_request is not None and not all_blocked:
+            predictive_scout_issues.extend(
+                _predictive_scout_pre_post_issues(
+                    intent,
+                    validation_time_utc=datetime.now(timezone.utc),
+                )
+            )
+            if any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues):
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            reservation_issue = self._reserve_predictive_scout_post(
+                intent=intent,
+                order_request=order_request,
+                lane_id=selected_lane_id,
+                intents_path=intents_path,
+            )
+            if reservation_issue is not None:
+                predictive_scout_issues.append(reservation_issue)
+                all_blocked = True
+                status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
             response = self.client.post_order_json(order_request)
             sent = True
@@ -387,6 +454,8 @@ class LiveOrderGateway:
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "predictive_scout": predictive_scout_intent_claimed(intent),
+            "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
             "sizing_evidence": _sizing_evidence_from_intent(
                 intent,
@@ -415,6 +484,7 @@ class LiveOrderGateway:
                 *target_path_issues,
                 *guardian_action_issues,
                 *guardian_receipt_consumption_issues,
+                *predictive_scout_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -437,6 +507,17 @@ class LiveOrderGateway:
             "scaled_units": intent.units,
             "portfolio_position_cap": portfolio_position_cap,
         }
+        self._write_result(result)
+        durable, durability_issue = self._record_predictive_scout_receipt_durably(
+            result,
+            intents_path=intents_path,
+        )
+        if durable is not None:
+            result["predictive_scout_receipt_durable"] = durable
+        if durability_issue is not None:
+            result["risk_issues"].append(durability_issue)
+            status = "SENT_WITH_SCOUT_RECEIPT_GAP"
+            result["status"] = status
         self._write_result(result)
         self._write_report(result)
         return LiveOrderStageSummary(
@@ -482,6 +563,55 @@ class LiveOrderGateway:
             self._write_result(result)
             self._write_report(result)
             return LiveOrderStageSummary("NO_INTENT", None, self.output_path, self.report_path, False, 0, 0)
+
+        predictive_scout_items = [
+            (selected, lane_id)
+            for selected, lane_id in selected_items
+            if _selected_intent_is_predictive_scout(selected)
+        ]
+        single_predictive_scout = len(predictive_scout_items) == 1 and len(selected_items) == 1
+        if predictive_scout_items and not single_predictive_scout:
+            issue = RiskIssue(
+                "PREDICTIVE_SCOUT_SINGLE_ORDER_ONLY",
+                "predictive SCOUT is a one-order forward experiment and cannot be staged or sent through basket/mixed execution",
+            )
+            order_results = [
+                _blocked_batch_result(
+                    generated_at=generated_at,
+                    selected=selected,
+                    lane_id=requested_lane_id,
+                    send=send,
+                    issue=issue,
+                )
+                for selected, requested_lane_id in selected_items
+            ]
+            result = {
+                "generated_at_utc": generated_at,
+                "status": "BLOCKED",
+                "lane_id": order_results[0].get("lane_id"),
+                "lane_ids": [item.get("lane_id") for item in order_results],
+                "orders": order_results,
+                "risk_issues": [issue for item in order_results for issue in item["risk_issues"]],
+                "strategy_issues": [],
+                "send_requested": send,
+                "sent": False,
+                "sent_count": 0,
+                "staged_count": 0,
+                "blocked_count": len(order_results),
+            }
+            self._write_result(result)
+            self._write_report(result)
+            return LiveOrderStageSummary(
+                status="BLOCKED",
+                lane_id=result["lane_id"],
+                output_path=self.output_path,
+                report_path=self.report_path,
+                sent=False,
+                risk_issues=len(result["risk_issues"]),
+                strategy_issues=0,
+                sent_count=0,
+                lane_ids=tuple(lane_id for lane_id in result["lane_ids"] if lane_id),
+            )
 
         ignored_pending_order_ids = _order_id_tuple(ignore_pending_order_ids)
         initial_snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, _intent_from_json(selected_items[0][0]["intent"])))
@@ -561,7 +691,7 @@ class LiveOrderGateway:
                 size_multiple=(size_multiples or {}).get(requested_lane_id, 1.0),
                 send=send,
                 confirm_live=confirm_live,
-                allow_basket_pending=True,
+                allow_basket_pending=not single_predictive_scout,
                 cumulative_risk_jpy=validation_cumulative_risk_jpy,
                 cumulative_margin_jpy=validation_cumulative_margin_jpy,
                 seen_geometry=seen_geometry,
@@ -634,6 +764,18 @@ class LiveOrderGateway:
             "ignored_pending_order_ids": list(ignored_pending_order_ids),
             "portfolio_position_cap": portfolio_position_cap,
         }
+        self._write_result(result)
+        durable, durability_issue = self._record_predictive_scout_receipt_durably(
+            result,
+            intents_path=intents_path,
+        )
+        if durable is not None:
+            result["predictive_scout_receipt_durable"] = durable
+        if durability_issue is not None:
+            result["risk_issues"].append(durability_issue)
+            batch_risk_issues += 1
+            status = "SENT_WITH_SCOUT_RECEIPT_GAP"
+            result["status"] = status
         self._write_result(result)
         self._write_report(result)
         return LiveOrderStageSummary(
@@ -765,6 +907,9 @@ class LiveOrderGateway:
             order_build_issues=order_build_issues,
         )
         scale_issues.extend(attached_stop_scale_issues)
+        order_build_issues.extend(
+            _predictive_scout_built_order_issues(intent, order_request)
+        )
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -808,6 +953,27 @@ class LiveOrderGateway:
             action_receipt_path=self.guardian_action_receipt_path,
         )
         guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
+        predictive_scout_issues = predictive_scout_intent_issues(
+            intent,
+            snapshot=snapshot,
+            data_root=intents_path.parent,
+            validation_time_utc=datetime.now(timezone.utc),
+            execution_ledger_db_path=self._predictive_scout_canonical_ledger_path(
+                intents_path,
+                live_send=send,
+            ),
+        )
+        predictive_scout_issues.extend(
+            _predictive_scout_ledger_path_issues(
+                intent,
+                intents_path=intents_path,
+                configured_db_path=self.execution_ledger_db_path,
+                canonical_db_path=self._predictive_scout_canonical_ledger_path(
+                    intents_path,
+                    live_send=send,
+                ),
+            )
+        )
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -826,6 +992,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_receipt_consumption_issues)
+            or any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -835,6 +1002,27 @@ class LiveOrderGateway:
         entry_thesis_record = None
         entry_thesis_issues: list[dict[str, str]] = []
         status = "BLOCKED" if all_blocked else "STAGED"
+        if send and order_request is not None and not all_blocked:
+            predictive_scout_issues.extend(
+                _predictive_scout_pre_post_issues(
+                    intent,
+                    validation_time_utc=datetime.now(timezone.utc),
+                )
+            )
+            if any(issue["severity"] == "BLOCK" for issue in predictive_scout_issues):
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            reservation_issue = self._reserve_predictive_scout_post(
+                intent=intent,
+                order_request=order_request,
+                lane_id=selected_lane_id,
+                intents_path=intents_path,
+            )
+            if reservation_issue is not None:
+                predictive_scout_issues.append(reservation_issue)
+                all_blocked = True
+                status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
             response = self.client.post_order_json(order_request)
             sent = True
@@ -874,6 +1062,8 @@ class LiveOrderGateway:
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "predictive_scout": predictive_scout_intent_claimed(intent),
+            "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
             "sizing_evidence": _sizing_evidence_from_intent(
                 intent,
@@ -902,6 +1092,7 @@ class LiveOrderGateway:
                 *target_path_issues,
                 *guardian_action_issues,
                 *guardian_receipt_consumption_issues,
+                *predictive_scout_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -1301,6 +1492,120 @@ class LiveOrderGateway:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
+    def _predictive_scout_canonical_ledger_path(
+        self,
+        intents_path: Path,
+        *,
+        live_send: bool,
+    ) -> Path:
+        if self.predictive_scout_canonical_ledger_db_path is not None:
+            return self.predictive_scout_canonical_ledger_db_path
+        # Live collection has one process-wide SSOT.  Dry-run/staging may use
+        # an isolated intent-adjacent ledger so tests and offline review do not
+        # mutate production state.
+        if live_send:
+            return DEFAULT_EXECUTION_LEDGER_DB
+        return intents_path.parent / DEFAULT_EXECUTION_LEDGER_DB.name
+
+    def _record_predictive_scout_receipt_durably(
+        self,
+        result: dict[str, Any],
+        *,
+        intents_path: Path,
+    ) -> tuple[bool | None, dict[str, str] | None]:
+        if result.get("sent") is not True or not _result_contains_predictive_scout(result):
+            return None, None
+        db_path = self._predictive_scout_canonical_ledger_path(
+            intents_path,
+            live_send=True,
+        )
+        report_path = self.execution_ledger_report_path or (
+            self.report_path.parent / DEFAULT_EXECUTION_LEDGER_REPORT.name
+        )
+        try:
+            ExecutionLedger(db_path=db_path, report_path=report_path).record_gateway_receipt(
+                kind="live_order",
+                receipt_path=self.output_path,
+            )
+        except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+            return False, RiskIssue(
+                "PREDICTIVE_SCOUT_RECEIPT_DURABILITY_GAP",
+                "broker accepted predictive SCOUT but its vehicle receipt was not durably indexed; "
+                f"do not send another SCOUT until ledger reconciliation succeeds: {exc}",
+            ).__dict__
+        return True, None
+
+    def _reserve_predictive_scout_post(
+        self,
+        *,
+        intent: OrderIntent,
+        order_request: dict[str, Any],
+        lane_id: str,
+        intents_path: Path,
+    ) -> dict[str, str] | None:
+        if not predictive_scout_intent_claimed(intent):
+            return None
+        db_path = self._predictive_scout_canonical_ledger_path(
+            intents_path,
+            live_send=True,
+        )
+        report_path = self.execution_ledger_report_path or (
+            self.report_path.parent / DEFAULT_EXECUTION_LEDGER_REPORT.name
+        )
+        reserved_at = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "generated_at_utc": reserved_at,
+            "status": "PREDICTIVE_SCOUT_POST_RESERVED",
+            "lane_id": lane_id,
+            "order_request": order_request,
+            "predictive_scout": True,
+            "predictive_scout_post_reserved": True,
+            "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
+            "send_requested": True,
+            "sent": False,
+            "response": None,
+        }
+        scout_receipt = payload.get("predictive_scout_receipt")
+        signal_id = (
+            str(scout_receipt.get("predictive_scout_signal_id") or "")
+            if isinstance(scout_receipt, dict)
+            else ""
+        )
+        experiment_id = (
+            str(scout_receipt.get("predictive_scout_experiment_id") or "")
+            if isinstance(scout_receipt, dict)
+            else ""
+        )
+        vehicle_id = (
+            str(scout_receipt.get("predictive_scout_vehicle_id") or "")
+            if isinstance(scout_receipt, dict)
+            else ""
+        )
+        try:
+            reserved = ExecutionLedger(
+                db_path=db_path,
+                report_path=report_path,
+            ).reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=Path(f"{self.output_path}.predictive-scout-reservation"),
+                payload=payload,
+                signal_id=signal_id,
+                experiment_id=experiment_id,
+                vehicle_id=vehicle_id,
+            )
+        except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_POST_RESERVATION_FAILED",
+                "refusing broker POST because the predictive SCOUT vehicle/experiment reservation "
+                f"could not be durably indexed first: {exc}",
+            ).__dict__
+        if not reserved:
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_EXPERIMENT_ALREADY_RESERVED",
+                "this SCOUT vehicle/forecast_cycle signal already owns a durable broker-POST reservation; refusing duplicate evidence and duplicate exposure",
+            ).__dict__
+        return None
+
     def _write_report(self, result: dict[str, Any]) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         lines = [
@@ -1430,6 +1735,16 @@ def _snapshot_pairs(payload: dict[str, Any], intent: OrderIntent) -> tuple[str, 
     return tuple(sorted(pairs))
 
 
+def _result_contains_predictive_scout(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        if payload.get("predictive_scout") is True:
+            return True
+        return any(_result_contains_predictive_scout(value) for value in payload.values())
+    if isinstance(payload, list):
+        return any(_result_contains_predictive_scout(value) for value in payload)
+    return False
+
+
 def _scaled_units(
     units: int,
     size_multiple: float,
@@ -1472,6 +1787,22 @@ def _scaled_units(
 
 
 def _scaled_units_for_intent(intent: OrderIntent, size_multiple: float) -> tuple[int | None, list[RiskIssue], float]:
+    if predictive_scout_intent_claimed(intent):
+        if not math.isfinite(size_multiple) or size_multiple <= 0:
+            return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")], size_multiple
+        if not math.isclose(size_multiple, 1.0, rel_tol=0.0, abs_tol=1e-9):
+            return (
+                None,
+                [
+                    RiskIssue(
+                        "PREDICTIVE_SCOUT_SIZE_MULTIPLE_FORBIDDEN",
+                        "predictive SCOUT is a fixed 1000u forward experiment; "
+                        f"size_multiple must remain 1.0, received {size_multiple:.4g}",
+                    )
+                ],
+                size_multiple,
+            )
+        return intent.units, [], 1.0
     if not _intent_declares_hedge(intent):
         scaled_units, issues = _scaled_units(intent.units, size_multiple)
         return scaled_units, issues, size_multiple
@@ -1534,6 +1865,19 @@ def _blocked_batch_result(*, generated_at: str, selected: dict[str, Any], lane_i
         "requested_units": None,
         "scaled_units": None,
     }
+
+
+def _selected_intent_is_predictive_scout(selected: dict[str, Any]) -> bool:
+    intent = selected.get("intent") if isinstance(selected.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    return predictive_scout_geometry_claimed(
+        metadata,
+        pair=str(intent.get("pair") or ""),
+        side=str(intent.get("side") or ""),
+        order_type=str(intent.get("order_type") or ""),
+        method=str(market_context.get("method") or "") or None,
+    )
 
 
 def _receipt_risk_jpy(result: dict[str, Any]) -> float:
@@ -1888,6 +2232,8 @@ def _attached_stop_loss_price(intent: OrderIntent) -> float | None:
 
 def _requires_intent_stop_on_fill(intent: OrderIntent) -> bool:
     metadata = intent.metadata or {}
+    if predictive_scout_metadata_supported(metadata):
+        return True
     if metadata.get("broker_stop_loss_mode") == "INTENT_SL":
         return True
     return (
@@ -2536,6 +2882,14 @@ def _repriced_crossed_passive_limit_intent(
         and "LIMIT_ENTRY_NOT_BELOW_MARKET" in issue_codes
         and original_entry >= quote.ask
     ):
+        if predictive_scout_intent_claimed(intent):
+            return intent, RiskIssue(
+                "PREDICTIVE_SCOUT_TRIGGER_CROSSED",
+                (
+                    f"predictive SCOUT LONG trigger {original_entry:.{precision}f} is no longer passive "
+                    f"at ask={quote.ask:.{precision}f}; expire the exact replay geometry instead of repricing it"
+                ),
+            )
         candidate = float(_price(intent.pair, quote.ask - tick))
         if candidate <= 0.0 or candidate >= quote.ask or candidate >= original_entry:
             return intent, None
@@ -2548,6 +2902,14 @@ def _repriced_crossed_passive_limit_intent(
         and "LIMIT_ENTRY_NOT_ABOVE_MARKET" in issue_codes
         and original_entry <= quote.bid
     ):
+        if predictive_scout_intent_claimed(intent):
+            return intent, RiskIssue(
+                "PREDICTIVE_SCOUT_TRIGGER_CROSSED",
+                (
+                    f"predictive SCOUT SHORT trigger {original_entry:.{precision}f} is no longer passive "
+                    f"at bid={quote.bid:.{precision}f}; expire the exact replay geometry instead of repricing it"
+                ),
+            )
         candidate = float(_price(intent.pair, quote.bid + tick))
         if candidate <= quote.bid or candidate <= original_entry:
             return intent, None
@@ -3244,6 +3606,16 @@ def _self_improvement_gateway_issues(
         selected,
         worst_segment=worst_segment,
     )
+    selected_intent = selected.get("intent") if isinstance(selected, dict) else {}
+    selected_metadata = (
+        selected_intent.get("metadata") if isinstance(selected_intent, dict) else {}
+    )
+    predictive_scout_repair_selected = bool(
+        p0_repair_selected
+        and isinstance(selected_metadata, dict)
+        and str(selected_metadata.get("self_improvement_p0_repair_mode") or "")
+        == "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+    )
     forecast_repair_selected = forecast_adverse_path_exempted_by_tp_harvest_repair(selected)
     blockers: list[str] = []
     for item in payload.get("findings", []) or []:
@@ -3260,6 +3632,7 @@ def _self_improvement_gateway_issues(
         if (
             code == "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED"
             and p0_repair_selected
+            and not predictive_scout_repair_selected
             and _verified_trade_covers_pending_cancel_review(
                 verified_decision_path,
                 finding=item,
@@ -3356,7 +3729,22 @@ def _selected_intent_is_self_improvement_profitability_repair(
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
     if metadata.get("self_improvement_p0_repair_live_ready") is not True:
         return False
-    if str(metadata.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+    mode = str(metadata.get("self_improvement_p0_repair_mode") or "")
+    if mode == "PREDICTIVE_SCOUT_FORWARD_EVIDENCE":
+        if not predictive_scout_metadata_supported(metadata):
+            return False
+        if str(intent.get("order_type") or "").strip().upper() != OrderType.LIMIT.value:
+            return False
+        try:
+            units = abs(int(intent.get("units")))
+        except (TypeError, ValueError):
+            return False
+        if units != MIN_PRODUCTION_LOT_UNITS:
+            return False
+        if intent_matches_profitability_worst_segment(intent, worst_segment):
+            return False
+        return True
+    if mode != "TP_HARVEST_REPAIR":
         return False
     if not oanda_firepower_repair_current_risk_reaches_minimum(metadata):
         return False
@@ -3386,6 +3774,51 @@ def _accepted_verification_postdates(
         generated = payload["decision"].get("generated_at_utc")
     decision_ts = _parse_utc_timestamp(generated)
     return decision_ts is not None and decision_ts > audit_ts
+
+
+def _predictive_scout_pre_post_issues(
+    intent: OrderIntent,
+    *,
+    validation_time_utc: datetime,
+) -> list[dict[str, str]]:
+    metadata = intent.metadata or {}
+    if not predictive_scout_intent_claimed(intent):
+        return []
+    now = validation_time_utc
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    expires_at = _parse_utc_timestamp(metadata.get("predictive_scout_expires_at_utc"))
+    if expires_at is not None and expires_at.astimezone(timezone.utc) > now:
+        return []
+    return [
+        RiskIssue(
+            "PREDICTIVE_SCOUT_EXPIRED_BEFORE_POST",
+            "predictive SCOUT TTL expired during gateway work; do not POST the stale forward experiment",
+        ).__dict__
+    ]
+
+
+def _predictive_scout_ledger_path_issues(
+    intent: OrderIntent,
+    *,
+    intents_path: Path,
+    configured_db_path: Path | None,
+    canonical_db_path: Path,
+) -> list[dict[str, str]]:
+    if not predictive_scout_intent_claimed(intent) or configured_db_path is None:
+        return []
+    canonical = canonical_db_path
+    if configured_db_path.expanduser().resolve() == canonical.expanduser().resolve():
+        return []
+    return [
+        RiskIssue(
+            "PREDICTIVE_SCOUT_CANONICAL_LEDGER_REQUIRED",
+            "predictive SCOUT checks, atomic signal claim, reconciliation, and forward proof must use "
+            f"the canonical intent ledger {canonical}; configured ledger {configured_db_path} is forbidden",
+        ).__dict__
+    ]
 
 
 def _parse_utc_timestamp(value: Any) -> datetime | None:
@@ -3432,6 +3865,83 @@ def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, li
         return _oanda_order_request(intent), []
     except ValueError as exc:
         return None, [RiskIssue("ORDER_REQUEST_INVALID", str(exc)).__dict__]
+
+
+def _predictive_scout_built_order_issues(
+    intent: OrderIntent,
+    order_request: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    if not predictive_scout_intent_claimed(intent):
+        return []
+    if order_request is None:
+        return [
+            RiskIssue(
+                "PREDICTIVE_SCOUT_ORDER_REQUEST_MISSING",
+                "predictive SCOUT requires a complete broker order request",
+            ).__dict__
+        ]
+    expected_tp = _price(intent.pair, intent.tp)
+    expected_sl = _price(intent.pair, intent.sl)
+    actual_tp = (order_request.get("takeProfitOnFill") or {}).get("price")
+    actual_sl = (order_request.get("stopLossOnFill") or {}).get("price")
+    issues: list[dict[str, str]] = []
+    if actual_tp != expected_tp:
+        issues.append(
+            RiskIssue(
+                "PREDICTIVE_SCOUT_ATTACHED_TP_MISMATCH",
+                "predictive SCOUT must POST its exact intent TP; a global TP kill switch or altered dependent order blocks this experiment",
+            ).__dict__
+        )
+    if actual_sl != expected_sl:
+        issues.append(
+            RiskIssue(
+                "PREDICTIVE_SCOUT_ATTACHED_SL_MISMATCH",
+                "predictive SCOUT must POST its exact intent SL as stopLossOnFill",
+            ).__dict__
+        )
+    if order_request.get("timeInForce") != "GTD" or not order_request.get("gtdTime"):
+        issues.append(
+            RiskIssue(
+                "PREDICTIVE_SCOUT_GTD_MISSING",
+                "predictive SCOUT pending order must be broker-expiring GTD, never ordinary GTC",
+            ).__dict__
+        )
+    return issues
+
+
+def _predictive_scout_receipt_from_intent(intent: OrderIntent) -> dict[str, Any] | None:
+    metadata = intent.metadata or {}
+    if not predictive_scout_intent_claimed(intent):
+        return None
+    rule = metadata.get("bidask_replay_precision_seed_rule")
+    return {
+        "predictive_scout": True,
+        "predictive_scout_vehicle_id": predictive_scout_vehicle_id(intent),
+        "predictive_scout_experiment_id": predictive_scout_experiment_id(intent),
+        "predictive_scout_signal_id": predictive_scout_signal_id(intent),
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "order_type": intent.order_type.value,
+        "units": abs(int(intent.units)),
+        "entry": intent.entry,
+        "take_profit": intent.tp,
+        "stop_loss": intent.sl,
+        "forecast_cycle_id": metadata.get("forecast_cycle_id"),
+        "forecast_direction": metadata.get("forecast_direction"),
+        "forecast_confidence": metadata.get("forecast_confidence"),
+        "forecast_horizon_min": metadata.get("forecast_horizon_min"),
+        "predictive_scout_source": metadata.get("predictive_scout_source"),
+        "predictive_scout_rule_name": metadata.get("predictive_scout_rule_name"),
+        "predictive_scout_rule_digest": metadata.get("predictive_scout_rule_digest"),
+        "predictive_scout_hypothesis": metadata.get("predictive_scout_hypothesis"),
+        "predictive_scout_vehicle_proof_status": metadata.get(
+            "predictive_scout_vehicle_proof_status"
+        ),
+        "predictive_scout_promotion_allowed": metadata.get("predictive_scout_promotion_allowed"),
+        "predictive_scout_generated_at_utc": metadata.get("predictive_scout_generated_at_utc"),
+        "predictive_scout_expires_at_utc": metadata.get("predictive_scout_expires_at_utc"),
+        "bidask_replay_precision_seed_rule": dict(rule) if isinstance(rule, dict) else None,
+    }
 
 
 def _context_evidence_from_intent(intent: OrderIntent) -> dict[str, Any]:
@@ -3610,7 +4120,16 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         if intent.entry is None:
             raise ValueError("pending orders require entry")
         order["price"] = _price(intent.pair, intent.entry)
-        order["timeInForce"] = "GTC"
+        if predictive_scout_intent_claimed(intent):
+            expires_at = _parse_utc_timestamp(
+                (intent.metadata or {}).get("predictive_scout_expires_at_utc")
+            )
+            if expires_at is None:
+                raise ValueError("predictive SCOUT pending orders require predictive_scout_expires_at_utc")
+            order["timeInForce"] = "GTD"
+            order["gtdTime"] = expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        else:
+            order["timeInForce"] = "GTC"
     return order
 
 
@@ -3676,8 +4195,17 @@ def _comment(intent: OrderIntent) -> str:
     desk = str(intent.metadata.get("desk") or "vnext")
     role = str(intent.metadata.get("campaign_role") or "")
     lane_id = _gateway_lane_id(intent)
+    role_part = f" role={role}" if role else ""
+    vehicle_part = (
+        f" vehicle={predictive_scout_vehicle_id(intent)}"
+        if predictive_scout_intent_claimed(intent)
+        else ""
+    )
     lane_part = f" lane={lane_id}" if lane_id else ""
-    text = f"qr-vnext{lane_part} desk={desk} role={role}".strip()
+    # SCOUT concurrency is reconstructed from the broker's truncated comment.
+    # Put the bounded campaign role before potentially long lane text so the
+    # one-active-SCOUT guard cannot lose its identity at the 128-byte boundary.
+    text = f"qr-vnext{role_part}{vehicle_part}{lane_part} desk={desk}".strip()
     return text[:128]
 
 

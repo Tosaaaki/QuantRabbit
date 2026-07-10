@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from quant_rabbit.paths import DEFAULT_PROFIT_PARTIAL_CLOSE_STATE
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 
 
 # Minimums are broker/execution-shape constants, not market predictions.
@@ -172,6 +173,8 @@ def compute_all_profit_partial_closes(
     milestones = state.get("trade_milestones") if isinstance(state.get("trade_milestones"), dict) else {}
     actions: list[ProfitPartialCloseAction] = []
     for position in positions:
+        if predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
+            continue
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
         if not _profit_take_owner_allowed(owner_str):
@@ -218,8 +221,13 @@ def apply_profit_partial_closes(
     send: bool = False,
     live_enabled: bool = False,
     confirm_live: bool = False,
+    forbidden_trade_reasons: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    forbidden_reasons = {
+        str(trade_id): str(reason)
+        for trade_id, reason in (forbidden_trade_reasons or {}).items()
+    }
     for action in actions:
         entry: dict[str, Any] = {
             "trade_id": action.trade_id,
@@ -238,6 +246,10 @@ def apply_profit_partial_closes(
             "response": None,
             "provenance": PROFIT_PARTIAL_CLOSE_PROVENANCE,
         }
+        if str(action.trade_id) in forbidden_reasons:
+            entry["error"] = forbidden_reasons[str(action.trade_id)]
+            results.append(entry)
+            continue
         if not send:
             results.append(entry)
             continue

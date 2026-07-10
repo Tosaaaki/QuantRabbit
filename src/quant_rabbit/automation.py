@@ -88,6 +88,7 @@ from quant_rabbit.ai_test_bot import AITestBotBacktester
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
+from quant_rabbit.predictive_scout import predictive_scout_geometry_claimed
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_position_raw
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
@@ -794,6 +795,63 @@ def _lane_ids_excluding_preserved_pending_parents(
     )
 
 
+def _predictive_scout_lane_ids(
+    intents_path: Path,
+    lane_ids: tuple[str, ...],
+) -> set[str]:
+    """Identify claimed SCOUT lanes from the executable intent artifact."""
+
+    selected = {str(lane_id) for lane_id in lane_ids if str(lane_id)}
+    if not selected:
+        return set()
+    try:
+        payload = json.loads(intents_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return set()
+    claimed: set[str] = set()
+    for result in payload.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        lane_id = str(result.get("lane_id") or "")
+        if lane_id not in selected:
+            continue
+        intent = result.get("intent")
+        if not isinstance(intent, dict):
+            continue
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        market_context = (
+            intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+        )
+        if predictive_scout_geometry_claimed(
+            metadata,
+            pair=str(intent.get("pair") or ""),
+            side=str(intent.get("side") or ""),
+            order_type=str(intent.get("order_type") or ""),
+            method=str(market_context.get("method") or ""),
+        ):
+            claimed.add(lane_id)
+    return claimed
+
+
+def _fixed_predictive_scout_size_plan(
+    *,
+    intents_path: Path,
+    lane_ids: tuple[str, ...],
+    size_multiples: dict[str, float],
+    selected_lane_id: str | None,
+    selected_lane_size_multiple: float | None,
+) -> tuple[dict[str, float], float | None]:
+    claimed = _predictive_scout_lane_ids(intents_path, lane_ids)
+    if not claimed:
+        return dict(size_multiples), selected_lane_size_multiple
+    normalized = {
+        lane_id: (1.0 if lane_id in claimed else multiple)
+        for lane_id, multiple in size_multiples.items()
+    }
+    selected_multiple = 1.0 if selected_lane_id in claimed else selected_lane_size_multiple
+    return normalized, selected_multiple
+
+
 def _gpt_cancel_has_material_same_parent_replacement(
     *,
     order: object,
@@ -1477,6 +1535,10 @@ class AutoTradeCycle:
             return summary
         except Exception:
             try:
+                self._record_execution_ledger_receipts()
+            except Exception:
+                pass
+            try:
                 self._sync_execution_ledger()
             except Exception:
                 pass
@@ -2061,6 +2123,8 @@ class AutoTradeCycle:
                             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
                             self_improvement_audit=self.gateway_self_improvement_audit_path,
                             verified_decision_path=self.gpt_decision_path,
+                            execution_ledger_db_path=self.execution_ledger_db_path,
+                            execution_ledger_report_path=self.execution_ledger_report_path,
                         )
                         order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
                             order_gateway=order_gateway,
@@ -2284,6 +2348,8 @@ class AutoTradeCycle:
                         portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
                         self_improvement_audit=self.gateway_self_improvement_audit_path,
                         verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
+                        execution_ledger_db_path=self.execution_ledger_db_path,
+                        execution_ledger_report_path=self.execution_ledger_report_path,
                     )
                     order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
                         order_gateway=order_gateway,
@@ -2991,6 +3057,19 @@ class AutoTradeCycle:
             self._write_report(summary, generated_at)
             return summary
 
+        # Reassert the fixed SCOUT vehicle at the final AI-trader → gateway
+        # boundary.  This also protects cycles that consume a stale/external
+        # TraderDecision created before TraderBrain learned the invariant.
+        basket_size_multiples, selected_lane_size_multiple = (
+            _fixed_predictive_scout_size_plan(
+                intents_path=self.intents_path,
+                lane_ids=basket_lane_ids,
+                size_multiples=basket_size_multiples,
+                selected_lane_id=selected_lane_id,
+                selected_lane_size_multiple=selected_lane_size_multiple,
+            )
+        )
+
         order_gateway = LiveOrderGateway(
             client=self.client,
             strategy_profile=self.strategy_profile_path,
@@ -3001,6 +3080,8 @@ class AutoTradeCycle:
             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
             self_improvement_audit=self.gateway_self_improvement_audit_path,
             verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
+            execution_ledger_db_path=self.execution_ledger_db_path,
+            execution_ledger_report_path=self.execution_ledger_report_path,
         )
         if len(basket_lane_ids) > 1:
             order_summary = order_gateway.run_batch(

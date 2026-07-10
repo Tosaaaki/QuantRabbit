@@ -7,13 +7,14 @@ import re
 import sqlite3
 import subprocess
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterable, Sequence
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.forecast_precision import (
+    bidask_replay_precision_rule_digest,
     bidask_replay_negative_precision_issue,
     bidask_replay_precision_geometry_candidate,
     bidask_replay_precision_support,
@@ -25,6 +26,12 @@ from quant_rabbit.forecast_precision import (
     technical_harvest_precision_support,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.predictive_scout import (
+    PREDICTIVE_SCOUT_SOURCE,
+    predictive_scout_intent_issues,
+    predictive_scout_metadata_supported,
+    predictive_scout_policy,
+)
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAPTURE_ECONOMICS,
@@ -3158,9 +3165,9 @@ def _bidask_replay_precision_seed_lane(
             "method": TradeMethod.BREAKOUT_FAILURE.value,
             "adoption": "TRIGGER_RECEIPT_REQUIRED",
             "campaign_role": (
-                "BIDASK_REPLAY_CONTRARIAN_HARVEST"
+                "BIDASK_REPLAY_CONTRARIAN_SCOUT"
                 if is_contrarian
-                else "BIDASK_REPLAY_PRECISION_HARVEST"
+                else "BIDASK_REPLAY_PRECISION_SCOUT"
             ),
             "reason": (
                 f"{lane.get('reason') or 'S5 bid/ask replay precision seed'}; "
@@ -3170,9 +3177,10 @@ def _bidask_replay_precision_seed_lane(
                 f"daily_positive={float(candidate.get('positive_day_rate') or 0.0):.2f}"
             ),
             "required_receipt": (
-                "S5 bid/ask replay precision lane: use only a passive LIMIT retest "
-                "with attached broker TP and SL geometry matching the audited replay grid; "
-                "no market chase and no alternate TP/SL shape."
+                "Forward-SCOUT derived from a reproducible forecast-failure contrarian hypothesis: "
+                "use only a passive LIMIT retest with attached broker TP and SL. The replay proves "
+                "the source failure bucket, not this LIMIT fill vehicle; minimum production lot, "
+                "short GTD, no market chase, and no alternate TP/SL shape."
             ),
             "target_reward_risk": round(rr, 3),
             "blockers": list(lane.get("blockers") or []),
@@ -3183,10 +3191,50 @@ def _bidask_replay_precision_seed_lane(
             "bidask_replay_precision_seed": True,
             "bidask_replay_precision_limit_only": True,
             "bidask_replay_precision_seed_rule": candidate,
+            "predictive_scout": True,
+            "predictive_scout_source": PREDICTIVE_SCOUT_SOURCE,
             **_forecast_context_payload(forecast, cycle_id=cycle_id),
         }
     )
     return lane
+
+
+def _predictive_scout_runtime_metadata(
+    lane: dict[str, Any],
+    *,
+    snapshot: BrokerSnapshot,
+    data_root: Path | None,
+) -> dict[str, Any]:
+    if lane.get("predictive_scout") is not True:
+        return {}
+    root = data_root or (ROOT / "data")
+    policy = predictive_scout_policy(root.parent / "config" / "predictive_scout_policy.json")
+    max_ttl = int(_optional_float(policy.get("max_ttl_minutes")) or 0)
+    horizon = int(_optional_float(lane.get("forecast_horizon_min")) or 0)
+    ttl_minutes = min(horizon, max_ttl) if horizon > 0 and max_ttl > 0 else 0
+    generated_at = snapshot.fetched_at_utc.astimezone(timezone.utc)
+    expires_at = generated_at + timedelta(minutes=ttl_minutes)
+    rule = lane.get("bidask_replay_precision_seed_rule")
+    rule_name = str(rule.get("name") or "") if isinstance(rule, dict) else ""
+    rule_digest = bidask_replay_precision_rule_digest(rule) if isinstance(rule, dict) else ""
+    return {
+        "predictive_scout": True,
+        "predictive_scout_source": PREDICTIVE_SCOUT_SOURCE,
+        "predictive_scout_mode": "FORWARD_EVIDENCE_ONLY",
+        "predictive_scout_hypothesis": "REPRODUCIBLE_FORECAST_FAILURE_CONTRARIAN",
+        "predictive_scout_vehicle_proof_status": "UNPROVEN_PASSIVE_LIMIT",
+        "predictive_scout_rule_is_vehicle_proof": False,
+        "predictive_scout_rule_name": rule_name,
+        "predictive_scout_rule_digest": rule_digest,
+        "predictive_scout_generated_at_utc": generated_at.isoformat(),
+        "predictive_scout_expires_at_utc": expires_at.isoformat(),
+        "predictive_scout_ttl_minutes": ttl_minutes,
+        "predictive_scout_units": MIN_PRODUCTION_LOT_UNITS,
+        "predictive_scout_policy_schema_version": policy.get("schema_version"),
+        "predictive_scout_promotion_allowed": False,
+        "broker_stop_loss_mode": "INTENT_SL",
+        "predictive_scout_live_permission_claimed": False,
+    }
 
 
 def _record_forecast_seed_telemetry(
@@ -5642,7 +5690,11 @@ class IntentGenerator:
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            repair_allowed = _self_improvement_profitability_p0_repair_allowed(
+            predictive_scout_p0_allowed = _predictive_scout_p0_forward_evidence_allowed(
+                intent,
+                self_improvement_profitability_issue,
+            )
+            repair_allowed = predictive_scout_p0_allowed or _self_improvement_profitability_p0_repair_allowed(
                 intent,
                 self_improvement_profitability_issue,
             )
@@ -5670,23 +5722,42 @@ class IntentGenerator:
             ):
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
                 intent.metadata["self_improvement_p0_repair_mode"] = (
-                    SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
+                    "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+                    if predictive_scout_p0_allowed
+                    else SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
                 )
                 intent.metadata["self_improvement_p0_repair_blocker_code"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_CODE
                 )
                 intent.metadata["self_improvement_p0_repair_reason"] = (
-                    "profitability P0 is concentrated in MARKET_ORDER_TRADE_CLOSE, "
-                    "while TAKE_PROFIT_ORDER has positive expectancy; allow only this "
-                    "non-market attached-TP HARVEST receipt to collect repair evidence"
+                    (
+                        "profitability P0 remains active, but this minimum-lot passive "
+                        "LIMIT is a pre-registered daily-stable S5 bid/ask forward "
+                        "experiment. Allow only bounded SCOUT evidence collection; "
+                        "do not claim profitability repair or normal-size permission"
+                    )
+                    if predictive_scout_p0_allowed
+                    else (
+                        "profitability P0 is concentrated in MARKET_ORDER_TRADE_CLOSE, "
+                        "while TAKE_PROFIT_ORDER has positive expectancy; allow only this "
+                        "non-market attached-TP HARVEST receipt to collect repair evidence"
+                    )
                 )
                 risk_issues.append(
                     {
                         "code": SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE,
                         "message": (
-                            "self-improvement profitability P0 downgraded to repair mode "
-                            "for this non-market attached-TP HARVEST intent; all normal "
-                            "forecast, strategy, spread, risk, and gateway gates still apply"
+                            (
+                                "self-improvement profitability P0 permits only this "
+                                "minimum-lot forward SCOUT experiment; it is not a "
+                                "profitability repair claim and every other gate still applies"
+                            )
+                            if predictive_scout_p0_allowed
+                            else (
+                                "self-improvement profitability P0 downgraded to repair mode "
+                                "for this non-market attached-TP HARVEST intent; all normal "
+                                "forecast, strategy, spread, risk, and gateway gates still apply"
+                            )
                         ),
                         "severity": "WARN",
                     }
@@ -5773,6 +5844,28 @@ class IntentGenerator:
         if forecast_watch_issue is not None:
             risk_issues.append(forecast_watch_issue)
             live_blockers = (*live_blockers, forecast_watch_issue["message"])
+        predictive_scout_issues = predictive_scout_intent_issues(
+            intent,
+            snapshot=snapshot,
+            data_root=data_root or self.data_root,
+            validation_time_utc=validation_time_utc,
+        )
+        if predictive_scout_issues:
+            risk_issues.extend(predictive_scout_issues)
+            live_blockers = (
+                *live_blockers,
+                *(issue["message"] for issue in predictive_scout_issues),
+            )
+            risk_allowed = False
+        predictive_scout_loss_issue = _predictive_scout_recent_lane_loss_issue(
+            intent,
+            repair_loss_streaks,
+        )
+        if predictive_scout_loss_issue is not None:
+            risk_issues.append(predictive_scout_loss_issue)
+            if predictive_scout_loss_issue.get("severity") == "BLOCK":
+                live_blockers = (*live_blockers, predictive_scout_loss_issue["message"])
+            risk_allowed = False
         telemetry_live_issues = _telemetry_live_readiness_issues(
             intent,
             intent.metadata or {},
@@ -6306,6 +6399,9 @@ LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
+)
+PREDICTIVE_SCOUT_FORWARD_EVIDENCE_WARN_CODE = (
+    "PREDICTIVE_SCOUT_FORWARD_EVIDENCE_UNDER_NEGATIVE_EXPECTANCY"
 )
 OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE = (
     "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
@@ -8692,6 +8788,25 @@ def _capture_positive_rotation_live_issue(
             ),
             "severity": "WARN",
         }
+    if _predictive_scout_forward_evidence_allowed(intent):
+        metadata["positive_rotation_mode"] = "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+        metadata["positive_rotation_live_ready"] = False
+        metadata["positive_rotation_basis"] = (
+            "overall capture expectancy is negative, but this exact passive "
+            "LIMIT matches a pre-registered live-grade daily-stable S5 bid/ask "
+            "rule. Permit only minimum-lot forward evidence collection; this "
+            "does not prove positive expectancy or relax any other live gate"
+        )
+        return {
+            "code": PREDICTIVE_SCOUT_FORWARD_EVIDENCE_WARN_CODE,
+            "message": (
+                "capture_economics is NEGATIVE_EXPECTANCY, but this exact "
+                "daily-stable S5 bid/ask rule may collect one minimum-lot "
+                "forward SCOUT sample through the normal GPT/gateway path; "
+                "all non-profitability gates and SCOUT caps remain mandatory"
+            ),
+            "severity": "WARN",
+        }
     if _oanda_campaign_firepower_harvest_rotation_allowed(intent, data_root=data_root):
         current_firepower = _annotate_oanda_campaign_current_risk_firepower(
             metadata,
@@ -8816,6 +8931,20 @@ def _capture_positive_rotation_live_issue(
     }
 
 
+def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
+    metadata = intent.metadata or {}
+    if not predictive_scout_metadata_supported(metadata):
+        return False
+    if intent.order_type != OrderType.LIMIT or intent.entry is None:
+        return False
+    if abs(int(intent.units)) != MIN_PRODUCTION_LOT_UNITS:
+        return False
+    if not _non_market_attached_harvest_shape(intent):
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    return bool(_bidask_replay_precision_support_for_intent(intent, metadata, method))
+
+
 def _intent_from_lane(
     lane: dict[str, Any],
     quote: Quote,
@@ -8876,6 +9005,11 @@ def _intent_from_lane(
         chart_context=chart_context,
         lane=lane,
     )
+    if lane.get("predictive_scout") is True:
+        # Forward evidence starts at the broker production floor.  The normal
+        # loss and margin budgets may still reduce this to zero and block it;
+        # they must never scale a SCOUT above the minimum lot.
+        recovery_target_units = MIN_PRODUCTION_LOT_UNITS
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
         side=side,
@@ -9210,6 +9344,11 @@ def _intent_from_lane(
     if oanda_firepower_loss_cap is not None:
         effective_max_loss_jpy = oanda_firepower_loss_cap
         loss_asymmetry_metadata.update(oanda_firepower_metadata)
+    predictive_scout_metadata = _predictive_scout_runtime_metadata(
+        lane,
+        snapshot=snapshot,
+        data_root=data_root,
+    )
     geometry_metadata = _geometry_metadata(
         pair,
         side,
@@ -9334,6 +9473,7 @@ def _intent_from_lane(
             "post_harvest_source": lane.get("post_harvest_source"),
             "bidask_replay_precision_seed": bool(lane.get("bidask_replay_precision_seed")),
             "bidask_replay_precision_seed_rule": lane.get("bidask_replay_precision_seed_rule"),
+            **predictive_scout_metadata,
             "oanda_campaign_firepower_seed": bool(lane.get("oanda_campaign_firepower_seed")),
             "oanda_campaign_vehicle_key": lane.get("oanda_campaign_vehicle_key"),
             "oanda_campaign_vehicle_count": lane.get("oanda_campaign_vehicle_count"),
@@ -10039,6 +10179,19 @@ def _self_improvement_profitability_p0_repair_allowed(
     return True
 
 
+def _predictive_scout_p0_forward_evidence_allowed(
+    intent: OrderIntent,
+    p0_issue: dict[str, Any] | None,
+) -> bool:
+    """Permit measurement without pretending the active P0 is repaired."""
+
+    if not _predictive_scout_forward_evidence_allowed(intent):
+        return False
+    if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
+        return False
+    return True
+
+
 def _self_improvement_p0_repair_recent_lane_loss_issue(
     intent: OrderIntent,
     repair_loss_streaks: dict[tuple[str, str, str], SameDayLaneLossStreak] | None,
@@ -10079,6 +10232,31 @@ def _self_improvement_p0_repair_recent_lane_loss_issue(
             "a winning close resets the lane, or fresh evidence creates a different TP-backed repair lane."
         ),
         "severity": "BLOCK",
+    }
+
+
+def _predictive_scout_recent_lane_loss_issue(
+    intent: OrderIntent,
+    repair_loss_streaks: dict[tuple[str, str, str], SameDayLaneLossStreak] | None,
+) -> dict[str, str] | None:
+    if intent.metadata.get("predictive_scout") is not True or not repair_loss_streaks:
+        return None
+    method = intent.market_context.method if intent.market_context is not None else None
+    method_value = str(getattr(method, "value", method) or "").strip().upper()
+    side_value = intent.side.value.upper()
+    streak = repair_loss_streaks.get((intent.pair, side_value, method_value))
+    if streak is None or streak.consecutive_losses <= 0:
+        return None
+    intent.metadata["predictive_scout_same_day_loss_count"] = streak.consecutive_losses
+    intent.metadata["predictive_scout_same_day_loss_net_jpy"] = round(streak.net_loss_jpy, 2)
+    return {
+        "code": "PREDICTIVE_SCOUT_RECENT_LANE_LOSS_RECORDED",
+        "message": (
+            f"{intent.pair} {side_value} {method_value} already lost "
+            f"{streak.consecutive_losses} forward-SCOUT attempt(s) today "
+            f"(net {streak.net_loss_jpy:+.1f} JPY); the gateway enforces the exact-vehicle six-hour cooldown and cumulative negative-net quarantine"
+        ),
+        "severity": "WARN",
     }
 
 

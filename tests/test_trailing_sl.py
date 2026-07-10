@@ -298,6 +298,36 @@ class ApplyTrailingSlTest(unittest.TestCase):
         self.assertGreater(updates[0].new_sl, updates[0].old_sl)
         client.replace_trade_dependent_orders.assert_called_once()
 
+    def test_predictive_scout_stop_is_not_trailed(self) -> None:
+        scout = BrokerPosition(
+            trade_id="scout-1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=1000,
+            entry_price=1.17500,
+            unrealized_pl_jpy=0.0,
+            take_profit=1.18000,
+            stop_loss=1.17000,
+            owner=Owner.TRADER,
+            raw={
+                "tradeClientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                }
+            },
+        )
+        snapshot = _snapshot(positions=[scout])
+        charts = _pair_charts(EUR_USD="M15(struct=BOS_DOWN@1.17200); H1(struct=BOS_UP@1.18000)")
+        client = MagicMock()
+
+        updates = apply_trailing_sls(
+            snapshot=snapshot,
+            pair_charts_payload=charts,
+            broker_client=client,
+        )
+
+        self.assertEqual(updates, [])
+        client.replace_trade_dependent_orders.assert_not_called()
+
     def test_thesis_aligned_bos_does_not_update(self) -> None:
         # LONG position + M15/H1 both print BOS_UP (aligned, NOT against).
         # No trailing update.

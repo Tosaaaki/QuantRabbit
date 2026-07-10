@@ -207,6 +207,7 @@ data/payoff_shape_diagnosis.json|\
 data/profitability_acceptance_blocker_reconciliation.json|\
 data/remaining_profitability_p0_decomposition.json|\
 data/rolling_30d_4x_firepower_board.json|\
+data/predictive_scout_forward_proof.json|\
 data/trader_goal_loop_orchestrator.json)
       return 0
       ;;

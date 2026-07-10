@@ -76,6 +76,20 @@ export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 # The forecast must also be auditable: current forecast_history row, projection
 # ledger calibration target, and OANDA execution ledger sync all gate LIVE_READY.
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
+# Bounded forward evidence for reproducible forecast-failure contrarian rules.
+# The environment flag is only the second half of a double gate: the canonical
+# rule digest and config/predictive_scout_policy.json must also pass, and the
+# gateway still enforces LIMIT/1000u/GTD/attached TP+SL, max-two active,
+# eight broker-POST reservations/day, post-loss cooldown, and
+# cumulative-negative quarantine.
+export QR_PREDICTIVE_SCOUT_LIVE_ENABLED="${QR_PREDICTIVE_SCOUT_LIVE_ENABLED:-1}"
+case "$QR_PREDICTIVE_SCOUT_LIVE_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_PREDICTIVE_SCOUT_LIVE_ENABLED=${QR_PREDICTIVE_SCOUT_LIVE_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 # Entry sends need the fast position guardian alive so TP-progress profit can be
 # converted between full trader cycles. The gateway uses the status exported by
 # this wrapper to block new risk while still allowing position-management closes.
@@ -153,6 +167,7 @@ data/payoff_shape_diagnosis.json|\
 data/profitability_acceptance_blocker_reconciliation.json|\
 data/remaining_profitability_p0_decomposition.json|\
 data/rolling_30d_4x_firepower_board.json|\
+data/predictive_scout_forward_proof.json|\
 data/trader_goal_loop_orchestrator.json)
       return 0
       ;;

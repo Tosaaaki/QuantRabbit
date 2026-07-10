@@ -48,6 +48,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
+
 
 HYSTERESIS_PIPS = float(os.environ.get("QR_TP_REBALANCE_HYSTERESIS_PIPS", "10"))
 MIN_TP_TO_MARKET_PIPS = float(os.environ.get("QR_TP_REBALANCE_MIN_TP_TO_MARKET", "5"))
@@ -950,6 +952,12 @@ def compute_all_tp_adjustments(
     close_review_ids = close_review_trade_ids or set()
     entry_thesis_block_ids = entry_thesis_block_trade_ids or set()
     for position in positions:
+        # A predictive SCOUT is an exact forward-test vehicle: changing its
+        # broker TP after fill mixes another exit policy into the result and
+        # makes its expectancy evidence uninterpretable.  Keep the entry-time
+        # attached TP frozen; ordinary trader positions remain adaptive.
+        if predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
+            continue
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
         if not _profit_take_owner_allowed(owner_str):

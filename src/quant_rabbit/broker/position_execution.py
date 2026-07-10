@@ -11,6 +11,7 @@ from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
@@ -181,6 +182,21 @@ class PositionProtectionGateway:
                     "severity": "BLOCK",
                     "code": "NON_TRADER_POSITION",
                     "message": f"refusing to modify external position id={position.trade_id}",
+                }
+            )
+            return action
+        if (
+            predictive_scout_broker_raw_claimed(position.raw)
+            and managed.action != ACTION_HOLD_PROTECTED
+        ):
+            action["issues"].append(
+                {
+                    "severity": "BLOCK",
+                    "code": "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN",
+                    "message": (
+                        "predictive SCOUT must resolve through its exact entry-time broker TP/SL; "
+                        "position-management close and dependent-order replacement are forbidden"
+                    ),
                 }
             )
             return action

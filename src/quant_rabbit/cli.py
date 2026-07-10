@@ -58,6 +58,7 @@ from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.predictive_scout import write_predictive_scout_forward_proof
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
     ROOT,
@@ -139,6 +140,8 @@ from quant_rabbit.paths import (
     DEFAULT_OPERATOR_REVIEW_REPORT,
     DEFAULT_OPERATOR_REVIEW_REPORT_MD,
     DEFAULT_OPERATOR_MANUAL_POSITIONS,
+    DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF,
+    DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF_REPORT,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
@@ -1167,6 +1170,72 @@ def _partial_close_receipt_actions(
             }
         )
     return actions
+
+
+def _fresh_partial_close_forbidden_trade_reasons(
+    *,
+    broker_client: Any,
+    actions: Iterable[Any],
+    local_positions: Iterable[Any],
+) -> dict[str, str]:
+    """Fail closed against stale JSON and broker-visible exact SCOUT vehicles."""
+
+    from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
+
+    action_rows = list(actions)
+    reasons = {
+        str(position.trade_id): (
+            "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: partial close is forbidden for "
+            "an exact broker TP/SL forward vehicle"
+        )
+        for position in local_positions
+        if predictive_scout_broker_raw_claimed(getattr(position, "raw", None))
+    }
+    if not action_rows:
+        return reasons
+    snapshot_fn = getattr(broker_client, "snapshot", None)
+    if not callable(snapshot_fn):
+        return {
+            **reasons,
+            **{
+                str(action.trade_id): (
+                    "FRESH_BROKER_POSITION_TRUTH_REQUIRED: live partial close requires a "
+                    "fresh broker snapshot with client extensions immediately before send"
+                )
+                for action in action_rows
+            },
+        }
+    pairs = tuple(sorted({str(action.pair) for action in action_rows if str(action.pair)}))
+    try:
+        fresh_snapshot = snapshot_fn(pairs)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            **reasons,
+            **{
+                str(action.trade_id): (
+                    "FRESH_BROKER_POSITION_TRUTH_REQUIRED: live partial-close broker refresh "
+                    f"failed: {exc}"
+                )
+                for action in action_rows
+            },
+        }
+    fresh_positions = {
+        str(position.trade_id): position
+        for position in getattr(fresh_snapshot, "positions", ()) or ()
+    }
+    for action in action_rows:
+        trade_id = str(action.trade_id)
+        position = fresh_positions.get(trade_id)
+        if position is None:
+            reasons[trade_id] = (
+                "FRESH_BROKER_POSITION_NOT_FOUND: partial-close target is no longer open"
+            )
+        elif predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
+            reasons[trade_id] = (
+                "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: fresh broker truth identifies an "
+                "exact TP/SL forward vehicle"
+            )
+    return reasons
 
 
 def _record_position_execution_receipt(
@@ -2443,6 +2512,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["execution-ledger-sync"], "required": False},
         {"argv": ["tp-rebalance"], "required": False},
         {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["predictive-scout-proof"], "required": False},
         {"argv": snapshot_args, "required": True},
         {"argv": target_args, "required": True},
         {"argv": ["verify-projections"], "required": False},
@@ -2540,6 +2610,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # entries. Reprice intents before acceptance/support so the loop does
         # not rank stale LIVE_READY/frontier blockers as repair work.
         {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["predictive-scout-proof"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
@@ -2581,6 +2652,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["predictive-scout-proof"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
@@ -2619,6 +2691,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["predictive-scout-proof"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
@@ -2998,6 +3071,42 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "live_ready": len(live_ready),
             "live_ready_lane_ids": [r.get("lane_id") for r in live_ready][:12],
             "top_blockers": dict(sorted(blocker_counts.items(), key=lambda kv: -kv[1])[:10]),
+        }
+
+    scout_proof = _read_json_quiet(DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF)
+    if isinstance(scout_proof, dict):
+        scout_vehicles = [
+            vehicle
+            for vehicle in scout_proof.get("vehicles", []) or []
+            if isinstance(vehicle, dict)
+        ]
+        eligible_vehicles = [
+            vehicle
+            for vehicle in scout_vehicles
+            if vehicle.get("statistically_eligible_for_operator_review") is True
+        ]
+        digest["predictive_scout_forward_proof"] = {
+            "generated_at_utc": scout_proof.get("generated_at_utc"),
+            "status": scout_proof.get("status"),
+            "promotion_allowed": False,
+            "vehicle_count": len(scout_vehicles),
+            "eligible_vehicle_count": len(eligible_vehicles),
+            "eligible_vehicles": [
+                {
+                    "predictive_scout_vehicle_id": vehicle.get("predictive_scout_vehicle_id"),
+                    "pair": vehicle.get("pair"),
+                    "side": vehicle.get("side"),
+                    "resolved_count": vehicle.get("resolved_count"),
+                    "net_jpy": vehicle.get("net_jpy"),
+                    "profit_factor": vehicle.get("profit_factor"),
+                    "one_sided_95_mean_lower_jpy": vehicle.get(
+                        "one_sided_95_mean_lower_jpy"
+                    ),
+                    "duplicate_signal_count": vehicle.get("duplicate_signal_count"),
+                }
+                for vehicle in eligible_vehicles[:8]
+            ],
+            "requirements": scout_proof.get("requirements"),
         }
 
     attack = _read_json_quiet(DEFAULT_AI_ATTACK_ADVICE)
@@ -4318,6 +4427,11 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_QR_TRADER_RUN_WATCHDOG,
     )
     p_operator_review_report.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_operator_review_report.add_argument(
+        "--predictive-scout-forward-proof",
+        type=Path,
+        default=DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF,
+    )
     p_operator_review_report.add_argument("--output", type=Path, default=DEFAULT_OPERATOR_REVIEW_REPORT)
     p_operator_review_report.add_argument("--report", type=Path, default=DEFAULT_OPERATOR_REVIEW_REPORT_MD)
 
@@ -4333,6 +4447,27 @@ def main(argv: list[str] | None = None) -> int:
     p_ledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_ledger.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_ledger.add_argument("--since-transaction-id", default=None)
+
+    p_scout_proof = sub.add_parser(
+        "predictive-scout-proof",
+        help="Evaluate all-resolved forward SCOUT expectancy without granting live permission.",
+    )
+    p_scout_proof.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_scout_proof.add_argument(
+        "--policy",
+        type=Path,
+        default=ROOT / "config" / "predictive_scout_policy.json",
+    )
+    p_scout_proof.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF,
+    )
+    p_scout_proof.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF_REPORT,
+    )
 
     p_vledger = sub.add_parser(
         "verification-ledger-audit",
@@ -5473,7 +5608,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "stage-live-order":
+        live_lock = None
         try:
+            if args.send:
+                live_lock = _acquire_cycle_runtime_lock("stage-live-order")
             client = OandaExecutionClient()
             ledger = ExecutionLedger(db_path=args.execution_ledger_db, report_path=args.execution_ledger_report)
             ledger.sync_oanda_transactions(client)
@@ -5490,12 +5628,16 @@ def main(argv: list[str] | None = None) -> int:
                     risk_equity_jpy=args.risk_equity_jpy,
                     label="stage-live-order",
                 ),
+                execution_ledger_db_path=args.execution_ledger_db,
+                execution_ledger_report_path=args.execution_ledger_report,
             ).run(intents_path=args.intents, lane_id=args.lane_id, send=args.send, confirm_live=args.confirm_live)
             ledger.record_gateway_receipt(kind="live_order", receipt_path=args.output)
             ledger.sync_oanda_transactions(client)
         except (RuntimeError, OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
+        finally:
+            _release_cycle_runtime_lock(live_lock)
         print(
             json.dumps(
                 {
@@ -6698,6 +6840,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == "READY_FOR_REVIEW" else 2
+    if args.command == "predictive-scout-proof":
+        payload = write_predictive_scout_forward_proof(
+            db_path=args.db,
+            policy_path=args.policy,
+            json_path=args.output,
+            report_path=args.report,
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if payload.get("status") not in {"POLICY_INVALID", "LEDGER_UNAVAILABLE"} else 2
     if args.command == "execution-ledger-sync":
         try:
             summary = ExecutionLedger(db_path=args.db, report_path=args.report).sync_oanda_transactions(
@@ -7345,6 +7496,7 @@ def main(argv: list[str] | None = None) -> int:
                 guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 broker_snapshot_path=args.broker_snapshot,
+                predictive_scout_forward_proof_path=args.predictive_scout_forward_proof,
                 output_path=args.output,
                 report_path=args.report,
             ).run()
@@ -8477,6 +8629,7 @@ def main(argv: list[str] | None = None) -> int:
                     stop_loss=p.get("stop_loss"),
                     unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
                     owner=_owner_apc(p.get("owner")),
+                    raw=p.get("raw") if isinstance(p.get("raw"), dict) else {},
                 ))
             except Exception:
                 continue
@@ -8522,7 +8675,21 @@ def main(argv: list[str] | None = None) -> int:
             if live_send and actions
             else {"status": "SKIPPED", "reason": "no live close send"}
         )
-        results = apply_partial_closes(actions, client, dry_run=not live_send)
+        forbidden_trade_reasons = (
+            _fresh_partial_close_forbidden_trade_reasons(
+                broker_client=client,
+                actions=actions,
+                local_positions=positions,
+            )
+            if live_send and actions
+            else {}
+        )
+        results = apply_partial_closes(
+            actions,
+            client,
+            dry_run=not live_send,
+            forbidden_trade_reasons=forbidden_trade_reasons,
+        )
         sent_count = sum(1 for result in results if result.get("sent"))
         blocked_count = sum(1 for result in results if result.get("error"))
         if not actions:
@@ -8633,6 +8800,7 @@ def main(argv: list[str] | None = None) -> int:
                         stop_loss=p.get("stop_loss"),
                         unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
                         owner=_owner_ppc(p.get("owner")),
+                        raw=p.get("raw") if isinstance(p.get("raw"), dict) else {},
                     )
                 )
             except Exception:
@@ -8664,12 +8832,22 @@ def main(argv: list[str] | None = None) -> int:
             if args.send and actions
             else {"status": "SKIPPED", "reason": "no live close send"}
         )
+        forbidden_trade_reasons = (
+            _fresh_partial_close_forbidden_trade_reasons(
+                broker_client=client,
+                actions=actions,
+                local_positions=positions,
+            )
+            if client is not None and actions
+            else {}
+        )
         results = apply_profit_partial_closes(
             actions,
             client,
             send=args.send,
             live_enabled=live_enabled,
             confirm_live=args.confirm_live,
+            forbidden_trade_reasons=forbidden_trade_reasons,
         )
         if args.send:
             state = save_profit_partial_state_from_results(results, path=args.state, state=state)

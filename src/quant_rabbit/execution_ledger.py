@@ -140,9 +140,31 @@ class ExecutionLedger:
             self._write_report(summary)
             return summary
         payload = json.loads(receipt_path.read_text())
+        return self.record_gateway_payload(
+            kind=kind,
+            receipt_path=receipt_path,
+            payload=payload,
+        )
+
+    def record_gateway_payload(
+        self,
+        *,
+        kind: str,
+        receipt_path: Path,
+        payload: dict[str, Any],
+    ) -> ExecutionLedgerSummary:
+        """Durably index a gateway payload without requiring a prior file write."""
+
+        self._init_db()
         now = _now()
         with self._connect() as conn:
-            receipt_inserted = _insert_gateway_receipt(conn, kind=kind, path=receipt_path, payload=payload, now=now)
+            receipt_inserted = _insert_gateway_receipt(
+                conn,
+                kind=kind,
+                path=receipt_path,
+                payload=payload,
+                now=now,
+            )
             inserted_events = 0
             for event in _events_from_gateway_receipt(kind=kind, payload=payload, now=now):
                 if _insert_event(conn, event):
@@ -166,6 +188,64 @@ class ExecutionLedger:
         )
         self._write_report(summary)
         return summary
+
+    def reserve_predictive_scout_gateway_payload(
+        self,
+        *,
+        kind: str,
+        receipt_path: Path,
+        payload: dict[str, Any],
+        signal_id: str,
+        experiment_id: str,
+        vehicle_id: str,
+    ) -> bool:
+        """Atomically claim one vehicle/forecast signal and index its POST reservation."""
+
+        if not signal_id or not experiment_id or not vehicle_id:
+            raise ValueError("predictive SCOUT reservation identity is incomplete")
+        self._init_db()
+        now = _now()
+        with self._connect() as conn:
+            claim = conn.execute(
+                """
+                INSERT OR IGNORE INTO predictive_scout_signal_claims(
+                    signal_id, experiment_id, vehicle_id, reserved_at_utc, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (signal_id, experiment_id, vehicle_id, now, _json(payload)),
+            )
+            if claim.rowcount <= 0:
+                return False
+            receipt_inserted = _insert_gateway_receipt(
+                conn,
+                kind=kind,
+                path=receipt_path,
+                payload=payload,
+                now=now,
+            )
+            inserted_events = 0
+            for event in _events_from_gateway_receipt(kind=kind, payload=payload, now=now):
+                if _insert_event(conn, event):
+                    inserted_events += 1
+            inserted_observations = _insert_gateway_close_gate_observations(
+                conn,
+                kind=kind,
+                path=receipt_path,
+                payload=payload,
+                now=now,
+            )
+            reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
+        summary = ExecutionLedgerSummary(
+            db_path=self.db_path,
+            report_path=self.report_path,
+            status="PREDICTIVE_SCOUT_SIGNAL_RESERVED",
+            gateway_receipts_inserted=1 if receipt_inserted else 0,
+            events_inserted=inserted_events,
+            verification_observations_inserted=inserted_observations,
+            reconciled_gateway_events_inserted=reconciled_events,
+        )
+        self._write_report(summary)
+        return True
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -232,6 +312,15 @@ class ExecutionLedger:
                 CREATE INDEX IF NOT EXISTS idx_execution_events_trade_id ON execution_events(trade_id);
                 CREATE INDEX IF NOT EXISTS idx_execution_events_order_id ON execution_events(order_id);
                 CREATE INDEX IF NOT EXISTS idx_execution_events_type ON execution_events(event_type);
+                CREATE TABLE IF NOT EXISTS predictive_scout_signal_claims (
+                    signal_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    vehicle_id TEXT NOT NULL,
+                    reserved_at_utc TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_predictive_scout_signal_claims_vehicle
+                    ON predictive_scout_signal_claims(vehicle_id, reserved_at_utc);
                 CREATE TABLE IF NOT EXISTS verification_observations (
                     observation_uid TEXT PRIMARY KEY,
                     ts_utc TEXT NOT NULL,
@@ -310,6 +399,9 @@ def _events_from_transaction(transaction: dict[str, Any], inserted_at_utc: str) 
     return events
 
 
+_UNSET_EVENT_VALUE = object()
+
+
 def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     opened = transaction.get("tradeOpened")
@@ -328,6 +420,8 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
         )
     reduced = transaction.get("tradeReduced")
     if isinstance(reduced, dict):
+        reduced_pl = _float(reduced.get("realizedPL"))
+        reduced_financing = _float(reduced.get("financing"))
         events.append(
             _event(
                 transaction,
@@ -338,14 +432,24 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
                 side=_closed_trade_side(transaction),
                 units=_abs_int(reduced.get("units")) or _abs_int(transaction.get("units")),
                 price=_float(reduced.get("price")) or _float(transaction.get("price")),
-                realized_pl_jpy=_float(reduced.get("realizedPL")) or _float(transaction.get("pl")),
+                realized_pl_jpy=(
+                    reduced_pl if reduced_pl is not None else _float(transaction.get("pl"))
+                ),
+                financing_jpy=(
+                    reduced_financing
+                    if reduced_financing is not None
+                    else _float(transaction.get("financing"))
+                ),
             )
         )
     closed_items = transaction.get("tradesClosed")
     if isinstance(closed_items, list):
+        multi_close = sum(1 for item in closed_items if isinstance(item, dict)) > 1
         for index, closed in enumerate(closed_items):
             if not isinstance(closed, dict):
                 continue
+            closed_pl = _float(closed.get("realizedPL"))
+            closed_financing = _float(closed.get("financing"))
             events.append(
                 _event(
                     transaction,
@@ -356,7 +460,16 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
                     side=_closed_trade_side(transaction),
                     units=_abs_int(closed.get("units")) or _abs_int(transaction.get("units")),
                     price=_float(closed.get("price")) or _float(transaction.get("price")),
-                    realized_pl_jpy=_float(closed.get("realizedPL")) or _float(transaction.get("pl")),
+                    realized_pl_jpy=(
+                        closed_pl
+                        if closed_pl is not None
+                        else (None if multi_close else _float(transaction.get("pl")))
+                    ),
+                    financing_jpy=(
+                        closed_financing
+                        if closed_financing is not None
+                        else (None if multi_close else _float(transaction.get("financing")))
+                    ),
                     exit_reason=str(transaction.get("reason") or ""),
                 )
             )
@@ -435,6 +548,7 @@ def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) 
     trade_id = _response_trade_id(response)
     uid = f"gateway:live_order:{payload.get('generated_at_utc') or now}:{index}:{event_type}:{lane_id or order_id or ''}"
     units = _int(order.get("units"))
+    client_extensions = order.get("clientExtensions") if isinstance(order.get("clientExtensions"), dict) else {}
     return {
         "event_uid": uid,
         "ts_utc": str(payload.get("generated_at_utc") or now),
@@ -443,7 +557,7 @@ def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) 
         "lane_id": lane_id,
         "order_id": order_id,
         "trade_id": trade_id,
-        "client_order_id": None,
+        "client_order_id": _text(client_extensions.get("id")),
         "pair": _text(order.get("instrument")),
         "side": _side_from_units(units),
         "units": abs(units) if units is not None else None,
@@ -581,7 +695,8 @@ def _event(
     side: str | None = None,
     units: int | None = None,
     price: float | None = None,
-    realized_pl_jpy: float | None = None,
+    realized_pl_jpy: float | None | object = _UNSET_EVENT_VALUE,
+    financing_jpy: float | None | object = _UNSET_EVENT_VALUE,
     exit_reason: str | None = None,
 ) -> dict[str, Any]:
     transaction_id = str(transaction.get("id") or "")
@@ -623,8 +738,16 @@ def _event(
         "price": price if price is not None else _float(transaction.get("price")),
         "tp": _transaction_tp_price(transaction),
         "sl": _transaction_sl_price(transaction),
-        "realized_pl_jpy": realized_pl_jpy if realized_pl_jpy is not None else _float(transaction.get("pl")),
-        "financing_jpy": _float(transaction.get("financing")),
+        "realized_pl_jpy": (
+            _float(transaction.get("pl"))
+            if realized_pl_jpy is _UNSET_EVENT_VALUE
+            else realized_pl_jpy
+        ),
+        "financing_jpy": (
+            _float(transaction.get("financing"))
+            if financing_jpy is _UNSET_EVENT_VALUE
+            else financing_jpy
+        ),
         "exit_reason": exit_reason if exit_reason is not None else _text(transaction.get("reason")),
         "oanda_transaction_id": transaction_id,
         "related_transaction_ids_json": json.dumps(_related_ids(transaction), sort_keys=True),

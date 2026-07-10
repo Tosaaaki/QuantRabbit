@@ -1712,6 +1712,10 @@ from quant_rabbit.market_close_leak_gate import (
     market_close_leak_family_payload_issue,
 )
 from quant_rabbit.month_scale_residual_gate import month_scale_residual_metadata_issue
+from quant_rabbit.predictive_scout import (
+    predictive_scout_geometry_claimed,
+    predictive_scout_metadata_supported,
+)
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
     FORECAST_ADVERSE_PATH_BLOCKER_CODE,
@@ -2269,7 +2273,12 @@ class GPTTraderBrain:
         guardian_receipt_operator_review = operator_review_status_summary(
             load_guardian_receipt_operator_review(self.guardian_receipt_operator_review_path)
         )
-        pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
+        pair_set = set(_pairs_from_lanes_and_positions(lanes, snapshot))
+        for active_lane in _active_path_candidate_lanes(active_path):
+            active_pair = str(active_lane.get("pair") or "").strip()
+            if active_pair:
+                pair_set.add(active_pair)
+        pairs = tuple(sorted(pair_set))
         currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
             snapshot=snapshot,
@@ -2363,7 +2372,7 @@ class GPTTraderBrain:
                     trader_overrides.get("expires_at_utc") if isinstance(trader_overrides, dict) else None
                 ),
             },
-            "broker_snapshot": _snapshot_packet(snapshot),
+            "broker_snapshot": _snapshot_packet(snapshot, relevant_pairs=pairs),
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": attack_packet,
@@ -2539,6 +2548,26 @@ class DecisionVerifier:
         if decision.action == "TRADE":
             if not selected_lane_ids:
                 issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id or selected_lane_ids"))
+            selected_scout_lane_ids = [
+                lane_id
+                for lane_id in selected_lane_ids
+                if _lane_is_predictive_scout(self.lanes.get(lane_id))
+            ]
+            if selected_scout_lane_ids and (
+                len(selected_scout_lane_ids) != 1 or len(selected_lane_ids) != 1
+            ):
+                issues.append(
+                    VerificationIssue(
+                        "PREDICTIVE_SCOUT_SINGLE_LANE_ONLY",
+                        "a predictive SCOUT is one bounded forward experiment and cannot be mixed with another lane or basket",
+                    )
+                )
+            for scout_lane_id in selected_scout_lane_ids:
+                issues.extend(
+                    _predictive_scout_lane_verification_issues(
+                        self.lanes.get(scout_lane_id)
+                    )
+                )
             if decision.close_trade_ids:
                 issues.append(
                     VerificationIssue(
@@ -3044,7 +3073,7 @@ class DecisionVerifier:
         market_read: dict[str, Any],
         issues: list[VerificationIssue],
     ) -> None:
-        if decision.action != "TRADE":
+        if decision.action not in ENTRY_DECISION_HORIZON_ACTIONS:
             return
         selected_lane_ids = _selected_trade_lane_ids(decision)
         selected_lanes = [self.lanes.get(lane_id) for lane_id in selected_lane_ids]
@@ -3085,11 +3114,14 @@ class DecisionVerifier:
             direction = str(prediction.get("direction") or "").strip().upper()
             if not pair or not direction:
                 continue
-            basis = self._market_read_forced_entry_basis(pair, direction, forced)
-            if basis is None:
-                basis = _current_market_read_price(self.packet, pair)
+            # Horizon predictions start at broker truth now.  A pending
+            # LIMIT/STOP entry is the basis only for the forced trade's own
+            # TP/SL geometry, not for a 30m/2h market-direction forecast.
+            basis = _current_market_read_price(self.packet, pair)
             if basis is None:
                 basis = self._selected_lane_price_basis(pair, selected_lanes)
+            if basis is None:
+                basis = self._market_read_forced_entry_basis(pair, direction, forced)
             if basis is None:
                 continue
             target_numbers = _numbers(str(prediction.get("target_zone") or ""))
@@ -4273,13 +4305,14 @@ def _market_read_prediction_row(
     start_price = _current_market_read_price(packet, pair)
     if start_price is None:
         start_price = _first_number(str(forced.get("entry") or ""))
+    issue_codes = [issue.code for issue in issues]
     row = {
         "prediction_id": f"{generated_at}|{decision.action}|{pair}|{direction}",
         "generated_at_utc": generated_at,
         "recorded_at_utc": now.isoformat(),
         "action": decision.action,
         "verification_status": status,
-        "verification_issue_codes": [issue.code for issue in issues],
+        "verification_issue_codes": issue_codes,
         "selected_lane_id": decision.selected_lane_id,
         "selected_lane_ids": list(decision.selected_lane_ids),
         "pair": pair,
@@ -4298,6 +4331,7 @@ def _market_read_prediction_row(
         "verdict": "PENDING",
         "blocked_but_market_read_recorded": status != "ACCEPTED" or decision.action != "TRADE",
     }
+    row["score_eligible"] = _market_read_row_score_eligible(row)
     _apply_market_read_verdicts(row)
     return row
 
@@ -4311,6 +4345,7 @@ def _score_due_market_read_rows(
     scored: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
+        item["score_eligible"] = _market_read_row_score_eligible(item)
         pair = str(item.get("pair") or "").strip()
         price = _current_market_read_price(packet, pair)
         if price is not None:
@@ -4408,6 +4443,59 @@ def _market_read_invalidation_on_wrong_side(direction: str, basis: float, prices
     return False
 
 
+MARKET_READ_SCORE_INELIGIBLE_ISSUE_CODES = frozenset(
+    {
+        "MARKET_READ_TARGET_GEOMETRY_CONFLICT",
+        "MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT",
+        "MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT",
+    }
+)
+
+
+def _market_read_row_score_eligible(row: dict[str, Any]) -> bool:
+    """Exclude internally impossible reads while retaining blocked good reads.
+
+    REQUEST_EVIDENCE and WAIT predictions are valuable counterfactual evidence,
+    but a direction assembled with the opposite forecast's target/invalidation
+    is not a forecast outcome.  Infer geometry for legacy rows too, because
+    older accepted receipts predate the explicit ``score_eligible`` field.
+    """
+    issue_codes = {
+        str(code)
+        for code in row.get("verification_issue_codes", []) or []
+        if str(code)
+    }
+    if issue_codes & MARKET_READ_SCORE_INELIGIBLE_ISSUE_CODES:
+        return False
+    direction = str(row.get("direction") or "").strip().upper()
+    start = _optional_float(row.get("start_price"))
+    if start is not None:
+        for key in ("next_30m_prediction", "next_2h_prediction"):
+            prediction = row.get(key) if isinstance(row.get(key), dict) else {}
+            prediction_direction = str(prediction.get("direction") or direction).strip().upper()
+            targets = _numbers(str(prediction.get("target_zone") or ""))
+            invalidations = _numbers(str(prediction.get("invalidation") or ""))
+            if targets and _market_read_target_on_wrong_side(prediction_direction, start, targets):
+                return False
+            if invalidations and _market_read_invalidation_on_wrong_side(
+                prediction_direction,
+                start,
+                invalidations,
+            ):
+                return False
+    forced = row.get("best_trade_if_forced") if isinstance(row.get("best_trade_if_forced"), dict) else {}
+    forced_direction = str(forced.get("direction") or direction).strip().upper()
+    forced_entry = _first_number(str(forced.get("entry") or ""))
+    if forced_entry is not None:
+        forced_tp = _numbers(str(forced.get("tp") or ""))
+        forced_sl = _numbers(str(forced.get("sl") or ""))
+        if forced_tp and _market_read_target_on_wrong_side(forced_direction, forced_entry, forced_tp):
+            return False
+        if forced_sl and _market_read_invalidation_on_wrong_side(forced_direction, forced_entry, forced_sl):
+            return False
+    return row.get("score_eligible") is not False
+
+
 def _numbers(text: str) -> list[float]:
     values: list[float] = []
     for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", text):
@@ -4480,11 +4568,12 @@ def _write_market_read_score_report(
     now: datetime,
 ) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    eligible_rows = [row for row in rows if _market_read_row_score_eligible(row)]
     verdict_counts: dict[str, int] = {}
-    for row in rows:
+    for row in eligible_rows:
         verdict = str(row.get("verdict") or "PENDING")
         verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-    resolved = [row for row in rows if str(row.get("verdict") or "PENDING") != "PENDING"]
+    resolved = [row for row in eligible_rows if str(row.get("verdict") or "PENDING") != "PENDING"]
     correct = sum(1 for row in resolved if row.get("verdict") == "CORRECT")
     accuracy = (correct / len(resolved) * 100.0) if resolved else None
     lines = [
@@ -4492,6 +4581,8 @@ def _write_market_read_score_report(
         "",
         f"- Generated at UTC: `{now.isoformat()}`",
         f"- Predictions stored: `{len(rows)}`",
+        f"- Score-eligible predictions: `{len(eligible_rows)}`",
+        f"- Geometry-ineligible predictions: `{len(rows) - len(eligible_rows)}`",
         f"- Resolved predictions: `{len(resolved)}`",
         f"- Full-read accuracy: `{accuracy:.1f}%`" if accuracy is not None else "- Full-read accuracy: `pending`",
         "- Verdict counts: "
@@ -4505,7 +4596,8 @@ def _write_market_read_score_report(
             "- "
             f"`{row.get('generated_at_utc')}` {row.get('pair') or 'unknown'} "
             f"{row.get('direction') or 'UNKNOWN'} action=`{row.get('action')}` "
-            f"status=`{row.get('verification_status')}` verdict=`{row.get('verdict')}` "
+            f"status=`{row.get('verification_status')}` score_eligible=`{_market_read_row_score_eligible(row)}` "
+            f"verdict=`{row.get('verdict')}` "
             f"30m=`{row.get('thirty_minute_verdict')}` 2h=`{row.get('two_hour_verdict')}`"
         )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -4994,12 +5086,95 @@ def _active_path_blocker_summary(packet: dict[str, Any]) -> str:
 
 
 def _draft_candidate_lane_ids(packet: dict[str, Any], live_ready_lane_ids: list[str]) -> list[str]:
-    attack_lane_ids = _attack_recommended_tradeable_lane_ids(packet, live_ready_lane_ids)
-    ordered = list(attack_lane_ids or live_ready_lane_ids)
-    for lane_id in live_ready_lane_ids:
+    lane_map = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict)
+    }
+    ordinary_lane_ids = [
+        lane_id
+        for lane_id in live_ready_lane_ids
+        if not _lane_is_predictive_scout(lane_map.get(lane_id))
+    ]
+    scout_lane_ids = [
+        lane_id
+        for lane_id in live_ready_lane_ids
+        if _lane_is_predictive_scout(lane_map.get(lane_id))
+    ]
+    candidate_pool = ordinary_lane_ids or scout_lane_ids[:1]
+    attack_lane_ids = [
+        lane_id
+        for lane_id in _attack_recommended_tradeable_lane_ids(packet, candidate_pool)
+        if lane_id in candidate_pool
+    ]
+    ordered = list(attack_lane_ids or candidate_pool)
+    for lane_id in candidate_pool:
         if lane_id not in ordered:
             ordered.append(lane_id)
     return ordered
+
+
+def _lane_is_predictive_scout(lane: dict[str, Any] | None) -> bool:
+    if not isinstance(lane, dict):
+        return False
+    scout = lane.get("predictive_scout")
+    return bool(
+        isinstance(scout, dict)
+        and (
+            scout.get("claimed") is True
+            or (
+                scout.get("enabled") is True
+                and scout.get("canonical_rule_supported") is True
+            )
+        )
+    )
+
+
+def _predictive_scout_lane_verification_issues(
+    lane: dict[str, Any] | None,
+) -> list[VerificationIssue]:
+    if not isinstance(lane, dict):
+        return [
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_PACKET_MISSING",
+                "selected predictive SCOUT lane is absent from the verifier packet",
+            )
+        ]
+    scout = lane.get("predictive_scout")
+    if not isinstance(scout, dict) or scout.get("canonical_rule_supported") is not True:
+        return [
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_CANONICAL_RULE_REQUIRED",
+                "predictive SCOUT must carry a canonical contrarian rule and immutable digest",
+            )
+        ]
+    issues: list[VerificationIssue] = []
+    if str(lane.get("order_type") or "").upper() != "LIMIT":
+        issues.append(VerificationIssue("PREDICTIVE_SCOUT_LIMIT_ONLY", "predictive SCOUT must use LIMIT"))
+    if _optional_int(lane.get("units")) != 1000:
+        issues.append(VerificationIssue("PREDICTIVE_SCOUT_MIN_LOT_REQUIRED", "predictive SCOUT must use exactly 1000 units"))
+    if scout.get("promotion_allowed") is not False:
+        issues.append(
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_AUTO_PROMOTION_FORBIDDEN",
+                "predictive SCOUT cannot carry automatic promotion permission",
+            )
+        )
+    if str(scout.get("vehicle_proof_status") or "").upper() != "UNPROVEN_PASSIVE_LIMIT":
+        issues.append(
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_VEHICLE_PROOF_MISSTATED",
+                "historical immediate-entry replay must not be presented as proof of the passive LIMIT vehicle",
+            )
+        )
+    if scout.get("rule_is_vehicle_proof") is not False:
+        issues.append(
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_RULE_IS_NOT_VEHICLE_PROOF",
+                "the source forecast-failure rule is hypothesis evidence only",
+            )
+        )
+    return issues
 
 
 def _draft_margin_aware_basket(
@@ -5015,6 +5190,8 @@ def _draft_margin_aware_basket(
         lane = lanes_by_id.get(lane_id)
         if not lane:
             continue
+        if _lane_is_predictive_scout(lane):
+            return (lane_id,)
         pair = str(lane.get("pair") or "")
         if pair and pair in selected_pairs:
             continue
@@ -5058,35 +5235,80 @@ def _draft_market_read_first(
     side = str((lane or {}).get("direction") or "").strip().upper()
     if not side:
         side = _market_read_chart_direction(packet, pair)
+    forecast = (lane or {}).get("forecast") if isinstance((lane or {}).get("forecast"), dict) else {}
+    direction = _market_read_prediction_direction(side, forecast)
+    prediction_side = _market_read_side(direction)
     base, quote = _pair_currencies(pair)
-    bought = base if side == "LONG" else quote
-    sold = quote if side == "LONG" else base
-    if side not in {"LONG", "SHORT"}:
+    currency_side = prediction_side or side
+    bought = base if currency_side == "LONG" else quote
+    sold = quote if currency_side == "LONG" else base
+    if currency_side not in {"LONG", "SHORT"}:
         bought = base or "UNKNOWN"
         sold = quote or "UNKNOWN"
-    forecast = (lane or {}).get("forecast") if isinstance((lane or {}).get("forecast"), dict) else {}
     current_price = _current_market_read_price(packet, pair)
-    target_price = _optional_float(forecast.get("forecast_target_price")) or _optional_float((lane or {}).get("tp"))
-    invalidation_price = _optional_float(forecast.get("forecast_invalidation_price")) or _optional_float((lane or {}).get("sl"))
-    entry_price = _optional_float((lane or {}).get("entry")) or current_price
-    direction = _market_read_prediction_direction(side, forecast)
+    lane_aligned = prediction_side is not None and prediction_side == side
+    entry_price = (
+        _optional_float((lane or {}).get("entry")) if lane_aligned else current_price
+    ) or current_price
+    geometry_basis = current_price or entry_price
+    forecast_target = _market_read_valid_target_price(
+        direction,
+        geometry_basis,
+        _optional_float(forecast.get("forecast_target_price")),
+    )
+    forecast_invalidation = _market_read_valid_invalidation_price(
+        direction,
+        geometry_basis,
+        _optional_float(forecast.get("forecast_invalidation_price")),
+    )
+    lane_target = _market_read_valid_target_price(
+        direction,
+        geometry_basis,
+        _optional_float((lane or {}).get("tp")) if lane_aligned else None,
+    )
+    lane_invalidation = _market_read_valid_invalidation_price(
+        direction,
+        geometry_basis,
+        _optional_float((lane or {}).get("sl")) if lane_aligned else None,
+    )
+    target_price = forecast_target if forecast_target is not None else lane_target
+    invalidation_price = (
+        forecast_invalidation if forecast_invalidation is not None else lane_invalidation
+    )
     tape_state = _market_read_tape_state(packet, pair, lane)
     expected_path = _market_read_expected_path(packet, pair, direction, current_price, target_price)
-    invalidation = _price_sentence(invalidation_price, fallback=str((lane or {}).get("invalidation") or "structure breaks"))
+    invalidation = _price_sentence(
+        invalidation_price,
+        fallback=(
+            str((lane or {}).get("invalidation") or "structure breaks")
+            if lane_aligned
+            else "forecast invalidation unavailable; refresh forecast geometry"
+        ),
+    )
     target_zone = _price_sentence(target_price, fallback=_market_read_target_zone_from_context(packet, pair, direction))
-    vehicle = _market_read_vehicle((lane or {}).get("order_type"))
+    vehicle = _market_read_vehicle((lane or {}).get("order_type")) if lane_aligned else "MARKET"
     building_answer = _market_read_building_style_allowed(lane)
     return {
         "naked_read": {
             "currency_bought": bought or "UNKNOWN",
             "currency_sold": sold or "UNKNOWN",
             "cleanest_pair_expression": pair or "UNKNOWN_PAIR",
-            "is_cleanest_currency_theme": _market_read_cleanest_theme_answer(pair, bought, sold, lane),
+            "is_cleanest_currency_theme": _market_read_cleanest_theme_answer(
+                pair,
+                bought,
+                sold,
+                lane if lane_aligned else None,
+            ),
             "location_24h": _market_read_location_24h(lane),
-            "h1_h4_alignment": _market_read_h1_h4_alignment(lane, side),
+            "h1_h4_alignment": _market_read_h1_h4_alignment(lane, currency_side),
             "tape_state": tape_state,
-            "known_winning_trade_shape_match": _market_read_shape_match_answer(packet, lane),
-            "proposed_building_style_allowed": building_answer,
+            "known_winning_trade_shape_match": _market_read_shape_match_answer(
+                packet,
+                lane if lane_aligned else None,
+            ),
+            "proposed_building_style_allowed": (
+                building_answer if lane_aligned else "YES - SINGLE forecast hypothetical only"
+            ),
             "thesis_state": _market_read_thesis_state(lane),
             "what_price_is_trying_to_do_now": _market_read_now_sentence(packet, pair, direction, current_price),
         },
@@ -5106,12 +5328,18 @@ def _draft_market_read_first(
         },
         "best_trade_if_forced": {
             "pair": pair or "UNKNOWN_PAIR",
-            "direction": direction if direction in {"LONG", "SHORT"} else _market_read_chart_direction(packet, pair),
+            "direction": prediction_side or _market_read_chart_direction(packet, pair),
             "vehicle": vehicle,
             "entry": _price_sentence(entry_price, fallback="current executable price only after broker refresh"),
             "tp": _price_sentence(target_price, fallback=target_zone),
             "sl": _price_sentence(invalidation_price, fallback=invalidation),
-            "why_this_pays": _market_read_forced_trade_reason(packet, lane, pair, direction),
+            "why_this_pays": _market_read_forced_trade_reason(
+                packet,
+                lane,
+                pair,
+                direction,
+                lane_aligned=lane_aligned,
+            ),
         },
     }
 
@@ -5262,8 +5490,6 @@ def _pair_currencies(pair: str) -> tuple[str, str]:
 
 
 def _market_read_prediction_direction(side: str, forecast: dict[str, Any]) -> str:
-    if side in {"LONG", "SHORT"}:
-        return side
     raw = str(forecast.get("forecast_direction") or "").strip().upper()
     if raw in {"UP", "LONG", "BUY", "BULL", "BULLISH"}:
         return "LONG"
@@ -5271,7 +5497,41 @@ def _market_read_prediction_direction(side: str, forecast: dict[str, Any]) -> st
         return "SHORT"
     if raw:
         return raw
+    if side in {"LONG", "SHORT"}:
+        return side
     return "RANGE"
+
+
+def _market_read_side(direction: str) -> str | None:
+    if _market_read_longish(direction):
+        return "LONG"
+    if _market_read_shortish(direction):
+        return "SHORT"
+    return None
+
+
+def _market_read_valid_target_price(
+    direction: str,
+    basis: float | None,
+    price: float | None,
+) -> float | None:
+    if price is None:
+        return None
+    if basis is not None and _market_read_target_on_wrong_side(direction, basis, [price]):
+        return None
+    return price
+
+
+def _market_read_valid_invalidation_price(
+    direction: str,
+    basis: float | None,
+    price: float | None,
+) -> float | None:
+    if price is None:
+        return None
+    if basis is not None and _market_read_invalidation_on_wrong_side(direction, basis, [price]):
+        return None
+    return price
 
 
 def _market_read_chart_direction(packet: dict[str, Any], pair: str) -> str:
@@ -5419,7 +5679,15 @@ def _market_read_forced_trade_reason(
     lane: dict[str, Any] | None,
     pair: str,
     direction: str,
+    *,
+    lane_aligned: bool = True,
 ) -> str:
+    if lane and not lane_aligned:
+        return (
+            f"Forced trade is only a {direction} forecast-geometry hypothetical because the active "
+            "blocked lane points the other way; execution requires a newly generated aligned intent "
+            "and every normal verifier/gateway gate."
+        )
     if lane:
         risk = lane.get("risk_metrics") if isinstance(lane.get("risk_metrics"), dict) else {}
         rr = risk.get("reward_risk")
@@ -6048,6 +6316,66 @@ def _selected_trade_lane_ids(decision: GPTTraderDecision) -> tuple[str, ...]:
     return (decision.selected_lane_id,) if decision.selected_lane_id else ()
 
 
+def _predictive_scout_lane_packet(
+    intent: dict[str, Any],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    if not predictive_scout_geometry_claimed(
+        metadata,
+        pair=str(intent.get("pair") or ""),
+        side=str(intent.get("side") or ""),
+        order_type=str(intent.get("order_type") or ""),
+        method=str(market_context.get("method") or "") or None,
+    ):
+        return {}
+    rule = (
+        metadata.get("bidask_replay_precision_seed_rule")
+        if isinstance(metadata.get("bidask_replay_precision_seed_rule"), dict)
+        else {}
+    )
+    return {
+        "claimed": True,
+        "enabled": metadata.get("predictive_scout") is True,
+        "canonical_rule_supported": predictive_scout_metadata_supported(metadata),
+        "source": metadata.get("predictive_scout_source"),
+        "hypothesis": metadata.get("predictive_scout_hypothesis"),
+        "vehicle_proof_status": metadata.get("predictive_scout_vehicle_proof_status"),
+        "rule_is_vehicle_proof": metadata.get("predictive_scout_rule_is_vehicle_proof"),
+        "rule_name": metadata.get("predictive_scout_rule_name"),
+        "rule_digest": metadata.get("predictive_scout_rule_digest"),
+        "generated_at_utc": metadata.get("predictive_scout_generated_at_utc"),
+        "expires_at_utc": metadata.get("predictive_scout_expires_at_utc"),
+        "ttl_minutes": metadata.get("predictive_scout_ttl_minutes"),
+        "promotion_allowed": metadata.get("predictive_scout_promotion_allowed"),
+        "broker_stop_loss_mode": metadata.get("broker_stop_loss_mode"),
+        "order_type": intent.get("order_type"),
+        "units": intent.get("units"),
+        "rule": _small_dict(
+            rule,
+            (
+                "name",
+                "pair",
+                "side",
+                "direction",
+                "forecast_direction",
+                "contrarian_edge",
+                "horizon_bucket",
+                "confidence_bucket",
+                "samples",
+                "active_days",
+                "optimized_avg_realized_pips",
+                "optimized_profit_factor",
+                "positive_day_rate",
+                "optimized_take_profit_pips",
+                "optimized_stop_loss_pips",
+                "daily_stability_status",
+                "adoption_status",
+            ),
+        ),
+    }
+
+
 def _lane_packet(
     intents: dict[str, Any],
     campaign: dict[str, Any],
@@ -6191,6 +6519,7 @@ def _lane_packet(
                         "month_scale_residual_loss_group",
                     ),
                 ),
+                "predictive_scout": _predictive_scout_lane_packet(intent, metadata),
                 "market_close_leak_family": _small_dict(
                     metadata,
                     CLOSE_GATE_PROOF_KEYS
@@ -6260,7 +6589,11 @@ def _lane_packet(
     return capped
 
 
-def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _snapshot_packet(
+    snapshot: dict[str, Any],
+    *,
+    relevant_pairs: set[str] | None = None,
+) -> dict[str, Any]:
     orders = snapshot.get("orders", []) or []
     quotes_in = snapshot.get("quotes") or {}
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
@@ -6268,13 +6601,13 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
     # to reference in this cycle) so the verifier packet stays compact
     # but the CLOSE-discipline gate has bid/ask available to check
     # `invalidation_price` hits against current broker truth.
-    relevant_pairs: set[str] = set()
+    scoped_pairs: set[str] = set(relevant_pairs or set())
     for item in snapshot.get("positions", []) or []:
         if item.get("pair"):
-            relevant_pairs.add(str(item["pair"]))
+            scoped_pairs.add(str(item["pair"]))
     for order in orders:
         if order.get("pair"):
-            relevant_pairs.add(str(order["pair"]))
+            scoped_pairs.add(str(order["pair"]))
     scoped_quotes = {
         pair: {
             "bid": q.get("bid"),
@@ -6282,7 +6615,7 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
             "timestamp_utc": q.get("timestamp_utc"),
         }
         for pair, q in quotes_in.items()
-        if pair in relevant_pairs and isinstance(q, dict)
+        if pair in scoped_pairs and isinstance(q, dict)
     }
     return {
         "evidence_ref": "broker:snapshot",
@@ -9129,7 +9462,18 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
         repair = lane.get("self_improvement") if isinstance(lane.get("self_improvement"), dict) else {}
         if repair.get("self_improvement_p0_repair_live_ready") is not True:
             return False
-        if str(repair.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+        repair_mode = str(repair.get("self_improvement_p0_repair_mode") or "")
+        if repair_mode == "PREDICTIVE_SCOUT_FORWARD_EVIDENCE":
+            if not _lane_is_predictive_scout(lane):
+                return False
+            if str(lane.get("order_type") or "").upper() != "LIMIT":
+                return False
+            if _optional_int(lane.get("units")) != 1000:
+                return False
+            if intent_matches_profitability_worst_segment(lane, worst_segment):
+                return False
+            continue
+        if repair_mode != "TP_HARVEST_REPAIR":
             return False
         if not oanda_firepower_repair_current_risk_reaches_minimum(repair):
             return False

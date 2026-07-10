@@ -4131,6 +4131,49 @@ class CliHelpTest(unittest.TestCase):
         self.assertFalse(payload["results"][0]["sent"])
         client_cls.assert_not_called()
 
+    def test_adverse_partial_close_cli_preserves_raw_scout_role_and_skips_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "QR_DISABLE_ADVERSE_PARTIAL_CLOSE": "",
+                "QR_LIVE_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            payload = json.loads(snapshot.read_text())
+            payload["positions"][0]["raw"] = {
+                "tradeClientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                }
+            }
+            snapshot.write_text(json.dumps(payload))
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.cli.OandaExecutionClient"
+            ) as client_cls, redirect_stdout(stdout):
+                code = main(
+                    [
+                        "adverse-partial-close",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(pair_charts),
+                        *self._partial_close_artifact_args(root),
+                        "--send",
+                        "--confirm-live",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(result["status"], "NO_ACTION")
+        self.assertEqual(result["actions_count"], 0)
+        self.assertEqual(result["sent_count"], 0)
+        client_cls.assert_not_called()
+
     def test_adverse_partial_close_send_requires_confirm_live_and_live_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"QR_DISABLE_ADVERSE_PARTIAL_CLOSE": ""}, clear=False):
             root = Path(tmp)
@@ -4199,6 +4242,28 @@ class CliHelpTest(unittest.TestCase):
                     self.close_calls.append((trade_id, units, provenance))
                     return {"ok": True}
 
+                def snapshot(self, pairs) -> BrokerSnapshot:
+                    now = datetime.now(timezone.utc)
+                    return BrokerSnapshot(
+                        fetched_at_utc=now,
+                        positions=(
+                            BrokerPosition(
+                                trade_id="t-adverse",
+                                pair="EUR_USD",
+                                side=Side.LONG,
+                                units=10000,
+                                entry_price=1.2,
+                                owner=Owner.TRADER,
+                                raw={},
+                            ),
+                        ),
+                        quotes={
+                            "EUR_USD": Quote(
+                                "EUR_USD", bid=1.195, ask=1.1951, timestamp_utc=now
+                            )
+                        },
+                    )
+
             client = CloseClient()
 
             with mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=client), redirect_stdout(stdout):
@@ -4230,6 +4295,69 @@ class CliHelpTest(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(event, ("GATEWAY_TRADE_CLOSE_SENT", "ADVERSE_PARTIAL_CLOSE", "t-adverse"))
 
+    def test_adverse_partial_close_fresh_broker_scout_role_blocks_stale_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {"QR_DISABLE_ADVERSE_PARTIAL_CLOSE": "", "QR_LIVE_ENABLED": "1"},
+            clear=False,
+        ):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+
+            class ScoutClient:
+                def __init__(self) -> None:
+                    self.close_calls = []
+
+                def snapshot(self, pairs) -> BrokerSnapshot:
+                    now = datetime.now(timezone.utc)
+                    return BrokerSnapshot(
+                        fetched_at_utc=now,
+                        positions=(
+                            BrokerPosition(
+                                trade_id="t-adverse",
+                                pair="EUR_USD",
+                                side=Side.LONG,
+                                units=10000,
+                                entry_price=1.2,
+                                owner=Owner.TRADER,
+                                raw={
+                                    "tradeClientExtensions": {
+                                        "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                                    }
+                                },
+                            ),
+                        ),
+                    )
+
+                def close_trade_with_provenance(self, *args, **kwargs):
+                    self.close_calls.append((args, kwargs))
+                    return {"ok": True}
+
+            client = ScoutClient()
+            with mock.patch(
+                "quant_rabbit.cli.OandaExecutionClient", return_value=client
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "adverse-partial-close",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(pair_charts),
+                        *self._partial_close_artifact_args(root),
+                        "--send",
+                        "--confirm-live",
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "BLOCKED")
+        self.assertFalse(payload["results"][0]["sent"])
+        self.assertIn("PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN", payload["results"][0]["error"])
+        self.assertEqual(client.close_calls, [])
+
     def test_adverse_partial_close_send_syncs_broker_close_outcome(self) -> None:
         class SyncingCloseClient:
             def __init__(self) -> None:
@@ -4238,6 +4366,28 @@ class CliHelpTest(unittest.TestCase):
 
             def account_summary(self, *, now_utc=None) -> AccountSummary:
                 return AccountSummary(nav_jpy=100000.0, balance_jpy=100000.0, last_transaction_id="100")
+
+            def snapshot(self, pairs) -> BrokerSnapshot:
+                now = datetime.now(timezone.utc)
+                return BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="t-adverse",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=10000,
+                            entry_price=1.2,
+                            owner=Owner.TRADER,
+                            raw={},
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote(
+                            "EUR_USD", bid=1.195, ask=1.1951, timestamp_utc=now
+                        )
+                    },
+                )
 
             def close_trade_with_provenance(
                 self,
@@ -6906,6 +7056,50 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(digest["steps_ok"], ["broker-snapshot"])
         self.assertEqual(len(digest["steps_failed"]), 1)
         self.assertEqual(digest["steps_failed"][0]["step"], "news-health --strict")
+
+    def test_cycle_digest_surfaces_predictive_scout_operator_review_eligibility(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "predictive_scout_forward_proof.json"
+            proof_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-10T00:00:00+00:00",
+                        "status": "PROOF_ELIGIBLE_FOR_OPERATOR_REVIEW",
+                        "promotion_allowed": False,
+                        "requirements": {"minimum_resolved_exits": 30},
+                        "vehicles": [
+                            {
+                                "predictive_scout_vehicle_id": "psv-ready",
+                                "pair": "USD_CAD",
+                                "side": "LONG",
+                                "resolved_count": 30,
+                                "net_jpy": 1200.0,
+                                "profit_factor": 1.8,
+                                "one_sided_95_mean_lower_jpy": 4.0,
+                                "duplicate_signal_count": 0,
+                                "statistically_eligible_for_operator_review": True,
+                            }
+                        ],
+                    }
+                )
+            )
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF",
+                proof_path,
+            ):
+                digest = _cycle_digest(
+                    kind="cycle_refresh_digest", step_results=[], aborted=False
+                )
+
+        summary = digest["predictive_scout_forward_proof"]
+        self.assertEqual(summary["eligible_vehicle_count"], 1)
+        self.assertEqual(
+            summary["eligible_vehicles"][0]["predictive_scout_vehicle_id"],
+            "psv-ready",
+        )
+        self.assertFalse(summary["promotion_allowed"])
 
     def test_cycle_digest_uses_live_blocker_codes(self) -> None:
         from quant_rabbit.cli import _cycle_digest

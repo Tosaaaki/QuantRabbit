@@ -153,6 +153,39 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertEqual([], adjustments)
 
+    def test_predictive_scout_keeps_exact_entry_time_tp_geometry(self) -> None:
+        self._kill_switch_off()
+        position = BrokerPosition(
+            trade_id="scout-trade-1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=1000,
+            entry_price=1.3000,
+            take_profit=1.3050,
+            owner=Owner.TRADER,
+            raw={
+                "tradeClientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                }
+            },
+        )
+
+        adjustments = compute_all_tp_adjustments(
+            positions=[position],
+            quotes={"EUR_USD": {"bid": 1.3050, "ask": 1.3051}},
+            pair_charts={
+                "EUR_USD": {
+                    "pair": "EUR_USD",
+                    "views": [
+                        {"granularity": "M5", "indicators": {"atr_pips": 30.0}},
+                    ],
+                }
+            },
+            market_reward_risk_fn=lambda _context: (3.0, []),
+        )
+
+        self.assertEqual([], adjustments)
+
     def test_expand_only_mode_blocks_contraction_when_in_profit(self) -> None:
         """LONG in profit (current > entry), small desired distance
         from contracted regime. Must NOT contract — expand-only rule."""

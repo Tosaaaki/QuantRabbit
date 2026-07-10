@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "mode": "FORWARD_EVIDENCE_ONLY",
+  "allowed_sources": [
+    "BIDASK_REPLAY_PRECISION"
+  ],
+  "order_types": [
+    "LIMIT"
+  ],
+  "units": 1000,
+  "max_concurrent": 2,
+  "max_sent_per_campaign_day": 8,
+  "max_ttl_minutes": 90,
+  "minimum_replay_samples": 30,
+  "minimum_active_days": 5,
+  "minimum_profit_factor": 1.2,
+  "minimum_positive_day_rate": 0.6667,
+  "loss_cooldown_hours": 6,
+  "quarantine_after_resolved_losses": 3,
+  "quarantine_requires_negative_net": true,
+  "promotion_min_resolved_exits": 30,
+  "promotion_min_active_days": 5,
+  "promotion_min_profit_factor": 1.2,
+  "promotion_min_positive_day_rate": 0.6667,
+  "promotion_one_sided_confidence": 0.95,
+  "promotion_requires_all_resolved_exit_expectancy_lower_bound_positive": true,
+  "notes": "This policy authorizes continuous bounded 1000u forward evidence collection from reproducible contrarian forecast-failure hypotheses only. Historical S5 PF is immediate-entry hypothesis evidence, not proof of the passive LIMIT vehicle. Every vehicle+forecast-cycle signal is atomically claimed before POST; the fixed attached TP/SL is not modified by adaptive position paths. A loss forces six-hour backoff; three losses with cumulative negative net quarantine the stable selector/exit vehicle. Promotion requires all resolved forward exits with no duplicate-signal anomaly; this policy does not permit MARKET entries or relax spread/news/margin/guardian gates."
+}

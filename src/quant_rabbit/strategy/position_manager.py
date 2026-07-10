@@ -9,6 +9,7 @@ from typing import Any
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Side
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_PAIR_CHARTS,
@@ -324,6 +325,42 @@ class PositionManager:
         pair_charts: dict[str, dict[str, Any]] | None,
         full_pair_charts: dict[str, dict[str, Any]] | None,
     ) -> ManagedPosition:
+        if predictive_scout_broker_raw_claimed(position.raw):
+            # The SCOUT's attached TP/SL pair is the exit policy under test.
+            # Normal adaptive position management would turn one forward
+            # vehicle into several hidden policies and erase the meaning of a
+            # loss.  Let the broker-attached exits resolve it unchanged.
+            same_score = scores.get((position.pair, position.side.value))
+            opposite_score = scores.get((position.pair, _opposite(position.side)))
+            remaining_risk = _remaining_risk_jpy(
+                position, snapshot.quotes, snapshot.home_conversions
+            )
+            remaining_reward = _remaining_reward_jpy(
+                position, snapshot.quotes, snapshot.home_conversions
+            )
+            return ManagedPosition(
+                trade_id=position.trade_id,
+                pair=position.pair,
+                side=position.side.value,
+                units=position.units,
+                action=ACTION_HOLD_PROTECTED,
+                unrealized_pl_jpy=round(position.unrealized_pl_jpy, 4),
+                remaining_risk_jpy=(
+                    round(remaining_risk, 2) if remaining_risk is not None else None
+                ),
+                remaining_reward_jpy=(
+                    round(remaining_reward, 2) if remaining_reward is not None else None
+                ),
+                same_direction_score=same_score,
+                opposite_direction_score=opposite_score,
+                recommended_stop_loss=None,
+                recommended_take_profit=None,
+                reasons=(
+                    "predictive SCOUT exact TP/SL vehicle is broker-managed until resolution; adaptive TP/SL and market-close writes are frozen",
+                ),
+                owner=position.owner.value,
+                close_review_action=None,
+            )
         if _manual_take_profit_owner(position.owner):
             return self._manage_manual_take_profit_position(position, snapshot, scores, pair_charts)
 

@@ -41,6 +41,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
 
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
+
 
 ADVERSE_PARTIAL_TRIGGER_ATR_MULT = float(
     os.environ.get("QR_ADVERSE_PARTIAL_TRIGGER_ATR_MULT", "1.5")
@@ -175,6 +177,8 @@ def compute_all_partial_closes(
 
     actions: list[PartialCloseAction] = []
     for position in positions:
+        if predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
+            continue
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
         if owner_str.lower() != "trader":
@@ -224,6 +228,8 @@ def apply_partial_closes(
     broker_client: Any,
     *,
     dry_run: bool = False,
+    forbidden_trade_ids: set[str] | None = None,
+    forbidden_trade_reasons: dict[str, str] | None = None,
 ) -> list[dict]:
     """Send partial-close requests through provenance-aware broker close calls.
 
@@ -231,6 +237,11 @@ def apply_partial_closes(
     the others.
     """
     results: list[dict] = []
+    forbidden = {str(trade_id) for trade_id in (forbidden_trade_ids or set())}
+    forbidden_reasons = {
+        str(trade_id): str(reason)
+        for trade_id, reason in (forbidden_trade_reasons or {}).items()
+    }
     for a in actions:
         entry = {
             "trade_id": a.trade_id,
@@ -246,6 +257,14 @@ def apply_partial_closes(
             "response": None,
             "provenance": ADVERSE_PARTIAL_CLOSE_PROVENANCE,
         }
+        if str(a.trade_id) in forbidden_reasons or str(a.trade_id) in forbidden:
+            entry["error"] = forbidden_reasons.get(
+                str(a.trade_id),
+                "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: adverse partial close is forbidden "
+                "for an exact broker TP/SL forward vehicle",
+            )
+            results.append(entry)
+            continue
         if dry_run:
             results.append(entry)
             continue

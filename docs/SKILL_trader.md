@@ -111,6 +111,10 @@ export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 # generate-intents may diagnose the lane but must not emit LIVE_READY.
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
+# Predictive SCOUT is a double gate. This env flag alone grants nothing;
+# config/predictive_scout_policy.json, canonical digest, current bucket,
+# LIMIT/1000u/GTD/attached TP+SL, atomic signal claim, concurrency and loss quarantine must pass.
+export QR_PREDICTIVE_SCOUT_LIVE_ENABLED="${QR_PREDICTIVE_SCOUT_LIVE_ENABLED:-1}"
 # Controlled target-path live is an extra gate. Leave it off unless the
 # operator intentionally wants a LIVE-LEARNING target-path send through
 # LiveOrderGateway after exact pretrade/spread/pricing/fill proofs pass.
@@ -593,12 +597,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # diagnostics.
 #
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
-#   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
+#   broker-snapshot → tp-rebalance → execution-ledger-sync → predictive-scout-proof → broker-snapshot
 #   → daily-target-state → profit-partial-close → verify-projections
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution → guardian-trigger-contract
 #   → guardian-event-router
-#   → execution-ledger-sync → broker-snapshot → daily-target-state
+#   → execution-ledger-sync → predictive-scout-proof → broker-snapshot → daily-target-state
 #   → capture-economics
 #   → qr-trader-run-watchdog
 #   → guardian-receipt-consumption
@@ -829,6 +833,26 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   next_trade_enabling_action while live_permission_allowed remains false.
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
+# - predictive-scout-proof is read-only and runs after execution-ledger-sync.
+#   The S5 contrarian replay is a forecast-failure hypothesis, not proof of the
+#   passive LIMIT retest. Live evidence collection is canonical-digest bound,
+#   LIMIT-only, exactly 1000u, GTD no later than forecast horizon (max 90m),
+#   actual attached TP+intent SL, canonical TP/SL distances, at most two active
+#   SCOUTs, failure_trader/BREAKOUT_FAILURE identity, no basket/reprice/chase,
+#   and eight pre-POST reservations/day maximum.
+#   TraderBrain/AutoTradeCycle fix the size multiplier at 1.0; SQLite atomically
+#   claims one vehicle+forecast-cycle signal, so retrying the same intent cannot
+#   duplicate exposure or proof. Filled SCOUT TP/SL is frozen across position
+#   manager, position gateway, TP rebalancer, trailing-SL, and partial-close
+#   paths. The claim/check/proof DB is always the canonical execution_ledger.db
+#   beside order_intents.json; live SCOUT sends reject redirected custom DB paths.
+#   One resolved net loss starts a six-hour exact-vehicle cooldown; three
+#   resolved losses with cumulative negative net quarantine the stable selector
+#   + side + LIMIT + TP/SL vehicle. Evidence-stat refreshes cannot reset it.
+#   Generic post-invalidation auto-reversal is forbidden. Promotion remains
+#   false; cycle digest/operator-review surface eligibility only after every fill resolves,
+#   n>=30 across >=5 days, PF>=1.2, positive-day rate>=2/3, and the one-sided
+#   95% all-exit net-mean lower bound is above zero.
 # - non-eurusd-proof-lane-mapper and non-eurusd-live-grade-frontier are
 #   read-only and run after active-opportunity-board. The mapper prevents
 #   historical non-EUR/USD profit evidence from being promoted without exact

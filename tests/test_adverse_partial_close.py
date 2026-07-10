@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import unittest
 
+from quant_rabbit.models import BrokerPosition, Owner, Side
 from quant_rabbit.strategy.adverse_partial_close import (
     ADVERSE_PARTIAL_TRIGGER_ATR_MULT,
     PARTIAL_CLOSE_FRACTION,
     PartialCloseAction,
     apply_partial_closes,
+    compute_all_partial_closes,
     compute_partial_close,
 )
 
@@ -136,8 +138,63 @@ class ComputePartialCloseTest(unittest.TestCase):
         self.assertEqual(a.close_units, 3800)
         self.assertEqual(a.close_units % 100, 0)
 
+    def test_predictive_scout_is_excluded_before_partial_close_computation(self) -> None:
+        position = BrokerPosition(
+            trade_id="scout-adverse",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=10000,
+            entry_price=1.2,
+            unrealized_pl_jpy=-1000.0,
+            owner=Owner.TRADER,
+            raw={
+                "tradeClientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                }
+            },
+        )
+
+        actions = compute_all_partial_closes(
+            positions=[position],
+            quotes={"EUR_USD": {"bid": 1.1950, "ask": 1.1951}},
+            pair_charts={
+                "EUR_USD": {
+                    "confluence": {"h4_atr_pips": 20.0},
+                    "views": [],
+                }
+            },
+        )
+
+        self.assertEqual(actions, [])
+
 
 class ApplyPartialClosesTest(unittest.TestCase):
+    def test_send_boundary_blocks_predictive_scout_trade_id(self) -> None:
+        action = PartialCloseAction(
+            trade_id="scout-t1", pair="EUR_USD", side="LONG",
+            original_units=10000, close_units=5000, remaining_units=5000,
+            adverse_pips=50, atr_pips=20, rationale="test",
+        )
+
+        class MockClient:
+            calls = []
+
+            def close_trade_with_provenance(self, trade_id, units="ALL", *, provenance):
+                self.calls.append((trade_id, units, provenance))
+                return {"ok": True}
+
+        client = MockClient()
+        results = apply_partial_closes(
+            [action],
+            client,
+            dry_run=False,
+            forbidden_trade_ids={"scout-t1"},
+        )
+
+        self.assertFalse(results[0]["sent"])
+        self.assertIn("PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN", results[0]["error"])
+        self.assertEqual(client.calls, [])
+
     def test_dry_run_does_not_call_broker(self) -> None:
         action = PartialCloseAction(
             trade_id="t1", pair="EUR_USD", side="LONG",

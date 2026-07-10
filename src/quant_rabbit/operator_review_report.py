@@ -17,6 +17,7 @@ from quant_rabbit.paths import (
     DEFAULT_NON_EURUSD_PROOF_LANE_MAPPER,
     DEFAULT_OPERATOR_REVIEW_REPORT,
     DEFAULT_OPERATOR_REVIEW_REPORT_MD,
+    DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
 )
 
@@ -80,6 +81,7 @@ class OperatorReviewReport:
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         broker_snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
+        predictive_scout_forward_proof_path: Path = DEFAULT_PREDICTIVE_SCOUT_FORWARD_PROOF,
         output_path: Path = DEFAULT_OPERATOR_REVIEW_REPORT,
         report_path: Path = DEFAULT_OPERATOR_REVIEW_REPORT_MD,
         now_utc: datetime | None = None,
@@ -93,6 +95,7 @@ class OperatorReviewReport:
             "guardian_receipt_operator_review": guardian_receipt_operator_review_path,
             "qr_trader_run_watchdog": qr_trader_run_watchdog_path,
             "broker_snapshot": broker_snapshot_path,
+            "predictive_scout_forward_proof": predictive_scout_forward_proof_path,
         }
         self.output_path = output_path
         self.report_path = report_path
@@ -128,6 +131,7 @@ class OperatorReviewReport:
         consumption = artifacts["guardian_receipt_consumption"]
         guardian_review = artifacts["guardian_receipt_operator_review"]
         watchdog = artifacts["qr_trader_run_watchdog"]
+        scout_proof = artifacts["predictive_scout_forward_proof"]
 
         board_top = _top_lane_from_board(board)
         contract_top = _top_lane_from_contract(contract)
@@ -171,6 +175,9 @@ class OperatorReviewReport:
             "watchdog_state": _watchdog_summary(watchdog),
             "blockers": blockers,
             "proof_summary": _proof_summary(target_lane),
+            "predictive_scout_forward_proof": _predictive_scout_proof_summary(
+                scout_proof
+            ),
             "risk_summary": _risk_summary(target_lane, frontier, contract),
             "recommendation_summary": _recommendation_summary(
                 status=status,
@@ -191,6 +198,11 @@ def render_operator_review_report(payload: dict[str, Any]) -> str:
     lane = payload.get("target_lane") if isinstance(payload.get("target_lane"), dict) else {}
     guardian = payload.get("guardian_receipt_state") if isinstance(payload.get("guardian_receipt_state"), dict) else {}
     proof = payload.get("proof_summary") if isinstance(payload.get("proof_summary"), dict) else {}
+    scout_proof = (
+        payload.get("predictive_scout_forward_proof")
+        if isinstance(payload.get("predictive_scout_forward_proof"), dict)
+        else {}
+    )
     risk = payload.get("risk_summary") if isinstance(payload.get("risk_summary"), dict) else {}
     recommendation = (
         payload.get("recommendation_summary") if isinstance(payload.get("recommendation_summary"), dict) else {}
@@ -232,6 +244,9 @@ def render_operator_review_report(payload: dict[str, Any]) -> str:
         f"- Replay status: `{risk.get('replay_status')}`",
         f"- Spread status: `{risk.get('spread_status')}`",
         f"- Bid/ask status: `{risk.get('bidask_status')}`",
+        f"- Predictive SCOUT proof status: `{scout_proof.get('status')}`",
+        f"- Predictive SCOUT eligible vehicles: `{scout_proof.get('eligible_vehicle_count')}`",
+        f"- Predictive SCOUT automatic promotion allowed: `{scout_proof.get('promotion_allowed')}`",
         "",
         "## Blockers",
         "",
@@ -285,6 +300,47 @@ def _source_summary(artifact: dict[str, Any]) -> dict[str, Any]:
         "status": artifact.get("status"),
         "normal_routing_allowed": artifact.get("normal_routing_allowed"),
         "live_permission_allowed": artifact.get("live_permission_allowed"),
+    }
+
+
+def _predictive_scout_proof_summary(artifact: dict[str, Any]) -> dict[str, Any]:
+    vehicles = [
+        vehicle
+        for vehicle in artifact.get("vehicles", []) or []
+        if isinstance(vehicle, dict)
+    ]
+    eligible = [
+        vehicle
+        for vehicle in vehicles
+        if vehicle.get("statistically_eligible_for_operator_review") is True
+    ]
+    return {
+        "artifact_status": artifact.get("_artifact_status"),
+        "generated_at_utc": artifact.get("generated_at_utc"),
+        "status": artifact.get("status"),
+        "promotion_allowed": False,
+        "future_profit_guaranteed": False,
+        "vehicle_count": len(vehicles),
+        "eligible_vehicle_count": len(eligible),
+        "eligible_vehicles": [
+            {
+                "predictive_scout_vehicle_id": vehicle.get(
+                    "predictive_scout_vehicle_id"
+                ),
+                "pair": vehicle.get("pair"),
+                "side": vehicle.get("side"),
+                "resolved_count": vehicle.get("resolved_count"),
+                "net_jpy": vehicle.get("net_jpy"),
+                "profit_factor": vehicle.get("profit_factor"),
+                "one_sided_95_mean_lower_jpy": vehicle.get(
+                    "one_sided_95_mean_lower_jpy"
+                ),
+                "positive_day_rate": vehicle.get("positive_day_rate"),
+                "duplicate_signal_count": vehicle.get("duplicate_signal_count"),
+            }
+            for vehicle in eligible
+        ],
+        "requirements": artifact.get("requirements"),
     }
 
 

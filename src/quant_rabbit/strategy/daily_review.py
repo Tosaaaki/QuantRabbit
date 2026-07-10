@@ -626,6 +626,8 @@ def _market_read_review(
     base = {
         "status": "NO_MARKET_READ_SCORE_PATH",
         "total_predictions": 0,
+        "score_eligible_predictions": 0,
+        "geometry_ineligible_predictions": 0,
         "resolved_predictions": 0,
         "pending_predictions": 0,
         "verdict_counts": {},
@@ -671,14 +673,15 @@ def _market_read_review(
         out.update({"status": "UNREADABLE", "path": str(path), "error": str(exc)})
         return out
 
+    score_rows = [row for row in rows if _market_read_score_eligible(row)]
     verdict_counts: dict[str, int] = {}
-    for row in rows:
+    for row in score_rows:
         verdict = str(row.get("verdict") or "PENDING")
         verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-    resolved = [row for row in rows if str(row.get("verdict") or "PENDING") != "PENDING"]
-    pending = [row for row in rows if str(row.get("verdict") or "PENDING") == "PENDING"]
-    resolved_30m = [row for row in rows if str(row.get("thirty_minute_verdict") or "PENDING") != "PENDING"]
-    resolved_2h = [row for row in rows if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"]
+    resolved = [row for row in score_rows if str(row.get("verdict") or "PENDING") != "PENDING"]
+    pending = [row for row in score_rows if str(row.get("verdict") or "PENDING") == "PENDING"]
+    resolved_30m = [row for row in score_rows if str(row.get("thirty_minute_verdict") or "PENDING") != "PENDING"]
+    resolved_2h = [row for row in score_rows if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"]
 
     blocked_correct = [
         row for row in resolved
@@ -703,6 +706,7 @@ def _market_read_review(
                 "direction": row.get("direction"),
                 "action": row.get("action"),
                 "verification_status": row.get("verification_status"),
+                "score_eligible": _market_read_score_eligible(row),
                 "verdict": row.get("verdict"),
                 "thirty_minute_verdict": row.get("thirty_minute_verdict"),
                 "two_hour_verdict": row.get("two_hour_verdict"),
@@ -714,6 +718,8 @@ def _market_read_review(
         "path": str(path),
         "malformed_rows": malformed,
         "total_predictions": len(rows),
+        "score_eligible_predictions": len(score_rows),
+        "geometry_ineligible_predictions": len(rows) - len(score_rows),
         "resolved_predictions": len(resolved),
         "pending_predictions": len(pending),
         "verdict_counts": verdict_counts,
@@ -736,6 +742,87 @@ def _market_read_review(
         "codex_vs_operator_manual_trade": "UNKNOWN_NO_OPERATOR_MANUAL_COMPARISON",
         "examples": examples,
     }
+
+
+_MARKET_READ_GEOMETRY_ISSUE_CODES = frozenset(
+    {
+        "MARKET_READ_TARGET_GEOMETRY_CONFLICT",
+        "MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT",
+        "MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT",
+    }
+)
+
+
+def _market_read_score_eligible(row: dict[str, Any]) -> bool:
+    issue_codes = {
+        str(code)
+        for code in row.get("verification_issue_codes", []) or []
+        if str(code)
+    }
+    if issue_codes & _MARKET_READ_GEOMETRY_ISSUE_CODES:
+        return False
+    direction = str(row.get("direction") or "").strip().upper()
+    start = _float_value(row.get("start_price"))
+    if start is not None:
+        for key in ("next_30m_prediction", "next_2h_prediction"):
+            prediction = row.get(key) if isinstance(row.get(key), dict) else {}
+            prediction_direction = str(prediction.get("direction") or direction).strip().upper()
+            targets = _market_read_numbers(prediction.get("target_zone"))
+            invalidations = _market_read_numbers(prediction.get("invalidation"))
+            if _market_read_target_wrong_side(prediction_direction, start, targets):
+                return False
+            if _market_read_invalidation_wrong_side(prediction_direction, start, invalidations):
+                return False
+    forced = row.get("best_trade_if_forced") if isinstance(row.get("best_trade_if_forced"), dict) else {}
+    forced_entry_values = _market_read_numbers(forced.get("entry"))
+    if forced_entry_values:
+        forced_entry = forced_entry_values[0]
+        forced_direction = str(forced.get("direction") or direction).strip().upper()
+        if _market_read_target_wrong_side(
+            forced_direction,
+            forced_entry,
+            _market_read_numbers(forced.get("tp")),
+        ):
+            return False
+        if _market_read_invalidation_wrong_side(
+            forced_direction,
+            forced_entry,
+            _market_read_numbers(forced.get("sl")),
+        ):
+            return False
+    return row.get("score_eligible") is not False
+
+
+def _market_read_numbers(value: object) -> list[float]:
+    import re
+
+    values: list[float] = []
+    for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", str(value or "")):
+        try:
+            values.append(float(match.group(0)))
+        except ValueError:
+            continue
+    return values
+
+
+def _market_read_target_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
+    if not prices:
+        return False
+    if direction in {"LONG", "BUY", "UP", "BULL", "BULLISH"}:
+        return max(prices) <= basis
+    if direction in {"SHORT", "SELL", "DOWN", "BEAR", "BEARISH"}:
+        return min(prices) >= basis
+    return False
+
+
+def _market_read_invalidation_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
+    if not prices:
+        return False
+    if direction in {"LONG", "BUY", "UP", "BULL", "BULLISH"}:
+        return min(prices) >= basis
+    if direction in {"SHORT", "SELL", "DOWN", "BEAR", "BEARISH"}:
+        return max(prices) <= basis
+    return False
 
 
 def _pct(numerator: int, denominator: int) -> float | None:
@@ -997,9 +1084,14 @@ def compute_daily_review(
             f"({latest_alpha.get('classification') or 'USER_ALPHA'})"
         )
     if market_read.get("total_predictions"):
+        eligible_predictions = market_read.get(
+            "score_eligible_predictions",
+            market_read.get("total_predictions", 0),
+        )
         parts.append(
             "market-read: "
-            f"{market_read.get('resolved_predictions', 0)}/{market_read.get('total_predictions', 0)} resolved "
+            f"{market_read.get('resolved_predictions', 0)}/{eligible_predictions} score-eligible resolved "
+            f"excluded_geometry={market_read.get('geometry_ineligible_predictions', 0)} "
             f"full_accuracy={market_read.get('full_read_accuracy_pct')}"
         )
     if not parts:

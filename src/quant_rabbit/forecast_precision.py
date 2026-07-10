@@ -8,6 +8,7 @@ confidence and an execution-aware target-width check.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import math
 import os
@@ -2068,6 +2069,89 @@ def _bidask_replay_rule_sets(
             "reason": "missing_or_empty_rule_file",
         },
     )
+
+
+def canonical_bidask_replay_precision_rule(
+    rule_name: str,
+    rules_path: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Return one immutable packaged replay rule by exact name.
+
+    Live metadata is attacker- and model-controlled JSON.  A copied
+    ``live_grade=true`` flag is therefore not evidence.  SCOUT callers use
+    this lookup (and the digest below) to bind an embedded rule to the current
+    configured rule set before any profile or profitability exception applies.
+    """
+
+    name = str(rule_name or "").strip()
+    if not name:
+        return None
+    edge, _negative, contrarian, _source = _bidask_replay_rule_sets(rules_path)
+    matches = [rule for rule in (*edge, *contrarian) if str(rule.get("name") or "") == name]
+    if len(matches) != 1:
+        return None
+    return _bidask_replay_geometry_payload(matches[0])
+
+
+def bidask_replay_precision_rule_digest(rule: dict[str, Any]) -> str:
+    """Stable digest for the rule fields that define the replay hypothesis."""
+
+    raw_payload = _bidask_replay_geometry_payload(rule) if _rule_has_positive_geometry(rule) else dict(rule)
+    # Provenance is useful for audit, but it is not a new vehicle.  Hash only
+    # selector, evidence, adoption, and executable geometry so repackaging the
+    # same rule with a new timestamp/path cannot erase a prior loss quarantine.
+    semantic_fields = (
+        "name",
+        "pair",
+        "side",
+        "direction",
+        "forecast_direction",
+        "faded_direction",
+        "contrarian_edge",
+        "horizon_bucket",
+        "confidence_bucket",
+        "granularity",
+        "samples",
+        "source_directional_hit_rate",
+        "source_avg_final_pips",
+        "source_avg_mfe_pips",
+        "source_avg_mae_pips",
+        "directional_hit_rate",
+        "avg_final_pips",
+        "median_final_pips",
+        "avg_mfe_pips",
+        "avg_mae_pips",
+        "optimized_take_profit_pips",
+        "optimized_stop_loss_pips",
+        "optimized_avg_realized_pips",
+        "optimized_win_rate",
+        "optimized_profit_factor",
+        "adoption_status",
+        "live_grade",
+        "adoption_blockers",
+        "daily_stability_status",
+        "campaign_timezone",
+        "active_days",
+        "min_daily_samples",
+        "max_daily_samples",
+        "avg_daily_samples",
+        "max_daily_sample_share",
+        "positive_days",
+        "negative_days",
+        "flat_days",
+        "positive_day_rate",
+        "avg_daily_realized_pips",
+        "worst_daily_realized_pips",
+        "best_daily_realized_pips",
+        "scalp_tp_pips",
+        "scalp_stop_pips",
+        "min_target_pips",
+        "max_target_pips",
+        "max_stop_pips",
+    )
+    payload = {key: raw_payload[key] for key in semantic_fields if key in raw_payload}
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 @functools.lru_cache(maxsize=8)

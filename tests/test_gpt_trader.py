@@ -21,6 +21,8 @@ from quant_rabbit.month_scale_residual_gate import (
 from quant_rabbit.gpt_trader import (
     GPTTraderBrain,
     StaticTraderProvider,
+    _draft_candidate_lane_ids,
+    _draft_margin_aware_basket,
     draft_trader_decision,
     post_stop_thesis_review,
 )
@@ -30,6 +32,39 @@ LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
 
 
 class GPTTraderBrainTest(unittest.TestCase):
+    def test_draft_never_mixes_predictive_scout_with_normal_or_scout_basket(self) -> None:
+        ordinary_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+        scout_a = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+        scout_b = "failure_trader:USD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"
+        scout_packet = {
+            "enabled": True,
+            "canonical_rule_supported": True,
+            "promotion_allowed": False,
+            "vehicle_proof_status": "UNPROVEN_PASSIVE_LIMIT",
+            "rule_is_vehicle_proof": False,
+        }
+        packet = {
+            "lanes": [
+                {"lane_id": ordinary_id, "pair": "EUR_USD", "predictive_scout": {}},
+                {"lane_id": scout_a, "pair": "USD_CAD", "predictive_scout": scout_packet},
+                {"lane_id": scout_b, "pair": "USD_JPY", "predictive_scout": scout_packet},
+            ]
+        }
+
+        self.assertEqual(
+            _draft_candidate_lane_ids(packet, [scout_a, ordinary_id, scout_b]),
+            [ordinary_id],
+        )
+        self.assertEqual(
+            _draft_candidate_lane_ids(packet, [scout_a, scout_b]),
+            [scout_a],
+        )
+        lanes_by_id = {str(item["lane_id"]): item for item in packet["lanes"]}
+        self.assertEqual(
+            _draft_margin_aware_basket(packet, [scout_a, scout_b], lanes_by_id),
+            (scout_a,),
+        )
+
     def test_post_stop_thesis_review_marks_noise_stop_for_reentry(self) -> None:
         review = post_stop_thesis_review(
             {
@@ -147,6 +182,36 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("MARKET_READ_TARGET_GEOMETRY_CONFLICT", codes)
             self.assertIn("MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT", codes)
             self.assertIn("MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT", codes)
+
+    def test_rejects_request_evidence_when_market_read_geometry_is_inverted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _wait_decision()
+            decision["action"] = "REQUEST_EVIDENCE"
+            decision["market_read_first"] = _market_read_first(
+                pair="EUR_USD",
+                direction="SHORT",
+            )
+            decision["thesis"] = (
+                "MARKET READ FIRST next 30m/next 2h EUR_USD SHORT is recorded before requesting evidence."
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_TARGET_GEOMETRY_CONFLICT", codes)
+            self.assertIn("MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT", codes)
+            self.assertIn("MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT", codes)
+            rows = [
+                json.loads(line)
+                for line in (root / "market_read_predictions.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertFalse(rows[-1]["score_eligible"])
 
     def test_rejects_live_ready_zero_without_naked_market_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -316,6 +381,57 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn(f"active:lane:{usd_cad_lane_id}", decision["evidence_refs"])
             self.assertIn(usd_cad_lane_id, " ".join(decision["risk_notes"]))
             self.assertIsNone(decision["specialist_reviews"][0]["lane_id"])
+
+    def test_draft_uses_forecast_direction_when_blocked_lane_points_the_other_way(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            lane = _result(
+                lane_id="trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
+                method="TREND_CONTINUATION",
+                pair="AUD_JPY",
+                side="SHORT",
+                metadata={
+                    "forecast_direction": "UP",
+                    "forecast_confidence": 0.20,
+                    "forecast_target_price": 112.444,
+                    "forecast_invalidation_price": 112.203,
+                },
+            )
+            lane["status"] = "DRY_RUN_BLOCKED"
+            lane["live_blockers"] = ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]
+            lane["intent"].update(
+                {
+                    "entry": 112.284,
+                    "tp": 111.423,
+                    "sl": 112.706,
+                }
+            )
+            files["intents"].write_text(json.dumps({"results": [lane]}))
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["AUD_JPY"] = {
+                "bid": 112.323,
+                "ask": 112.325,
+                "timestamp_utc": snapshot["fetched_at_utc"],
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.action, "REQUEST_EVIDENCE")
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            market_read = decision["market_read_first"]
+            self.assertEqual(market_read["naked_read"]["currency_bought"], "AUD")
+            self.assertEqual(market_read["naked_read"]["currency_sold"], "JPY")
+            self.assertEqual(market_read["next_30m_prediction"]["direction"], "LONG")
+            self.assertEqual(market_read["next_30m_prediction"]["target_zone"], "112.444")
+            self.assertEqual(market_read["next_30m_prediction"]["invalidation"], "112.203")
+            forced = market_read["best_trade_if_forced"]
+            self.assertEqual(forced["direction"], "LONG")
+            self.assertEqual(forced["vehicle"], "MARKET")
+            self.assertEqual(forced["entry"], "112.324")
+            self.assertEqual(forced["tp"], "112.444")
+            self.assertEqual(forced["sl"], "112.203")
 
     def test_draft_focuses_parallel_non_eurusd_frontier_when_board_top_is_eurusd(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3927,6 +4043,15 @@ class GPTTraderBrainTest(unittest.TestCase):
             files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
             _write_fresh_forecast_close_recommendation(root, files, side="LONG")
             decision = _trade_decision()
+            decision["market_read_first"]["next_30m_prediction"].update(
+                {"target_zone": "1.1780", "invalidation": "1.1750"}
+            )
+            decision["market_read_first"]["next_2h_prediction"].update(
+                {"target_zone": "1.1800", "invalidation": "1.1750"}
+            )
+            decision["market_read_first"]["best_trade_if_forced"].update(
+                {"entry": "1.1762", "tp": "1.1800", "sl": "1.1750"}
+            )
             decision["evidence_refs"].append("position:persistence:555")
             brain = _brain(root, files, decision)
 

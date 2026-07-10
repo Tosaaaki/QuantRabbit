@@ -72,6 +72,49 @@ class _NonmatchingBidaskRulesMixin:
 
 class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
 
+    def test_predictive_scout_score_cannot_resize_fixed_1000_unit_vehicle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            result = _result(lane_id, "EUR_USD", "LONG", "TREND_CONTINUATION")
+            result["intent"] = {
+                **result["intent"],
+                "order_type": "LIMIT",
+                "metadata": {"campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT"},
+            }
+            intents_path = root / "intents.json"
+            intents_path.write_text(json.dumps({"results": [result]}))
+            settings_path = root / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "score_bias": 100.0,
+                        "score_size_enabled": True,
+                        "size_multiple_anchor_score": 0.0,
+                        "size_multiple_per_score_point": 0.01,
+                        "size_multiple_min": 0.7,
+                        "size_multiple_max": 1.8,
+                    }
+                )
+            )
+            brain = TraderBrain(
+                intents_path=intents_path,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=settings_path,
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+        self.assertEqual(decision.scores[0].size_multiple, 1.0)
+        self.assertIn("fixes score sizing", " ".join(decision.scores[0].rationale))
+
     def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:
         policy = RiskPolicy()
 

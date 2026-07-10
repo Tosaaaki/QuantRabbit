@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.execution_ledger import ExecutionLedger, _events_from_transaction
 from quant_rabbit.models import AccountSummary
 from quant_rabbit.strategy.entry_thesis_ledger import (
     PendingEntryThesis,
@@ -17,6 +17,52 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
 
 
 class ExecutionLedgerTest(unittest.TestCase):
+    def test_multi_trade_close_preserves_nested_zero_pl_and_trade_financing(self) -> None:
+        events = _events_from_transaction(
+            {
+                "id": "multi-close-1",
+                "type": "ORDER_FILL",
+                "time": "2026-07-10T00:00:00Z",
+                "instrument": "EUR_USD",
+                "units": "-2000",
+                "pl": "100.0",
+                "financing": "-9.0",
+                "reason": "MARKET_ORDER_TRADE_CLOSE",
+                "tradesClosed": [
+                    {
+                        "tradeID": "scout-trade",
+                        "units": "1000",
+                        "price": "1.17000",
+                        "realizedPL": "0.0",
+                        "financing": "1.0",
+                    },
+                    {
+                        "tradeID": "normal-trade",
+                        "units": "1000",
+                        "price": "1.17000",
+                        "realizedPL": "100.0",
+                        "financing": "-10.0",
+                    },
+                ],
+            },
+            "2026-07-10T00:00:01Z",
+        )
+
+        self.assertEqual(
+            [
+                (
+                    event["trade_id"],
+                    event["realized_pl_jpy"],
+                    event["financing_jpy"],
+                )
+                for event in events
+            ],
+            [
+                ("scout-trade", 0.0, 1.0),
+                ("normal-trade", 100.0, -10.0),
+            ],
+        )
+
     def test_syncs_oanda_transactions_raw_and_normalized_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

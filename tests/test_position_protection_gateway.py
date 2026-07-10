@@ -23,6 +23,35 @@ from quant_rabbit.strategy.position_manager import (
 
 
 class PositionProtectionGatewayTest(unittest.TestCase):
+    def test_predictive_scout_rejects_stale_exit_management_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_PROFIT_PROTECT, stop=1.1729, take_profit=1.1750),
+                snapshot=_snapshot(
+                    raw={
+                        "tradeClientExtensions": {
+                            "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                        }
+                    }
+                ),
+                send=True,
+            )
+
+            report = (root / "exec.md").read_text()
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.dependent_orders, [])
+        self.assertEqual(client.closed, [])
+        self.assertIn("PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN", report)
+
     def test_stages_break_even_stop_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

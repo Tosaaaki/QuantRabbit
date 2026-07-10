@@ -4,9 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from quant_rabbit.models import BrokerPosition, Owner, Side
 from quant_rabbit.strategy.profit_partial_close import (
     ProfitPartialCloseAction,
     apply_profit_partial_closes,
+    compute_all_profit_partial_closes,
     compute_profit_partial_close,
     save_profit_partial_state_from_results,
 )
@@ -99,6 +101,34 @@ class ComputeProfitPartialCloseTest(unittest.TestCase):
 
         self.assertIsNone(action)
 
+    def test_predictive_scout_is_excluded_before_profit_partial_computation(self) -> None:
+        position = BrokerPosition(
+            trade_id="scout-profit",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=10000,
+            entry_price=1.3000,
+            owner=Owner.TRADER,
+            raw={
+                "tradeClientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT vehicle=psv-test"
+                }
+            },
+        )
+
+        actions = compute_all_profit_partial_closes(
+            positions=[position],
+            quotes={"EUR_USD": {"bid": 1.3030, "ask": 1.3031}},
+            pair_charts={
+                "EUR_USD": {
+                    "confluence": {"h4_atr_pips": 20.0},
+                    "views": [],
+                }
+            },
+        )
+
+        self.assertEqual(actions, [])
+
 
 class ApplyProfitPartialCloseTest(unittest.TestCase):
     def _action(self) -> ProfitPartialCloseAction:
@@ -129,6 +159,31 @@ class ApplyProfitPartialCloseTest(unittest.TestCase):
 
         self.assertFalse(results[0]["sent"])
         self.assertIn("LIVE_DISABLED", results[0]["error"])
+
+    def test_send_boundary_blocks_fresh_broker_scout_trade(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def close_trade_with_provenance(self, trade_id, units="ALL", *, provenance):
+                self.calls.append((trade_id, units, provenance))
+                return {"ok": True}
+
+        client = Client()
+        results = apply_profit_partial_closes(
+            [self._action()],
+            broker_client=client,
+            send=True,
+            live_enabled=True,
+            confirm_live=True,
+            forbidden_trade_reasons={
+                "t4": "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: fresh broker truth"
+            },
+        )
+
+        self.assertFalse(results[0]["sent"])
+        self.assertIn("PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN", results[0]["error"])
+        self.assertEqual(client.calls, [])
 
     def test_live_send_blocks_raw_close_fallback(self) -> None:
         class Client:

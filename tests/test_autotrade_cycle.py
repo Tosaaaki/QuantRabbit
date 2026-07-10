@@ -20,6 +20,7 @@ from quant_rabbit.automation import (
     _gpt_lanes_pass_prefilter_or_recovery,
     _cycle_perspective_alignment_parts,
     _filtered_gpt_trade_cancel_order_ids,
+    _fixed_predictive_scout_size_plan,
     _passes_gpt_prefilter,
     _snapshot_to_json,
 )
@@ -3394,6 +3395,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 pair="EUR_USD",
                 method="RANGE_ROTATION",
                 direction="SHORT",
+                reference_price=1.16060,
             )
             gpt_decision["selected_lane_ids"] = [invalid_lane]
             gpt_decision["cancel_order_ids"] = [pending.order_id]
@@ -3538,6 +3540,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 pair="NZD_CAD",
                 method="RANGE_ROTATION",
                 direction="SHORT",
+                reference_price=0.81346,
             )
             gpt_decision["selected_lane_ids"] = [gpt_lane]
             gpt_decision["cancel_order_ids"] = [pending.order_id]
@@ -6422,7 +6425,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 receipt_promotion_report_path=root / "promotion.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
-                    _gpt_trade_decision(lane_id=rejected_lane, pair="AUD_JPY", method="BREAKOUT_FAILURE")
+                    _gpt_trade_decision(
+                        lane_id=rejected_lane,
+                        pair="AUD_JPY",
+                        method="BREAKOUT_FAILURE",
+                        reference_price=113.104,
+                    )
                 ),
                 refresh_market_story=False,
                 live_enabled=True,
@@ -6514,6 +6522,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                             pair="EUR_USD",
                             method="TREND_CONTINUATION",
                             direction="SHORT",
+                            reference_price=1.16076,
                         )
                     ),
                     reuse_market_artifacts=True,
@@ -8001,10 +8010,15 @@ def _gpt_trade_decision(
     pair: str = "EUR_USD",
     method: str = "TREND_CONTINUATION",
     direction: str = "LONG",
+    reference_price: float | None = None,
 ) -> dict:
     return {
         "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
-        "market_read_first": _gpt_market_read_first(pair=pair, direction=direction),
+        "market_read_first": _gpt_market_read_first(
+            pair=pair,
+            direction=direction,
+            reference_price=reference_price,
+        ),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
@@ -8032,20 +8046,25 @@ def _gpt_trade_decision(
     }
 
 
-def _gpt_market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dict:
+def _gpt_market_read_first(
+    *,
+    pair: str = "EUR_USD",
+    direction: str = "LONG",
+    reference_price: float | None = None,
+) -> dict:
     base, quote = pair.split("_", 1) if "_" in pair else (pair, "USD")
     bought = base if direction == "LONG" else quote
     sold = quote if direction == "LONG" else base
     if pair.endswith("_JPY"):
-        entry = 112.00 if pair.startswith("AUD_") else 157.40
+        entry = reference_price if reference_price is not None else (112.00 if pair.startswith("AUD_") else 157.40)
         target_30 = entry + 0.60 if direction == "LONG" else entry - 0.60
         target_2h = entry + 1.00 if direction == "LONG" else entry - 1.00
         invalidation = entry - 0.40 if direction == "LONG" else entry + 0.40
     else:
-        entry = 1.1730
-        target_30 = 1.1740 if direction == "LONG" else 1.1720
-        target_2h = 1.1760 if direction == "LONG" else 1.1700
-        invalidation = 1.1700 if direction == "LONG" else 1.1760
+        entry = reference_price if reference_price is not None else 1.1730
+        target_30 = entry + 0.0010 if direction == "LONG" else entry - 0.0010
+        target_2h = entry + 0.0030 if direction == "LONG" else entry - 0.0030
+        invalidation = entry - 0.0030 if direction == "LONG" else entry + 0.0030
     return {
         "naked_read": {
             "currency_bought": bought,
@@ -8426,6 +8445,55 @@ class MarginAwareBasketTest(unittest.TestCase):
         # operator decision.
         from quant_rabbit.automation import MARGIN_AWARE_BASKET_BUFFER
         self.assertEqual(MARGIN_AWARE_BASKET_BUFFER, 0.9)
+
+
+class PredictiveScoutSizingBoundaryTest(unittest.TestCase):
+    def test_ai_cycle_normalizes_only_scout_lane_to_fixed_vehicle_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "intents.json"
+            scout_lane = "predictive_scout:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+            ordinary_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": scout_lane,
+                                "intent": {
+                                    "pair": "USD_CAD",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "market_context": {"method": "BREAKOUT_FAILURE"},
+                                    "metadata": {
+                                        "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+                                    },
+                                },
+                            },
+                            {
+                                "lane_id": ordinary_lane,
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "MARKET",
+                                    "market_context": {"method": "TREND_CONTINUATION"},
+                                    "metadata": {},
+                                },
+                            },
+                        ]
+                    }
+                )
+            )
+
+            multiples, selected = _fixed_predictive_scout_size_plan(
+                intents_path=path,
+                lane_ids=(scout_lane, ordinary_lane),
+                size_multiples={scout_lane: 1.65, ordinary_lane: 1.4},
+                selected_lane_id=scout_lane,
+                selected_lane_size_multiple=1.65,
+            )
+
+        self.assertEqual(multiples, {scout_lane: 1.0, ordinary_lane: 1.4})
+        self.assertEqual(selected, 1.0)
 
 
 if __name__ == "__main__":

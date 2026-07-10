@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from quant_rabbit.models import BrokerSnapshot, Owner, Side
+from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 
 
 # Buffer applied to the BOS price when computing the new SL. A small
@@ -238,6 +239,8 @@ def _iter_eligible_positions(
     threshold = from_trade_id
     for pos in snapshot.positions:
         if pos.owner != Owner.TRADER:
+            continue
+        if predictive_scout_broker_raw_claimed(pos.raw):
             continue
         if pos.stop_loss is None:
             continue
