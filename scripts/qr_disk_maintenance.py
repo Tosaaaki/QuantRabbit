@@ -61,6 +61,8 @@ PROJECT_BACKUP_MIN_AGE = timedelta(days=7)
 KNOWN_LAUNCHD_LOGS = (
     "guardian_wake_dispatcher.launchd.log",
     "guardian_wake_dispatcher.launchd.err",
+    "position_guardian.launchd.log",
+    "position_guardian.launchd.err",
     "qr_trader_run_watchdog.launchd.log",
     "qr_trader_run_watchdog.launchd.err",
 )
