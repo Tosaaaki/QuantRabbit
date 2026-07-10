@@ -5703,7 +5703,7 @@ class IntentGenerator:
                     intent,
                     repair_loss_streaks,
                 )
-                if repair_allowed
+                if repair_allowed and not predictive_scout_p0_allowed
                 else None
             )
             repair_residual_issue = (
@@ -5865,7 +5865,7 @@ class IntentGenerator:
             risk_issues.append(predictive_scout_loss_issue)
             if predictive_scout_loss_issue.get("severity") == "BLOCK":
                 live_blockers = (*live_blockers, predictive_scout_loss_issue["message"])
-            risk_allowed = False
+                risk_allowed = False
         telemetry_live_issues = _telemetry_live_readiness_issues(
             intent,
             intent.metadata or {},

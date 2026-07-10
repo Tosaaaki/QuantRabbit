@@ -12,7 +12,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
-from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Quote, Side, TradeMethod
+from quant_rabbit.models import (
+    BrokerSnapshot,
+    MarketContext,
+    OrderIntent,
+    OrderType,
+    Owner,
+    Quote,
+    Side,
+    TradeMethod,
+)
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
@@ -44,7 +53,7 @@ from quant_rabbit.strategy.intent_generator import (
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
 )
-from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
+from quant_rabbit.strategy.lane_history_ledger import SameDayLaneLossStreak, SameDayLossStreak
 from tests.support_bidask_rules import (
     bidask_rules_env,
     write_bidask_replay_fixture_rules,
@@ -927,6 +936,127 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertIn("not this LIMIT fill vehicle", seed["required_receipt"])
         self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_tp_pips"], 10.0)
         self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_stop_pips"], 7.0)
+
+    def test_predictive_scout_loss_warn_uses_exact_vehicle_gate_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 7, 10, 3, 0, tzinfo=timezone.utc)
+            lane = {
+                "desk": "failure_trader",
+                "pair": "USD_CAD",
+                "direction": "LONG",
+                "method": TradeMethod.BREAKOUT_FAILURE.value,
+                "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT",
+            }
+            intent = OrderIntent(
+                pair="USD_CAD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                units=1000,
+                entry=1.3500,
+                tp=1.3510,
+                sl=1.3493,
+                thesis="bounded forward evidence",
+                owner=Owner.TRADER,
+                market_context=MarketContext(
+                    regime="range",
+                    narrative="reproducible forecast failure bucket",
+                    chart_story="passive retest",
+                    method=TradeMethod.BREAKOUT_FAILURE,
+                    invalidation="broker stop",
+                ),
+                metadata={"predictive_scout": True},
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "USD_CAD": Quote(
+                        "USD_CAD",
+                        bid=1.3501,
+                        ask=1.3503,
+                        timestamp_utc=now,
+                    )
+                },
+            )
+            loss_streak = SameDayLaneLossStreak(
+                pair="USD_CAD",
+                side="LONG",
+                method=TradeMethod.BREAKOUT_FAILURE.value,
+                consecutive_losses=1,
+                net_loss_jpy=-300.0,
+                last_loss_ts_utc="2026-07-10T01:00:00+00:00",
+            )
+            p0_issue = {
+                "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                "message": "profitability P0 remains active",
+                "severity": "BLOCK",
+            }
+            clean_risk = SimpleNamespace(allowed=True, issues=(), metrics=None)
+            generator = IntentGenerator(
+                campaign_plan=root / "campaign.json",
+                strategy_profile=root / "strategy.json",
+                output_path=root / "intents.json",
+                report_path=root / "intents.md",
+                data_root=root,
+                max_loss_jpy=500.0,
+            )
+
+            with (
+                patch(
+                    "quant_rabbit.strategy.intent_generator._intent_from_lane",
+                    return_value=intent,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator.RiskEngine.validate",
+                    return_value=clean_risk,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._atr_pips_for",
+                    return_value=10.0,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._predictive_scout_p0_forward_evidence_allowed",
+                    return_value=True,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._self_improvement_profitability_p0_repair_allowed",
+                    return_value=False,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator.predictive_scout_intent_issues",
+                    return_value=[],
+                ),
+            ):
+                result = generator._build_for_lane(
+                    lane,
+                    snapshot,
+                    None,
+                    max_loss_jpy=500.0,
+                    pair_charts={"USD_CAD": {}},
+                    validation_time_utc=now,
+                    data_root=root,
+                    repair_loss_streaks={
+                        ("USD_CAD", "LONG", TradeMethod.BREAKOUT_FAILURE.value): loss_streak
+                    },
+                    self_improvement_profitability_issue=p0_issue,
+                )
+
+            issue_codes = {issue["code"] for issue in result.risk_issues}
+            metadata = result.intent["metadata"] if result.intent is not None else {}
+
+            self.assertEqual(result.status, "LIVE_READY")
+            self.assertTrue(result.risk_allowed)
+            self.assertEqual(result.live_blockers, ())
+            self.assertNotIn(
+                SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
+                issue_codes,
+            )
+            self.assertNotIn("self_improvement_p0_repair_recent_lane_loss", metadata)
+            self.assertIn("PREDICTIVE_SCOUT_RECENT_LANE_LOSS_RECORDED", issue_codes)
+            self.assertNotIn(
+                "PREDICTIVE_SCOUT_RECENT_LANE_LOSS_RECORDED",
+                result.live_blocker_codes,
+            )
 
     def test_unclear_zero_forecast_seed_is_kept_for_auditable_blocker(self) -> None:
         from quant_rabbit.strategy.directional_forecaster import DirectionalForecast

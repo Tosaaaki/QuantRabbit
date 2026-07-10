@@ -4,7 +4,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.execution_ledger import ExecutionLedger, _events_from_transaction
@@ -17,6 +18,348 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
 
 
 class ExecutionLedgerTest(unittest.TestCase):
+    @staticmethod
+    def _scout_reservation_payload(
+        *, signal_id: str, vehicle_id: str, expires_at_utc: str
+    ) -> dict[str, object]:
+        return {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "status": "PREDICTIVE_SCOUT_POST_RESERVED",
+            "predictive_scout": True,
+            "predictive_scout_post_reserved": True,
+            "predictive_scout_receipt": {
+                "predictive_scout": True,
+                "predictive_scout_signal_id": signal_id,
+                "predictive_scout_vehicle_id": vehicle_id,
+                "predictive_scout_expires_at_utc": expires_at_utc,
+            },
+            "sent": False,
+        }
+
+    def test_predictive_scout_atomic_reservation_enforces_daily_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+
+            results = []
+            for index in range(3):
+                signal_id = f"signal-{index}"
+                vehicle_id = f"vehicle-{index}"
+                results.append(
+                    ledger.reserve_predictive_scout_gateway_payload(
+                        kind="live_order",
+                        receipt_path=root / f"reservation-{index}.json",
+                        payload=self._scout_reservation_payload(
+                            signal_id=signal_id,
+                            vehicle_id=vehicle_id,
+                            expires_at_utc=expires_at,
+                        ),
+                        signal_id=signal_id,
+                        experiment_id=f"experiment-{index}",
+                        vehicle_id=vehicle_id,
+                        expires_at_utc=expires_at,
+                        max_daily=2,
+                        max_concurrent=10,
+                        broker_active_total=0,
+                    )
+                )
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                claim_count = conn.execute(
+                    "SELECT COUNT(*) FROM predictive_scout_signal_claims"
+                ).fetchone()[0]
+
+        self.assertEqual([result.reserved for result in results], [True, True, False])
+        self.assertEqual(results[-1].status, "DAILY_CAP_REACHED")
+        self.assertEqual(results[-1].daily_reserved, 2)
+        self.assertEqual(claim_count, 2)
+
+    def test_predictive_scout_atomic_daily_cap_includes_legacy_sent_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            ledger.record_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "legacy-sent.json",
+                payload={
+                    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "status": "SENT",
+                    "predictive_scout": True,
+                    "send_requested": True,
+                    "sent": True,
+                },
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+
+            result = ledger.reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "new-reservation.json",
+                payload=self._scout_reservation_payload(
+                    signal_id="new-signal",
+                    vehicle_id="new-vehicle",
+                    expires_at_utc=expires_at,
+                ),
+                signal_id="new-signal",
+                experiment_id="new-experiment",
+                vehicle_id="new-vehicle",
+                expires_at_utc=expires_at,
+                max_daily=1,
+                max_concurrent=2,
+                broker_active_total=0,
+            )
+
+        self.assertFalse(result.reserved)
+        self.assertEqual(result.status, "DAILY_CAP_REACHED")
+        self.assertEqual(result.daily_reserved, 1)
+
+    def test_predictive_scout_atomic_reservation_serializes_distinct_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            # Initialize/migrate once before the threads race on reservation.
+            ledger.record_gateway_receipt(
+                kind="live_order",
+                receipt_path=root / "missing.json",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+
+            def reserve(index: int):
+                signal_id = f"parallel-signal-{index}"
+                vehicle_id = f"parallel-vehicle-{index}"
+                return ledger.reserve_predictive_scout_gateway_payload(
+                    kind="live_order",
+                    receipt_path=root / f"parallel-{index}.json",
+                    payload=self._scout_reservation_payload(
+                        signal_id=signal_id,
+                        vehicle_id=vehicle_id,
+                        expires_at_utc=expires_at,
+                    ),
+                    signal_id=signal_id,
+                    experiment_id=f"parallel-experiment-{index}",
+                    vehicle_id=vehicle_id,
+                    expires_at_utc=expires_at,
+                    max_daily=8,
+                    max_concurrent=2,
+                    broker_active_total=0,
+                )
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                results = list(executor.map(reserve, range(4)))
+            with sqlite3.connect(root / "ledger.db") as conn:
+                claim_count = conn.execute(
+                    "SELECT COUNT(*) FROM predictive_scout_signal_claims"
+                ).fetchone()[0]
+
+        self.assertEqual(sum(result.reserved for result in results), 2)
+        self.assertEqual(
+            sum(result.status == "CONCURRENT_CAP_REACHED" for result in results),
+            2,
+        )
+        self.assertEqual(claim_count, 2)
+
+    def test_predictive_scout_cold_start_parallel_initialization_fails_closed_without_lock_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+
+            def reserve(index: int):
+                signal_id = f"cold-signal-{index}"
+                vehicle_id = f"cold-vehicle-{index}"
+                return ExecutionLedger(
+                    db_path=root / "cold-ledger.db",
+                    report_path=root / f"cold-ledger-{index}.md",
+                ).reserve_predictive_scout_gateway_payload(
+                    kind="live_order",
+                    receipt_path=root / f"cold-{index}.json",
+                    payload=self._scout_reservation_payload(
+                        signal_id=signal_id,
+                        vehicle_id=vehicle_id,
+                        expires_at_utc=expires_at,
+                    ),
+                    signal_id=signal_id,
+                    experiment_id=f"cold-experiment-{index}",
+                    vehicle_id=vehicle_id,
+                    expires_at_utc=expires_at,
+                    max_daily=8,
+                    max_concurrent=2,
+                    broker_active_total=0,
+                )
+
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                results = list(executor.map(reserve, range(12)))
+
+        self.assertEqual(sum(result.reserved for result in results), 2)
+        self.assertEqual(
+            sum(result.status == "CONCURRENT_CAP_REACHED" for result in results),
+            10,
+        )
+
+    def test_predictive_scout_broker_reflection_does_not_double_count_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+            first = ledger.reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "first.json",
+                payload=self._scout_reservation_payload(
+                    signal_id="signal-first",
+                    vehicle_id="vehicle-first",
+                    expires_at_utc=expires_at,
+                ),
+                signal_id="signal-first",
+                experiment_id="experiment-first",
+                vehicle_id="vehicle-first",
+                expires_at_utc=expires_at,
+                max_daily=8,
+                max_concurrent=2,
+                broker_active_total=0,
+            )
+            second = ledger.reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "second.json",
+                payload=self._scout_reservation_payload(
+                    signal_id="signal-second",
+                    vehicle_id="vehicle-second",
+                    expires_at_utc=expires_at,
+                ),
+                signal_id="signal-second",
+                experiment_id="experiment-second",
+                vehicle_id="vehicle-second",
+                expires_at_utc=expires_at,
+                max_daily=8,
+                max_concurrent=2,
+                broker_active_total=1,
+                broker_active_signal_ids={"signal-first"},
+            )
+
+        self.assertTrue(first.reserved)
+        self.assertTrue(second.reserved)
+        self.assertEqual(second.active_slots, 2)
+
+    def test_predictive_scout_reflected_then_resolved_releases_slot_before_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+
+            def reserve(
+                signal_id: str,
+                *,
+                broker_total: int,
+                broker_signals: set[str],
+            ):
+                return ledger.reserve_predictive_scout_gateway_payload(
+                    kind="live_order",
+                    receipt_path=root / f"{signal_id}.json",
+                    payload=self._scout_reservation_payload(
+                        signal_id=signal_id,
+                        vehicle_id="shared-vehicle",
+                        expires_at_utc=expires_at,
+                    ),
+                    signal_id=signal_id,
+                    experiment_id=f"experiment-{signal_id}",
+                    vehicle_id="shared-vehicle",
+                    expires_at_utc=expires_at,
+                    max_daily=8,
+                    max_concurrent=2,
+                    broker_active_total=broker_total,
+                    broker_active_signal_ids=broker_signals,
+                )
+
+            first = reserve("signal-1", broker_total=0, broker_signals=set())
+            second = reserve(
+                "signal-2",
+                broker_total=1,
+                broker_signals={"signal-1"},
+            )
+            # signal-1 has resolved and disappeared. signal-2 is now broker
+            # active. The durable reflection marker must stop signal-1's claim
+            # from resurrecting as an in-flight shadow slot.
+            third = reserve(
+                "signal-3",
+                broker_total=1,
+                broker_signals={"signal-2"},
+            )
+            with sqlite3.connect(root / "ledger.db") as conn:
+                reflected = conn.execute(
+                    """
+                    SELECT signal_id, broker_reflected_at_utc
+                    FROM predictive_scout_signal_claims
+                    WHERE signal_id IN ('signal-1', 'signal-2')
+                    ORDER BY signal_id
+                    """
+                ).fetchall()
+
+        self.assertTrue(first.reserved)
+        self.assertTrue(second.reserved)
+        self.assertTrue(third.reserved)
+        self.assertEqual(third.active_slots, 2)
+        self.assertTrue(all(row[1] for row in reflected))
+
+    def test_predictive_scout_same_vehicle_different_signal_does_not_hide_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+            first = ledger.reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "first.json",
+                payload=self._scout_reservation_payload(
+                    signal_id="new-signal-first",
+                    vehicle_id="shared-vehicle",
+                    expires_at_utc=expires_at,
+                ),
+                signal_id="new-signal-first",
+                experiment_id="experiment-first",
+                vehicle_id="shared-vehicle",
+                expires_at_utc=expires_at,
+                max_daily=8,
+                max_concurrent=2,
+                broker_active_total=0,
+            )
+            second = ledger.reserve_predictive_scout_gateway_payload(
+                kind="live_order",
+                receipt_path=root / "second.json",
+                payload=self._scout_reservation_payload(
+                    signal_id="new-signal-second",
+                    vehicle_id="shared-vehicle",
+                    expires_at_utc=expires_at,
+                ),
+                signal_id="new-signal-second",
+                experiment_id="experiment-second",
+                vehicle_id="shared-vehicle",
+                expires_at_utc=expires_at,
+                max_daily=8,
+                max_concurrent=2,
+                broker_active_total=1,
+                broker_active_signal_ids={"older-filled-signal"},
+            )
+
+        self.assertTrue(first.reserved)
+        self.assertFalse(second.reserved)
+        self.assertEqual(second.status, "CONCURRENT_CAP_REACHED")
+        self.assertEqual(second.active_slots, 2)
+
     def test_multi_trade_close_preserves_nested_zero_pl_and_trade_financing(self) -> None:
         events = _events_from_transaction(
             {

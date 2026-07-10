@@ -8,7 +8,7 @@ import sqlite3
 import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -44,11 +44,17 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.predictive_scout import (
+    PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS,
+    PREDICTIVE_SCOUT_MAX_CONCURRENT,
+    PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY,
+    predictive_scout_broker_signal_ids,
+    predictive_scout_concurrent_count,
     predictive_scout_experiment_id,
     predictive_scout_geometry_claimed,
     predictive_scout_intent_claimed,
     predictive_scout_intent_issues,
     predictive_scout_metadata_supported,
+    predictive_scout_policy,
     predictive_scout_signal_id,
     predictive_scout_vehicle_id,
 )
@@ -330,6 +336,8 @@ class LiveOrderGateway:
             selected_lane_id=selected_lane_id,
             intents_payload=intents_payload,
             send=send,
+            require_receipt=predictive_scout_intent_claimed(intent),
+            intent=intent,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
@@ -405,6 +413,7 @@ class LiveOrderGateway:
                 order_request=order_request,
                 lane_id=selected_lane_id,
                 intents_path=intents_path,
+                snapshot=snapshot,
             )
             if reservation_issue is not None:
                 predictive_scout_issues.append(reservation_issue)
@@ -943,6 +952,8 @@ class LiveOrderGateway:
             selected_lane_id=selected_lane_id,
             intents_payload=intents_payload,
             send=send,
+            require_receipt=predictive_scout_intent_claimed(intent),
+            intent=intent,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
@@ -1018,6 +1029,7 @@ class LiveOrderGateway:
                 order_request=order_request,
                 lane_id=selected_lane_id,
                 intents_path=intents_path,
+                snapshot=snapshot,
             )
             if reservation_issue is not None:
                 predictive_scout_issues.append(reservation_issue)
@@ -1542,6 +1554,7 @@ class LiveOrderGateway:
         order_request: dict[str, Any],
         lane_id: str,
         intents_path: Path,
+        snapshot: BrokerSnapshot,
     ) -> dict[str, str] | None:
         if not predictive_scout_intent_claimed(intent):
             return None
@@ -1581,8 +1594,33 @@ class LiveOrderGateway:
             if isinstance(scout_receipt, dict)
             else ""
         )
+        expires_at_utc = (
+            str(scout_receipt.get("predictive_scout_expires_at_utc") or "")
+            if isinstance(scout_receipt, dict)
+            else ""
+        )
+        policy_path = intents_path.parent.parent / "config" / "predictive_scout_policy.json"
+        policy = predictive_scout_policy(policy_path)
         try:
-            reserved = ExecutionLedger(
+            max_daily = int(policy.get("max_sent_per_campaign_day"))
+            max_concurrent = int(policy.get("max_concurrent"))
+        except (TypeError, ValueError):
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_POST_RESERVATION_FAILED",
+                "refusing broker POST because the predictive SCOUT policy does not provide "
+                "valid daily and concurrent reservation caps",
+            ).__dict__
+        if not (
+            0 < max_daily <= PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY
+            and 0 < max_concurrent <= PREDICTIVE_SCOUT_MAX_CONCURRENT
+        ):
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_POST_RESERVATION_FAILED",
+                "refusing broker POST because predictive SCOUT reservation caps exceed the "
+                "canonical shared campaign limits",
+            ).__dict__
+        try:
+            reservation = ExecutionLedger(
                 db_path=db_path,
                 report_path=report_path,
             ).reserve_predictive_scout_gateway_payload(
@@ -1592,6 +1630,11 @@ class LiveOrderGateway:
                 signal_id=signal_id,
                 experiment_id=experiment_id,
                 vehicle_id=vehicle_id,
+                expires_at_utc=expires_at_utc,
+                max_daily=max_daily,
+                max_concurrent=max_concurrent,
+                broker_active_total=predictive_scout_concurrent_count(snapshot),
+                broker_active_signal_ids=predictive_scout_broker_signal_ids(snapshot),
             )
         except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
             return RiskIssue(
@@ -1599,10 +1642,27 @@ class LiveOrderGateway:
                 "refusing broker POST because the predictive SCOUT vehicle/experiment reservation "
                 f"could not be durably indexed first: {exc}",
             ).__dict__
-        if not reserved:
+        if reservation.status == "DUPLICATE_SIGNAL":
             return RiskIssue(
                 "PREDICTIVE_SCOUT_EXPERIMENT_ALREADY_RESERVED",
                 "this SCOUT vehicle/forecast_cycle signal already owns a durable broker-POST reservation; refusing duplicate evidence and duplicate exposure",
+            ).__dict__
+        if reservation.status == "DAILY_CAP_REACHED":
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_DAILY_CAP_REACHED_AT_RESERVATION",
+                f"atomic SCOUT reservation found {reservation.daily_reserved} broker-POST slots "
+                f"already consumed today (cap {max_daily})",
+            ).__dict__
+        if reservation.status == "CONCURRENT_CAP_REACHED":
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_CONCURRENT_CAP_REACHED_AT_RESERVATION",
+                f"atomic SCOUT reservation found {reservation.active_slots} broker/reflection-aware "
+                f"active slots already occupied (cap {max_concurrent})",
+            ).__dict__
+        if not reservation.reserved:
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_POST_RESERVATION_FAILED",
+                f"predictive SCOUT reservation returned unsupported status {reservation.status}",
             ).__dict__
         return None
 
@@ -2961,9 +3021,21 @@ def _gpt_verified_decision_live_send_issues(
     selected_lane_id: str | None,
     intents_payload: dict[str, Any],
     send: bool,
+    require_receipt: bool = False,
+    intent: OrderIntent | None = None,
 ) -> list[dict[str, str]]:
-    if not send or verified_decision_path is None:
+    if not send:
         return []
+    if verified_decision_path is None:
+        if not require_receipt:
+            return []
+        return [
+            RiskIssue(
+                "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
+                "predictive SCOUT live send requires a fresh verified ACCEPTED TRADE receipt; "
+                "direct gateway invocation without AI trader verification is forbidden",
+            ).__dict__
+        ]
     if not verified_decision_path.exists():
         return [
             RiskIssue(
@@ -2992,16 +3064,22 @@ def _gpt_verified_decision_live_send_issues(
                 f"verified GPT receipt status is {status or 'missing'}; fresh entry send requires ACCEPTED TRADE.",
             )
         )
-    if action not in {"TRADE", "ADD"}:
+    allowed_actions = {"TRADE"} if require_receipt else {"TRADE", "ADD"}
+    if action not in allowed_actions:
         issues.append(
             RiskIssue(
                 "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
-                f"verified GPT receipt action is {action or 'missing'}; WAIT/REQUEST_EVIDENCE/non-TRADE cannot send fresh risk.",
+                f"verified GPT receipt action is {action or 'missing'}; "
+                + (
+                    "predictive SCOUT requires an exact TRADE receipt (ADD is not a forward experiment authorization)."
+                    if require_receipt
+                    else "WAIT/REQUEST_EVIDENCE/non-TRADE cannot send fresh risk."
+                ),
             )
         )
 
     selected_receipt_lanes = _gpt_receipt_selected_lane_ids(decision)
-    if action in {"TRADE", "ADD"} and not selected_receipt_lanes:
+    if action in allowed_actions and not selected_receipt_lanes:
         issues.append(
             RiskIssue(
                 "GPT_SELECTED_LANE_MISSING_FOR_LIVE_SEND",
@@ -3018,11 +3096,28 @@ def _gpt_verified_decision_live_send_issues(
         )
 
     market_read = decision.get("market_read_first")
-    if action in {"TRADE", "ADD"} and not isinstance(market_read, dict):
+    if action in allowed_actions and not isinstance(market_read, dict):
         issues.append(
             RiskIssue(
                 "GPT_MARKET_READ_FIRST_REQUIRED_FOR_LIVE_SEND",
                 "fresh entry send requires current market_read_first on the verified GPT receipt.",
+            )
+        )
+    if require_receipt and intent is not None and isinstance(market_read, dict):
+        if not _market_read_supports_intent(market_read, intent):
+            issues.append(
+                RiskIssue(
+                    "GPT_SCOUT_MARKET_READ_MISMATCH_FOR_LIVE_SEND",
+                    f"verified predictive SCOUT receipt must contain a current {intent.pair} "
+                    f"{intent.side.value} market-read prediction",
+                )
+            )
+        issues.extend(
+            RiskIssue(code, message)
+            for code, message in _predictive_scout_verified_packet_mismatches(
+                payload,
+                selected_lane_id=selected_lane_id,
+                intent=intent,
             )
         )
 
@@ -3059,8 +3154,141 @@ def _gpt_verified_decision_live_send_issues(
                 "current intents before sending fresh risk.",
             )
         )
+    if require_receipt and intent is not None:
+        now = datetime.now(timezone.utc)
+        scout_generated = _parse_utc_timestamp(
+            (intent.metadata or {}).get("predictive_scout_generated_at_utc")
+        )
+        try:
+            scout_ttl_minutes = float(
+                (intent.metadata or {}).get("predictive_scout_ttl_minutes")
+            )
+        except (TypeError, ValueError):
+            scout_ttl_minutes = 0.0
+        if intents_ts is None:
+            issues.append(
+                RiskIssue(
+                    "GPT_SCOUT_INTENTS_TIMESTAMP_REQUIRED_FOR_LIVE_SEND",
+                    "predictive SCOUT requires a timestamped order_intents packet so the AI receipt "
+                    "cannot be replayed against an unversioned signal",
+                )
+            )
+        if receipt_ts is not None:
+            if receipt_ts > now + timedelta(seconds=PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS):
+                issues.append(
+                    RiskIssue(
+                        "GPT_SCOUT_RECEIPT_FROM_FUTURE",
+                        "predictive SCOUT AI receipt timestamp exceeds the allowed clock-skew window",
+                    )
+                )
+            if (
+                scout_generated is not None
+                and receipt_ts
+                < scout_generated - timedelta(seconds=PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS)
+            ):
+                issues.append(
+                    RiskIssue(
+                        "GPT_SCOUT_RECEIPT_PREDATES_SIGNAL",
+                        "predictive SCOUT AI receipt predates the current forecast-cycle signal",
+                    )
+                )
+            if scout_ttl_minutes <= 0.0 or (
+                now - receipt_ts
+            ).total_seconds() > scout_ttl_minutes * 60.0:
+                issues.append(
+                    RiskIssue(
+                        "GPT_SCOUT_RECEIPT_STALE_FOR_SIGNAL",
+                        "predictive SCOUT AI receipt is older than the signal's bounded TTL",
+                    )
+                )
 
     return [issue.__dict__ for issue in issues]
+
+
+def _market_read_supports_intent(
+    market_read: dict[str, Any],
+    intent: OrderIntent,
+) -> bool:
+    expected_pair = intent.pair.replace("_", "").upper()
+    expected_side = intent.side.value
+    for key in ("next_30m_prediction", "next_2h_prediction", "best_trade_if_forced"):
+        prediction = market_read.get(key)
+        if not isinstance(prediction, dict):
+            continue
+        pair = str(prediction.get("pair") or "").replace("_", "").upper()
+        direction = str(prediction.get("direction") or prediction.get("side") or "").upper()
+        side = (
+            "LONG"
+            if direction in {"LONG", "UP", "BUY", "BULLISH"}
+            else "SHORT"
+            if direction in {"SHORT", "DOWN", "SELL", "BEARISH"}
+            else ""
+        )
+        if pair == expected_pair and side == expected_side:
+            return True
+    return False
+
+
+def _predictive_scout_verified_packet_mismatches(
+    payload: dict[str, Any],
+    *,
+    selected_lane_id: str | None,
+    intent: OrderIntent,
+) -> list[tuple[str, str]]:
+    packet = payload.get("input_packet") if isinstance(payload.get("input_packet"), dict) else {}
+    lanes = packet.get("lanes") if isinstance(packet.get("lanes"), list) else []
+    lane = next(
+        (
+            item
+            for item in lanes
+            if isinstance(item, dict)
+            and str(item.get("lane_id") or "") == str(selected_lane_id or "")
+        ),
+        None,
+    )
+    if not isinstance(lane, dict):
+        return [
+            (
+                "GPT_SCOUT_VERIFIED_PACKET_LANE_MISSING",
+                "verified AI receipt must preserve the exact predictive SCOUT lane from its input packet",
+            )
+        ]
+    scout = lane.get("predictive_scout") if isinstance(lane.get("predictive_scout"), dict) else {}
+    metadata = intent.metadata or {}
+    expected = {
+        "pair": intent.pair,
+        "direction": intent.side.value,
+        "order_type": intent.order_type.value,
+        "units": abs(int(intent.units)),
+        "entry": intent.entry,
+        "tp": intent.tp,
+        "sl": intent.sl,
+        "forecast_cycle_id": str(metadata.get("forecast_cycle_id") or ""),
+        "rule_digest": str(metadata.get("predictive_scout_rule_digest") or ""),
+        "generated_at_utc": str(metadata.get("predictive_scout_generated_at_utc") or ""),
+        "expires_at_utc": str(metadata.get("predictive_scout_expires_at_utc") or ""),
+    }
+    actual = {
+        "pair": str(lane.get("pair") or ""),
+        "direction": str(lane.get("direction") or "").upper(),
+        "order_type": str(lane.get("order_type") or "").upper(),
+        "units": abs(_optional_int(lane.get("units")) or 0),
+        "entry": _optional_float(lane.get("entry")),
+        "tp": _optional_float(lane.get("tp")),
+        "sl": _optional_float(lane.get("sl")),
+        "forecast_cycle_id": str(scout.get("forecast_cycle_id") or ""),
+        "rule_digest": str(scout.get("rule_digest") or ""),
+        "generated_at_utc": str(scout.get("generated_at_utc") or ""),
+        "expires_at_utc": str(scout.get("expires_at_utc") or ""),
+    }
+    if actual != expected:
+        return [
+            (
+                "GPT_SCOUT_SIGNAL_MISMATCH_FOR_LIVE_SEND",
+                "verified AI packet does not match the current SCOUT forecast cycle, authenticated rule, or exact order geometry",
+            )
+        ]
+    return []
 
 
 def _gpt_receipt_selected_lane_ids(decision: dict[str, Any]) -> tuple[str, ...]:
@@ -3852,6 +4080,15 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # `LATEST_GPT_DECISION_STALE` is repaired by producing/verifying a current GPT
 # decision, so one fresh repair pass must not be self-blocked by the previous
 # audit. Once the audit history says the same stale-decision P0 is persistent,
@@ -3904,6 +4141,14 @@ def _predictive_scout_built_order_issues(
             RiskIssue(
                 "PREDICTIVE_SCOUT_GTD_MISSING",
                 "predictive SCOUT pending order must be broker-expiring GTD, never ordinary GTC",
+            ).__dict__
+        )
+    if order_request.get("positionFill") != "OPEN_ONLY":
+        issues.append(
+            RiskIssue(
+                "PREDICTIVE_SCOUT_OPEN_ONLY_REQUIRED",
+                "predictive SCOUT must use positionFill=OPEN_ONLY so it cannot reduce or net "
+                "manual/operator exposure if account hedging settings change",
             ).__dict__
         )
     return issues
@@ -4140,6 +4385,8 @@ def _oanda_order_type(order_type: OrderType) -> str:
 
 
 def _position_fill(intent: OrderIntent) -> str:
+    if predictive_scout_intent_claimed(intent):
+        return "OPEN_ONLY"
     raw = str(intent.metadata.get("position_fill") or "").upper()
     if raw in {"DEFAULT", "OPEN_ONLY", "REDUCE_FIRST", "REDUCE_ONLY"}:
         return raw
@@ -4188,7 +4435,14 @@ def _client_order_id(intent: OrderIntent) -> str:
         )
     )
     digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
-    return f"{CLIENT_ORDER_ID_PREFIX}-{intent.pair.replace('_', '')}-{intent.side.value[0]}-{digest}"[:128]
+    base = f"{CLIENT_ORDER_ID_PREFIX}-{intent.pair.replace('_', '')}-{intent.side.value[0]}-{digest}"
+    if predictive_scout_intent_claimed(intent):
+        # The exact signal id belongs in the broker extension id, not the
+        # already space-constrained comment.  This preserves the broker-visible
+        # role, vehicle, and lane prefix while allowing atomic reservations to
+        # reconcile one exact claim rather than a same-vehicle approximation.
+        base = f"{base}-{predictive_scout_signal_id(intent)}"
+    return base[:128]
 
 
 def _comment(intent: OrderIntent) -> str:

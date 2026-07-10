@@ -6344,6 +6344,7 @@ def _predictive_scout_lane_packet(
         "rule_is_vehicle_proof": metadata.get("predictive_scout_rule_is_vehicle_proof"),
         "rule_name": metadata.get("predictive_scout_rule_name"),
         "rule_digest": metadata.get("predictive_scout_rule_digest"),
+        "forecast_cycle_id": metadata.get("forecast_cycle_id"),
         "generated_at_utc": metadata.get("predictive_scout_generated_at_utc"),
         "expires_at_utc": metadata.get("predictive_scout_expires_at_utc"),
         "ttl_minutes": metadata.get("predictive_scout_ttl_minutes"),

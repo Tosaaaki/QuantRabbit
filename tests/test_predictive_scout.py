@@ -17,6 +17,7 @@ from quant_rabbit.forecast_precision import (
 from quant_rabbit.models import (
     AccountSummary,
     BrokerOrder,
+    BrokerPosition,
     BrokerSnapshot,
     MarketContext,
     OrderIntent,
@@ -27,6 +28,8 @@ from quant_rabbit.models import (
 )
 from quant_rabbit.predictive_scout import (
     PREDICTIVE_SCOUT_LIVE_ENV,
+    predictive_scout_broker_signal_ids,
+    predictive_scout_broker_vehicle_counts,
     predictive_scout_forward_proof,
     predictive_scout_intent_issues,
     predictive_scout_vehicle_outcome_stats,
@@ -202,6 +205,124 @@ class PredictiveScoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self._issues(Path(tmp)), [])
 
+    def test_manual_owned_same_pair_position_blocks_regardless_of_side_or_override(self) -> None:
+        for owner in (Owner.MANUAL, Owner.OPERATOR_MANUAL, Owner.UNKNOWN):
+            for position_side in (Side.LONG, Side.SHORT):
+                with (
+                    self.subTest(owner=owner, position_side=position_side),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    metadata = self._metadata()
+                    metadata["operator_authorized_manual_overlap"] = True
+                    snapshot = BrokerSnapshot(
+                        fetched_at_utc=self.now,
+                        positions=(
+                            BrokerPosition(
+                                trade_id=f"manual-{owner.value}-{position_side.value}",
+                                pair="USD_CAD",
+                                side=position_side,
+                                units=10_000,
+                                entry_price=1.35,
+                                owner=owner,
+                            ),
+                        ),
+                    )
+
+                    codes = {
+                        item["code"]
+                        for item in self._issues(
+                            Path(tmp),
+                            intent=self._intent(metadata=metadata),
+                            snapshot=snapshot,
+                        )
+                    }
+
+                self.assertIn("PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED", codes)
+
+    def test_manual_owned_different_pair_does_not_block_scout(self) -> None:
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=self.now,
+            positions=(
+                BrokerPosition(
+                    trade_id="manual-eurusd",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=10_000,
+                    entry_price=1.15,
+                    owner=Owner.OPERATOR_MANUAL,
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            codes = {
+                item["code"]
+                for item in self._issues(Path(tmp), snapshot=snapshot)
+            }
+
+        self.assertNotIn("PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED", codes)
+
+    def test_manual_owned_same_pair_pending_order_blocks_scout(self) -> None:
+        for owner in (Owner.OPERATOR_MANUAL, Owner.UNKNOWN):
+            with self.subTest(owner=owner), tempfile.TemporaryDirectory() as tmp:
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=self.now,
+                    orders=(
+                        BrokerOrder(
+                            order_id=f"manual-pending-usdcad-{owner.value}",
+                            pair="USD_CAD",
+                            order_type="LIMIT",
+                            owner=owner,
+                        ),
+                    ),
+                )
+                codes = {
+                    item["code"]
+                    for item in self._issues(Path(tmp), snapshot=snapshot)
+                }
+
+            self.assertIn("PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED", codes)
+
+    def test_tagless_pending_order_on_different_pair_does_not_block_scout(self) -> None:
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=self.now,
+            orders=(
+                BrokerOrder(
+                    order_id="tagless-pending-eurusd",
+                    pair="EUR_USD",
+                    order_type="LIMIT",
+                    owner=Owner.UNKNOWN,
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            codes = {
+                item["code"]
+                for item in self._issues(Path(tmp), snapshot=snapshot)
+            }
+
+        self.assertNotIn("PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED", codes)
+
+    def test_pairless_dependent_order_does_not_crash_or_block_scout(self) -> None:
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=self.now,
+            orders=(
+                BrokerOrder(
+                    order_id="manual-position-dependent-tp",
+                    pair=None,
+                    order_type="TAKE_PROFIT",
+                    owner=Owner.UNKNOWN,
+                    trade_id="manual-position-trade",
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            codes = {
+                item["code"]
+                for item in self._issues(Path(tmp), snapshot=snapshot)
+            }
+
+        self.assertNotIn("PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED", codes)
+
     def test_environment_and_policy_are_independent_live_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -298,6 +419,46 @@ class PredictiveScoutTest(unittest.TestCase):
             codes = {item["code"] for item in self._issues(root, snapshot=snapshot)}
         self.assertIn("PREDICTIVE_SCOUT_DAILY_CAP_REACHED", codes)
         self.assertIn("PREDICTIVE_SCOUT_CONCURRENT_CAP_REACHED", codes)
+
+    def test_broker_vehicle_counts_reconcile_claims_without_hiding_unknown_scout(self) -> None:
+        known = BrokerOrder(
+            order_id="known-scout",
+            pair="USD_CAD",
+            order_type="LIMIT",
+            owner=Owner.TRADER,
+            raw={
+                "clientExtensions": {
+                    "id": "qrv1-USDCAD-L-test-pss-known",
+                    "comment": (
+                        "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT "
+                        "vehicle=psv-known lane=scout"
+                    )
+                }
+            },
+        )
+        unknown = replace(
+            known,
+            order_id="unknown-scout",
+            raw={
+                "clientExtensions": {
+                    "comment": "qr-vnext role=BIDASK_REPLAY_CONTRARIAN_SCOUT"
+                }
+            },
+        )
+        filled_order_shadow = replace(known, order_id="filled-shadow", trade_id="trade-1")
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=self.now,
+            orders=(known, unknown, filled_order_shadow),
+        )
+
+        self.assertEqual(
+            predictive_scout_broker_vehicle_counts(snapshot),
+            {"psv-known": 1},
+        )
+        self.assertEqual(
+            predictive_scout_broker_signal_ids(snapshot),
+            {"pss-known"},
+        )
 
     def test_policy_cannot_raise_hard_caps(self) -> None:
         policy = self._policy()

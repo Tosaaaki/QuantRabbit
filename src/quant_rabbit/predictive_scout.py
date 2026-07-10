@@ -16,6 +16,7 @@ from quant_rabbit.forecast_precision import (
 )
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Owner, Side, TradeMethod
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner
 from quant_rabbit.paths import ROOT
 from quant_rabbit.risk import MIN_PRODUCTION_LOT_UNITS
 
@@ -172,6 +173,31 @@ def predictive_scout_intent_issues(
     policy = predictive_scout_policy(policy_path or data_root.parent / "config" / "predictive_scout_policy.json")
     ledger_path = execution_ledger_db_path or (data_root / "execution_ledger.db")
     issues: list[dict[str, str]] = []
+
+    manual_pair_exposure = bool(
+        snapshot is not None
+        and (
+            any(
+                str(position.pair or "").upper() == intent.pair.upper()
+                and is_operator_managed_manual_owner(position.owner)
+                for position in snapshot.positions
+            )
+            or any(
+                str(order.pair or "").upper() == intent.pair.upper()
+                and not order.trade_id
+                and is_operator_managed_manual_owner(order.owner)
+                for order in snapshot.orders
+            )
+        )
+    )
+    if manual_pair_exposure:
+        issues.append(
+            _issue(
+                "PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED",
+                f"predictive SCOUT must not enter {intent.pair} while manual/operator-managed "
+                "or tagless position/pending-order exposure exists on the same pair, regardless of direction",
+            )
+        )
 
     if not _policy_contract_valid(policy):
         issues.append(
@@ -570,6 +596,64 @@ def predictive_scout_concurrent_count(snapshot: BrokerSnapshot | None) -> int:
         if not order.trade_id and predictive_scout_broker_raw_claimed(order.raw):
             count += 1
     return count
+
+
+def predictive_scout_broker_vehicle_counts(
+    snapshot: BrokerSnapshot | None,
+) -> dict[str, int]:
+    """Count active broker-visible SCOUTs by stable vehicle id for diagnostics."""
+
+    if snapshot is None:
+        return {}
+    counts: dict[str, int] = {}
+    broker_rows = [
+        position.raw
+        for position in snapshot.positions
+        if predictive_scout_broker_raw_claimed(position.raw)
+    ]
+    broker_rows.extend(
+        order.raw
+        for order in snapshot.orders
+        if not order.trade_id and predictive_scout_broker_raw_claimed(order.raw)
+    )
+    for raw in broker_rows:
+        vehicle_id = _raw_scout_vehicle_id(raw)
+        if not vehicle_id:
+            continue
+        counts[vehicle_id] = counts.get(vehicle_id, 0) + 1
+    return counts
+
+
+def predictive_scout_broker_signal_ids(
+    snapshot: BrokerSnapshot | None,
+) -> set[str]:
+    """Return exact broker-reflected signal ids for atomic slot reconciliation.
+
+    Vehicle ids are intentionally insufficient here: an older filled position
+    and a newer in-flight reservation can share the same vehicle.  Only the
+    exact signal id may cancel the corresponding local claim's shadow slot.
+    Missing or truncated signal ids stay absent, which is conservative because
+    the broker object still contributes to the global concurrent count.
+    """
+
+    if snapshot is None:
+        return set()
+    signal_ids: set[str] = set()
+    broker_rows = [
+        position.raw
+        for position in snapshot.positions
+        if predictive_scout_broker_raw_claimed(position.raw)
+    ]
+    broker_rows.extend(
+        order.raw
+        for order in snapshot.orders
+        if not order.trade_id and predictive_scout_broker_raw_claimed(order.raw)
+    )
+    for raw in broker_rows:
+        signal_id = _raw_scout_signal_id(raw)
+        if signal_id:
+            signal_ids.add(signal_id)
+    return signal_ids
 
 
 def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
@@ -1268,6 +1352,42 @@ def _raw_has_scout_role(raw: Any) -> bool:
         if "ROLE=BIDASK_REPLAY_CONTRARIAN_SCOUT" in comment or "ROLE=BIDASK_REPLAY_PRECISION_SCOUT" in comment:
             return True
     return False
+
+
+def _raw_scout_vehicle_id(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(key)
+        if not isinstance(extension, dict):
+            continue
+        for token in str(extension.get("comment") or "").split():
+            if token.lower().startswith("vehicle="):
+                vehicle_id = token.split("=", 1)[1].strip()
+                if vehicle_id.startswith("psv-"):
+                    return vehicle_id
+    return None
+
+
+def _raw_scout_signal_id(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(key)
+        if not isinstance(extension, dict):
+            continue
+        extension_id = str(extension.get("id") or "")
+        signal_offset = extension_id.rfind("pss-")
+        if signal_offset >= 0:
+            signal_id = extension_id[signal_offset : signal_offset + 28]
+            if signal_id.startswith("pss-"):
+                return signal_id
+        for token in str(extension.get("comment") or "").split():
+            if token.lower().startswith("signal="):
+                signal_id = token.split("=", 1)[1].strip()
+                if signal_id.startswith("pss-"):
+                    return signal_id
+    return None
 
 
 def _parse_utc(value: Any) -> datetime | None:

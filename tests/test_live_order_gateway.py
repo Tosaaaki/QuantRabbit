@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -596,6 +597,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             staged = json.loads((root / "request.json").read_text())
             order = staged["order_request"]
             self.assertEqual(order["timeInForce"], "GTD")
+            self.assertEqual(order["positionFill"], "OPEN_ONLY")
             self.assertEqual(order["stopLossOnFill"]["price"], "1.41520")
             expected_expiry = datetime.fromisoformat(
                 metadata["predictive_scout_expires_at_utc"]
@@ -648,6 +650,14 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 comment.index(f"vehicle={scout_receipt['predictive_scout_vehicle_id']}"),
             )
             self.assertIn("lane=predictive_scout:", comment)
+            self.assertIn(
+                scout_receipt["predictive_scout_signal_id"],
+                order["clientExtensions"]["id"],
+            )
+            self.assertIn(
+                scout_receipt["predictive_scout_signal_id"],
+                order["tradeClientExtensions"]["id"],
+            )
 
     def test_predictive_scout_rejects_ai_size_multiple(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -814,6 +824,270 @@ class LiveOrderGatewayTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in staged["risk_issues"]}
             self.assertIn("PREDICTIVE_SCOUT_ATTACHED_TP_MISMATCH", issue_codes)
 
+    def test_predictive_scout_live_send_requires_verified_ai_trade_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1",
+                "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+            },
+        ):
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_predictive_scout_policy(root)
+            intents = _predictive_scout_intents(
+                data_root,
+                now=datetime.now(timezone.utc),
+            )
+            client = _predictive_scout_client()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, pair="USD_CAD"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
+            ).run(
+                intents_path=intents,
+                lane_id=PREDICTIVE_SCOUT_LANE_ID,
+                send=True,
+                confirm_live=True,
+            )
+            staged = json.loads((root / "request.json").read_text())
+            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+                claims = con.execute(
+                    "SELECT COUNT(*) FROM predictive_scout_signal_claims"
+                ).fetchone()[0]
+
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.orders, [])
+        self.assertEqual(claims, 0)
+        self.assertIn(
+            "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
+            {issue["code"] for issue in staged["risk_issues"]},
+        )
+
+    def test_predictive_scout_ai_receipt_is_trade_signal_and_market_bound(self) -> None:
+        cases = (
+            ("single_add", "single", "ADD", "LONG", False, 0, "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND"),
+            ("batch_add", "batch", "ADD", "LONG", False, 0, "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND"),
+            ("wrong_market_side", "single", "TRADE", "SHORT", False, 0, "GPT_SCOUT_MARKET_READ_MISMATCH_FOR_LIVE_SEND"),
+            ("wrong_cycle", "single", "TRADE", "LONG", True, 0, "GPT_SCOUT_SIGNAL_MISMATCH_FOR_LIVE_SEND"),
+            ("future_receipt", "single", "TRADE", "LONG", False, 30, "GPT_SCOUT_RECEIPT_FROM_FUTURE"),
+        )
+        for (
+            label,
+            mode,
+            action,
+            market_direction,
+            wrong_cycle,
+            future_days,
+            expected_code,
+        ) in cases:
+            with (
+                self.subTest(label=label),
+                tempfile.TemporaryDirectory() as tmp,
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1",
+                        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+                    },
+                ),
+            ):
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir()
+                _write_predictive_scout_policy(root)
+                intents = _predictive_scout_intents(
+                    data_root,
+                    now=datetime.now(timezone.utc),
+                )
+                generated_at = (
+                    datetime.now(timezone.utc) + timedelta(days=future_days)
+                ).isoformat()
+                verified = _write_predictive_scout_verified_decision(
+                    root,
+                    intents_path=intents,
+                    action=action,
+                    market_direction=market_direction,
+                    generated_at_utc=generated_at,
+                )
+                if wrong_cycle:
+                    verified_payload = json.loads(verified.read_text())
+                    verified_payload["input_packet"]["lanes"][0]["predictive_scout"][
+                        "forecast_cycle_id"
+                    ] = "stale-forecast-cycle"
+                    verified.write_text(json.dumps(verified_payload), encoding="utf-8")
+                client = _predictive_scout_client()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root, pair="USD_CAD"),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                    verified_decision_path=verified,
+                    predictive_scout_canonical_ledger_db_path=(
+                        data_root / "execution_ledger.db"
+                    ),
+                )
+                if mode == "batch":
+                    summary = gateway.run_batch(
+                        intents_path=intents,
+                        lane_ids=(PREDICTIVE_SCOUT_LANE_ID,),
+                        send=True,
+                        confirm_live=True,
+                    )
+                else:
+                    summary = gateway.run(
+                        intents_path=intents,
+                        lane_id=PREDICTIVE_SCOUT_LANE_ID,
+                        send=True,
+                        confirm_live=True,
+                    )
+                staged = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    staged["orders"][0]["risk_issues"]
+                    if mode == "batch"
+                    else staged["risk_issues"]
+                )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                self.assertIn(expected_code, {issue["code"] for issue in risk_issues})
+
+    def test_predictive_scout_manual_same_pair_blocks_gateway_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1",
+                "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+            },
+        ):
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_predictive_scout_policy(root)
+            intents = _predictive_scout_intents(
+                data_root,
+                now=datetime.now(timezone.utc),
+            )
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
+            )
+            client = _predictive_scout_client()
+            snapshot = client.snapshot_value
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=snapshot.fetched_at_utc,
+                positions=(
+                    BrokerPosition(
+                        trade_id="manual-usdcad-short",
+                        pair="USD_CAD",
+                        side=Side.SHORT,
+                        units=10_000,
+                        entry_price=1.42,
+                        owner=Owner.OPERATOR_MANUAL,
+                    ),
+                ),
+                orders=snapshot.orders,
+                quotes=snapshot.quotes,
+                account=snapshot.account,
+                home_conversions=snapshot.home_conversions,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, pair="USD_CAD"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                verified_decision_path=verified,
+                predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
+            ).run(
+                intents_path=intents,
+                lane_id=PREDICTIVE_SCOUT_LANE_ID,
+                send=True,
+                confirm_live=True,
+            )
+            staged = json.loads((root / "request.json").read_text())
+
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.orders, [])
+        self.assertIn(
+            "PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED",
+            {issue["code"] for issue in staged["risk_issues"]},
+        )
+
+    def test_predictive_scout_tagless_same_pair_pending_blocks_gateway_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1",
+                "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+            },
+        ):
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_predictive_scout_policy(root)
+            intents = _predictive_scout_intents(
+                data_root,
+                now=datetime.now(timezone.utc),
+            )
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
+            )
+            client = _predictive_scout_client()
+            snapshot = client.snapshot_value
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=snapshot.fetched_at_utc,
+                positions=snapshot.positions,
+                orders=(
+                    BrokerOrder(
+                        order_id="oanda-ui-tagless-usdcad-limit",
+                        pair="USD_CAD",
+                        order_type="LIMIT",
+                        owner=Owner.UNKNOWN,
+                        raw={
+                            "id": "oanda-ui-tagless-usdcad-limit",
+                            "instrument": "USD_CAD",
+                            "type": "LIMIT_ORDER",
+                            "units": "1000",
+                        },
+                    ),
+                ),
+                quotes=snapshot.quotes,
+                account=snapshot.account,
+                home_conversions=snapshot.home_conversions,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, pair="USD_CAD"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                verified_decision_path=verified,
+                predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
+            ).run(
+                intents_path=intents,
+                lane_id=PREDICTIVE_SCOUT_LANE_ID,
+                send=True,
+                confirm_live=True,
+            )
+            staged = json.loads((root / "request.json").read_text())
+
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.orders, [])
+        self.assertIn(
+            "PREDICTIVE_SCOUT_MANUAL_PAIR_BLOCKED",
+            {issue["code"] for issue in staged["risk_issues"]},
+        )
+
     def test_predictive_scout_expiry_is_rechecked_immediately_before_post(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -829,6 +1103,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
             intents = _predictive_scout_intents(
                 data_root,
                 now=datetime.now(timezone.utc),
+            )
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
             )
             client = _predictive_scout_client()
 
@@ -849,6 +1127,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     output_path=root / "request.json",
                     report_path=root / "report.md",
                     live_enabled=True,
+                    verified_decision_path=verified,
                     predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
                 ).run(
                     intents_path=intents,
@@ -881,6 +1160,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 data_root,
                 now=datetime.now(timezone.utc),
             )
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
+            )
             client = _predictive_scout_client()
 
             summary = LiveOrderGateway(
@@ -889,6 +1172,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 output_path=root / "request.json",
                 report_path=root / "report.md",
                 live_enabled=True,
+                verified_decision_path=verified,
                 predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
             ).run(
                 intents_path=intents,
@@ -923,6 +1207,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 data_root,
                 now=datetime.now(timezone.utc),
             )
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
+            )
             client = _predictive_scout_client()
             gateway = LiveOrderGateway(
                 client=client,
@@ -930,6 +1218,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 output_path=root / "request.json",
                 report_path=root / "report.md",
                 live_enabled=True,
+                verified_decision_path=verified,
                 predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
             )
 
@@ -969,6 +1258,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
             data_root.mkdir()
             _write_predictive_scout_policy(root)
             intents = _predictive_scout_intents(data_root, now=datetime.now(timezone.utc))
+            verified = _write_predictive_scout_verified_decision(
+                root,
+                intents_path=intents,
+            )
             client = _predictive_scout_client()
             gateway = LiveOrderGateway(
                 client=client,
@@ -976,6 +1269,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 output_path=root / "request.json",
                 report_path=root / "report.md",
                 live_enabled=True,
+                verified_decision_path=verified,
                 predictive_scout_canonical_ledger_db_path=data_root / "execution_ledger.db",
             )
 
@@ -1004,6 +1298,82 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertIn(
             "PREDICTIVE_SCOUT_EXPERIMENT_ALREADY_RESERVED",
             {issue["code"] for issue in payload["risk_issues"]},
+        )
+
+    def test_distinct_predictive_scout_gateways_cannot_race_past_global_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1",
+                "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+            },
+        ):
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_predictive_scout_policy(root)
+            base_intents = _predictive_scout_intents(
+                data_root,
+                now=datetime.now(timezone.utc),
+            )
+            profile_path = _profile(root, pair="USD_CAD")
+            gateways = []
+            clients = []
+            intent_paths = []
+            for index in range(3):
+                payload = json.loads(base_intents.read_text())
+                payload["results"][0]["intent"]["metadata"]["forecast_cycle_id"] = (
+                    f"parallel-forecast-cycle-{index}"
+                )
+                intents_path = data_root / f"parallel-intents-{index}.json"
+                intents_path.write_text(json.dumps(payload), encoding="utf-8")
+                client = _predictive_scout_client()
+                clients.append(client)
+                intent_paths.append(intents_path)
+                gateways.append(
+                    LiveOrderGateway(
+                        client=client,
+                        strategy_profile=profile_path,
+                        output_path=root / f"request-{index}.json",
+                        report_path=root / f"report-{index}.md",
+                        live_enabled=True,
+                        verified_decision_path=_write_predictive_scout_verified_decision(
+                            root,
+                            intents_path=intents_path,
+                            suffix=str(index),
+                        ),
+                        predictive_scout_canonical_ledger_db_path=(
+                            data_root / "execution_ledger.db"
+                        ),
+                        execution_ledger_report_path=root / f"ledger-{index}.md",
+                    )
+                )
+
+            def send(index: int):
+                return gateways[index].run(
+                    intents_path=intent_paths[index],
+                    lane_id=PREDICTIVE_SCOUT_LANE_ID,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                results = list(executor.map(send, range(3)))
+            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+                claim_count = con.execute(
+                    "SELECT COUNT(*) FROM predictive_scout_signal_claims"
+                ).fetchone()[0]
+            issue_codes = []
+            for index in range(3):
+                staged = json.loads((root / f"request-{index}.json").read_text())
+                issue_codes.extend(issue["code"] for issue in staged["risk_issues"])
+
+        self.assertEqual(sum(result.sent for result in results), 2)
+        self.assertEqual(sum(len(client.orders) for client in clients), 2)
+        self.assertEqual(claim_count, 2)
+        self.assertIn(
+            "PREDICTIVE_SCOUT_CONCURRENT_CAP_REACHED_AT_RESERVATION",
+            issue_codes,
         )
 
     def test_predictive_scout_cannot_redirect_atomic_claim_to_custom_ledger(self) -> None:
@@ -3950,6 +4320,7 @@ def _predictive_scout_intents(
         lane_id=PREDICTIVE_SCOUT_LANE_ID,
     )
     payload = json.loads(intents.read_text())
+    payload["generated_at_utc"] = now.isoformat()
     intent = payload["results"][0]["intent"]
     intent["entry"] = 1.41610 if crossed else 1.41590
     intent["tp"] = 1.41690
@@ -3963,6 +4334,71 @@ def _predictive_scout_intents(
     }
     intents.write_text(json.dumps(payload))
     return intents
+
+
+def _write_predictive_scout_verified_decision(
+    root: Path,
+    *,
+    intents_path: Path,
+    suffix: str = "",
+    action: str = "TRADE",
+    market_pair: str = "USD_CAD",
+    market_direction: str = "LONG",
+    generated_at_utc: str | None = None,
+) -> Path:
+    name_suffix = f"-{suffix}" if suffix else ""
+    path = root / f"gpt_verified_predictive_scout{name_suffix}.json"
+    intents_payload = json.loads(intents_path.read_text())
+    intent = intents_payload["results"][0]["intent"]
+    metadata = intent["metadata"]
+    lane_packet = {
+        "lane_id": PREDICTIVE_SCOUT_LANE_ID,
+        "pair": intent["pair"],
+        "direction": intent["side"],
+        "order_type": intent["order_type"],
+        "entry": intent["entry"],
+        "tp": intent["tp"],
+        "sl": intent["sl"],
+        "units": intent["units"],
+        "predictive_scout": {
+            "forecast_cycle_id": metadata["forecast_cycle_id"],
+            "rule_digest": metadata["predictive_scout_rule_digest"],
+            "generated_at_utc": metadata["predictive_scout_generated_at_utc"],
+            "expires_at_utc": metadata["predictive_scout_expires_at_utc"],
+        },
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at_utc
+                or datetime.now(timezone.utc).isoformat(),
+                "status": "ACCEPTED",
+                "decision": {
+                    "action": action,
+                    "selected_lane_id": PREDICTIVE_SCOUT_LANE_ID,
+                    "market_read_first": {
+                        "next_30m_prediction": {
+                            "pair": market_pair,
+                            "direction": market_direction,
+                        },
+                        "next_2h_prediction": {
+                            "pair": market_pair,
+                            "direction": market_direction,
+                        },
+                        "best_trade_if_forced": {
+                            "pair": market_pair,
+                            "direction": market_direction,
+                        },
+                    },
+                },
+                "verification_issues": [],
+                "input_packet": {"lanes": [lane_packet]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_predictive_scout_policy(root: Path) -> Path:

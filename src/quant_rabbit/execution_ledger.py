@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -19,6 +20,16 @@ GPT_CLOSE_RECONCILE_MAX_ACCEPT_DELAY_SECONDS = 20 * 60
 # Broker and receipt timestamps can differ slightly across local write time,
 # OANDA nanosecond timestamps, and transaction fetch order.
 GPT_CLOSE_RECONCILE_CLOCK_SKEW_SECONDS = 60
+# Claims written before the expiry column existed can only have come from the
+# original SCOUT contract, whose broker GTD ceiling is 90 minutes.  This
+# compatibility ceiling prevents a legacy claim from occupying a concurrent
+# slot forever without inventing a shorter market TTL.
+PREDICTIVE_SCOUT_LEGACY_CLAIM_MAX_TTL_MINUTES = 90
+# SQLite PRAGMA/schema setup can fail immediately when several fresh worker
+# processes open a brand-new ledger together, even with connection busy_timeout.
+# These short engineering backoffs serialize that one-time migration without
+# weakening the reservation transaction or waiting anywhere near a trade TTL.
+SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS = (0.05, 0.10, 0.20, 0.40, 0.80)
 
 
 class TransactionClient(Protocol):
@@ -40,6 +51,14 @@ class ExecutionLedgerSummary:
     reconciled_gateway_events_inserted: int = 0
     last_transaction_id: str | None = None
     baseline_transaction_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PredictiveScoutReservationResult:
+    reserved: bool
+    status: str
+    daily_reserved: int
+    active_slots: int
 
 
 class ExecutionLedger:
@@ -198,24 +217,186 @@ class ExecutionLedger:
         signal_id: str,
         experiment_id: str,
         vehicle_id: str,
-    ) -> bool:
-        """Atomically claim one vehicle/forecast signal and index its POST reservation."""
+        expires_at_utc: str,
+        max_daily: int,
+        max_concurrent: int,
+        broker_active_total: int,
+        broker_active_signal_ids: set[str] | None = None,
+    ) -> PredictiveScoutReservationResult:
+        """Atomically claim one signal plus its shared daily/concurrent slot.
+
+        ``BEGIN IMMEDIATE`` serializes different signal ids as well as duplicate
+        ids.  Broker-active vehicles are reconciled against still-live local
+        reservations by exact signal id, so a reflected broker order consumes one slot, while an
+        in-flight POST that has not reached the broker snapshot also consumes
+        one slot.  This closes the stale-snapshot race where two bots could both
+        observe one free slot and POST simultaneously.
+        """
 
         if not signal_id or not experiment_id or not vehicle_id:
             raise ValueError("predictive SCOUT reservation identity is incomplete")
+        if max_daily <= 0 or max_concurrent <= 0:
+            raise ValueError("predictive SCOUT reservation caps must be positive")
+        expiry = _parse_utc(expires_at_utc)
+        if expiry is None:
+            raise ValueError("predictive SCOUT reservation expiry must be timezone-aware UTC")
+        broker_active_total = max(0, int(broker_active_total))
+        broker_signals = {
+            str(signal_id)
+            for signal_id in (broker_active_signal_ids or set())
+            if str(signal_id)
+        }
         self._init_db()
         now = _now()
+        now_dt = _parse_utc(now)
+        assert now_dt is not None
+        if expiry <= now_dt:
+            raise ValueError("predictive SCOUT reservation expiry is not in the future")
+        day = now_dt.date().isoformat()
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for broker_signal in broker_signals:
+                conn.execute(
+                    """
+                    UPDATE predictive_scout_signal_claims
+                    SET broker_reflected_at_utc = COALESCE(broker_reflected_at_utc, ?)
+                    WHERE signal_id = ?
+                    """,
+                    (now, broker_signal),
+                )
+            duplicate = conn.execute(
+                "SELECT 1 FROM predictive_scout_signal_claims WHERE signal_id = ?",
+                (signal_id,),
+            ).fetchone()
+            daily_budget_keys = {
+                f"signal:{str(row[0])}"
+                for row in conn.execute(
+                    """
+                    SELECT signal_id
+                    FROM predictive_scout_signal_claims
+                    WHERE substr(reserved_at_utc, 1, 10) = ?
+                    """,
+                    (day,),
+                ).fetchall()
+                if str(row[0] or "")
+            }
+            for row in conn.execute(
+                """
+                SELECT rowid, payload_json
+                FROM gateway_receipts
+                WHERE sent = 1 AND substr(ts_utc, 1, 10) = ?
+                """,
+                (day,),
+            ).fetchall():
+                try:
+                    legacy_payload = json.loads(row["payload_json"])
+                except (TypeError, json.JSONDecodeError):
+                    raise ValueError("predictive SCOUT daily receipt history is unreadable")
+                daily_budget_keys.update(
+                    _predictive_scout_budget_keys(
+                        legacy_payload,
+                        fallback=f"legacy-receipt:{row['rowid']}",
+                    )
+                )
+            for row in conn.execute(
+                """
+                SELECT rowid, event_type, raw_json
+                FROM execution_events
+                WHERE event_type IN ('GATEWAY_ORDER_SENT', 'GATEWAY_ORDER_STAGED')
+                  AND substr(ts_utc, 1, 10) = ?
+                """,
+                (day,),
+            ).fetchall():
+                try:
+                    legacy_payload = json.loads(row["raw_json"])
+                except (TypeError, json.JSONDecodeError):
+                    raise ValueError("predictive SCOUT daily event history is unreadable")
+                is_reservation = bool(
+                    legacy_payload.get("predictive_scout_post_reserved") is True
+                    or str(legacy_payload.get("status") or "").upper()
+                    == "PREDICTIVE_SCOUT_POST_RESERVED"
+                )
+                if row["event_type"] != "GATEWAY_ORDER_SENT" and not is_reservation:
+                    continue
+                daily_budget_keys.update(
+                    _predictive_scout_budget_keys(
+                        legacy_payload,
+                        fallback=f"legacy-event:{row['rowid']}",
+                    )
+                )
+            daily_reserved = len(daily_budget_keys)
+            unreflected_claims = 0
+            for row in conn.execute(
+                """
+                SELECT signal_id, reserved_at_utc, expires_at_utc,
+                       broker_reflected_at_utc
+                FROM predictive_scout_signal_claims
+                """
+            ).fetchall():
+                claim_expiry = _parse_utc(row["expires_at_utc"])
+                if claim_expiry is None:
+                    reserved_at = _parse_utc(row["reserved_at_utc"])
+                    if reserved_at is not None:
+                        claim_expiry = reserved_at + timedelta(
+                            minutes=PREDICTIVE_SCOUT_LEGACY_CLAIM_MAX_TTL_MINUTES
+                        )
+                if claim_expiry is None or claim_expiry <= now_dt:
+                    continue
+                claimed_signal = str(row["signal_id"] or "")
+                was_reflected = bool(str(row["broker_reflected_at_utc"] or "").strip())
+                if (
+                    claimed_signal
+                    and claimed_signal not in broker_signals
+                    and not was_reflected
+                ):
+                    unreflected_claims += 1
+            active_slots = broker_active_total + unreflected_claims
+
+            if duplicate is not None:
+                return PredictiveScoutReservationResult(
+                    reserved=False,
+                    status="DUPLICATE_SIGNAL",
+                    daily_reserved=daily_reserved,
+                    active_slots=active_slots,
+                )
+            if daily_reserved >= max_daily:
+                return PredictiveScoutReservationResult(
+                    reserved=False,
+                    status="DAILY_CAP_REACHED",
+                    daily_reserved=daily_reserved,
+                    active_slots=active_slots,
+                )
+            if active_slots >= max_concurrent:
+                return PredictiveScoutReservationResult(
+                    reserved=False,
+                    status="CONCURRENT_CAP_REACHED",
+                    daily_reserved=daily_reserved,
+                    active_slots=active_slots,
+                )
+
             claim = conn.execute(
                 """
                 INSERT OR IGNORE INTO predictive_scout_signal_claims(
-                    signal_id, experiment_id, vehicle_id, reserved_at_utc, payload_json
-                ) VALUES (?, ?, ?, ?, ?)
+                    signal_id, experiment_id, vehicle_id, reserved_at_utc,
+                    expires_at_utc, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (signal_id, experiment_id, vehicle_id, now, _json(payload)),
+                (
+                    signal_id,
+                    experiment_id,
+                    vehicle_id,
+                    now,
+                    expiry.isoformat(),
+                    _json(payload),
+                ),
             )
             if claim.rowcount <= 0:
-                return False
+                return PredictiveScoutReservationResult(
+                    reserved=False,
+                    status="DUPLICATE_SIGNAL",
+                    daily_reserved=daily_reserved,
+                    active_slots=active_slots,
+                )
             receipt_inserted = _insert_gateway_receipt(
                 conn,
                 kind=kind,
@@ -245,14 +426,29 @@ class ExecutionLedger:
             reconciled_gateway_events_inserted=reconciled_events,
         )
         self._write_report(summary)
-        return True
+        return PredictiveScoutReservationResult(
+            reserved=True,
+            status="RESERVED",
+            daily_reserved=daily_reserved + 1,
+            active_slots=active_slots + 1,
+        )
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
+        for delay in (*SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS, None):
+            try:
+                self._init_db_once()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or delay is None:
+                    raise
+                time.sleep(delay)
+
+    def _init_db_once(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(
@@ -317,6 +513,8 @@ class ExecutionLedger:
                     experiment_id TEXT NOT NULL,
                     vehicle_id TEXT NOT NULL,
                     reserved_at_utc TEXT NOT NULL,
+                    expires_at_utc TEXT,
+                    broker_reflected_at_utc TEXT,
                     payload_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_predictive_scout_signal_claims_vehicle
@@ -343,6 +541,37 @@ class ExecutionLedger:
                 CREATE INDEX IF NOT EXISTS idx_verification_observations_subject
                     ON verification_observations(subject_type, subject_id);
                 """
+            )
+            claim_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(predictive_scout_signal_claims)"
+                ).fetchall()
+            }
+            for column_name in ("expires_at_utc", "broker_reflected_at_utc"):
+                if column_name in claim_columns:
+                    continue
+                try:
+                    conn.execute(
+                        "ALTER TABLE predictive_scout_signal_claims "
+                        f"ADD COLUMN {column_name} TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    # Another process may complete the same additive migration
+                    # after our PRAGMA read but before our ALTER acquires the
+                    # schema lock.  Only accept that precise converged state.
+                    refreshed = {
+                        str(row[1])
+                        for row in conn.execute(
+                            "PRAGMA table_info(predictive_scout_signal_claims)"
+                        ).fetchall()
+                    }
+                    if column_name not in refreshed:
+                        raise exc
+                claim_columns.add(column_name)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_predictive_scout_signal_claims_expiry "
+                "ON predictive_scout_signal_claims(expires_at_utc)"
             )
             _backfill_legacy_lane_ids(conn)
             _backfill_legacy_trade_close_ids(conn)
@@ -1567,6 +1796,76 @@ def _text(value: Any) -> str | None:
 
 def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _predictive_scout_budget_keys(
+    payload: Any,
+    *,
+    fallback: str,
+) -> set[str]:
+    """Return one stable daily-budget identity per SCOUT payload.
+
+    Mixed-version ledgers may contain a SENT gateway receipt without a signal
+    claim row.  Prefer exact signal, then experiment, then broker client-order
+    id so the receipt/event/claim copies of one POST deduplicate.  A payload
+    with only the legacy SCOUT marker still consumes a conservative fallback
+    slot rather than disappearing from the atomic daily cap.
+    """
+
+    scout_dicts: list[dict[str, Any]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("predictive_scout") is True:
+                scout_dicts.append(value)
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(payload)
+    if not scout_dicts:
+        return set()
+    signal_ids = {
+        str(item.get("predictive_scout_signal_id") or "").strip()
+        for item in scout_dicts
+        if str(item.get("predictive_scout_signal_id") or "").strip()
+    }
+    if signal_ids:
+        return {f"signal:{signal_id}" for signal_id in signal_ids}
+    experiment_ids = {
+        str(item.get("predictive_scout_experiment_id") or "").strip()
+        for item in scout_dicts
+        if str(item.get("predictive_scout_experiment_id") or "").strip()
+    }
+    if experiment_ids:
+        return {f"experiment:{experiment_id}" for experiment_id in experiment_ids}
+    client_ids: set[str] = set()
+
+    def collect_client_ids(value: Any) -> None:
+        if isinstance(value, dict):
+            for key in ("clientExtensions", "tradeClientExtensions"):
+                extension = value.get(key)
+                if isinstance(extension, dict):
+                    client_id = str(extension.get("id") or "").strip()
+                    if client_id:
+                        client_ids.add(client_id)
+            for nested in value.values():
+                collect_client_ids(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                collect_client_ids(nested)
+
+    collect_client_ids(payload)
+    if client_ids:
+        return {f"client:{client_id}" for client_id in client_ids}
+    if isinstance(payload, dict):
+        generated_at = str(payload.get("generated_at_utc") or "").strip()
+        if generated_at:
+            lane_id = str(payload.get("lane_id") or "").strip()
+            return {f"legacy-generated:{generated_at}:{lane_id}"}
+    return {fallback}
 
 
 def _now() -> str:
