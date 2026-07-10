@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -389,6 +391,175 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("live runtime lock busy", result.stderr)
             self.assertIn("skipped guardian cycle", result.stderr)
 
+    def test_position_guardian_monitors_every_open_owner_and_bounds_candidate_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = {
+                "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                "positions": [
+                    {"trade_id": "t1", "pair": "EUR_USD", "owner": "trader"},
+                    {"trade_id": "m1", "pair": "USD_JPY", "owner": "operator_manual"},
+                    {"trade_id": "u1", "pair": "GBP_USD", "owner": "unknown"},
+                ],
+                "orders": [
+                    {"order_id": "o1", "pair": "AUD_CAD", "owner": "trader", "state": "PENDING"},
+                    {"order_id": "o2", "pair": "USD_JPY", "owner": "operator_manual", "state": "PENDING"},
+                ],
+                "quotes": {},
+            }
+            triggers = {
+                "entries": [
+                    {"pair": "AUD_JPY", "lane_id": "lane-a", "status": "DRY_RUN_BLOCKED"},
+                    {"pair": "NZD_USD", "lane_id": "lane-b", "status": "DRY_RUN_BLOCKED"},
+                    {"pair": "CAD_JPY", "lane_id": "lane-c", "status": "DRY_RUN_BLOCKED"},
+                ]
+            }
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot=snapshot,
+                trigger_contract=triggers,
+                candidate_limit=2,
+            )
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_call = next(call for call in calls if "pair-charts" in call)
+            self.assertEqual(
+                pair_call[pair_call.index("--pairs") + 1],
+                "EUR_USD,GBP_USD,USD_JPY,AUD_CAD,AUD_JPY",
+            )
+            self.assertEqual(pair_call[pair_call.index("--timeframes") + 1], "M1,M5,M15")
+            self.assertNotIn("M30", pair_call)
+            management_call = next(call for call in calls if "position-management" in call)
+            execution_call = next(call for call in calls if "position-execution" in call)
+            self.assertEqual(
+                management_call[management_call.index("--snapshot") + 1],
+                "data/position_guardian_trader_snapshot.json",
+            )
+            self.assertEqual(
+                execution_call[execution_call.index("--snapshot") + 1],
+                "data/position_guardian_trader_snapshot.json",
+            )
+            management_snapshot = json.loads((root / "data" / "position_guardian_trader_snapshot.json").read_text())
+            self.assertEqual(
+                [(item["trade_id"], item["owner"]) for item in management_snapshot["positions"]],
+                [("t1", "trader")],
+            )
+            self.assertEqual(
+                [(item["order_id"], item["owner"]) for item in management_snapshot["orders"]],
+                [("o1", "trader")],
+            )
+            self.assertTrue(management_snapshot["position_guardian_scope"]["non_trader_positions_monitor_only"])
+            self.assertTrue(management_snapshot["position_guardian_scope"]["non_trader_orders_monitor_only"])
+            charts = json.loads((root / "data" / "position_guardian_pair_charts.json").read_text())
+            self.assertEqual(
+                charts["guardian_monitor_pairs"],
+                ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_CAD", "AUD_JPY"],
+            )
+            scope = charts["guardian_monitor_scope"]
+            self.assertEqual(scope["USD_JPY"]["position_owners"], ["operator_manual"])
+            self.assertTrue(scope["USD_JPY"]["non_trader_monitor_only"])
+            self.assertFalse(scope["USD_JPY"]["management_write_eligible"])
+            self.assertIn("active_trigger_candidate", scope["AUD_JPY"]["reasons"])
+            self.assertIn("active_pending_order", scope["AUD_CAD"]["reasons"])
+            freshness = json.loads((root / "data" / "position_guardian_chart_freshness.json").read_text())
+            self.assertEqual(freshness["status"], "FRESH")
+            self.assertEqual(freshness["timeframes"], ["M1", "M5", "M15"])
+            self.assertIn("closed-candle chart refresh FRESH", result.stderr)
+
+    def test_position_guardian_monitor_only_continues_and_reuses_chart_until_next_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = {
+                "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                "positions": [
+                    {"trade_id": "m1", "pair": "USD_JPY", "owner": "operator_manual"},
+                    {"trade_id": "u1", "pair": "GBP_USD", "owner": "unknown"},
+                ],
+                "orders": [],
+                "quotes": {},
+            }
+            triggers = {"entries": [{"pair": "EUR_USD", "lane_id": "lane-a", "status": "TRIGGER_READY"}]}
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot=snapshot,
+                trigger_contract=triggers,
+                candidate_limit=1,
+            )
+
+            results = [
+                subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                for _ in range(2)
+            ]
+
+            for result in results:
+                self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(sum("pair-charts" in call for call in calls), 1)
+            self.assertEqual(sum("guardian-event-router" in call for call in calls), 2)
+            self.assertFalse(any("position-management" in call for call in calls))
+            self.assertFalse(any("position-execution" in call for call in calls))
+            pair_call = next(call for call in calls if "pair-charts" in call)
+            self.assertEqual(pair_call[pair_call.index("--pairs") + 1], "GBP_USD,USD_JPY,EUR_USD")
+            management = json.loads((root / "data" / "position_guardian_management.json").read_text())
+            self.assertEqual(management["action"], "MONITOR_ONLY_NO_TRADER_POSITION")
+            self.assertEqual(management["positions"], [])
+            heartbeat = json.loads((root / "data" / "position_guardian.json").read_text())
+            self.assertEqual(heartbeat["status"], "MONITOR_ONLY_NO_TRADER_POSITION")
+            self.assertEqual(heartbeat["monitor_pairs"], ["GBP_USD", "USD_JPY", "EUR_USD"])
+            self.assertIn("completed read-only monitor scope", results[-1].stderr)
+            self.assertIn("reused data/position_guardian_pair_charts.json", results[-1].stderr)
+
+    def test_position_guardian_clears_old_chart_scope_when_nothing_is_open_or_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            stale_charts = root / "data" / "position_guardian_pair_charts.json"
+            stale_charts.write_text('{"charts":[{"pair":"EUR_USD"}],"guardian_monitor_pairs":["EUR_USD"]}\n')
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertFalse(any("pair-charts" in call for call in calls))
+            self.assertEqual(sum("guardian-event-router" in call for call in calls), 1)
+            charts = json.loads(stale_charts.read_text())
+            self.assertEqual(charts["guardian_monitor_pairs"], [])
+            self.assertEqual(charts["charts"], [])
+
     def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -543,6 +714,143 @@ def _wrapper_env(
         }
     )
     return env
+
+
+def _guardian_wrapper_env(
+    root: Path,
+    *,
+    snapshot: dict[str, object],
+    trigger_contract: dict[str, object],
+    candidate_limit: int,
+) -> tuple[dict[str, str], Path]:
+    data = root / "data"
+    docs = root / "docs"
+    data.mkdir(parents=True)
+    docs.mkdir(parents=True)
+    snapshot_source = root / "snapshot-source.json"
+    snapshot_source.write_text(json.dumps(snapshot))
+    (data / "guardian_trigger_contract.json").write_text(json.dumps(trigger_contract))
+    (data / "order_intents.json").write_text('{"results":[]}\n')
+    env_file = root / "oanda.env"
+    env_file.write_text("QR_LIVE_ENABLED=1\n")
+    capture = root / "guardian-calls.jsonl"
+    fake_python = root / "fake-python"
+    fake_python.write_text(
+        f"#!{sys.executable}\n"
+        + r'''
+import json
+import os
+import shutil
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+def value_after(args, name, default=None):
+    try:
+        return args[args.index(name) + 1]
+    except (ValueError, IndexError):
+        return default
+
+
+args = sys.argv[1:]
+if args and args[0] == "-":
+    source = sys.stdin.read()
+    sys.argv = ["-", *args[1:]]
+    exec(compile(source, "<guardian-helper>", "exec"), {"__name__": "__main__"})
+    raise SystemExit(0)
+
+capture = Path(os.environ["QR_FAKE_GUARDIAN_CAPTURE"])
+capture.parent.mkdir(parents=True, exist_ok=True)
+with capture.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\n")
+
+if len(args) < 3 or args[:2] != ["-m", "quant_rabbit.cli"]:
+    raise SystemExit(64)
+command = args[2]
+if command == "broker-snapshot":
+    destination = Path(value_after(args, "--output"))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(os.environ["QR_FAKE_GUARDIAN_SNAPSHOT"], destination)
+elif command == "pair-charts":
+    pairs = [item for item in str(value_after(args, "--pairs", "")).split(",") if item]
+    timeframes = [item for item in str(value_after(args, "--timeframes", "")).split(",") if item]
+    durations = {"M1": 60, "M5": 300, "M15": 900}
+    now = datetime.now(timezone.utc)
+    charts = []
+    for pair in pairs:
+        views = []
+        for timeframe in timeframes:
+            started = now - timedelta(seconds=durations[timeframe])
+            views.append(
+                {
+                    "granularity": timeframe,
+                    "recent_candles": [
+                        {
+                            "t": started.isoformat(),
+                            "complete": True,
+                            "o": 1.0,
+                            "h": 1.1,
+                            "l": 0.9,
+                            "c": 1.0,
+                            "v": 1,
+                        }
+                    ],
+                }
+            )
+        charts.append({"pair": pair, "views": views})
+    payload = {
+        "generated_at_utc": now.isoformat(),
+        "timeframes": timeframes,
+        "pairs_requested": len(pairs),
+        "pairs_succeeded": len(pairs),
+        "pairs_failed": 0,
+        "partial": False,
+        "failures": [],
+        "charts": charts,
+    }
+    output = Path(value_after(args, "--output"))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload) + "\n")
+    report = Path(value_after(args, "--report"))
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Pair Charts Report\n")
+elif command == "position-management":
+    output = Path(value_after(args, "--output"))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text('{"action":"HOLD","positions":[]}\n')
+    report = Path(value_after(args, "--report"))
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Position Management Report\n")
+elif command == "position-execution":
+    output = Path(value_after(args, "--output"))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text('{"status":"NO_ACTION","sent":false}\n')
+    report = Path(value_after(args, "--report"))
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Position Execution Report\n")
+elif command == "guardian-event-router":
+    output = Path(value_after(args, "--output"))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text('{"events":[]}\n')
+raise SystemExit(0)
+'''.lstrip()
+    )
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "QR_PYTHON": str(fake_python),
+            "QR_TRADER_ROOT_DIR": str(root),
+            "QR_OANDA_ENV_FILE": str(env_file),
+            "QR_LIVE_ENABLED": "1",
+            "QR_AUTOTRADE_LOCK_DIR": str(root / "lock"),
+            "QR_FAKE_GUARDIAN_CAPTURE": str(capture),
+            "QR_FAKE_GUARDIAN_SNAPSHOT": str(snapshot_source),
+            "QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS": str(candidate_limit),
+        }
+    )
+    return env, capture
 
 
 def _init_git(root: Path) -> None:

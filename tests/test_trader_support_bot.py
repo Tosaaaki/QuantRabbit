@@ -45,6 +45,165 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderSupportBotTest(unittest.TestCase):
+    def test_pending_guardian_market_tuning_work_order_becomes_read_only_repair_request(self) -> None:
+        work_order = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-eurusd-1",
+            "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|DOWN",
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+            "wake_reason_codes": ["TECHNICAL_STATE_CHANGE"],
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+                "details": {"m5_atr_pips": 2.57},
+            },
+            "bot_tuning_review": {
+                "affected_pairs": ["EUR_USD"],
+                "affected_bot_families": ["trend", "breakout"],
+            },
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=work_order,
+        )
+
+        self.assertEqual([item["code"] for item in requests], ["REVIEW_GUARDIAN_MARKET_STATE_TUNING"])
+        request = requests[0]
+        self.assertEqual(request["status"], "PENDING_HOURLY_AI_REVIEW")
+        evidence = request["evidence_summary"]
+        self.assertEqual(evidence["affected_pairs"], ["EUR_USD"])
+        self.assertFalse(evidence["live_permission_allowed"])
+        self.assertTrue(evidence["no_direct_oanda"])
+        self.assertTrue(evidence["preserve_blockers"])
+        self.assertTrue(all("LiveOrderGateway" not in command for command in request["verification_commands"]))
+
+    def test_guardian_tuning_work_order_cannot_promote_when_safety_boundary_is_missing(self) -> None:
+        malformed = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "unsafe",
+            "live_permission_allowed": True,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=malformed,
+        )
+
+        self.assertNotIn(
+            "REVIEW_GUARDIAN_MARKET_STATE_TUNING",
+            {item["code"] for item in requests},
+        )
+
+    def test_producer_shaped_tuning_work_order_derives_pair_family_and_material_reasons(self) -> None:
+        work_order = {
+            "schema_version": 1,
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-producer-shape",
+            "event_fingerprint": "fingerprint-1",
+            "material_reason_codes": [
+                "REGIME_STATE_CHANGE",
+                "TECHNICAL_FAMILY_STATE_CHANGE",
+            ],
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+                "details": {
+                    "material_fingerprint": {
+                        "dominant_regime": "TREND_DOWN",
+                        "family_consensus": {
+                            "trend": "DOWN",
+                            "mean_reversion": "MIXED",
+                            "breakout": "DOWN",
+                        },
+                    }
+                },
+            },
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=work_order,
+        )
+
+        evidence = requests[0]["evidence_summary"]
+        self.assertEqual(evidence["affected_pairs"], ["EUR_USD"])
+        self.assertEqual(evidence["affected_bot_families"], ["trend", "mean_reversion", "breakout"])
+        self.assertEqual(
+            evidence["material_reason_codes"],
+            ["REGIME_STATE_CHANGE", "TECHNICAL_FAMILY_STATE_CHANGE"],
+        )
+        self.assertIn("REGIME_STATE_CHANGE", requests[0]["source_findings"])
+
+    def test_schema_v2_tuning_queue_preserves_all_affected_pairs_for_hourly_ai(self) -> None:
+        first = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-eur",
+            "event_fingerprint": "eur-fingerprint",
+            "material_reason_codes": ["REGIME_STATE_CHANGE"],
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+                "details": {
+                    "material_fingerprint": {
+                        "family_consensus": {"trend": "DOWN"},
+                    }
+                },
+            },
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+        second = {
+            **first,
+            "work_order_id": "guardian-tuning-jpy",
+            "event_fingerprint": "jpy-fingerprint",
+            "material_reason_codes": ["VOLATILITY_BUCKET_CHANGE"],
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "USD_JPY",
+                "details": {
+                    "material_fingerprint": {
+                        "family_consensus": {"breakout": "UP"},
+                    }
+                },
+            },
+        }
+        payload = {**first, "schema_version": 2, "work_orders": [first, second], "pending_count": 2}
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=payload,
+        )
+
+        evidence = requests[0]["evidence_summary"]
+        self.assertEqual(evidence["pending_work_order_count"], 2)
+        self.assertEqual(evidence["affected_pairs"], ["EUR_USD", "USD_JPY"])
+        self.assertEqual(evidence["affected_bot_families"], ["trend", "breakout"])
+        self.assertEqual(
+            evidence["material_reason_codes"],
+            ["REGIME_STATE_CHANGE", "VOLATILITY_BUCKET_CHANGE"],
+        )
+
     def test_near_ready_evidence_orders_global_blocker_before_lane_local_work(self) -> None:
         needs = _near_ready_evidence_needed(
             [
@@ -255,7 +414,12 @@ class TraderSupportBotTest(unittest.TestCase):
             error_at = now - timedelta(minutes=30)
             os.utime(log_path, (error_at.timestamp(), error_at.timestamp()))
             review_path = root / "docs" / "guardian_action_review.md"
-            review_path.write_text("# Guardian Action Review\n\n- status: NO_WAKE\n", encoding="utf-8")
+            review_path.write_text(
+                "# Guardian Action Review\n\n"
+                f"- Generated at UTC: `{(now - timedelta(minutes=5)).isoformat()}`\n"
+                "- Status: `NO_WAKE`\n",
+                encoding="utf-8",
+            )
             recovered_at = now - timedelta(minutes=5)
             os.utime(review_path, (recovered_at.timestamp(), recovered_at.timestamp()))
             env = _guardian_env(root, active="1")
@@ -297,6 +461,41 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertNotIn("RUN_QUANTRABBIT_DISK_MAINTENANCE", action_codes)
             self.assertNotIn("REPAIR_RUNTIME_DISK_PRESSURE", request_codes)
             self.assertTrue(payload["runtime_disk"]["enospc_recovery_markers"])
+
+    def test_invalid_newer_runtime_marker_does_not_clear_enospc(self) -> None:
+        now = datetime(2026, 7, 9, 20, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "data" / "trader_support_bot.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text("", encoding="utf-8")
+            os.utime(marker, (now.timestamp(), now.timestamp()))
+
+            markers = trader_support_bot_module._runtime_disk_recovery_markers(
+                root,
+                [
+                    {
+                        "mtime_utc": (now - timedelta(minutes=10)).isoformat(),
+                        "path": str(root / "logs" / "guardian_wake_dispatcher.log"),
+                    }
+                ],
+            )
+
+            self.assertEqual(markers, [])
+
+    def test_atomic_support_write_failure_preserves_last_good_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trader_support_bot.json"
+            path.write_text('{"status":"READY"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(trader_support_bot_module.os, "replace", side_effect=OSError("ENOSPC")),
+                self.assertRaisesRegex(OSError, "ENOSPC"),
+            ):
+                trader_support_bot_module._atomic_write_text(path, '{"status":"BLOCKED"}\n')
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "READY"})
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
 
     def test_large_runtime_filesystem_low_free_fraction_warns_without_blocking(self) -> None:
         now = datetime(2026, 7, 10, 1, 15, tzinfo=timezone.utc)

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
+import stat
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -39,6 +43,7 @@ LEGACY_EVENT_BACKFILL_MIGRATION_KEY = (
     "migration:execution_ledger:legacy_event_backfills"
 )
 LEGACY_EVENT_BACKFILL_MIGRATION_VERSION = "1"
+GATEWAY_INPUT_PACKET_ARCHIVE_SCHEMA = "gateway_input_packet_archive_v1"
 
 
 class TransactionClient(Protocol):
@@ -88,6 +93,9 @@ class ExecutionLedger:
     ) -> None:
         self.db_path = db_path
         self.report_path = report_path
+        self.gateway_input_packet_archive_root = (
+            self.db_path.parent / "execution_evidence" / "gateway_input_packets"
+        )
 
     def sync_oanda_transactions(
         self,
@@ -185,12 +193,17 @@ class ExecutionLedger:
 
         self._init_db()
         now = _now()
+        ledger_payload = _gateway_payload_for_storage(
+            payload,
+            archive_root=self.gateway_input_packet_archive_root,
+            storage_root=self.db_path.parent,
+        )
         with self._connect() as conn:
             receipt_inserted = _insert_gateway_receipt(
                 conn,
                 kind=kind,
                 path=receipt_path,
-                payload=payload,
+                payload=ledger_payload,
                 now=now,
             )
             inserted_events = 0
@@ -257,6 +270,11 @@ class ExecutionLedger:
         }
         self._init_db()
         now = _now()
+        ledger_payload = _gateway_payload_for_storage(
+            payload,
+            archive_root=self.gateway_input_packet_archive_root,
+            storage_root=self.db_path.parent,
+        )
         now_dt = _parse_utc(now)
         assert now_dt is not None
         if expiry <= now_dt:
@@ -396,7 +414,7 @@ class ExecutionLedger:
                     vehicle_id,
                     now,
                     expiry.isoformat(),
-                    _json(payload),
+                    _json(ledger_payload),
                 ),
             )
             if claim.rowcount <= 0:
@@ -410,7 +428,7 @@ class ExecutionLedger:
                 conn,
                 kind=kind,
                 path=receipt_path,
-                payload=payload,
+                payload=ledger_payload,
                 now=now,
             )
             inserted_events = 0
@@ -1055,6 +1073,168 @@ def _insert_transaction(conn: sqlite3.Connection, transaction: dict[str, Any], n
         ),
     )
     return cur.rowcount > 0
+
+
+def _gateway_payload_for_storage(
+    payload: dict[str, Any],
+    *,
+    archive_root: Path,
+    storage_root: Path,
+) -> dict[str, Any]:
+    """Keep gateway receipts auditable without duplicating a ~1 MiB GPT packet.
+
+    The latest receipt file is overwritten by later cycles, so simply dropping
+    ``input_packet`` would destroy historical evidence.  Store its canonical
+    JSON once in a content-addressed gzip archive and keep a digest, sizes, and
+    compact shape summary in SQLite.  All execution/gate fields outside the
+    packet remain inline for existing ledger readers.
+    """
+
+    if "input_packet" not in payload:
+        return payload
+    packet = payload.get("input_packet")
+    canonical = _json(packet).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    archive_path = archive_root / digest[:2] / f"{digest}.json.gz"
+    _write_verified_content_addressed_gzip(
+        archive_path,
+        canonical,
+        expected_sha256=digest,
+        storage_root=storage_root,
+    )
+    try:
+        stored_path = str(archive_path.relative_to(storage_root))
+    except ValueError:
+        stored_path = str(archive_path)
+    compact = dict(payload)
+    compact.pop("input_packet", None)
+    compact["input_packet_archive"] = {
+        "schema_version": GATEWAY_INPUT_PACKET_ARCHIVE_SCHEMA,
+        "sha256": digest,
+        "path": stored_path,
+        "compression": "gzip",
+        "encoding": "utf-8",
+        "canonical_json": True,
+        "uncompressed_bytes": len(canonical),
+        "compressed_bytes": archive_path.stat().st_size,
+        "content_addressed": True,
+    }
+    compact["input_packet_summary"] = _gateway_input_packet_summary(packet)
+    return compact
+
+
+def _gateway_input_packet_summary(packet: Any) -> dict[str, Any]:
+    if not isinstance(packet, dict):
+        return {"json_type": type(packet).__name__}
+    lanes = packet.get("lanes") if isinstance(packet.get("lanes"), list) else []
+    refs = (
+        packet.get("allowed_evidence_refs")
+        if isinstance(packet.get("allowed_evidence_refs"), list)
+        else []
+    )
+    broker = packet.get("broker_snapshot") if isinstance(packet.get("broker_snapshot"), dict) else {}
+    return {
+        "top_level_keys": sorted(str(key) for key in packet),
+        "lane_count": len(lanes),
+        "lane_ids": [
+            str(item.get("lane_id"))
+            for item in lanes
+            if isinstance(item, dict) and item.get("lane_id")
+        ],
+        "allowed_evidence_ref_count": len(refs),
+        "broker_fetched_at_utc": broker.get("fetched_at_utc"),
+        "artifact_timestamps": packet.get("artifact_timestamps")
+        if isinstance(packet.get("artifact_timestamps"), dict)
+        else {},
+    }
+
+
+def _write_verified_content_addressed_gzip(
+    path: Path,
+    content: bytes,
+    *,
+    expected_sha256: str,
+    storage_root: Path,
+) -> None:
+    _assert_archive_path_contained(path, storage_root=storage_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_archive_path_contained(path, storage_root=storage_root)
+    if path.is_symlink():
+        raise ValueError(f"gateway input packet archive cannot be a symlink: {path}")
+    if path.exists():
+        _verify_gzip_content(path, expected_sha256=expected_sha256, expected_size=len(content))
+        return
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    try:
+        with tmp.open("wb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as compressed:
+                compressed.write(content)
+            raw.flush()
+            os.fsync(raw.fileno())
+        os.replace(tmp, path)
+        _fsync_directory(path.parent)
+        _assert_archive_path_contained(path, storage_root=storage_root)
+        _verify_gzip_content(path, expected_sha256=expected_sha256, expected_size=len(content))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _assert_archive_path_contained(path: Path, *, storage_root: Path) -> None:
+    root = Path(os.path.abspath(storage_root))
+    candidate = Path(os.path.abspath(path))
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"gateway input packet archive escapes storage root: {candidate}"
+        ) from exc
+
+    current = root
+    for part in relative.parts:
+        current = current / part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ValueError(
+                f"gateway input packet archive path cannot be inspected: {current}: {exc}"
+            ) from exc
+        if stat.S_ISLNK(mode):
+            raise ValueError(
+                f"gateway input packet archive path contains a symlink: {current}"
+            )
+
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_parent = candidate.parent.resolve(strict=False)
+        resolved_parent.relative_to(resolved_root)
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"gateway input packet archive parent escapes storage root: {candidate.parent}"
+        ) from exc
+
+
+def _verify_gzip_content(path: Path, *, expected_sha256: str, expected_size: int) -> None:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with gzip.open(path, "rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+    except (OSError, EOFError) as exc:
+        raise ValueError(f"gateway input packet archive is unreadable: {path}: {exc}") from exc
+    if digest.hexdigest() != expected_sha256 or size != expected_size:
+        raise ValueError(f"gateway input packet archive digest mismatch: {path}")
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _insert_gateway_receipt(

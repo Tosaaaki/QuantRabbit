@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,7 @@ from quant_rabbit.paths import (
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    DEFAULT_GUARDIAN_TUNING_WORK_ORDER,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
@@ -209,6 +211,7 @@ RUNTIME_DISK_RECOVERY_MARKERS = (
     "docs/trader_support_bot_report.md",
     "logs/disk_maintenance_report.json",
 )
+GUARDIAN_MARKET_TUNING_REPAIR_REQUEST = "REVIEW_GUARDIAN_MARKET_STATE_TUNING"
 RANGE_RAIL_RECHECK_MONITOR_COMMAND = (
     "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-trigger-contract && "
     "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-event-router && "
@@ -273,6 +276,7 @@ class TraderSupportBot:
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+        guardian_tuning_work_order_path: Path = DEFAULT_GUARDIAN_TUNING_WORK_ORDER,
         active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
         non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
@@ -310,6 +314,11 @@ class TraderSupportBot:
         self.guardian_receipt_operator_review_path = _default_receipt_artifact_path(
             requested_path=guardian_receipt_operator_review_path,
             default_path=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+            output_path=output_path,
+        )
+        self.guardian_tuning_work_order_path = _default_receipt_artifact_path(
+            requested_path=guardian_tuning_work_order_path,
+            default_path=DEFAULT_GUARDIAN_TUNING_WORK_ORDER,
             output_path=output_path,
         )
         self.active_trader_contract_path = _default_receipt_artifact_path(
@@ -366,10 +375,11 @@ class TraderSupportBot:
 
     def run(self) -> TraderSupportSummary:
         payload = self.build_payload()
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
-        self.report_path.write_text(_render_report(payload), encoding="utf-8")
+        _atomic_write_text(
+            self.output_path,
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
+        _atomic_write_text(self.report_path, _render_report(payload))
         return TraderSupportSummary(
             status=payload["status"],
             output_path=self.output_path,
@@ -397,6 +407,7 @@ class TraderSupportBot:
         guardian_receipt_operator_review = operator_review_status_summary(
             _read_json(self.guardian_receipt_operator_review_path)
         )
+        guardian_tuning_work_order = _read_json(self.guardian_tuning_work_order_path)
         active_trader_contract = _read_json(self.active_trader_contract_path)
         active_opportunity_board = _read_json(self.active_opportunity_board_path)
         non_eurusd_live_grade_frontier = _read_json(self.non_eurusd_live_grade_frontier_path)
@@ -516,6 +527,7 @@ class TraderSupportBot:
             target=target_summary,
             oanda_history_coverage=oanda_history_coverage,
             runtime_disk=runtime_disk,
+            guardian_tuning_work_order=guardian_tuning_work_order,
         )
         send_allowed = (
             status == STATUS_READY
@@ -679,6 +691,10 @@ class TraderSupportBot:
             ),
             "repair_request_count": len(repair_requests),
             "repair_request_codes": [item["code"] for item in repair_requests],
+            "guardian_tuning_work_order_pending": _guardian_tuning_work_order_pending(
+                guardian_tuning_work_order
+            ),
+            "guardian_tuning_work_order_id": guardian_tuning_work_order.get("work_order_id"),
             "qr_trader_run_watchdog_status": qr_trader_run_watchdog.get("status"),
             "qr_trader_run_watchdog_severity": qr_trader_run_watchdog.get("severity"),
             "qr_trader_run_watchdog_minutes_since_last_run": qr_trader_run_watchdog.get(
@@ -768,6 +784,7 @@ class TraderSupportBot:
                 "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
                 "guardian_receipt_consumption": str(self.guardian_receipt_consumption_path),
                 "guardian_receipt_operator_review": str(self.guardian_receipt_operator_review_path),
+                "guardian_tuning_work_order": str(self.guardian_tuning_work_order_path),
                 "active_trader_contract": str(self.active_trader_contract_path),
                 "active_opportunity_board": str(self.active_opportunity_board_path),
                 "non_eurusd_live_grade_frontier": str(self.non_eurusd_live_grade_frontier_path),
@@ -792,6 +809,7 @@ class TraderSupportBot:
             "runtime_disk": runtime_disk,
             "guardian_receipt_consumption": guardian_receipt_consumption,
             "guardian_receipt_operator_review": guardian_receipt_operator_review,
+            "guardian_tuning_work_order": guardian_tuning_work_order,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
@@ -815,6 +833,53 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def _guardian_tuning_work_order_pending(payload: dict[str, Any] | None) -> bool:
+    return bool(_guardian_tuning_work_order_entries(payload))
+
+
+def _guardian_tuning_work_order_entries(
+    payload: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or payload.get("_missing"):
+        return []
+    raw_entries = payload.get("work_orders")
+    entries = [payload]
+    if isinstance(raw_entries, list):
+        entries.extend(item for item in raw_entries if isinstance(item, dict))
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        identity = str(entry.get("event_fingerprint") or entry.get("work_order_id") or "")
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        status = str(entry.get("status") or "").upper()
+        if status not in {"PENDING_HOURLY_AI_REVIEW", "PENDING", "OPEN"}:
+            continue
+        if not (
+            entry.get("consumed_at_utc") in {None, ""}
+            and entry.get("live_permission_allowed") is False
+            and entry.get("no_direct_oanda") is True
+            and entry.get("preserve_blockers") is True
+        ):
+            continue
+        result.append(entry)
+    return result
+
+
+def _string_list(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in values:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _runtime_disk_health(root: Path, *, now_utc: datetime) -> dict[str, Any]:
@@ -965,15 +1030,94 @@ def _runtime_disk_recovery_markers(
             continue
         if mtime <= latest_error:
             continue
+        marker = _validated_runtime_disk_recovery_marker(path, latest_error=latest_error)
+        if marker is None:
+            continue
         markers.append(
             {
                 "path": str(path),
                 "mtime_utc": mtime.isoformat(),
                 "seconds_after_latest_enospc": round((mtime - latest_error).total_seconds(), 3),
+                **marker,
             }
         )
     markers.sort(key=lambda item: str(item.get("mtime_utc") or ""), reverse=True)
     return markers
+
+
+def _validated_runtime_disk_recovery_marker(
+    path: Path,
+    *,
+    latest_error: datetime,
+) -> dict[str, Any] | None:
+    try:
+        if path.stat().st_size <= 0 or path.stat().st_size > 20 * 1024 * 1024:
+            return None
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if not text.strip():
+        return None
+
+    generated: datetime | None = None
+    status = ""
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        generated = _parse_utc(payload.get("generated_at_utc"))
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        status = str(payload.get("status") or summary.get("status") or "").upper()
+    else:
+        generated_match = re.search(
+            r"Generated(?: at UTC)?:?\s*`?([^`\n]+)",
+            text,
+            re.IGNORECASE,
+        )
+        status_match = re.search(r"(?:^|\n)[-*]?\s*Status:\s*`?([^`\n]+)", text, re.IGNORECASE)
+        generated = _parse_utc(generated_match.group(1).strip()) if generated_match else None
+        status = status_match.group(1).strip().upper() if status_match else ""
+    if generated is None or generated <= latest_error or not status:
+        return None
+    if status in {
+        "ERROR",
+        "P0_NO_SAFE_RECLAIM",
+        "P0_LOW_SPACE",
+        "RUNTIME_DISK_P0",
+        "WORK_ORDER_WRITE_FAILED",
+    }:
+        return None
+    return {
+        "marker_generated_at_utc": generated.isoformat(),
+        "marker_status": status,
+        "content_validated": True,
+    }
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _recent_enospc_errors(root: Path, *, now_utc: datetime) -> list[dict[str, Any]]:
@@ -5694,11 +5838,15 @@ def _build_repair_requests(
     target: dict[str, Any] | None = None,
     oanda_history_coverage: dict[str, Any] | None = None,
     runtime_disk: dict[str, Any] | None = None,
+    guardian_tuning_work_order: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
     p0_findings = p0_findings if isinstance(p0_findings, list) else []
     runtime_disk = runtime_disk if isinstance(runtime_disk, dict) else {}
+    guardian_tuning_work_order = (
+        guardian_tuning_work_order if isinstance(guardian_tuning_work_order, dict) else {}
+    )
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
     items = [item for item in raw_items if isinstance(item, dict)]
@@ -5710,6 +5858,136 @@ def _build_repair_requests(
     )
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
+
+    if _guardian_tuning_work_order_pending(guardian_tuning_work_order):
+        tuning_entries = _guardian_tuning_work_order_entries(guardian_tuning_work_order)
+        selected_events = [
+            entry.get("selected_event")
+            for entry in tuning_entries
+            if isinstance(entry.get("selected_event"), dict)
+        ]
+        selected_event = selected_events[0] if selected_events else {}
+        reviews = [
+            entry.get("bot_tuning_review")
+            for entry in tuning_entries
+            if isinstance(entry.get("bot_tuning_review"), dict)
+        ]
+        review = reviews[0] if reviews else {}
+        pair_values: list[Any] = []
+        family_values: list[Any] = []
+        reason_values: list[Any] = []
+        for entry in tuning_entries:
+            entry_review = (
+                entry.get("bot_tuning_review")
+                if isinstance(entry.get("bot_tuning_review"), dict)
+                else {}
+            )
+            entry_event = (
+                entry.get("selected_event")
+                if isinstance(entry.get("selected_event"), dict)
+                else {}
+            )
+            entry_details = (
+                entry_event.get("details")
+                if isinstance(entry_event.get("details"), dict)
+                else {}
+            )
+            entry_fingerprint = (
+                entry_details.get("material_fingerprint")
+                if isinstance(entry_details.get("material_fingerprint"), dict)
+                else {}
+            )
+            family_consensus = (
+                entry_fingerprint.get("family_consensus")
+                if isinstance(entry_fingerprint.get("family_consensus"), dict)
+                else {}
+            )
+            pair_values.extend(
+                _string_list(
+                    entry_review.get("affected_pairs")
+                    or entry.get("affected_pairs")
+                    or entry_event.get("pair")
+                )
+            )
+            family_values.extend(
+                _string_list(
+                    entry_review.get("affected_bot_families")
+                    or entry.get("affected_bot_families")
+                    or list(family_consensus)
+                )
+            )
+            reason_values.extend(
+                _string_list(
+                    entry.get("material_reason_codes")
+                    or entry.get("wake_reason_codes")
+                    or entry_event.get("wake_reason_codes")
+                )
+            )
+        affected_pairs = _string_list(pair_values)
+        affected_families = _string_list(family_values)
+        material_reason_codes = _string_list(reason_values)
+        requests.append(
+            _repair_request(
+                code=GUARDIAN_MARKET_TUNING_REPAIR_REQUEST,
+                priority="P1",
+                status="PENDING_HOURLY_AI_REVIEW",
+                source_findings=[
+                    *[
+                        str(event.get("event_type") or "GUARDIAN_MARKET_STATE_CHANGE")
+                        for event in selected_events
+                    ],
+                    *material_reason_codes,
+                ],
+                problem=(
+                    "Guardian detected a material market-state change that requires the hourly AI "
+                    "to re-evaluate the affected bot/lane parameters against fresh evidence."
+                ),
+                why_now=(
+                    "Frequent monitoring only has value when a successfully reviewed regime, volatility, "
+                    "structure, or technical-family transition becomes a concrete tuning experiment instead "
+                    "of a read-only alert that the next hourly cycle ignores."
+                ),
+                evidence_summary={
+                    "work_order_id": guardian_tuning_work_order.get("work_order_id"),
+                    "work_order_ids": [entry.get("work_order_id") for entry in tuning_entries],
+                    "event_fingerprint": guardian_tuning_work_order.get("event_fingerprint"),
+                    "pending_work_order_count": len(tuning_entries),
+                    "affected_pairs": affected_pairs,
+                    "affected_bot_families": affected_families,
+                    "material_reason_codes": material_reason_codes,
+                    "selected_event": selected_event,
+                    "selected_events": selected_events,
+                    "bot_tuning_review": review,
+                    "live_permission_allowed": False,
+                    "no_direct_oanda": True,
+                    "preserve_blockers": True,
+                },
+                clearance_conditions=[
+                    "Refresh broker truth and bounded closed-candle charts for every affected pair.",
+                    "Run one falsifiable replay/backtest and the targeted regression tests before changing bot parameters.",
+                    "Record the experiment identity and result, then mark the work order consumed or superseded so the same failed hypothesis is not repeated.",
+                    "Do not loosen expectancy, spread, exposure, margin, ownership, or broker-truth gates and do not treat this work order as live permission.",
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15 --output data/position_guardian_pair_charts.json",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+                suggested_files=[
+                    "data/guardian_tuning_work_order.json",
+                    "src/quant_rabbit/guardian_events.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "tests/test_guardian_events.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Material market-state change creates exactly one idempotent tuning work order.",
+                    "Failed or queued GPT wake does not create or consume a tuning work order.",
+                    "Tuning review never grants live permission or bypasses deterministic trading gates.",
+                ],
+            )
+        )
 
     if runtime_disk.get("blocking"):
         blocker_code = str(runtime_disk.get("blocker_code") or RUNTIME_DISK_PRESSURE_BLOCKER)

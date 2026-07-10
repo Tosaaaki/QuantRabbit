@@ -32,7 +32,7 @@ class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
         env = payload["EnvironmentVariables"]
         self.assertEqual(
             env["QR_GUARDIAN_WAKE_CODEX_BIN"],
-            "/Applications/Codex.app/Contents/Resources/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
         )
         self.assertEqual(env["QR_GUARDIAN_WAKE_CODEX_PREFLIGHT"], "1")
         self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "0")

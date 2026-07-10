@@ -100,6 +100,13 @@ def fetch_candles_via_client(
 def _candles_from_payload(payload: dict) -> tuple[Candle, ...]:
     candles: list[Candle] = []
     for entry in payload.get("candles") or []:
+        # Strategy indicators and structure must never repaint from OANDA's
+        # still-forming tail candle. Live bid/ask quotes are consumed through
+        # broker snapshots, so excluding an incomplete bar does not make the
+        # guardian blind to price displacement; it keeps the technical state
+        # anchored to closed evidence as downstream pattern code expects.
+        if entry.get("complete") is False:
+            continue
         block = entry.get("mid") or entry.get("ask") or entry.get("bid") or {}
         try:
             timestamp = _parse_oanda_time(entry.get("time"))

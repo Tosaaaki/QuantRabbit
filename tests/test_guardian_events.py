@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+import quant_rabbit.guardian_events as guardian_events_module
 from quant_rabbit.cli import main
 from quant_rabbit.guardian_events import (
     build_guardian_trigger_contract,
@@ -23,6 +25,332 @@ NOW = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
 
 
 class GuardianEventRouterTest(unittest.TestCase):
+    def test_atomic_guardian_write_failure_preserves_last_good_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_escalation.json"
+            path.write_text('{"wake_gpt":false}\n', encoding="utf-8")
+
+            with (
+                patch.object(guardian_events_module.os, "replace", side_effect=OSError("ENOSPC")),
+                self.assertRaisesRegex(OSError, "ENOSPC"),
+            ):
+                guardian_events_module._write_json(path, {"wake_gpt": True})
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"wake_gpt": False})
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
+
+    def test_manual_open_pair_gets_fresh_bounded_technical_state_event(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(mid=1.17305, generated_at=NOW),
+            },
+            now=NOW,
+        )
+
+        technical = next(event for event in events if event.event_type == "TECHNICAL_STATE_CHANGE")
+        self.assertEqual(technical.pair, "EUR_USD")
+        self.assertEqual(technical.action_hint, "HOLD")
+        self.assertTrue(technical.details["open_exposure"])
+        self.assertFalse(technical.details["live_permission_allowed"])
+        self.assertEqual(
+            technical.details["material_fingerprint"]["family_consensus"]["trend"],
+            "DOWN",
+        )
+
+    def test_negative_breakout_pressure_uses_independent_direction_not_score_sign(self) -> None:
+        charts = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            family_sign=1,
+            structure_kind="BOS_UP",
+        )
+        for view in charts["charts"][0]["views"]:
+            view["family_scores"]["breakout_score"] = -0.8
+        events = detect_guardian_events(
+            inputs={"snapshot": _snapshot(), "pair_charts": charts},
+            now=NOW,
+        )
+
+        technical = next(event for event in events if event.event_type == "TECHNICAL_STATE_CHANGE")
+        self.assertEqual(
+            technical.details["material_fingerprint"]["family_consensus"]["breakout"],
+            "UP",
+        )
+
+    def test_fresh_chart_missing_m1_and_m5_emits_partial_input_stale_event(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+        charts["charts"][0]["views"] = [
+            view for view in charts["charts"][0]["views"] if view["granularity"] == "M15"
+        ]
+
+        events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": charts},
+            now=NOW,
+        )
+
+        technical = [event for event in events if event.event_type.startswith("TECHNICAL_")]
+        self.assertEqual([event.event_type for event in technical], ["TECHNICAL_INPUT_STALE"])
+        self.assertEqual(technical[0].severity, "P1")
+        self.assertEqual(technical[0].details["status"], "REQUIRED_FAST_VIEWS_MISSING")
+
+    def test_tuning_only_technical_event_rejects_live_action_for_manual_position(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        event = next(
+            item
+            for item in detect_guardian_events(
+                inputs={
+                    "snapshot": snapshot,
+                    "pair_charts": _technical_chart_payload(mid=1.17305, generated_at=NOW),
+                },
+                now=NOW,
+            )
+            if item.event_type == "TECHNICAL_STATE_CHANGE"
+        )
+
+        review = review_guardian_action_receipt(
+            {
+                "action": "REDUCE",
+                "new_information": True,
+                "event_id": event.event_id,
+                "pair": "EUR_USD",
+                "side": "SHORT",
+                "thesis_state": "WOUNDED",
+                "reason": "technical state changed",
+                "invalidation": "fresh chart invalidation",
+                "harvest_trigger": "fresh chart harvest",
+                "gateway_required": True,
+            },
+            events=[event],
+            selected_event=event,
+            now=NOW,
+        )
+
+        self.assertEqual(review["status"], "REJECTED")
+        self.assertIn("GUARDIAN_TUNING_EVENT_LIVE_ACTION_FORBIDDEN", _issue_codes(review))
+
+    def test_slow_price_drift_accumulates_against_unacknowledged_material_baseline(self) -> None:
+        position = {"pair": "EUR_USD", "side": "SHORT", "units": -30000, "owner": "operator_manual"}
+        first_snapshot = _snapshot(positions=[position])
+        first_events = detect_guardian_events(
+            inputs={
+                "snapshot": first_snapshot,
+                "pair_charts": _technical_chart_payload(mid=1.17305, generated_at=NOW),
+            },
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=first_events, previous_state={}, now=NOW)
+
+        small_snapshot = _snapshot(positions=[position])
+        small_snapshot["quotes"]["EUR_USD"] = {"bid": 1.17305, "ask": 1.17315}
+        small_events = detect_guardian_events(
+            inputs={
+                "snapshot": small_snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17310,
+                    generated_at=NOW + timedelta(minutes=10),
+                ),
+            },
+            now=NOW + timedelta(minutes=10),
+        )
+        small_escalation, state = evaluate_guardian_escalation(
+            events=small_events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=10),
+        )
+        self.assertFalse(
+            any(
+                event.get("event_type") == "TECHNICAL_STATE_CHANGE"
+                for event in small_escalation["events_to_review"]
+            )
+        )
+
+        moved_snapshot = _snapshot(positions=[position])
+        moved_snapshot["quotes"]["EUR_USD"] = {"bid": 1.17335, "ask": 1.17345}
+        moved_events = detect_guardian_events(
+            inputs={
+                "snapshot": moved_snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17340,
+                    generated_at=NOW + timedelta(minutes=31),
+                ),
+            },
+            now=NOW + timedelta(minutes=31),
+        )
+        escalation, _ = evaluate_guardian_escalation(
+            events=moved_events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=31),
+        )
+
+        technical = [
+            event
+            for event in escalation["events_to_review"]
+            if event.get("event_type") == "TECHNICAL_STATE_CHANGE"
+        ]
+        self.assertEqual(len(technical), 1)
+        self.assertIn("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE", technical[0]["wake_reason_codes"])
+        self.assertAlmostEqual(technical[0]["details"]["material_threshold_pips"], 2.0)
+
+    def test_closed_candle_family_and_regime_flip_is_material_tuning_wake(self) -> None:
+        position = {"pair": "EUR_USD", "side": "SHORT", "units": -30000, "owner": "operator_manual"}
+        snapshot = _snapshot(positions=[position])
+        first = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": _technical_chart_payload(mid=1.17305, generated_at=NOW)},
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=first, previous_state={}, now=NOW)
+        flipped = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW + timedelta(minutes=31),
+                    regime="TREND_UP",
+                    volatility="VOLATILE",
+                    family_sign=1,
+                    structure_kind="BOS_UP",
+                    structure_time=NOW + timedelta(minutes=30),
+                ),
+            },
+            now=NOW + timedelta(minutes=31),
+        )
+        escalation, _ = evaluate_guardian_escalation(
+            events=flipped,
+            previous_state=state,
+            now=NOW + timedelta(minutes=31),
+        )
+
+        reasons = set(escalation["wake_reason_codes"])
+        self.assertIn("TECHNICAL_STATE_CHANGE", reasons)
+        self.assertIn("REGIME_STATE_CHANGE", reasons)
+        self.assertIn("VOLATILITY_BUCKET_CHANGE", reasons)
+        self.assertIn("TECHNICAL_FAMILY_STATE_CHANGE", reasons)
+        self.assertIn("CLOSED_CANDLE_STRUCTURE_CHANGE", reasons)
+
+    def test_stale_bounded_chart_emits_one_stale_input_event_not_fake_technical_state(self) -> None:
+        snapshot = _snapshot(
+            positions=[{"pair": "EUR_USD", "side": "SHORT", "units": -30000, "owner": "operator_manual"}]
+        )
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW - timedelta(minutes=20),
+                ),
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events if event.event_type.startswith("TECHNICAL_")],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+
+    def test_accepted_harvest_ack_does_not_retrigger_price_entered_every_probe(self) -> None:
+        events = _events_from_chart(
+            {
+                "event_type": "HARVEST_ZONE",
+                "thesis": "open position harvest",
+                "price_zone": "upper rail",
+                "severity": "P1",
+                "action_hint": "HARVEST",
+            }
+        )
+        first, state = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+        event = next(item for item in events if item.event_type == "HARVEST_ZONE")
+        dispatcher_state = {
+            "reviewed_events": {
+                event.dedupe_key: {
+                    "event_id": event.event_id,
+                    "receipt_written": True,
+                    "last_reviewed_at_utc": NOW.isoformat(),
+                    "selected_event": event.to_payload(),
+                }
+            }
+        }
+
+        second, _ = evaluate_guardian_escalation(
+            events=events,
+            previous_state=state,
+            dispatcher_state=dispatcher_state,
+            now=NOW + timedelta(seconds=30),
+        )
+
+        self.assertIn("PRICE_ENTERED_HARVEST_ZONE", first["wake_reason_codes"])
+        self.assertFalse(second["wake_gpt"])
+
+    def test_stale_technical_input_reappears_after_disappearance_even_with_old_dispatch_ack(self) -> None:
+        snapshot = _snapshot(
+            positions=[{"pair": "EUR_USD", "side": "SHORT", "units": -30000, "owner": "operator_manual"}]
+        )
+        stale_events = detect_guardian_events(inputs={"snapshot": snapshot, "pair_charts": {}}, now=NOW)
+        _, stale_state = evaluate_guardian_escalation(events=stale_events, previous_state={}, now=NOW)
+        stale_event = next(event for event in stale_events if event.event_type == "TECHNICAL_INPUT_STALE")
+        dispatcher_state = {
+            "reviewed_events": {
+                stale_event.dedupe_key: {
+                    "event_id": stale_event.event_id,
+                    "receipt_written": True,
+                    "last_reviewed_at_utc": NOW.isoformat(),
+                    "selected_event": stale_event.to_payload(),
+                }
+            }
+        }
+        fresh_events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": _technical_chart_payload(mid=1.17305, generated_at=NOW)},
+            now=NOW,
+        )
+        _, fresh_state = evaluate_guardian_escalation(
+            events=fresh_events,
+            previous_state=stale_state,
+            dispatcher_state=dispatcher_state,
+            now=NOW,
+        )
+        reappeared = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": {}},
+            now=NOW + timedelta(minutes=1),
+        )
+        escalation, _ = evaluate_guardian_escalation(
+            events=reappeared,
+            previous_state=fresh_state,
+            dispatcher_state=dispatcher_state,
+            now=NOW + timedelta(minutes=1),
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertIn("NEW_EVENT", escalation["wake_reason_codes"])
+
     def test_no_event_no_wake(self) -> None:
         events = detect_guardian_events(inputs={"snapshot": _snapshot()}, now=NOW)
         escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
@@ -320,7 +648,7 @@ class GuardianEventRouterTest(unittest.TestCase):
         events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
         event_types = {event.event_type for event in events}
 
-        self.assertEqual(event_types, {"CONTRACT_STALE"})
+        self.assertEqual(event_types, {"CONTRACT_STALE", "TECHNICAL_INPUT_STALE"})
 
     def test_self_improvement_pending_cancel_review_wakes_before_age_stale(self) -> None:
         snapshot = _snapshot(
@@ -1764,6 +2092,59 @@ def _events_from_chart(event: dict, *, pair: str = "EUR_USD"):
         },
         now=NOW,
     )
+
+
+def _technical_chart_payload(
+    *,
+    mid: float,
+    generated_at: datetime,
+    regime: str = "TREND_DOWN",
+    volatility: str = "NORMAL",
+    family_sign: int = -1,
+    structure_kind: str = "BOS_DOWN",
+    structure_time: datetime = NOW - timedelta(minutes=1),
+) -> dict:
+    views = []
+    for timeframe in ("M5", "M15", "M30", "H1"):
+        structure_events = []
+        if timeframe in {"M15", "M30", "H1"}:
+            structure_events = [
+                {
+                    "kind": structure_kind,
+                    "timestamp": structure_time.isoformat(),
+                    "close_confirmed": True,
+                }
+            ]
+        views.append(
+            {
+                "granularity": timeframe,
+                "indicators": {
+                    "close": mid,
+                    "atr_pips": 2.0 if timeframe == "M5" else 4.0,
+                    "regime_quantile": volatility,
+                    "supertrend_dir": family_sign,
+                    "linreg_slope_20": float(family_sign),
+                },
+                "family_scores": {
+                    "trend_score": 0.8 * family_sign,
+                    "mean_rev_score": 0.6 * family_sign,
+                    "breakout_score": 0.7,
+                },
+                "structure": {"structure_events": structure_events},
+            }
+        )
+    return {
+        "generated_at_utc": generated_at.isoformat(),
+        "guardian_monitor_pairs": ["EUR_USD"],
+        "guardian_monitor_scope": {"EUR_USD": ["open_position", "operator_manual_read_only"]},
+        "charts": [
+            {
+                "pair": "EUR_USD",
+                "dominant_regime": regime,
+                "views": views,
+            }
+        ],
+    }
 
 
 def _issue_codes(review: dict) -> set[str]:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,10 +42,13 @@ EVENT_TYPES = (
     "EVENT_SUPPRESSED_WITH_PRICE_CHANGE",
     "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
     "WATCH_ONLY_NO_TRIGGER_CONTRACT",
+    "TECHNICAL_STATE_CHANGE",
+    "TECHNICAL_INPUT_STALE",
 )
 SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
 GUARDIAN_ACTIONS = ("TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION")
+TUNING_ONLY_EVENT_TYPES = {"TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"}
 
 # Cadence contract, not market geometry: a repeated identical state should not
 # spend a discretionary wake again inside the normal trader cadence window.
@@ -78,6 +82,12 @@ DEFAULT_CONTRACT_REVIEW_DEADLINE_SECONDS = 60 * 60
 # window: stale quote truth should wake review rather than feed market triggers.
 DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
 
+# A bounded M1/M5/M15 guardian chart refresh should normally update on every
+# closed M1 candle. Two M5 candles plus scheduling grace is the maximum age at
+# which its categorical state may wake a discretionary tuning review.
+DEFAULT_GUARDIAN_CHART_MAX_AGE_SECONDS = 12 * 60
+TECHNICAL_FAMILY_MIN_SCORE = 0.35
+
 CONTRACT_TRIGGER_BUCKETS = {
     "harvest_triggers": ("CONTRACT_HARVEST_TRIGGER", "HARVEST", "HARVEST_REVIEW", "P1", None),
     "add_triggers": ("CONTRACT_ADD_TRIGGER", "ADD", "ADD_REVIEW", "P1", "ALIVE"),
@@ -95,6 +105,7 @@ MARKET_READ_STATE_CHANGE_EVENTS = {
     "THEME_CONFIRMATION",
     "SQUEEZE_RELEASE",
 }
+MATERIAL_ACK_EVENT_TYPES = MARKET_READ_STATE_CHANGE_EVENTS | {"TECHNICAL_STATE_CHANGE"}
 
 
 @dataclass(frozen=True)
@@ -174,6 +185,7 @@ def run_guardian_event_router(
     escalation, next_state = evaluate_guardian_escalation(
         events=events,
         previous_state=previous_state,
+        dispatcher_state=inputs["wake_dispatcher_state"],
         now=now,
     )
 
@@ -297,11 +309,18 @@ def evaluate_guardian_escalation(
     *,
     events: list[GuardianEvent],
     previous_state: dict[str, Any] | None,
+    dispatcher_state: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     now = _utc(now)
     previous = previous_state if isinstance(previous_state, dict) else {}
     previous_events = previous.get("events") if isinstance(previous.get("events"), dict) else {}
+    dispatcher = dispatcher_state if isinstance(dispatcher_state, dict) else {}
+    reviewed_events = (
+        dispatcher.get("reviewed_events")
+        if isinstance(dispatcher.get("reviewed_events"), dict)
+        else {}
+    )
     review_events: list[dict[str, Any]] = []
     suppressed_events: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
@@ -312,7 +331,18 @@ def evaluate_guardian_escalation(
         prior = previous_events.get(event.dedupe_key) if isinstance(previous_events, dict) else None
         if not isinstance(prior, dict):
             prior = None
-        reasons = _wake_reasons_for_event(event, prior)
+        acknowledged = _dispatcher_acknowledged_event(reviewed_events.get(event.dedupe_key))
+        material_acknowledged = (
+            acknowledged
+            if event.event_type in MATERIAL_ACK_EVENT_TYPES
+            else None
+        )
+        reference = (
+            _material_reference_event(prior, acknowledged=material_acknowledged)
+            if event.event_type in MATERIAL_ACK_EVENT_TYPES
+            else prior
+        )
+        reasons = _wake_reasons_for_event(event, reference)
         last_wake = _parse_utc((prior or {}).get("last_wake_at_utc"))
         throttle_seconds = _event_throttle_seconds(event)
         bypass_throttle = _event_bypasses_throttle(event, reasons)
@@ -327,7 +357,7 @@ def evaluate_guardian_escalation(
         else:
             last_wake_at = (prior or {}).get("last_wake_at_utc")
             if reasons and throttled:
-                diagnostics.extend(_suppressed_price_change_diagnostics(event, prior))
+                diagnostics.extend(_suppressed_price_change_diagnostics(event, reference))
                 suppressed_events.append(
                     {
                         **event_payload,
@@ -343,7 +373,7 @@ def evaluate_guardian_escalation(
                     and last_wake is not None
                     and (now - last_wake).total_seconds() < throttle_seconds
                 )
-                diagnostics.extend(_suppressed_price_change_diagnostics(event, prior))
+                diagnostics.extend(_suppressed_price_change_diagnostics(event, reference))
                 suppressed_events.append(
                     {
                         **event_payload,
@@ -352,6 +382,11 @@ def evaluate_guardian_escalation(
                         "last_wake_at_utc": last_wake_at,
                     }
                 )
+        material_reference = (
+            material_acknowledged
+            or ((prior or {}).get("material_reference") if isinstance((prior or {}).get("material_reference"), dict) else None)
+            or _event_state_snapshot(event)
+        )
         next_events[event.dedupe_key] = {
             "event_id": event.event_id,
             "event_type": event.event_type,
@@ -368,6 +403,8 @@ def evaluate_guardian_escalation(
             "margin_pressure": event.event_type == "MARGIN_PRESSURE",
             "last_seen_at_utc": now.isoformat(),
             "last_wake_at_utc": last_wake_at,
+            "material_reference": material_reference,
+            "acknowledged_event": material_acknowledged or (prior or {}).get("acknowledged_event"),
         }
 
     escalation = {
@@ -437,6 +474,13 @@ def review_guardian_action_receipt(
 
     if action in {"TRADE", "ADD"}:
         issues.extend(_guardian_trade_add_action_issues(receipt, event=event))
+    if event is not None and event.event_type in TUNING_ONLY_EVENT_TYPES and action not in {"HOLD", "NO_ACTION"}:
+        issues.append(
+            _issue(
+                "GUARDIAN_TUNING_EVENT_LIVE_ACTION_FORBIDDEN",
+                f"{event.event_type} is monitoring/tuning evidence only; action must be HOLD or NO_ACTION",
+            )
+        )
 
     if binding_issues:
         status = "RECEIPT_EVENT_MISMATCH"
@@ -993,7 +1037,7 @@ def write_guardian_trigger_contract_report(path: Path, contract: dict[str, Any],
     else:
         lines.append("- none")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n")
+    _atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 def _contract_events(contract: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:
@@ -1436,7 +1480,72 @@ def _current_trader_pending_orders_by_id(snapshot: dict[str, Any]) -> dict[str, 
 
 def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
-    for chart in _chart_rows(pair_charts):
+    chart_rows = _chart_rows(pair_charts)
+    charts_by_pair = {
+        pair: chart
+        for chart in chart_rows
+        if (pair := _pair(chart.get("pair"))) is not None
+    }
+    monitor_pairs = _guardian_monitor_pairs(pair_charts, snapshot=snapshot)
+    freshness = _guardian_chart_freshness(pair_charts, now=now)
+    if monitor_pairs and not freshness["fresh"]:
+        for pair in monitor_pairs:
+            events.append(
+                _event(
+                    event_type="TECHNICAL_INPUT_STALE",
+                    pair=pair,
+                    direction=None,
+                    thesis="bounded guardian chart input freshness",
+                    price_zone="guardian technical input is stale",
+                    severity="P1" if _pair_has_open_exposure(snapshot, pair) else "P2",
+                    recommended_review_type="TUNING_REVIEW",
+                    action_hint="HOLD" if _pair_has_open_exposure(snapshot, pair) else "NO_ACTION",
+                    now=now,
+                    details={
+                        **freshness,
+                        "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                        "live_permission_allowed": False,
+                        "no_direct_oanda": True,
+                    },
+                )
+            )
+        return events
+
+    for pair in monitor_pairs:
+        chart = charts_by_pair.get(pair)
+        if chart is None:
+            events.append(
+                _event(
+                    event_type="TECHNICAL_INPUT_STALE",
+                    pair=pair,
+                    direction=None,
+                    thesis="bounded guardian chart input freshness",
+                    price_zone="guardian technical input is missing for monitored pair",
+                    severity="P1" if _pair_has_open_exposure(snapshot, pair) else "P2",
+                    recommended_review_type="TUNING_REVIEW",
+                    action_hint="HOLD" if _pair_has_open_exposure(snapshot, pair) else "NO_ACTION",
+                    now=now,
+                    details={
+                        "fresh": False,
+                        "status": "PAIR_CHART_MISSING",
+                        "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                        "live_permission_allowed": False,
+                        "no_direct_oanda": True,
+                    },
+                )
+            )
+            continue
+        technical_event = _technical_state_event(
+            pair,
+            chart,
+            pair_charts=pair_charts,
+            snapshot=snapshot,
+            now=now,
+        )
+        if technical_event is not None:
+            events.append(technical_event)
+
+    for chart in chart_rows:
         pair = _pair(chart.get("pair"))
         if not pair:
             continue
@@ -1468,6 +1577,272 @@ def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any],
         if squeeze_event is not None:
             events.append(squeeze_event)
     return events
+
+
+def _guardian_monitor_pairs(pair_charts: dict[str, Any], *, snapshot: dict[str, Any]) -> list[str]:
+    pairs: list[str] = []
+    explicit = pair_charts.get("guardian_monitor_pairs")
+    for raw in explicit if isinstance(explicit, list) else []:
+        pair = _pair(raw)
+        if pair and pair not in pairs:
+            pairs.append(pair)
+    # The fast wrapper already ranks and clamps pending/candidate pairs.  When
+    # that explicit scope is present, only add missing open exposures here;
+    # appending every broker order would exceed the bounded chart set and emit
+    # artificial PAIR_CHART_MISSING events for intentionally deferred pairs.
+    collections = (snapshot.get("positions", []) or [],) if isinstance(explicit, list) else (
+        snapshot.get("positions", []) or [],
+        snapshot.get("orders", []) or [],
+    )
+    for collection in collections:
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            pair = _pair(item.get("pair") or item.get("instrument"))
+            if pair and pair not in pairs:
+                pairs.append(pair)
+    return pairs
+
+
+def _guardian_monitor_scope(pair_charts: dict[str, Any], pair: str) -> Any:
+    scope = pair_charts.get("guardian_monitor_scope")
+    if isinstance(scope, dict):
+        return scope.get(pair) or scope.get(pair.replace("_", "/")) or []
+    return []
+
+
+def _guardian_chart_freshness(pair_charts: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+    generated = _parse_utc(pair_charts.get("generated_at_utc"))
+    max_age = int(os.environ.get("QR_GUARDIAN_CHART_MAX_AGE_SECONDS", DEFAULT_GUARDIAN_CHART_MAX_AGE_SECONDS))
+    if generated is None:
+        return {"fresh": False, "status": "MISSING_GENERATED_AT", "max_age_seconds": max_age}
+    age = max(0.0, (now - generated).total_seconds())
+    return {
+        "fresh": age <= max_age,
+        "status": "FRESH" if age <= max_age else "STALE",
+        "generated_at_utc": generated.isoformat(),
+        "age_seconds": round(age, 3),
+        "max_age_seconds": max_age,
+    }
+
+
+def _pair_has_open_exposure(snapshot: dict[str, Any], pair: str) -> bool:
+    return any(
+        isinstance(item, dict)
+        and _pair(item.get("pair") or item.get("instrument")) == pair
+        and abs(_float(item.get("units")) or 0.0) > 0.0
+        for item in snapshot.get("positions", []) or []
+    )
+
+
+def _technical_state_event(
+    pair: str,
+    chart: dict[str, Any],
+    *,
+    pair_charts: dict[str, Any],
+    snapshot: dict[str, Any],
+    now: datetime,
+) -> GuardianEvent | None:
+    views = {
+        str(item.get("granularity") or "").upper(): item
+        for item in chart.get("views", []) or []
+        if isinstance(item, dict)
+    }
+    m5 = views.get("M5") or views.get("M1")
+    if not isinstance(m5, dict):
+        open_exposure = _pair_has_open_exposure(snapshot, pair)
+        return _event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair=pair,
+            direction=None,
+            thesis="bounded guardian chart input completeness",
+            price_zone="guardian technical input is missing both M1 and M5 views",
+            severity="P1" if open_exposure else "P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="HOLD" if open_exposure else "NO_ACTION",
+            now=now,
+            details={
+                "fresh": False,
+                "status": "REQUIRED_FAST_VIEWS_MISSING",
+                "required_any_of": ["M1", "M5"],
+                "available_views": sorted(views),
+                "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                "open_exposure": open_exposure,
+                "live_permission_allowed": False,
+                "no_direct_oanda": True,
+                "preserve_blockers": True,
+            },
+        )
+    indicators = m5.get("indicators") if isinstance(m5.get("indicators"), dict) else {}
+    mid = _chart_mid(chart, snapshot)
+    if mid is None:
+        mid = _float(indicators.get("close"))
+    atr_pips = _float(indicators.get("atr_pips"))
+    spread_pips = _live_spread_pips(snapshot, pair)
+    family_consensus = _technical_family_consensus(views)
+    closed_structure = _latest_closed_structure(views)
+    dominant_regime = str(chart.get("dominant_regime") or "UNKNOWN").upper()
+    volatility_bucket = str(indicators.get("regime_quantile") or "UNKNOWN").upper()
+    fingerprint = {
+        "dominant_regime": dominant_regime,
+        "volatility_bucket": volatility_bucket,
+        "family_consensus": family_consensus,
+        "closed_structure": closed_structure,
+    }
+    direction_votes = [
+        str(value).upper()
+        for value in family_consensus.values()
+        if str(value).upper() in {"UP", "DOWN"}
+    ]
+    up_votes = direction_votes.count("UP")
+    down_votes = direction_votes.count("DOWN")
+    direction = "LONG" if up_votes > down_votes else "SHORT" if down_votes > up_votes else None
+    open_exposure = _pair_has_open_exposure(snapshot, pair)
+    price_zone = (
+        f"mid={mid:.8f} spread_pips={spread_pips:.3f} m5_atr_pips={atr_pips:.3f}"
+        if mid is not None and spread_pips is not None and atr_pips is not None
+        else "bounded closed-candle technical state"
+    )
+    return _event(
+        event_type="TECHNICAL_STATE_CHANGE",
+        pair=pair,
+        direction=direction,
+        thesis="bounded closed-candle technical state",
+        price_zone=price_zone,
+        severity="P1" if open_exposure else "P2",
+        recommended_review_type="THESIS_REVIEW" if open_exposure else "TUNING_REVIEW",
+        action_hint="HOLD" if open_exposure else "NO_ACTION",
+        now=now,
+        details={
+            "mid": mid,
+            "live_spread_pips": spread_pips,
+            "m5_atr_pips": atr_pips,
+            "material_threshold_pips": max(
+                2.0 * (spread_pips if spread_pips is not None else NORMAL_SPREAD_PIPS.get(pair, 1.0)),
+                atr_pips if atr_pips is not None else 0.0,
+                1.0,
+            ),
+            "material_fingerprint": fingerprint,
+            "chart_generated_at_utc": pair_charts.get("generated_at_utc"),
+            "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+            "open_exposure": open_exposure,
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        },
+    )
+
+
+def _technical_family_consensus(views: dict[str, dict[str, Any]]) -> dict[str, str]:
+    votes: dict[str, list[str]] = {"trend": [], "mean_reversion": [], "breakout": []}
+    timeframes = _technical_consensus_timeframes(views)
+    for timeframe in timeframes:
+        view = views.get(timeframe)
+        if not isinstance(view, dict):
+            continue
+        scores = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        for family, score_key in (("trend", "trend_score"), ("mean_reversion", "mean_rev_score")):
+            score = _float(scores.get(score_key))
+            if score is not None and abs(score) >= TECHNICAL_FAMILY_MIN_SCORE:
+                votes[family].append("UP" if score > 0 else "DOWN")
+        breakout_score = _float(scores.get("breakout_score"))
+        if breakout_score is not None and abs(breakout_score) >= TECHNICAL_FAMILY_MIN_SCORE:
+            # FamilyScores.breakout_score is primarily expansion/squeeze
+            # magnitude.  Its negative sign can mean "already expanded", not
+            # bearish direction, so never turn the score sign itself into a
+            # directional vote.  Direction must come from an explicit
+            # Donchian/BOS observation or an independent trend proxy.
+            direction = _breakout_direction(view, scores=scores, indicators=indicators)
+            if direction is not None:
+                votes["breakout"].append(direction)
+    consensus: dict[str, str] = {}
+    for family, family_votes in votes.items():
+        if family_votes.count("UP") >= 2:
+            consensus[family] = "UP"
+        elif family_votes.count("DOWN") >= 2:
+            consensus[family] = "DOWN"
+        else:
+            consensus[family] = "MIXED"
+    return consensus
+
+
+def _breakout_direction(
+    view: dict[str, Any],
+    *,
+    scores: dict[str, Any],
+    indicators: dict[str, Any],
+) -> str | None:
+    components = (
+        scores.get("breakout_components")
+        if isinstance(scores.get("breakout_components"), dict)
+        else {}
+    )
+    donchian_break = _float(components.get("donchian_break"))
+    if donchian_break is not None and donchian_break != 0:
+        return "UP" if donchian_break > 0 else "DOWN"
+
+    structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+    structure_events = structure.get("structure_events") or []
+    for event in reversed(structure_events if isinstance(structure_events, list) else []):
+        if not isinstance(event, dict) or event.get("close_confirmed") is not True:
+            continue
+        kind = str(event.get("kind") or "").upper()
+        if "UP" in kind and ("BOS" in kind or "BREAK" in kind):
+            return "UP"
+        if "DOWN" in kind and ("BOS" in kind or "BREAK" in kind):
+            return "DOWN"
+
+    close = _float(indicators.get("close"))
+    donchian_high = _float(indicators.get("donchian_high"))
+    donchian_low = _float(indicators.get("donchian_low"))
+    if close is not None:
+        if donchian_high is not None and close >= donchian_high:
+            return "UP"
+        if donchian_low is not None and close <= donchian_low:
+            return "DOWN"
+
+    for key in ("supertrend_dir", "linreg_slope_20"):
+        proxy = _float(indicators.get(key))
+        if proxy is not None and proxy != 0:
+            return "UP" if proxy > 0 else "DOWN"
+    return None
+
+
+def _latest_closed_structure(views: dict[str, dict[str, Any]]) -> str:
+    rows: list[tuple[datetime, str]] = []
+    for timeframe in _technical_consensus_timeframes(views):
+        view = views.get(timeframe)
+        if not isinstance(view, dict):
+            continue
+        structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+        for item in structure.get("structure_events", []) or []:
+            if not isinstance(item, dict) or item.get("close_confirmed") is not True:
+                continue
+            timestamp = _parse_utc(item.get("timestamp"))
+            if timestamp is None:
+                continue
+            rows.append((timestamp, f"{timeframe}:{str(item.get('kind') or 'UNKNOWN').upper()}:{timestamp.isoformat()}"))
+    return max(rows, key=lambda item: item[0])[1] if rows else "NONE"
+
+
+def _technical_consensus_timeframes(views: dict[str, dict[str, Any]]) -> tuple[str, ...]:
+    higher = tuple(timeframe for timeframe in ("M15", "M30", "H1") if timeframe in views)
+    if len(higher) >= 2:
+        return higher
+    return tuple(timeframe for timeframe in ("M1", "M5", "M15") if timeframe in views)
+
+
+def _live_spread_pips(snapshot: dict[str, Any], pair: str) -> float | None:
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    quote = quotes.get(pair)
+    if not isinstance(quote, dict):
+        return None
+    bid = _float(quote.get("bid"))
+    ask = _float(quote.get("ask"))
+    if bid is None or ask is None or ask < bid:
+        return None
+    return (ask - bid) * instrument_pip_factor(pair)
 
 
 def _order_intent_events(order_intents: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
@@ -3024,6 +3399,20 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
         reasons.append("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE")
         if event.event_type == "FAILED_ACCEPTANCE":
             reasons.append("FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE")
+    if event.event_type == "TECHNICAL_STATE_CHANGE" and prior is not None:
+        prior_details = prior.get("details") if isinstance(prior.get("details"), dict) else {}
+        current_fingerprint = _technical_fingerprint(event.details)
+        prior_fingerprint = _technical_fingerprint(prior_details)
+        if current_fingerprint and current_fingerprint != prior_fingerprint:
+            reasons.append("TECHNICAL_STATE_CHANGE")
+            if current_fingerprint.get("dominant_regime") != prior_fingerprint.get("dominant_regime"):
+                reasons.append("REGIME_STATE_CHANGE")
+            if current_fingerprint.get("volatility_bucket") != prior_fingerprint.get("volatility_bucket"):
+                reasons.append("VOLATILITY_BUCKET_CHANGE")
+            if current_fingerprint.get("family_consensus") != prior_fingerprint.get("family_consensus"):
+                reasons.append("TECHNICAL_FAMILY_STATE_CHANGE")
+            if current_fingerprint.get("closed_structure") != prior_fingerprint.get("closed_structure"):
+                reasons.append("CLOSED_CANDLE_STRUCTURE_CHANGE")
     return list(dict.fromkeys(reasons))
 
 
@@ -3039,11 +3428,67 @@ def _event_bypasses_throttle(event: GuardianEvent, reasons: list[str]) -> bool:
         or (event.severity == "P0" and event.event_type != "UNKNOWN_ORDER")
         or "UNKNOWN_GATEWAY_OUTSIDE_ORDER" in reasons
         or "UNKNOWN_GATEWAY_OUTSIDE_ORDER_STATE_CHANGE" in reasons
-        or "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE" in reasons
-        or "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE" in reasons
+        or (
+            event.event_type != "TECHNICAL_STATE_CHANGE"
+            and "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE" in reasons
+        )
+        or (
+            event.event_type != "TECHNICAL_STATE_CHANGE"
+            and "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE" in reasons
+        )
         or "SEVERITY_INCREASE" in reasons
         or any(reason.startswith("THESIS_ALIVE_TO_") for reason in reasons)
     )
+
+
+def _event_state_snapshot(event: GuardianEvent) -> dict[str, Any]:
+    return {
+        "event_id": event.event_id,
+        "event_type": event.event_type,
+        "pair": event.pair,
+        "direction": event.direction,
+        "severity": event.severity,
+        "thesis_state": event.thesis_state,
+        "price_zone": event.price_zone,
+        "details": event.details,
+    }
+
+
+def _dispatcher_acknowledged_event(record: Any) -> dict[str, Any] | None:
+    if not isinstance(record, dict) or record.get("receipt_written") is not True:
+        return None
+    nested = record.get("selected_event") if isinstance(record.get("selected_event"), dict) else {}
+    event_id = nested.get("event_id") or record.get("event_id")
+    price_zone = nested.get("price_zone") or record.get("price_zone")
+    details = nested.get("details") if isinstance(nested.get("details"), dict) else record.get("details")
+    if not event_id and not price_zone and not isinstance(details, dict):
+        return None
+    return {
+        "event_id": event_id,
+        "event_type": nested.get("event_type") or record.get("event_type"),
+        "pair": nested.get("pair") or record.get("pair"),
+        "direction": nested.get("direction") or record.get("direction"),
+        "severity": nested.get("severity") or record.get("severity"),
+        "thesis_state": nested.get("thesis_state") or record.get("thesis_state"),
+        "price_zone": price_zone,
+        "details": details if isinstance(details, dict) else {},
+        "acknowledged_at_utc": record.get("last_reviewed_at_utc"),
+    }
+
+
+def _material_reference_event(
+    prior: dict[str, Any] | None,
+    *,
+    acknowledged: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if acknowledged is not None:
+        return acknowledged
+    if not isinstance(prior, dict):
+        return None
+    reference = prior.get("material_reference")
+    if isinstance(reference, dict):
+        return reference
+    return prior
 
 
 def _unknown_order_broker_truth_changed(event: GuardianEvent, prior: dict[str, Any]) -> bool:
@@ -3066,6 +3511,9 @@ def _unknown_order_truth_fingerprint(payload: dict[str, Any]) -> str:
 def _event_price_zone_material_change(event: GuardianEvent, prior: dict[str, Any] | None) -> dict[str, Any]:
     if prior is None:
         return {"changed": False, "material": False}
+    dynamic = _technical_price_material_change(event, prior)
+    if dynamic is not None:
+        return dynamic
     current_zone = str(event.price_zone or "").strip()
     previous_zone = str(prior.get("price_zone") or "").strip()
     if not current_zone or not previous_zone or current_zone == previous_zone:
@@ -3105,6 +3553,59 @@ def _event_price_zone_material_change(event: GuardianEvent, prior: dict[str, Any
         "current_price_zone": current_zone,
         "previous_price_zone": previous_zone,
         "basis": "anchor_price",
+    }
+
+
+def _technical_price_material_change(
+    event: GuardianEvent,
+    prior: dict[str, Any],
+) -> dict[str, Any] | None:
+    if event.event_type != "TECHNICAL_STATE_CHANGE":
+        return None
+    current_details = event.details if isinstance(event.details, dict) else {}
+    prior_details = prior.get("details") if isinstance(prior.get("details"), dict) else {}
+    current_mid = _float(current_details.get("mid"))
+    previous_mid = _float(prior_details.get("mid"))
+    if current_mid is None or previous_mid is None:
+        return {
+            "changed": current_details.get("material_fingerprint") != prior_details.get("material_fingerprint"),
+            "material": False,
+            "basis": "technical_mid_missing",
+        }
+    spread = _float(current_details.get("live_spread_pips"))
+    atr = _float(current_details.get("m5_atr_pips"))
+    threshold = max(
+        2.0 * (spread if spread is not None else NORMAL_SPREAD_PIPS.get(event.pair, 1.0)),
+        atr if atr is not None else 0.0,
+        1.0,
+    )
+    delta = abs(current_mid - previous_mid) * instrument_pip_factor(event.pair)
+    return {
+        "changed": delta > 0.0,
+        "material": delta >= threshold,
+        "delta_pips": delta,
+        "threshold_pips": threshold,
+        "current_mid": current_mid,
+        "previous_mid": previous_mid,
+        "live_spread_pips": spread,
+        "m5_atr_pips": atr,
+        "basis": "max_2x_live_spread_m5_atr",
+    }
+
+
+def _technical_fingerprint(details: dict[str, Any]) -> dict[str, Any]:
+    raw = details.get("material_fingerprint") if isinstance(details, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    families = raw.get("family_consensus") if isinstance(raw.get("family_consensus"), dict) else {}
+    return {
+        "dominant_regime": str(raw.get("dominant_regime") or "UNKNOWN").upper(),
+        "volatility_bucket": str(raw.get("volatility_bucket") or "UNKNOWN").upper(),
+        "family_consensus": {
+            str(key): str(value).upper()
+            for key, value in sorted(families.items())
+        },
+        "closed_structure": str(raw.get("closed_structure") or "NONE"),
     }
 
 
@@ -3306,7 +3807,7 @@ def _write_event_report(path: Path, events_payload: dict[str, Any], escalation: 
             ]
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n")
+    _atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 def _write_action_review_report(path: Path, review: dict[str, Any]) -> None:
@@ -3337,12 +3838,37 @@ def _write_action_review_report(path: Path, review: dict[str, Any]) -> None:
         ]
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n")
+    _atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    _atomic_write_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _load_json(path: Path | str | None) -> dict[str, Any]:

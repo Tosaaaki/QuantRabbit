@@ -10,13 +10,39 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tools.guardian_wake_dispatcher import DispatcherPaths, run_dispatcher
+import tools.guardian_wake_dispatcher as dispatcher_module
+from tools.guardian_wake_dispatcher import (
+    DispatcherPaths,
+    _resolve_codex_bin,
+    _select_dispatch_event,
+    run_dispatcher,
+)
 
 
 NOW = datetime(2026, 6, 30, 4, 0, tzinfo=timezone.utc)
 
 
 class GuardianWakeDispatcherTest(unittest.TestCase):
+    def test_default_codex_bin_prefers_current_desktop_app_over_path_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_bin = Path(tmp) / "ChatGPT.app/Contents/Resources/codex"
+            app_bin.parent.mkdir(parents=True)
+            app_bin.write_text("desktop cli\n")
+            with (
+                patch("tools.guardian_wake_dispatcher.DEFAULT_CODEX_APP_BIN", app_bin),
+                patch(
+                    "tools.guardian_wake_dispatcher.LEGACY_CODEX_APP_BIN",
+                    Path(tmp) / "missing-codex-app",
+                ),
+                patch(
+                    "tools.guardian_wake_dispatcher.shutil.which",
+                    return_value="/opt/homebrew/bin/codex",
+                ),
+            ):
+                resolved = _resolve_codex_bin({})
+
+            self.assertEqual(resolved, str(app_bin))
+
     def test_gpt_json_only_prompt_contains_required_schema(self) -> None:
         prompt = (Path(__file__).resolve().parents[1] / "docs" / "guardian_wake_prompt.md").read_text()
 
@@ -111,6 +137,96 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(calls[0][1:3], ["exec", "-"])
             self.assertTrue(paths.action_receipt.exists())
 
+    def test_runtime_disk_p0_queues_without_starting_codex_or_marking_reviewed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            gib = 1024**3
+
+            with patch(
+                "tools.guardian_wake_dispatcher.shutil.disk_usage",
+                return_value=SimpleNamespace(total=100 * gib, used=99 * gib, free=1 * gib),
+            ):
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+            self.assertEqual(result["status"], "RUNTIME_DISK_P0")
+            self.assertTrue(result["queued_for_active_trader"])
+            self.assertEqual(calls, [])
+            self.assertFalse(paths.codex_home.exists())
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertNotIn("reviewed_events", state)
+            attempt = state["dispatch_attempts"][_event(severity="P1")["dedupe_key"]]
+            self.assertEqual(attempt["last_status"], "RUNTIME_DISK_P0")
+            self.assertEqual(attempt["runtime_disk"]["free_bytes"], gib)
+
+    def test_runtime_disk_warning_is_in_result_and_gpt_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            prompts: list[str] = []
+            gib = 1024**3
+
+            with patch(
+                "tools.guardian_wake_dispatcher.shutil.disk_usage",
+                return_value=SimpleNamespace(total=100 * gib, used=97 * gib, free=3 * gib),
+            ):
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={},
+                    subprocess_run=_fake_codex_with_prompt(
+                        calls,
+                        prompts,
+                        _valid_receipt(),
+                    ),
+                )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["runtime_disk"]["status"], "RUNTIME_DISK_WARNING")
+            self.assertEqual(len(prompts), 1)
+            self.assertIn('"status": "RUNTIME_DISK_WARNING"', prompts[0])
+
+    def test_runtime_disk_recovery_retries_same_event_without_waiting_for_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            gib = 1024**3
+            disk_checks = 0
+
+            def fake_disk_usage(_path):
+                nonlocal disk_checks
+                disk_checks += 1
+                free = 1 * gib if disk_checks == 1 else 8 * gib
+                return SimpleNamespace(total=100 * gib, used=100 * gib - free, free=free)
+
+            with patch(
+                "tools.guardian_wake_dispatcher.shutil.disk_usage",
+                side_effect=fake_disk_usage,
+            ):
+                first = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+                recovered = run_dispatcher(
+                    paths=paths,
+                    now=NOW + timedelta(seconds=10),
+                    env={},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+            self.assertEqual(first["status"], "RUNTIME_DISK_P0")
+            self.assertEqual(recovered["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 1)
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(state["dispatch_attempts"], {})
+
     def test_active_qr_trader_lock_queues_instead_of_starting_second_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -125,6 +241,27 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(calls, [])
             escalation = json.loads(paths.escalation.read_text())
             self.assertTrue(escalation["queued_for_active_trader"])
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertNotIn("reviewed_events", state)
+            self.assertNotIn("dispatch_attempts", state)
+            self.assertIn(_event(severity="P1")["dedupe_key"], state["pending_dispatches"])
+
+            for child in paths.live_lock.iterdir():
+                child.unlink()
+            paths.live_lock.rmdir()
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            paths.events.write_text(json.dumps({"events": []}))
+            recovered = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(recovered["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 1)
+            recovered_state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(recovered_state["pending_dispatches"], {})
 
     def test_duplicate_wake_is_throttled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,6 +282,38 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertIn("THROTTLED", reasons)
             self.assertTrue(paths.action_receipt.exists())
 
+    def test_legacy_failed_review_record_does_not_suppress_same_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            event = _event(severity="P1")
+            paths.dispatcher_state.write_text(
+                json.dumps(
+                    {
+                        "reviewed_events": {
+                            event["dedupe_key"]: {
+                                "event_id": event["event_id"],
+                                "severity": "P1",
+                                "last_reviewed_at_utc": NOW.isoformat(),
+                                "last_status": "CODEX_MODEL_UNSUPPORTED",
+                                "receipt_written": False,
+                            }
+                        }
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=10),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertTrue(state["reviewed_events"][event["dedupe_key"]]["receipt_written"])
+
     def test_p0_severity_increase_can_bypass_throttle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -161,6 +330,191 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             )
 
             self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 2)
+
+    def test_material_equal_severity_event_dispatches_after_success_throttle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            env = {"QR_GUARDIAN_FRESH_ACTION_THROTTLE_SECONDS": "60"}
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env=env,
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            moved = {
+                **_event(severity="P1", event_id="event-moved"),
+                "price_zone": "EUR_USD 1.1715 rejection",
+                "wake_reason_codes": [
+                    "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+                    "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE",
+                ],
+            }
+            paths.events.write_text(json.dumps({"events": [moved]}))
+            paths.escalation.write_text(
+                json.dumps({"wake_gpt": True, "events_to_review": [moved]})
+            )
+
+            throttled = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=30),
+                env=env,
+                subprocess_run=_fake_codex(calls, _valid_receipt(event_id="event-moved")),
+            )
+            retried = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=61),
+                env=env,
+                subprocess_run=_fake_codex(calls, _valid_receipt(event_id="event-moved")),
+            )
+
+            self.assertEqual(first["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(throttled["status"], "SUPPRESSED")
+            self.assertEqual(retried["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 2)
+            state = json.loads(paths.dispatcher_state.read_text())
+            baseline = state["reviewed_events"][moved["dedupe_key"]]
+            self.assertEqual(baseline["event_id"], "event-moved")
+            self.assertEqual(baseline["price_zone"], moved["price_zone"])
+            self.assertIn("material_fingerprint", baseline)
+
+    def test_state_change_reason_families_are_dispatchable(self) -> None:
+        reasons = (
+            "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+            "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE",
+            "THESIS_ALIVE_TO_WOUNDED",
+            "PRICE_ENTERED_HARVEST_ZONE",
+            "TECHNICAL_STATE_CHANGE_TREND_FLIP",
+            "REGIME_SHIFT_TO_RANGE",
+            "VOLATILITY_BUCKET_CHANGE",
+            "FAMILY_DISAGREEMENT_STATE_CHANGE",
+            "CLOSED_CANDLE_STRUCTURE_CHANGE",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp), reasons=(reason,))
+                calls: list[list[str]] = []
+
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+                self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+                self.assertEqual(len(calls), 1)
+
+    def test_priority_prefers_open_exposure_then_p0_then_material(self) -> None:
+        open_event = {
+            **_event(
+                severity="P1",
+                event_id="open-event",
+                pair="ZZZ_USD",
+                dedupe_key="open-key",
+            ),
+            "event_type": "HARVEST_ZONE",
+            "action_hint": "HARVEST",
+            "wake_reason_codes": ["PRICE_ENTERED_HARVEST_ZONE"],
+            "details": {"trade_id": "123", "units": 1000},
+        }
+        p0_event = {
+            **_event(
+                severity="P0",
+                event_id="p0-event",
+                pair="AAA_USD",
+                dedupe_key="p0-key",
+            ),
+            "wake_reason_codes": ["NEW_EVENT"],
+        }
+        material_event = {
+            **_event(
+                severity="P1",
+                event_id="material-event",
+                pair="BBB_USD",
+                dedupe_key="material-key",
+            ),
+            "wake_reason_codes": ["TECHNICAL_STATE_CHANGE_TREND_FLIP"],
+        }
+
+        selected, selection = _select_dispatch_event(
+            escalation={"events_to_review": [material_event, p0_event, open_event]},
+            events_payload={"events": [material_event, p0_event, open_event]},
+            dispatcher_state={},
+            now=NOW,
+            env={},
+        )
+
+        self.assertEqual(selected["event_id"], "open-event")
+        self.assertTrue(selection["selected_priority"]["open_exposure"])
+
+    def test_multiple_review_events_are_durably_drained_across_router_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            first_event = {
+                **_event(
+                    severity="P0",
+                    event_id="event-first",
+                    pair="AAA_USD",
+                    dedupe_key="AAA_USD|first|FAILED_ACCEPTANCE|TRADE",
+                ),
+                "wake_reason_codes": ["NEW_EVENT"],
+            }
+            second_event = {
+                **_event(
+                    severity="P1",
+                    event_id="event-second",
+                    pair="BBB_USD",
+                    dedupe_key="BBB_USD|second|FAILED_ACCEPTANCE|TRADE",
+                ),
+                "wake_reason_codes": ["NEW_EVENT"],
+            }
+            paths.events.write_text(json.dumps({"events": [first_event, second_event]}))
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "wake_gpt": True,
+                        "events_to_review": [second_event, first_event],
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(
+                    calls,
+                    _valid_receipt(
+                        event_id="event-first",
+                        pair="AAA_USD",
+                        dedupe_key=first_event["dedupe_key"],
+                    ),
+                ),
+            )
+            state_after_first = json.loads(paths.dispatcher_state.read_text())
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            paths.events.write_text(json.dumps({"events": []}))
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={},
+                subprocess_run=_fake_codex(
+                    calls,
+                    _valid_receipt(
+                        event_id="event-second",
+                        pair="BBB_USD",
+                        dedupe_key=second_event["dedupe_key"],
+                    ),
+                ),
+            )
+
+            self.assertEqual(first["selected_event"]["event_id"], "event-first")
+            self.assertIn(second_event["dedupe_key"], state_after_first["pending_dispatches"])
+            self.assertEqual(second["selected_event"]["event_id"], "event-second")
+            self.assertEqual(json.loads(paths.dispatcher_state.read_text())["pending_dispatches"], {})
             self.assertEqual(len(calls), 2)
 
     def test_codex_command_uses_gpt55_and_read_only_sandbox(self) -> None:
@@ -434,8 +788,47 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             state = json.loads(paths.dispatcher_state.read_text())
             self.assertEqual(state["last_status"], "CODEX_MODEL_UNSUPPORTED")
             self.assertEqual(state["last_result"]["codex_preflight"]["codex_version"], "0.25.0")
+            self.assertNotIn("reviewed_events", state)
+            self.assertEqual(
+                state["dispatch_attempts"][_event(severity="P1")["dedupe_key"]]["attempt_count"],
+                1,
+            )
             escalation = json.loads(paths.escalation.read_text())
             self.assertTrue(escalation["queued_for_active_trader"])
+
+    def test_binary_change_retries_same_event_during_failure_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            first_preflight_calls: list[list[str]] = []
+            second_preflight_calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/Codex.app/Contents/Resources/codex",
+                },
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                codex_preflight_run=_fake_preflight(first_preflight_calls, stdout="codex-cli 0.25.0\n"),
+            )
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=10),
+                env={
+                    "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/ChatGPT.app/Contents/Resources/codex",
+                },
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                codex_preflight_run=_fake_preflight(second_preflight_calls, stdout="codex-cli 0.144.0\n"),
+            )
+
+            self.assertEqual(first["status"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertEqual(second["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(codex_calls), 1)
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(state["dispatch_attempts"], {})
+            self.assertIn(_event(severity="P1")["dedupe_key"], state["reviewed_events"])
 
     def test_unsupported_codex_model_error_is_not_schema_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,7 +865,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 now=NOW,
                 env={
                     "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
-                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/Codex.app/Contents/Resources/codex",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/ChatGPT.app/Contents/Resources/codex",
                 },
                 subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
                 codex_preflight_run=_fake_preflight(preflight_calls, stdout="codex-cli 0.142.4\n"),
@@ -480,9 +873,9 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             self.assertEqual(result["status"], "RECEIPT_WRITTEN")
             self.assertNotIn(result["status"], {"CODEX_MODEL_UNSUPPORTED", "CODEX_CLI_VERSION_UNSUPPORTED"})
-            self.assertEqual(preflight_calls, [["/Applications/Codex.app/Contents/Resources/codex", "--version"]])
+            self.assertEqual(preflight_calls, [["/Applications/ChatGPT.app/Contents/Resources/codex", "--version"]])
             self.assertEqual(len(codex_calls), 1)
-            self.assertEqual(codex_calls[0][0], "/Applications/Codex.app/Contents/Resources/codex")
+            self.assertEqual(codex_calls[0][0], "/Applications/ChatGPT.app/Contents/Resources/codex")
             self.assertEqual(result["codex_preflight"]["codex_version"], "0.142.4")
             self.assertEqual(result["codex"]["codex_version"], "0.142.4")
             self.assertTrue(paths.action_receipt.exists())
@@ -498,7 +891,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 now=NOW,
                 env={
                     "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
-                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/Codex.app/Contents/Resources/codex",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/ChatGPT.app/Contents/Resources/codex",
                 },
                 subprocess_run=_fake_codex_with_diagnostics(
                     codex_calls,
@@ -702,6 +1095,20 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(codex_calls, [])
             self.assertFalse(paths.action_receipt.exists())
 
+            stale["fetched_at_utc"] = (NOW + timedelta(seconds=1)).isoformat()
+            paths.broker_snapshot.write_text(json.dumps(stale))
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            paths.events.write_text(json.dumps({"events": []}))
+            recovered = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={},
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+            )
+
+            self.assertEqual(recovered["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(codex_calls), 1)
+
     def test_active_lock_after_invalid_output_queues_instead_of_retrying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -723,7 +1130,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertFalse(paths.action_receipt.exists())
 
-    def test_repeated_parse_failure_is_queued_for_active_trader(self) -> None:
+    def test_parse_failure_uses_bounded_backoff_then_retries_same_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
             calls: list[list[str]] = []
@@ -736,13 +1143,104 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             second = run_dispatcher(
                 paths=paths,
-                now=NOW + timedelta(minutes=1),
+                now=NOW + timedelta(seconds=30),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            third = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=61),
                 env={},
                 subprocess_run=_fake_codex(calls, _valid_receipt()),
             )
 
             self.assertEqual(first["status"], "PARSE_FAILED")
-            self.assertEqual(second["status"], "QUEUED_FOR_ACTIVE_TRADER")
+            self.assertEqual(second["status"], "SUPPRESSED")
+            self.assertEqual(second["selection"]["suppressed"][0]["reason"], "RETRY_BACKOFF")
+            self.assertEqual(third["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(third["retry_injection"]["status"], "DUE_FAILED_ATTEMPTS_INJECTED")
+            self.assertEqual(len(calls), 3)
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(state["dispatch_attempts"], {})
+            self.assertEqual(state["parse_failures"], {})
+            self.assertIn(_event(severity="P1")["dedupe_key"], state["reviewed_events"])
+
+    def test_retry_budget_waits_for_ttl_before_opening_fresh_series(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            env = {
+                "QR_GUARDIAN_WAKE_RETRY_BASE_SECONDS": "1",
+                "QR_GUARDIAN_WAKE_RETRY_MAX_ATTEMPTS": "2",
+                "QR_GUARDIAN_WAKE_RETRY_TTL_SECONDS": "10",
+            }
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env=env,
+                subprocess_run=_fake_codex_sequence(calls, ["bad", "bad"]),
+            )
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env=env,
+                subprocess_run=_fake_codex_sequence(calls, ["bad", "bad"]),
+            )
+            blocked = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=2),
+                env=env,
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            recovered = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=11),
+                env=env,
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(first["status"], "PARSE_FAILED")
+            self.assertEqual(second["status"], "PARSE_FAILED")
+            self.assertEqual(blocked["status"], "SUPPRESSED")
+            self.assertEqual(blocked["selection"]["suppressed"][0]["reason"], "RETRY_BUDGET_EXHAUSTED")
+            self.assertEqual(recovered["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 5)
+
+    def test_quote_tick_does_not_reset_failed_dispatch_backoff_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["bad", "bad"]),
+            )
+            original = _event(severity="P1")
+            ticked = {
+                **original,
+                "event_id": "event-tick-only",
+                "price_zone": "EUR_USD 1.17001 rejection",
+            }
+            paths.events.write_text(json.dumps({"events": [ticked]}))
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+
+            blocked = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(first["status"], "PARSE_FAILED")
+            self.assertEqual(blocked["status"], "SUPPRESSED")
+            self.assertEqual(blocked["selection"]["suppressed"][0]["reason"], "RETRY_BACKOFF")
+            state = json.loads(paths.dispatcher_state.read_text())
+            attempt = state["dispatch_attempts"][original["dedupe_key"]]
+            self.assertEqual(attempt["attempt_count"], 1)
+            self.assertEqual(attempt["event_id"], original["event_id"])
             self.assertEqual(len(calls), 2)
 
     def test_valid_gpt_output_creates_guardian_action_receipt(self) -> None:
@@ -762,6 +1260,195 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(payload["receipt"]["dedupe_key"], payload["selected_event"]["dedupe_key"])
             self.assertTrue(payload["receipt"]["gateway_required"])
             self.assertTrue(payload["receipt"]["no_direct_oanda"])
+            state = json.loads(paths.dispatcher_state.read_text())
+            baseline = state["reviewed_events"][payload["selected_event"]["dedupe_key"]]
+            self.assertEqual(baseline["event_id"], payload["selected_event_id"])
+            self.assertEqual(baseline["price_zone"], payload["selected_event"]["price_zone"])
+            self.assertEqual(baseline["details"], payload["selected_event"]["details"])
+            self.assertIn("material_fingerprint", baseline)
+
+    def test_accepted_material_event_writes_idempotent_safe_tuning_work_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",))
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            first_work_order_text = paths.tuning_work_order.read_text()
+            work_order = json.loads(first_work_order_text)
+
+            # Simulate dispatcher-state restoration without deleting the
+            # durable work order; the same event must not churn the file.
+            paths.dispatcher_state.write_text("{}\n")
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=10),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(first["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(first["tuning_handoff"]["status"], "WORK_ORDER_WRITTEN")
+            self.assertEqual(work_order["status"], "PENDING_HOURLY_AI_REVIEW")
+            self.assertFalse(work_order["live_permission_allowed"])
+            self.assertTrue(work_order["no_direct_oanda"])
+            self.assertTrue(work_order["preserve_blockers"])
+            self.assertEqual(work_order["bot_tuning_review_validation"]["status"], "MISSING")
+            self.assertEqual(second["tuning_handoff"]["status"], "UNCHANGED_IDEMPOTENT")
+            self.assertEqual(paths.tuning_work_order.read_text(), first_work_order_text)
+
+    def test_tuning_work_order_write_failure_is_retried_without_accepted_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
+            calls: list[list[str]] = []
+            real_write_json = dispatcher_module._write_json
+
+            def fail_only_work_order(path, payload):
+                if path == paths.tuning_work_order:
+                    raise OSError("ENOSPC")
+                return real_write_json(path, payload)
+
+            with patch.object(dispatcher_module, "_write_json", side_effect=fail_only_work_order):
+                first = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={"QR_GUARDIAN_WAKE_RETRY_BASE_SECONDS": "1"},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+            first_state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(first["status"], "TUNING_HANDOFF_FAILED")
+            self.assertTrue(first["receipt_written"])
+            self.assertFalse(paths.tuning_work_order.exists())
+            self.assertNotIn(_event(severity="P1")["dedupe_key"], first_state.get("reviewed_events", {}))
+            self.assertIn(_event(severity="P1")["dedupe_key"], first_state["dispatch_attempts"])
+
+            paths.escalation.write_text(json.dumps({"wake_gpt": False, "events_to_review": []}))
+            recovered = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={"QR_GUARDIAN_WAKE_RETRY_BASE_SECONDS": "1"},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(recovered["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(paths.tuning_work_order.exists())
+            self.assertIn(
+                _event(severity="P1")["dedupe_key"],
+                json.loads(paths.dispatcher_state.read_text())["reviewed_events"],
+            )
+
+    def test_distinct_pending_tuning_work_orders_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            second_event = {
+                **_event(
+                    severity="P1",
+                    event_id="event-gbp",
+                    pair="GBP_USD",
+                    dedupe_key="GBP_USD|regime|FAILED_ACCEPTANCE|TRADE",
+                ),
+                "wake_reason_codes": ["VOLATILITY_BUCKET_CHANGE"],
+            }
+            paths.events.write_text(json.dumps({"events": [second_event]}))
+            paths.escalation.write_text(
+                json.dumps({"wake_gpt": True, "events_to_review": [second_event]})
+            )
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=1),
+                env={},
+                subprocess_run=_fake_codex(
+                    calls,
+                    _valid_receipt(
+                        event_id="event-gbp",
+                        pair="GBP_USD",
+                        dedupe_key=second_event["dedupe_key"],
+                    ),
+                ),
+            )
+
+            work_order = json.loads(paths.tuning_work_order.read_text())
+            self.assertEqual(first["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(second["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(work_order["schema_version"], 2)
+            self.assertEqual(work_order["pending_count"], 2)
+            self.assertEqual(
+                {item["selected_event"]["pair"] for item in work_order["work_orders"]},
+                {"EUR_USD", "GBP_USD"},
+            )
+
+    def test_consumed_tuning_fingerprint_reopens_on_later_accepted_occurrence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
+            calls: list[list[str]] = []
+            run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+            consumed = json.loads(paths.tuning_work_order.read_text())
+            consumed["status"] = "CONSUMED"
+            consumed["consumed_at_utc"] = (NOW + timedelta(minutes=1)).isoformat()
+            consumed["consumed_by"] = "qr-trader-hourly-ai"
+            consumed["experiment_id"] = "experiment-1"
+            consumed["experiment_result"] = "NO_CHANGE_INSUFFICIENT_EDGE"
+            paths.tuning_work_order.write_text(json.dumps(consumed))
+            paths.dispatcher_state.write_text("{}\n")
+
+            reopened = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(minutes=2),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            work_order = json.loads(paths.tuning_work_order.read_text())
+            self.assertEqual(reopened["tuning_handoff"]["status"], "WORK_ORDER_WRITTEN")
+            self.assertEqual(work_order["status"], "PENDING_HOURLY_AI_REVIEW")
+            self.assertEqual(work_order["reopened_count"], 1)
+            self.assertEqual(work_order["reopened_from_terminal"]["status"], "CONSUMED")
+
+    def test_unsafe_optional_bot_tuning_review_cannot_change_work_order_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("REGIME_SHIFT_TO_RANGE",))
+            calls: list[list[str]] = []
+            receipt = json.loads(_valid_receipt())
+            receipt["bot_tuning_review"] = {
+                "proposal": "lower all blockers",
+                "live_permission_allowed": True,
+                "no_direct_oanda": False,
+                "preserve_blockers": False,
+            }
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, json.dumps(receipt)),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            work_order = json.loads(paths.tuning_work_order.read_text())
+            self.assertEqual(
+                work_order["bot_tuning_review_validation"]["status"],
+                "INVALID_UNSAFE_BOUNDARY",
+            )
+            self.assertNotIn("bot_tuning_review", work_order)
+            self.assertFalse(work_order["live_permission_allowed"])
+            self.assertTrue(work_order["no_direct_oanda"])
+            self.assertTrue(work_order["preserve_blockers"])
 
     def test_selected_event_aud_jpy_receipt_usd_cad_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -815,6 +1502,9 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertFalse(paths.action_receipt.exists())
             self.assertTrue(result["queued_for_active_trader"])
             self.assertIn("RECEIPT_EVENT_MISMATCH", paths.action_review.read_text())
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertNotIn("reviewed_events", state)
+            self.assertIn(aud["dedupe_key"], state["dispatch_attempts"])
 
     def test_selected_event_event_id_mismatch_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1132,6 +1822,18 @@ def _valid_receipt(
 def _fake_codex(calls: list[list[str]], output: str):
     def run(cmd, *, input, capture_output, text, timeout, env):
         calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_with_prompt(calls: list[list[str]], prompts: list[str], output: str):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        prompts.append(input)
         out_path = Path(cmd[cmd.index("--output-last-message") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(output)

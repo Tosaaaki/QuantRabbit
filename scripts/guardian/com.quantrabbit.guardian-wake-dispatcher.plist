@@ -27,7 +27,7 @@
     <key>QR_GUARDIAN_ACTION_EXECUTE</key>
     <string>0</string>
     <key>QR_GUARDIAN_WAKE_CODEX_BIN</key>
-    <string>/Applications/Codex.app/Contents/Resources/codex</string>
+    <string>/Applications/ChatGPT.app/Contents/Resources/codex</string>
     <key>QR_GUARDIAN_WAKE_CODEX_PREFLIGHT</key>
     <string>1</string>
     <key>CODEX_DISABLE_UPDATE_CHECK</key>

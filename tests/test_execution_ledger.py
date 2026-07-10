@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -15,6 +18,7 @@ from quant_rabbit.execution_ledger import (
     ExecutionLedger,
     _events_from_transaction,
 )
+import quant_rabbit.execution_ledger as execution_ledger_module
 from quant_rabbit.models import AccountSummary
 from quant_rabbit.strategy.entry_thesis_ledger import (
     PendingEntryThesis,
@@ -24,6 +28,122 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
 
 
 class ExecutionLedgerTest(unittest.TestCase):
+    def test_large_gateway_input_packet_is_content_addressed_and_not_duplicated_in_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            input_packet = {
+                "lanes": [{"lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"}],
+                "allowed_evidence_refs": ["chart:EUR_USD:M5", "news:health"],
+                "broker_snapshot": {"fetched_at_utc": "2026-07-10T10:00:00+00:00"},
+                "artifact_timestamps": {"pair_charts": "2026-07-10T10:00:00+00:00"},
+                "large_evidence": "market-evidence-" * 40000,
+            }
+            first = {
+                "generated_at_utc": "2026-07-10T10:01:00+00:00",
+                "status": "ACCEPTED",
+                "decision": {"action": "WAIT"},
+                "input_packet": input_packet,
+            }
+            second = {
+                **first,
+                "generated_at_utc": "2026-07-10T11:01:00+00:00",
+                "input_packet": input_packet,
+            }
+
+            ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "first.json", payload=first)
+            ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "second.json", payload=second)
+
+            self.assertIs(first["input_packet"], input_packet)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                rows = conn.execute(
+                    "SELECT payload_json FROM gateway_receipts ORDER BY ts_utc"
+                ).fetchall()
+            self.assertEqual(len(rows), 2)
+            stored = [json.loads(row[0]) for row in rows]
+            self.assertTrue(all("input_packet" not in item for item in stored))
+            self.assertEqual(
+                stored[0]["input_packet_archive"]["sha256"],
+                stored[1]["input_packet_archive"]["sha256"],
+            )
+            self.assertLess(len(rows[0][0]), 10000)
+            archive_path = root / stored[0]["input_packet_archive"]["path"]
+            self.assertTrue(archive_path.exists())
+            self.assertEqual(len(list((root / "execution_evidence" / "gateway_input_packets").rglob("*.json.gz"))), 1)
+            with gzip.open(archive_path, "rt", encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle), input_packet)
+            self.assertEqual(stored[0]["input_packet_summary"]["lane_count"], 1)
+            self.assertEqual(stored[0]["input_packet_summary"]["allowed_evidence_ref_count"], 2)
+
+    def test_corrupt_existing_gateway_packet_archive_refuses_new_ledger_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            payload = {
+                "generated_at_utc": "2026-07-10T10:01:00+00:00",
+                "status": "ACCEPTED",
+                "input_packet": {"large_evidence": "x" * 10000},
+            }
+            ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "first.json", payload=payload)
+            archive = next((root / "execution_evidence" / "gateway_input_packets").rglob("*.json.gz"))
+            archive.write_bytes(b"not-gzip")
+            retry = {**payload, "generated_at_utc": "2026-07-10T11:01:00+00:00"}
+
+            with self.assertRaises(ValueError):
+                ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "second.json", payload=retry)
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                count = conn.execute("SELECT COUNT(*) FROM gateway_receipts").fetchone()[0]
+            self.assertEqual(count, 1)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink unavailable")
+    def test_gateway_packet_archive_rejects_symlinked_storage_subtree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            (root / "execution_evidence").symlink_to(outside, target_is_directory=True)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            payload = {
+                "generated_at_utc": "2026-07-10T10:01:00+00:00",
+                "status": "ACCEPTED",
+                "input_packet": {"large_evidence": "x" * 10000},
+            }
+
+            with self.assertRaisesRegex(ValueError, "contains a symlink"):
+                ledger.record_gateway_payload(
+                    kind="gpt_decision",
+                    receipt_path=root / "receipt.json",
+                    payload=payload,
+                )
+
+            self.assertEqual(list(outside.rglob("*")), [])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink unavailable")
+    def test_gateway_packet_archive_rejects_existing_symlink_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            packet = {"large_evidence": "x" * 10000}
+            canonical = execution_ledger_module._json(packet).encode("utf-8")
+            digest = hashlib.sha256(canonical).hexdigest()
+            archive_dir = root / "execution_evidence" / "gateway_input_packets" / digest[:2]
+            archive_dir.mkdir(parents=True)
+            outside = Path(outside_tmp) / "matching.json.gz"
+            with gzip.open(outside, "wb") as handle:
+                handle.write(canonical)
+            (archive_dir / f"{digest}.json.gz").symlink_to(outside)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            with self.assertRaisesRegex(ValueError, "contains a symlink"):
+                ledger.record_gateway_payload(
+                    kind="gpt_decision",
+                    receipt_path=root / "receipt.json",
+                    payload={
+                        "generated_at_utc": "2026-07-10T10:01:00+00:00",
+                        "status": "ACCEPTED",
+                        "input_packet": packet,
+                    },
+                )
+
     @staticmethod
     def _scout_reservation_payload(
         *, signal_id: str, vehicle_id: str, expires_at_utc: str

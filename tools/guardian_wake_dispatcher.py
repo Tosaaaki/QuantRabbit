@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -28,7 +29,8 @@ MODEL = "gpt-5.5"
 ACTIONABLE_ACTIONS = {"TRADE", "ADD", "HARVEST", "REDUCE", "CANCEL_PENDING"}
 THESIS_STATES = {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}
 DEFAULT_LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
-DEFAULT_CODEX_APP_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
+DEFAULT_CODEX_APP_BIN = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+LEGACY_CODEX_APP_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
 
 # Local compatibility floor for GPT-5.5 support: codex-cli 0.25.0 returns
 # "gpt-5.5 model requires a newer version of Codex", while 0.142.4 accepts the
@@ -50,6 +52,52 @@ CODEX_TIMEOUT_SECONDS = 8 * 60
 DEFAULT_RECEIPT_TTL_SECONDS = 75 * 60
 TERMINAL_RECEIPT_LIFECYCLES = {"CONSUMED", "SUPERSEDED", "EXPIRED", "REJECTED"}
 
+# Failed wake attempts are not reviews. Keep their retry lifecycle separate so
+# a repaired Codex binary or a materially changed event can be retried without
+# erasing the last accepted review baseline. The cap prevents a malformed GPT
+# response from consuming every 30-second launchd tick forever; the TTL opens a
+# fresh bounded series for an event that still needs hourly-trader attention.
+DEFAULT_RETRY_BASE_SECONDS = 60
+DEFAULT_RETRY_MAX_SECONDS = 15 * 60
+DEFAULT_RETRY_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_TTL_SECONDS = 30 * 60
+DEFAULT_PENDING_DISPATCH_TTL_SECONDS = 2 * 60 * 60
+MAX_PENDING_DISPATCHES = 24
+DEFAULT_DISK_P0_FREE_BYTES = 2 * 1024**3
+DEFAULT_DISK_WARNING_FREE_BYTES = 5 * 1024**3
+
+_EXPLICIT_DISPATCH_REASONS = {
+    "NEW_EVENT",
+    "SEVERITY_INCREASE",
+    "UNKNOWN_GATEWAY_OUTSIDE_ORDER",
+    "UNKNOWN_GATEWAY_OUTSIDE_ORDER_STATE_CHANGE",
+    "MARGIN_RISK_THRESHOLD_CROSSED",
+    "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+    "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE",
+    "PRICE_ENTERED_HARVEST_ZONE",
+    "FAILED_DISPATCH_RETRY",
+}
+_MATERIAL_CHANGE_REASONS = {
+    "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+    "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE",
+    "TECHNICAL_STATE_CHANGE",
+    "REGIME_STATE_CHANGE",
+    "VOLATILITY_BUCKET_CHANGE",
+    "TECHNICAL_FAMILY_STATE_CHANGE",
+    "CLOSED_CANDLE_STRUCTURE_CHANGE",
+}
+_ACTIVE_EXPOSURE_EVENT_TYPES = {
+    "HARVEST_ZONE",
+    "THESIS_INVALIDATION",
+    "MARGIN_PRESSURE",
+    "UNKNOWN_ORDER",
+    "UNEXPECTED_PROTECTION_MISSING",
+    "CONTRACT_HARVEST_TRIGGER",
+    "CONTRACT_WOUNDED_TRIGGER",
+    "CONTRACT_INVALIDATION_TRIGGER",
+    "CONTRACT_EMERGENCY_TRIGGER",
+}
+
 
 @dataclass(frozen=True)
 class DispatcherPaths:
@@ -63,6 +111,7 @@ class DispatcherPaths:
     prompt_template: Path
     action_receipt: Path
     action_review: Path
+    tuning_work_order: Path
     dispatcher_state: Path
     log: Path
     codex_home: Path
@@ -85,6 +134,7 @@ class DispatcherPaths:
             prompt_template=root / "docs" / "guardian_wake_prompt.md",
             action_receipt=root / "data" / "guardian_action_receipt.json",
             action_review=root / "docs" / "guardian_action_review.md",
+            tuning_work_order=root / "data" / "guardian_tuning_work_order.json",
             dispatcher_state=root / "data" / "guardian_wake_dispatcher_state.json",
             log=root / "logs" / "guardian_wake_dispatcher.log",
             codex_home=root / "data" / "codex_guardian_home",
@@ -115,14 +165,38 @@ def run_dispatcher(
     daily_target_state = _load_json(paths.daily_target_state)
     event_report = _read_text(paths.event_report)
     dispatcher_state = _load_json(paths.dispatcher_state)
+    runtime_disk = _runtime_disk_state(paths.root, environ)
+
+    escalation, events_payload, retry_injection = _inject_due_failed_attempts(
+        escalation=escalation,
+        events_payload=events_payload,
+        dispatcher_state=dispatcher_state,
+        now=clock,
+        env=environ,
+    )
+    escalation, events_payload, pending_injection = _inject_pending_dispatches(
+        escalation=escalation,
+        events_payload=events_payload,
+        dispatcher_state=dispatcher_state,
+        now=clock,
+    )
 
     result_base = {
         "generated_at_utc": clock.isoformat(),
         "model": MODEL,
         "paths": _paths_payload(paths),
         "execution_boundary": _execution_boundary(),
+        "runtime_disk": runtime_disk,
     }
-    _expire_current_receipt_if_needed(paths.action_receipt, now=clock)
+    if retry_injection:
+        result_base["retry_injection"] = retry_injection
+    if pending_injection:
+        result_base["pending_injection"] = pending_injection
+    # Expiry archival writes a new JSON file. Under P0 disk pressure preserve
+    # the current receipt as-is and let the first recovered cycle expire it;
+    # the disk guard must run before any optional archive/session growth.
+    if runtime_disk["status"] != "RUNTIME_DISK_P0":
+        _expire_current_receipt_if_needed(paths.action_receipt, now=clock)
 
     if escalation.get("wake_gpt") is not True:
         result = {
@@ -161,24 +235,30 @@ def run_dispatcher(
         _append_log(paths.log, result)
         return result
 
-    parse_queue = _same_event_parse_failure_queue(dispatcher_state, selected)
-    if parse_queue:
-        queued = {
+    if runtime_disk["status"] == "RUNTIME_DISK_P0":
+        result = {
             **result_base,
-            "status": "QUEUED_FOR_ACTIVE_TRADER",
+            "status": "RUNTIME_DISK_P0",
             "wake_gpt": True,
             "selected_event": selected,
             "selection": selection,
-            "queue_reason": "repeated guardian wake parse failure",
-            "parse_failure": parse_queue,
+            "queued_for_active_trader": True,
+            "queue_reason": "runtime free space is below the 2 GiB GPT wake floor",
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="repeated guardian wake parse failure")
-        _write_action_review(paths.action_review, queued, action_receipt_path=paths.action_receipt, now=clock)
-        _record_state(paths.dispatcher_state, dispatcher_state, queued)
-        _append_log(paths.log, queued)
-        return queued
+        _mark_escalation_queued(
+            paths.escalation,
+            escalation,
+            result,
+            now=clock,
+            reason="runtime free space is below the GPT wake floor",
+        )
+        _remove_non_accepted_current_receipt(paths.action_receipt)
+        _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
+        _record_state(paths.dispatcher_state, dispatcher_state, result, attempted_event=selected, env=environ)
+        _append_log(paths.log, result)
+        return result
 
     lock = _active_live_lock(paths.live_lock)
     if lock["active"]:
@@ -187,6 +267,7 @@ def run_dispatcher(
             "status": "QUEUED_FOR_ACTIVE_TRADER",
             "wake_gpt": True,
             "selected_event": selected,
+            "selection": selection,
             "lock": lock,
             "receipt_written": False,
             "action_receipt_path": None,
@@ -216,6 +297,7 @@ def run_dispatcher(
             "status": "BROKER_SNAPSHOT_STALE",
             "wake_gpt": True,
             "selected_event": selected,
+            "selection": selection,
             "broker_snapshot_freshness": freshness,
             "queued_for_active_trader": True,
             "queue_reason": "stale broker snapshot; GPT wake not started because stale broker truth must not enter the prompt",
@@ -268,7 +350,7 @@ def run_dispatcher(
             reason="Codex CLI/model compatibility failed before guardian wake",
         )
         _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
-        _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
+        _record_state(paths.dispatcher_state, dispatcher_state, result, attempted_event=selected, env=environ)
         _append_log(paths.log, result)
         return result
 
@@ -283,6 +365,7 @@ def run_dispatcher(
         daily_target_state=daily_target_state,
         event_report=event_report,
         dispatcher_state=dispatcher_state,
+        runtime_disk=runtime_disk,
     )
     codex = _run_codex(
         paths=paths,
@@ -327,7 +410,7 @@ def run_dispatcher(
                 reason="active qr-trader/live gateway lock before parse repair retry",
             )
             _write_action_review(paths.action_review, queued, action_receipt_path=paths.action_receipt, now=clock)
-            _record_state(paths.dispatcher_state, dispatcher_state, queued)
+            _record_state(paths.dispatcher_state, dispatcher_state, queued, attempted_event=selected, env=environ)
             _append_log(paths.log, queued)
             return queued
         repair_attempted = True
@@ -346,9 +429,20 @@ def run_dispatcher(
         codex_attempts.append(repair_codex)
         parsed = _parse_codex_result(repair_codex)
         codex = repair_codex
-    events = _events_from_payload(events_payload)
+    review_events_payload = dict(events_payload)
+    review_event_by_key = {
+        str(item.get("dedupe_key") or ""): item
+        for item in review_events_payload.get("events", []) or []
+        if isinstance(item, dict) and str(item.get("dedupe_key") or "")
+    }
+    review_event_by_key[str(selected.get("dedupe_key") or "")] = {
+        key: value for key, value in selected.items() if key != "wake_reason_codes"
+    }
+    review_events_payload["events"] = list(review_event_by_key.values())
+    events = _events_from_payload(review_events_payload)
     review = None
     receipt_written = False
+    tuning_handoff: dict[str, Any] = {"status": "SKIPPED_NO_ACCEPTED_MATERIAL_EVENT"}
     if parsed["valid"]:
         if not parsed["receipt"].get("dedupe_key") and selected.get("dedupe_key"):
             parsed["receipt"]["dedupe_key"] = selected["dedupe_key"]
@@ -381,6 +475,12 @@ def run_dispatcher(
             _write_json(paths.action_receipt, payload)
             _archive_receipt(paths.action_receipt, payload)
             receipt_written = True
+            tuning_handoff = _maybe_write_tuning_work_order(
+                path=paths.tuning_work_order,
+                selected_event=selected,
+                receipt=parsed["receipt"],
+                now=clock,
+            )
         else:
             _remove_non_accepted_current_receipt(paths.action_receipt)
     else:
@@ -392,8 +492,11 @@ def run_dispatcher(
         env=environ,
         lock=lock,
     )
+    tuning_handoff_failed = str(tuning_handoff.get("status") or "").upper() == "WORK_ORDER_WRITE_FAILED"
     status = (
-        "RECEIPT_WRITTEN"
+        "TUNING_HANDOFF_FAILED"
+        if receipt_written and tuning_handoff_failed
+        else "RECEIPT_WRITTEN"
         if receipt_written
         else parsed["error"]
         if not parsed["valid"] and parsed.get("error") in CODEX_MODEL_FAILURE_STATUSES
@@ -421,6 +524,8 @@ def run_dispatcher(
         "receipt_written": receipt_written,
         "action_receipt_path": str(paths.action_receipt) if receipt_written else None,
         "gateway_handoff": handoff,
+        "tuning_handoff": tuning_handoff,
+        "tuning_handoff_failed": tuning_handoff_failed,
     }
     if review is not None:
         result["receipt_review"] = review
@@ -435,9 +540,189 @@ def run_dispatcher(
             reason="guardian wake receipt did not match selected_event",
         )
     _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
-    _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
+    _record_state(
+        paths.dispatcher_state,
+        dispatcher_state,
+        result,
+        reviewed_event=selected if receipt_written and not tuning_handoff_failed else None,
+        attempted_event=selected,
+        env=environ,
+    )
     _append_log(paths.log, result)
     return result
+
+
+def _runtime_disk_state(root: Path, env: dict[str, str]) -> dict[str, Any]:
+    p0_floor = max(1, int(env.get("QR_GUARDIAN_WAKE_DISK_P0_FREE_BYTES", DEFAULT_DISK_P0_FREE_BYTES)))
+    warning_floor = max(
+        p0_floor,
+        int(env.get("QR_GUARDIAN_WAKE_DISK_WARNING_FREE_BYTES", DEFAULT_DISK_WARNING_FREE_BYTES)),
+    )
+    try:
+        usage = shutil.disk_usage(root)
+    except OSError as exc:
+        return {
+            "status": "RUNTIME_DISK_UNKNOWN",
+            "path": str(root),
+            "p0_free_bytes": p0_floor,
+            "warning_free_bytes": warning_floor,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if usage.free < p0_floor:
+        status = "RUNTIME_DISK_P0"
+    elif usage.free < warning_floor:
+        status = "RUNTIME_DISK_WARNING"
+    else:
+        status = "RUNTIME_DISK_OK"
+    return {
+        "status": status,
+        "path": str(root),
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "free_gib": round(usage.free / 1024**3, 3),
+        "p0_free_bytes": p0_floor,
+        "warning_free_bytes": warning_floor,
+        "gpt_wake_allowed": status != "RUNTIME_DISK_P0",
+    }
+
+
+def _inject_due_failed_attempts(
+    *,
+    escalation: dict[str, Any],
+    events_payload: dict[str, Any],
+    dispatcher_state: dict[str, Any],
+    now: datetime,
+    env: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    attempts = dispatcher_state.get("dispatch_attempts")
+    if not isinstance(attempts, dict) or not attempts:
+        return escalation, events_payload, None
+    current_events = {
+        str(item.get("dedupe_key") or ""): item
+        for item in events_payload.get("events", []) or []
+        if isinstance(item, dict) and str(item.get("dedupe_key") or "")
+    }
+    due: list[dict[str, Any]] = []
+    for dedupe_key, record in attempts.items():
+        if not isinstance(record, dict):
+            continue
+        stored_event = record.get("event") if isinstance(record.get("event"), dict) else {}
+        # Retry the exact failed observation.  A live quote tick changes the
+        # current technical event_id/price_zone, but must not reset backoff or
+        # the max-attempt budget.  A genuinely new material router escalation
+        # is still merged separately and can start its own reviewed series.
+        event = dict(stored_event)
+        if not event or not event.get("event_id") or not event.get("dedupe_key"):
+            continue
+        if _retry_suppression(record, event=event, now=now, env=env) is not None:
+            continue
+        event["wake_reason_codes"] = list(
+            dict.fromkeys([*(event.get("wake_reason_codes") or []), "FAILED_DISPATCH_RETRY"])
+        )
+        due.append(event)
+    if not due:
+        return escalation, events_payload, None
+
+    payload = dict(escalation)
+    review_events = [item for item in payload.get("events_to_review", []) or [] if isinstance(item, dict)]
+    review_by_key = {str(item.get("dedupe_key") or ""): item for item in review_events}
+    for event in due:
+        review_by_key[str(event.get("dedupe_key") or "")] = event
+    payload["wake_gpt"] = True
+    payload["events_to_review"] = list(review_by_key.values())
+    payload["wake_reason_codes"] = sorted(
+        {*(str(item) for item in payload.get("wake_reason_codes", []) or []), "FAILED_DISPATCH_RETRY"}
+    )
+
+    event_payload = dict(events_payload)
+    event_by_key = dict(current_events)
+    for event in due:
+        event_by_key[str(event.get("dedupe_key") or "")] = {
+            key: value for key, value in event.items() if key != "wake_reason_codes"
+        }
+    event_payload["events"] = list(event_by_key.values())
+    return payload, event_payload, {
+        "status": "DUE_FAILED_ATTEMPTS_INJECTED",
+        "event_ids": [event.get("event_id") for event in due],
+        "count": len(due),
+    }
+
+
+def _inject_pending_dispatches(
+    *,
+    escalation: dict[str, Any],
+    events_payload: dict[str, Any],
+    dispatcher_state: dict[str, Any],
+    now: datetime,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    pending = _active_pending_dispatch_records(
+        dispatcher_state.get("pending_dispatches"),
+        now=now,
+    )
+    if not pending:
+        return escalation, events_payload, None
+
+    payload = dict(escalation)
+    review_events = [
+        item for item in payload.get("events_to_review", []) or [] if isinstance(item, dict)
+    ]
+    review_by_key = {
+        str(item.get("dedupe_key") or ""): item
+        for item in review_events
+        if str(item.get("dedupe_key") or "")
+    }
+    injected: list[dict[str, Any]] = []
+    for dedupe_key, record in pending.items():
+        if dedupe_key in review_by_key:
+            continue
+        event = record.get("event") if isinstance(record.get("event"), dict) else {}
+        if not event:
+            continue
+        review_by_key[dedupe_key] = dict(event)
+        injected.append(event)
+    if not injected:
+        return escalation, events_payload, None
+
+    payload["wake_gpt"] = True
+    payload["events_to_review"] = list(review_by_key.values())
+    payload["wake_reason_codes"] = sorted(
+        {
+            *(str(item) for item in payload.get("wake_reason_codes", []) or []),
+            "DURABLE_PENDING_DISPATCH",
+        }
+    )
+    event_payload = dict(events_payload)
+    event_by_key = {
+        str(item.get("dedupe_key") or ""): item
+        for item in event_payload.get("events", []) or []
+        if isinstance(item, dict) and str(item.get("dedupe_key") or "")
+    }
+    for event in injected:
+        event_by_key[str(event.get("dedupe_key") or "")] = {
+            key: value for key, value in event.items() if key != "wake_reason_codes"
+        }
+    event_payload["events"] = list(event_by_key.values())
+    return payload, event_payload, {
+        "status": "DURABLE_PENDING_DISPATCHES_INJECTED",
+        "event_ids": [event.get("event_id") for event in injected],
+        "count": len(injected),
+    }
+
+
+def _active_pending_dispatch_records(value: Any, *, now: datetime) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    active: dict[str, dict[str, Any]] = {}
+    for dedupe_key, record in value.items():
+        if not isinstance(record, dict):
+            continue
+        event = record.get("event") if isinstance(record.get("event"), dict) else {}
+        expires_at = _parse_utc(record.get("expires_at_utc"))
+        if not event or expires_at is None or expires_at <= now:
+            continue
+        active[str(dedupe_key)] = record
+    return active
 
 
 def _select_dispatch_event(
@@ -452,33 +737,45 @@ def _select_dispatch_event(
     if not isinstance(review_events, list) or not review_events:
         return None, {"status": "NO_EVENTS_TO_REVIEW"}
 
-    reviewed = dispatcher_state.get("reviewed_events") if isinstance(dispatcher_state.get("reviewed_events"), dict) else {}
+    reviewed = _accepted_review_records(dispatcher_state.get("reviewed_events"))
+    attempts = (
+        dispatcher_state.get("dispatch_attempts")
+        if isinstance(dispatcher_state.get("dispatch_attempts"), dict)
+        else {}
+    )
     candidates: list[dict[str, Any]] = []
+    pending_events: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
-    current_events = {
-        str(item.get("dedupe_key") or ""): item
-        for item in events_payload.get("events", []) or []
-        if isinstance(item, dict)
-    }
+    del events_payload
     for raw_event in review_events:
         if not isinstance(raw_event, dict):
             continue
-        event = dict(current_events.get(str(raw_event.get("dedupe_key") or "")) or raw_event)
-        event["wake_reason_codes"] = list(raw_event.get("wake_reason_codes") or event.get("wake_reason_codes") or [])
-        reasons = {str(item) for item in event.get("wake_reason_codes") or []}
+        # events_to_review is the immutable observation that triggered this
+        # wake.  Replacing it with a newer raw quote tick would reset retry
+        # identity and could evade backoff indefinitely.
+        event = dict(raw_event)
+        event["wake_reason_codes"] = list(raw_event.get("wake_reason_codes") or [])
+        reasons = {str(item).strip().upper() for item in event.get("wake_reason_codes") or [] if str(item).strip()}
         dedupe_key = str(event.get("dedupe_key") or "").strip()
         if not dedupe_key:
             suppressed.append({"event": event, "reason": "MISSING_DEDUPE_KEY"})
             continue
-        if not ({"NEW_EVENT", "SEVERITY_INCREASE"} & reasons):
-            suppressed.append({"event": event, "reason": "NO_NEW_EVENT_OR_SEVERITY_INCREASE"})
+        if not any(_is_dispatch_reason(reason) for reason in reasons):
+            suppressed.append({"event": event, "reason": "NO_DISPATCHABLE_STATE_CHANGE_REASON"})
+            continue
+        retry_suppression = _retry_suppression(
+            attempts.get(dedupe_key) if isinstance(attempts, dict) else None,
+            event=event,
+            now=now,
+            env=env,
+        )
+        if retry_suppression is not None:
+            pending_events.append(event)
+            suppressed.append({"event": event, **retry_suppression})
             continue
         record = reviewed.get(dedupe_key) if isinstance(reviewed, dict) else None
         throttle = _dispatch_throttle_seconds(event, env)
         if isinstance(record, dict):
-            if str(record.get("last_status") or "").upper() == "PARSE_FAILED":
-                candidates.append(event)
-                continue
             previous_severity = _severity_rank(record.get("severity"))
             current_severity = _severity_rank(event.get("severity"))
             last_reviewed = _parse_utc(record.get("last_reviewed_at_utc"))
@@ -495,15 +792,30 @@ def _select_dispatch_event(
                         }
                     )
                     continue
-            if current_severity <= previous_severity:
+            if current_severity < previous_severity:
+                suppressed.append({"event": event, "reason": "SEVERITY_DECREASED_SINCE_ACCEPTED_REVIEW"})
+                continue
+            if current_severity == previous_severity and not _accepted_baseline_changed(record, event):
                 suppressed.append({"event": event, "reason": "DEDUPE_KEY_ALREADY_REVIEWED"})
                 continue
         candidates.append(event)
+        pending_events.append(event)
 
     if not candidates:
-        return None, {"status": "NO_DISPATCHABLE_EVENT", "suppressed": suppressed}
-    candidates.sort(key=lambda item: (-_severity_rank(item.get("severity")), str(item.get("pair") or ""), str(item.get("event_type") or "")))
-    return candidates[0], {"status": "SELECTED", "suppressed": suppressed, "candidate_count": len(candidates)}
+        return None, {
+            "status": "NO_DISPATCHABLE_EVENT",
+            "suppressed": suppressed,
+            "pending_events": pending_events,
+        }
+    candidates.sort(key=_dispatch_priority)
+    selected = candidates[0]
+    return selected, {
+        "status": "SELECTED",
+        "suppressed": suppressed,
+        "candidate_count": len(candidates),
+        "pending_events": pending_events,
+        "selected_priority": _dispatch_priority_evidence(selected),
+    }
 
 
 def _dispatch_throttle_seconds(event: dict[str, Any], env: dict[str, str]) -> int:
@@ -514,33 +826,219 @@ def _dispatch_throttle_seconds(event: dict[str, Any], env: dict[str, str]) -> in
     return int(env.get("QR_GUARDIAN_EVENT_THROTTLE_SECONDS", DEFAULT_THROTTLE_SECONDS))
 
 
+def _accepted_review_records(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): record
+        for key, record in value.items()
+        if isinstance(record, dict) and record.get("receipt_written") is True
+    }
+
+
 def _event_bypasses_dispatch_throttle(
     event: dict[str, Any],
     reasons: set[str],
     *,
     previous_severity: int,
 ) -> bool:
-    return (
-        str(event.get("severity") or "").upper() == "P0"
-        and _severity_rank(event.get("severity")) > previous_severity
-    ) or "SEVERITY_INCREASE" in reasons
+    severity_increased = _severity_rank(event.get("severity")) > previous_severity
+    return severity_increased and (
+        str(event.get("severity") or "").upper() == "P0" or "SEVERITY_INCREASE" in reasons
+    )
 
 
-def _same_event_parse_failure_queue(dispatcher_state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | None:
-    failures = dispatcher_state.get("parse_failures")
-    if not isinstance(failures, dict):
-        return None
-    dedupe_key = str(event.get("dedupe_key") or "").strip()
-    if not dedupe_key:
-        return None
-    record = failures.get(dedupe_key)
+def _is_dispatch_reason(reason: str) -> bool:
+    code = str(reason or "").strip().upper()
+    if code in _EXPLICIT_DISPATCH_REASONS:
+        return True
+    if _is_thesis_degrade_reason(code) or "HARVEST" in code:
+        return True
+    if "TECHNICAL_STATE_CHANGE" in code:
+        return True
+    # Future router contracts can name the exact regime/family transition
+    # without requiring a dispatcher release. events_to_review remains the
+    # deterministic upstream boundary, so this does not wake on raw indicators.
+    return any(token in code for token in ("REGIME", "VOLATILITY", "FAMILY", "STRUCTURE"))
+
+
+def _is_thesis_degrade_reason(reason: str) -> bool:
+    match = re.fullmatch(r"THESIS_([A-Z]+)_TO_([A-Z]+)", str(reason or "").upper())
+    if not match:
+        return False
+    rank = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
+    return rank.get(match.group(2), -1) > rank.get(match.group(1), -1)
+
+
+def _event_material_fingerprint(event: dict[str, Any]) -> str:
+    material = {
+        key: event.get(key)
+        for key in (
+            "event_id",
+            "event_type",
+            "pair",
+            "direction",
+            "thesis",
+            "price_zone",
+            "severity",
+            "recommended_review_type",
+            "action_hint",
+            "thesis_state",
+            "details",
+        )
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _accepted_baseline_changed(record: dict[str, Any], event: dict[str, Any]) -> bool:
+    previous_event_id = str(record.get("event_id") or "")
+    current_event_id = str(event.get("event_id") or "")
+    if previous_event_id and current_event_id and previous_event_id != current_event_id:
+        return True
+    previous_fingerprint = str(record.get("material_fingerprint") or "")
+    # Accepted records written before material baselines were introduced do
+    # not carry enough fields for a local comparison. Trust one explicit
+    # router material-change reason after the normal review throttle; the new
+    # accepted receipt then writes a complete baseline and restores strict
+    # fingerprint comparison for subsequent cycles.
+    if not previous_fingerprint and _event_is_active_or_material(event):
+        return True
+    return bool(previous_fingerprint and previous_fingerprint != _event_material_fingerprint(event))
+
+
+def _retry_suppression(
+    record: Any,
+    *,
+    event: dict[str, Any],
+    now: datetime,
+    env: dict[str, str],
+) -> dict[str, Any] | None:
     if not isinstance(record, dict):
         return None
     if str(record.get("event_id") or "") != str(event.get("event_id") or ""):
         return None
-    if int(record.get("consecutive_failures") or 0) < 1:
+    recorded_fingerprint = str(record.get("material_fingerprint") or "")
+    if recorded_fingerprint and recorded_fingerprint != _event_material_fingerprint(event):
         return None
-    return dict(record)
+    if str(record.get("last_status") or "").upper() == "RUNTIME_DISK_P0":
+        prior_disk = record.get("runtime_disk") if isinstance(record.get("runtime_disk"), dict) else {}
+        disk_path = Path(str(prior_disk.get("path") or "."))
+        if _runtime_disk_state(disk_path, env).get("status") != "RUNTIME_DISK_P0":
+            return None
+    prior_binary = record.get("codex_binary_identity")
+    current_binary = _codex_binary_identity(env)
+    if isinstance(prior_binary, dict) and _binary_identity_key(prior_binary) != _binary_identity_key(current_binary):
+        return None
+    expires_at = _parse_utc(record.get("expires_at_utc"))
+    if expires_at is not None and now >= expires_at:
+        return None
+    retry_after = _parse_utc(record.get("retry_after_utc"))
+    attempt_count = int(record.get("attempt_count") or 0)
+    max_attempts = max(1, int(env.get("QR_GUARDIAN_WAKE_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)))
+    if attempt_count >= max_attempts:
+        return {
+            "reason": "RETRY_BUDGET_EXHAUSTED",
+            "attempt_count": attempt_count,
+            "max_attempts": max_attempts,
+            "retry_after_utc": record.get("retry_after_utc"),
+            "expires_at_utc": record.get("expires_at_utc"),
+        }
+    if retry_after is not None and now < retry_after:
+        return {
+            "reason": "RETRY_BACKOFF",
+            "attempt_count": attempt_count,
+            "max_attempts": max_attempts,
+            "retry_after_utc": retry_after.isoformat(),
+            "expires_at_utc": record.get("expires_at_utc"),
+        }
+    return None
+
+
+def _codex_binary_identity(env: dict[str, str]) -> dict[str, Any]:
+    path = Path(_resolve_codex_bin(env))
+    identity: dict[str, Any] = {"path": str(path)}
+    try:
+        stat = path.stat()
+    except OSError:
+        return identity
+    identity.update(
+        {
+            "device": stat.st_dev,
+            "inode": stat.st_ino,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+    )
+    return identity
+
+
+def _binary_identity_key(identity: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(identity.get(key) for key in ("path", "device", "inode", "size", "mtime_ns"))
+
+
+def _event_has_open_exposure(event: dict[str, Any]) -> bool:
+    if str(event.get("event_type") or "").upper() in _ACTIVE_EXPOSURE_EVENT_TYPES:
+        return True
+    details = event.get("details") if isinstance(event.get("details"), dict) else {}
+    stack: list[Any] = [details]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, value in item.items():
+                key_text = str(key).lower()
+                if key_text in {"trade_id", "position_id", "open_trade_id"} and str(value or "").strip():
+                    return True
+                if key_text in {"units", "open_units", "current_units"}:
+                    try:
+                        if float(value or 0) != 0:
+                            return True
+                    except (TypeError, ValueError):
+                        pass
+                stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
+
+
+def _event_is_active_or_material(event: dict[str, Any]) -> bool:
+    reasons = {str(item).strip().upper() for item in event.get("wake_reason_codes") or []}
+    return _event_has_open_exposure(event) or any(
+        reason in _MATERIAL_CHANGE_REASONS
+        or _is_thesis_degrade_reason(reason)
+        or "HARVEST" in reason
+        or "TECHNICAL_STATE_CHANGE" in reason
+        or "REGIME" in reason
+        or "VOLATILITY" in reason
+        or "FAMILY" in reason
+        or "STRUCTURE" in reason
+        for reason in reasons
+    )
+
+
+def _dispatch_priority(event: dict[str, Any]) -> tuple[Any, ...]:
+    open_exposure = _event_has_open_exposure(event)
+    p0 = str(event.get("severity") or "").upper() == "P0"
+    active_or_material = _event_is_active_or_material(event)
+    return (
+        -int(open_exposure or p0),
+        -int(open_exposure),
+        -_severity_rank(event.get("severity")),
+        -int(active_or_material),
+        str(event.get("pair") or ""),
+        str(event.get("event_type") or ""),
+        str(event.get("dedupe_key") or ""),
+    )
+
+
+def _dispatch_priority_evidence(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "open_exposure": _event_has_open_exposure(event),
+        "p0": str(event.get("severity") or "").upper() == "P0",
+        "active_or_material": _event_is_active_or_material(event),
+        "severity": event.get("severity"),
+        "alphabetical_tiebreak": [event.get("pair"), event.get("event_type"), event.get("dedupe_key")],
+    }
 
 
 def _broker_snapshot_freshness(payload: dict[str, Any], *, now: datetime, env: dict[str, str]) -> dict[str, Any]:
@@ -681,11 +1179,16 @@ def _resolve_codex_bin(env: dict[str, str]) -> str:
     configured = str(env.get("QR_GUARDIAN_WAKE_CODEX_BIN") or "").strip()
     if configured:
         return configured
+    # Prefer the desktop-bundled CLI: it is upgraded with the app and can
+    # support the requested model while a Homebrew/PATH copy remains older.
+    # The app was renamed from Codex.app to ChatGPT.app, so keep the legacy
+    # location as a compatibility fallback without selecting it when absent.
+    for app_bin in (DEFAULT_CODEX_APP_BIN, LEGACY_CODEX_APP_BIN):
+        if app_bin.exists():
+            return str(app_bin)
     found = shutil.which("codex")
     if found:
         return found
-    if DEFAULT_CODEX_APP_BIN.exists():
-        return str(DEFAULT_CODEX_APP_BIN)
     return "codex"
 
 
@@ -780,6 +1283,7 @@ def _build_prompt(
     daily_target_state: dict[str, Any],
     event_report: str,
     dispatcher_state: dict[str, Any],
+    runtime_disk: dict[str, Any],
 ) -> str:
     template = _read_text(paths.prompt_template)
     if not template:
@@ -792,6 +1296,7 @@ def _build_prompt(
         "broker_snapshot": _compact_broker_snapshot(broker_snapshot, pair=str(selected_event.get("pair") or "")),
         "daily_target_state": daily_target_state,
         "dispatcher_state": dispatcher_state,
+        "runtime_disk": runtime_disk,
     }
     return (
         template.rstrip()
@@ -1691,16 +2196,240 @@ def _archive_path(current_path: Path, payload: dict[str, Any]) -> Path:
     return current_path.parent / "guardian_action_receipts" / f"{safe}.json"
 
 
+def _maybe_write_tuning_work_order(
+    *,
+    path: Path,
+    selected_event: dict[str, Any],
+    receipt: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    reasons = sorted(
+        {
+            str(item).strip().upper()
+            for item in selected_event.get("wake_reason_codes") or []
+            if _is_tuning_handoff_reason(str(item))
+        }
+    )
+    if not reasons:
+        return {"status": "SKIPPED_NON_TUNING_EVENT"}
+    fingerprint = _event_material_fingerprint(selected_event)
+    work_order_id = f"guardian-tuning-{fingerprint[:20]}"
+    existing = _load_json(path)
+    pending_existing = _pending_tuning_work_order_entries(existing)
+    matching_pending = next(
+        (
+            item
+            for item in pending_existing
+            if str(item.get("event_fingerprint") or "") == fingerprint
+        ),
+        None,
+    )
+    if matching_pending is not None:
+        return {
+            "status": "UNCHANGED_IDEMPOTENT",
+            "work_order_id": matching_pending.get("work_order_id") or work_order_id,
+            "path": str(path),
+            "event_fingerprint": fingerprint,
+            "pending_count": len(pending_existing),
+        }
+    review_validation = _validate_bot_tuning_review(receipt.get("bot_tuning_review"))
+    entry: dict[str, Any] = {
+        "generated_at_utc": now.isoformat(),
+        "work_order_id": work_order_id,
+        "status": "PENDING_HOURLY_AI_REVIEW",
+        "source": "guardian_wake_dispatcher",
+        "source_receipt_id": receipt.get("receipt_id") or now.isoformat(),
+        "selected_event_id": selected_event.get("event_id"),
+        "selected_event_dedupe_key": selected_event.get("dedupe_key"),
+        "event_fingerprint": fingerprint,
+        "material_reason_codes": reasons,
+        "selected_event": selected_event,
+        "bot_tuning_review_validation": {
+            key: value for key, value in review_validation.items() if key != "review"
+        },
+        "live_permission_allowed": False,
+        "no_direct_oanda": True,
+        "preserve_blockers": True,
+        "execution_boundary": {
+            "hourly_ai_review_required": True,
+            "work_order_never_grants_live_permission": True,
+            "live_gateway_and_risk_gates_unchanged": True,
+        },
+        "lifecycle_contract": {
+            "terminal_statuses": ["CONSUMED", "SUPERSEDED"],
+            "consume_only_after_falsifiable_review": True,
+            "required_terminal_fields": [
+                "consumed_at_utc",
+                "consumed_by",
+                "experiment_id",
+                "experiment_result",
+            ],
+        },
+    }
+    if review_validation.get("status") == "VALID":
+        entry["bot_tuning_review"] = review_validation.get("review")
+
+    existing_same_fingerprint = (
+        str(existing.get("event_fingerprint") or "") == fingerprint
+        and not _tuning_work_order_entry_pending(existing)
+    )
+    if existing_same_fingerprint:
+        entry["reopened_count"] = int(existing.get("reopened_count") or 0) + 1
+        entry["reopened_from_terminal"] = {
+            "work_order_id": existing.get("work_order_id"),
+            "status": existing.get("status"),
+            "consumed_at_utc": existing.get("consumed_at_utc"),
+            "experiment_id": existing.get("experiment_id"),
+        }
+
+    entries = [entry, *pending_existing]
+    deduped_entries: list[dict[str, Any]] = []
+    seen_fingerprints: set[str] = set()
+    for item in entries:
+        item_fingerprint = str(item.get("event_fingerprint") or "")
+        if not item_fingerprint or item_fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(item_fingerprint)
+        deduped_entries.append(item)
+        if len(deduped_entries) >= 20:
+            break
+    payload: dict[str, Any] = {
+        **entry,
+        "schema_version": 2,
+        "work_orders": deduped_entries,
+        "pending_count": len(deduped_entries),
+    }
+    try:
+        _write_json(path, payload)
+    except OSError as exc:
+        return {
+            "status": "WORK_ORDER_WRITE_FAILED",
+            "work_order_id": work_order_id,
+            "path": str(path),
+            "event_fingerprint": fingerprint,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "status": "WORK_ORDER_WRITTEN",
+        "work_order_id": work_order_id,
+        "path": str(path),
+        "event_fingerprint": fingerprint,
+        "bot_tuning_review_status": review_validation.get("status"),
+        "pending_count": len(deduped_entries),
+    }
+
+
+def _pending_tuning_work_order_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or payload.get("_missing"):
+        return []
+    raw_entries = payload.get("work_orders")
+    entries = [payload]
+    if isinstance(raw_entries, list):
+        entries.extend(item for item in raw_entries if isinstance(item, dict))
+    pending: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in entries:
+        fingerprint = str(item.get("event_fingerprint") or item.get("work_order_id") or "")
+        if not fingerprint or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        if _tuning_work_order_entry_pending(item):
+            pending.append(item)
+    return pending
+
+
+def _tuning_work_order_entry_pending(entry: dict[str, Any]) -> bool:
+    return bool(
+        str(entry.get("status") or "").upper()
+        in {"PENDING_HOURLY_AI_REVIEW", "PENDING", "OPEN"}
+        and entry.get("consumed_at_utc") in {None, ""}
+        and entry.get("live_permission_allowed") is False
+        and entry.get("no_direct_oanda") is True
+        and entry.get("preserve_blockers") is True
+    )
+
+
+def _is_tuning_handoff_reason(reason: str) -> bool:
+    code = str(reason or "").strip().upper()
+    return (
+        code in _MATERIAL_CHANGE_REASONS
+        or "TECHNICAL_STATE_CHANGE" in code
+        or "REGIME" in code
+        or "VOLATILITY" in code
+        or "FAMILY" in code
+        or "STRUCTURE" in code
+    )
+
+
+def _validate_bot_tuning_review(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {"status": "MISSING", "issues": []}
+    if not isinstance(value, dict):
+        return {"status": "INVALID", "issues": ["bot_tuning_review must be an object"]}
+    issues: list[str] = []
+    if "live_permission_allowed" in value and value.get("live_permission_allowed") is not False:
+        issues.append("bot_tuning_review live_permission_allowed must be false when present")
+    if "no_direct_oanda" in value and value.get("no_direct_oanda") is not True:
+        issues.append("bot_tuning_review no_direct_oanda must be true when present")
+    if "preserve_blockers" in value and value.get("preserve_blockers") is not True:
+        issues.append("bot_tuning_review preserve_blockers must be true when present")
+    if issues:
+        return {"status": "INVALID_UNSAFE_BOUNDARY", "issues": issues}
+    return {"status": "VALID", "issues": [], "review": value}
+
+
 def _record_state(
     path: Path,
     previous_state: dict[str, Any],
     result: dict[str, Any],
     *,
     reviewed_event: dict[str, Any] | None = None,
+    attempted_event: dict[str, Any] | None = None,
+    env: dict[str, str] | None = None,
 ) -> None:
+    environ = env if env is not None else os.environ
     state = dict(previous_state) if isinstance(previous_state, dict) else {}
+    if "reviewed_events" in state:
+        state["reviewed_events"] = _accepted_review_records(state.get("reviewed_events"))
     state["generated_at_utc"] = result.get("generated_at_utc")
     state["last_status"] = result.get("status")
+    result_time = _parse_utc(result.get("generated_at_utc")) or datetime.now(timezone.utc)
+    pending_dispatches = _active_pending_dispatch_records(
+        state.get("pending_dispatches"),
+        now=result_time,
+    )
+    selection = result.get("selection") if isinstance(result.get("selection"), dict) else {}
+    pending_ttl = max(
+        60,
+        int(
+            environ.get(
+                "QR_GUARDIAN_PENDING_DISPATCH_TTL_SECONDS",
+                DEFAULT_PENDING_DISPATCH_TTL_SECONDS,
+            )
+        ),
+    )
+    for event in selection.get("pending_events", []) or []:
+        if not isinstance(event, dict):
+            continue
+        dedupe_key = str(event.get("dedupe_key") or "").strip()
+        if not dedupe_key:
+            continue
+        prior = pending_dispatches.get(dedupe_key) or {}
+        fingerprint = _event_material_fingerprint(event)
+        same_observation = str(prior.get("material_fingerprint") or "") == fingerprint
+        queued_at = (
+            prior.get("queued_at_utc")
+            if same_observation and prior.get("queued_at_utc")
+            else result_time.isoformat()
+        )
+        pending_dispatches[dedupe_key] = {
+            "event": event,
+            "event_id": event.get("event_id"),
+            "material_fingerprint": fingerprint,
+            "queued_at_utc": queued_at,
+            "last_seen_at_utc": result_time.isoformat(),
+            "expires_at_utc": (result_time + timedelta(seconds=pending_ttl)).isoformat(),
+        }
     state["last_result"] = {
         key: result.get(key)
         for key in (
@@ -1709,6 +2438,7 @@ def _record_state(
             "receipt_written",
             "action_receipt_path",
             "broker_snapshot_freshness",
+            "runtime_disk",
             "queued_for_active_trader",
             "queue_reason",
         )
@@ -1735,45 +2465,166 @@ def _record_state(
         }
     if isinstance(result.get("parse_failure"), dict):
         state["last_result"]["parse_failure"] = result.get("parse_failure")
-    if reviewed_event is not None:
-        reviewed = state.get("reviewed_events") if isinstance(state.get("reviewed_events"), dict) else {}
+    accepted_review = reviewed_event is not None and bool(result.get("receipt_written"))
+    if accepted_review:
+        reviewed = _accepted_review_records(state.get("reviewed_events"))
         dedupe_key = str(reviewed_event.get("dedupe_key") or "")
         if dedupe_key:
             reviewed[dedupe_key] = {
                 "event_id": reviewed_event.get("event_id"),
+                "price_zone": reviewed_event.get("price_zone"),
+                "details": reviewed_event.get("details") if isinstance(reviewed_event.get("details"), dict) else {},
+                "material_fingerprint": _event_material_fingerprint(reviewed_event),
                 "severity": reviewed_event.get("severity"),
                 "last_reviewed_at_utc": result.get("generated_at_utc"),
                 "last_status": result.get("status"),
-                "receipt_written": bool(result.get("receipt_written")),
+                "receipt_written": True,
             }
             state["reviewed_events"] = reviewed
+            pending_dispatches.pop(dedupe_key, None)
+            attempts = state.get("dispatch_attempts") if isinstance(state.get("dispatch_attempts"), dict) else {}
+            attempts.pop(dedupe_key, None)
+            state["dispatch_attempts"] = attempts
             failures = state.get("parse_failures") if isinstance(state.get("parse_failures"), dict) else {}
-            if result.get("status") == "PARSE_FAILED":
-                prior = failures.get(dedupe_key) if isinstance(failures.get(dedupe_key), dict) else {}
-                same_event = str(prior.get("event_id") or "") == str(reviewed_event.get("event_id") or "")
-                consecutive = int(prior.get("consecutive_failures") or 0) + 1 if same_event else 1
-                parse = result.get("parse") if isinstance(result.get("parse"), dict) else {}
-                failure_record = {
-                    "event_id": reviewed_event.get("event_id"),
-                    "dedupe_key": dedupe_key,
-                    "pair": reviewed_event.get("pair"),
-                    "direction": reviewed_event.get("direction"),
-                    "event_type": reviewed_event.get("event_type"),
-                    "thesis": reviewed_event.get("thesis"),
-                    "price_zone": reviewed_event.get("price_zone"),
-                    "severity": reviewed_event.get("severity"),
-                    "last_failed_at_utc": result.get("generated_at_utc"),
-                    "last_error": parse.get("error"),
-                    "consecutive_failures": consecutive,
-                    "queued_for_active_trader_after_failure": consecutive >= 1,
+            failures.pop(dedupe_key, None)
+            state["parse_failures"] = failures
+    elif attempted_event is not None:
+        failure_code = _failed_attempt_code(result)
+        dedupe_key = str(attempted_event.get("dedupe_key") or "")
+        if dedupe_key and failure_code:
+            attempt_record = _next_failed_attempt_record(
+                prior=(state.get("dispatch_attempts") or {}).get(dedupe_key)
+                if isinstance(state.get("dispatch_attempts"), dict)
+                else None,
+                event=attempted_event,
+                result=result,
+                failure_code=failure_code,
+                env=environ,
+            )
+            attempts = state.get("dispatch_attempts") if isinstance(state.get("dispatch_attempts"), dict) else {}
+            attempts[dedupe_key] = attempt_record
+            state["dispatch_attempts"] = attempts
+            state["last_result"]["dispatch_attempt"] = attempt_record
+            if _result_has_parse_failure(result):
+                parse_failure = {
+                    **{
+                        key: attempted_event.get(key)
+                        for key in (
+                            "event_id",
+                            "dedupe_key",
+                            "pair",
+                            "direction",
+                            "event_type",
+                            "thesis",
+                            "price_zone",
+                            "severity",
+                        )
+                    },
+                    "material_fingerprint": attempt_record["material_fingerprint"],
+                    "last_failed_at_utc": attempt_record["last_failed_at_utc"],
+                    "last_error": failure_code,
+                    "consecutive_failures": attempt_record["attempt_count"],
+                    "retry_after_utc": attempt_record["retry_after_utc"],
+                    "expires_at_utc": attempt_record["expires_at_utc"],
+                    "queued_for_active_trader_after_failure": attempt_record["retry_budget_exhausted"],
                 }
-                failures[dedupe_key] = failure_record
-                state["last_result"]["parse_failure"] = failure_record
+                failures = state.get("parse_failures") if isinstance(state.get("parse_failures"), dict) else {}
+                failures[dedupe_key] = parse_failure
                 state["parse_failures"] = failures
-            elif dedupe_key in failures and result.get("receipt_written"):
-                failures.pop(dedupe_key, None)
-                state["parse_failures"] = failures
+                state["last_result"]["parse_failure"] = parse_failure
+    ordered_pending = sorted(
+        pending_dispatches.items(),
+        key=lambda item: (
+            _dispatch_priority(
+                item[1].get("event") if isinstance(item[1].get("event"), dict) else {}
+            ),
+            str(item[1].get("queued_at_utc") or ""),
+        ),
+    )[:MAX_PENDING_DISPATCHES]
+    state["pending_dispatches"] = dict(ordered_pending)
+    state["last_result"]["pending_dispatch_count"] = len(ordered_pending)
     _write_json(path, state)
+
+
+def _failed_attempt_code(result: dict[str, Any]) -> str | None:
+    status = str(result.get("status") or "").upper()
+    if bool(result.get("receipt_written")) and status != "TUNING_HANDOFF_FAILED":
+        return None
+    parse = result.get("parse") if isinstance(result.get("parse"), dict) else {}
+    parse_error = str(parse.get("error") or "").upper()
+    if status in {
+        "PARSE_FAILED",
+        "RECEIPT_EVENT_MISMATCH",
+        "RECEIPT_REJECTED",
+        "RUNTIME_DISK_P0",
+        "TUNING_HANDOFF_FAILED",
+        *CODEX_MODEL_FAILURE_STATUSES,
+    }:
+        return parse_error or status
+    # A live lock that appeared after the first malformed response interrupted
+    # only the repair retry; the actual GPT attempt still needs backoff state.
+    if status == "QUEUED_FOR_ACTIVE_TRADER" and parse.get("valid") is False and result.get("codex"):
+        return parse_error or "PARSE_FAILED_BEFORE_QUEUE"
+    return None
+
+
+def _result_has_parse_failure(result: dict[str, Any]) -> bool:
+    parse = result.get("parse") if isinstance(result.get("parse"), dict) else {}
+    status = str(result.get("status") or "").upper()
+    return parse.get("valid") is False and status not in CODEX_MODEL_FAILURE_STATUSES
+
+
+def _next_failed_attempt_record(
+    *,
+    prior: Any,
+    event: dict[str, Any],
+    result: dict[str, Any],
+    failure_code: str,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    failed_at = _parse_utc(result.get("generated_at_utc")) or datetime.now(timezone.utc)
+    fingerprint = _event_material_fingerprint(event)
+    binary_identity = _codex_binary_identity(env)
+    same_series = (
+        isinstance(prior, dict)
+        and str(prior.get("event_id") or "") == str(event.get("event_id") or "")
+        and str(prior.get("material_fingerprint") or "") == fingerprint
+        and _binary_identity_key(prior.get("codex_binary_identity") or {}) == _binary_identity_key(binary_identity)
+        and (_parse_utc(prior.get("expires_at_utc")) or failed_at) > failed_at
+    )
+    attempt_count = int(prior.get("attempt_count") or 0) + 1 if same_series else 1
+    total_failures = int(prior.get("total_failures") or 0) + 1 if isinstance(prior, dict) else 1
+    first_failed = _parse_utc(prior.get("first_failed_at_utc")) if same_series else failed_at
+    first_failed = first_failed or failed_at
+    base = max(1, int(env.get("QR_GUARDIAN_WAKE_RETRY_BASE_SECONDS", DEFAULT_RETRY_BASE_SECONDS)))
+    max_backoff = max(base, int(env.get("QR_GUARDIAN_WAKE_RETRY_MAX_SECONDS", DEFAULT_RETRY_MAX_SECONDS)))
+    max_attempts = max(1, int(env.get("QR_GUARDIAN_WAKE_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)))
+    ttl = max(base, int(env.get("QR_GUARDIAN_WAKE_RETRY_TTL_SECONDS", DEFAULT_RETRY_TTL_SECONDS)))
+    expires_at = first_failed + timedelta(seconds=ttl)
+    backoff = min(max_backoff, base * (2 ** max(0, attempt_count - 1)))
+    retry_budget_exhausted = attempt_count >= max_attempts
+    retry_after = expires_at if retry_budget_exhausted else min(failed_at + timedelta(seconds=backoff), expires_at)
+    return {
+        "event_id": event.get("event_id"),
+        "dedupe_key": event.get("dedupe_key"),
+        "pair": event.get("pair"),
+        "event_type": event.get("event_type"),
+        "severity": event.get("severity"),
+        "event": event,
+        "material_fingerprint": fingerprint,
+        "codex_binary_identity": binary_identity,
+        "first_failed_at_utc": first_failed.isoformat(),
+        "last_failed_at_utc": failed_at.isoformat(),
+        "retry_after_utc": retry_after.isoformat(),
+        "expires_at_utc": expires_at.isoformat(),
+        "attempt_count": attempt_count,
+        "max_attempts": max_attempts,
+        "total_failures": total_failures,
+        "retry_budget_exhausted": retry_budget_exhausted,
+        "last_status": result.get("status"),
+        "last_error": failure_code,
+        "runtime_disk": result.get("runtime_disk"),
+    }
 
 
 def _paths_payload(paths: DispatcherPaths) -> dict[str, str]:
@@ -1786,6 +2637,7 @@ def _paths_payload(paths: DispatcherPaths) -> dict[str, str]:
         "guardian_event_report": str(paths.event_report),
         "guardian_action_receipt": str(paths.action_receipt),
         "guardian_action_review": str(paths.action_review),
+        "guardian_tuning_work_order": str(paths.tuning_work_order),
         "dispatcher_state": str(paths.dispatcher_state),
         "codex_home": str(paths.codex_home),
         "codex_explicit_output": str(paths.codex_explicit_output),
@@ -1815,6 +2667,12 @@ def _append_log(path: Path, payload: dict[str, Any]) -> None:
             if isinstance(payload.get("selected_event"), dict)
             else None,
             "receipt_written": payload.get("receipt_written", False),
+            "runtime_disk_status": (payload.get("runtime_disk") or {}).get("status")
+            if isinstance(payload.get("runtime_disk"), dict)
+            else None,
+            "runtime_disk_free_bytes": (payload.get("runtime_disk") or {}).get("free_bytes")
+            if isinstance(payload.get("runtime_disk"), dict)
+            else None,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -1904,6 +2762,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prompt-template", type=Path, default=None)
     parser.add_argument("--action-receipt", type=Path, default=None)
     parser.add_argument("--action-review", type=Path, default=None)
+    parser.add_argument("--tuning-work-order", type=Path, default=None)
     parser.add_argument("--dispatcher-state", type=Path, default=None)
     parser.add_argument("--log", type=Path, default=None)
     parser.add_argument("--codex-home", type=Path, default=None)
@@ -1926,6 +2785,7 @@ def paths_from_args(args: argparse.Namespace) -> DispatcherPaths:
         prompt_template=args.prompt_template or paths.prompt_template,
         action_receipt=args.action_receipt or paths.action_receipt,
         action_review=args.action_review or paths.action_review,
+        tuning_work_order=args.tuning_work_order or paths.tuning_work_order,
         dispatcher_state=args.dispatcher_state or paths.dispatcher_state,
         log=args.log or paths.log,
         codex_home=args.codex_home or paths.codex_home,
