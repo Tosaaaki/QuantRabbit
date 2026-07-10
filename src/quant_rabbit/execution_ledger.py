@@ -30,6 +30,16 @@ PREDICTIVE_SCOUT_LEGACY_CLAIM_MAX_TTL_MINUTES = 90
 # These short engineering backoffs serialize that one-time migration without
 # weakening the reservation transaction or waiting anywhere near a trade TTL.
 SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS = (0.05, 0.10, 0.20, 0.40, 0.80)
+# These three compatibility backfills repair rows written by older ledger
+# versions.  Current transaction/gateway parsers populate the fields on insert,
+# while genuinely manual/tagless broker rows can never acquire a lane/order id.
+# Persist a version in sync_state so those irreparable rows are not reparsed on
+# every sync and receipt write.  Bump the version only when the migration logic
+# itself gains a new repair capability that must be applied to existing rows.
+LEGACY_EVENT_BACKFILL_MIGRATION_KEY = (
+    "migration:execution_ledger:legacy_event_backfills"
+)
+LEGACY_EVENT_BACKFILL_MIGRATION_VERSION = "1"
 
 
 class TransactionClient(Protocol):
@@ -480,6 +490,8 @@ class ExecutionLedger:
                     payload_json TEXT NOT NULL,
                     inserted_at_utc TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_gateway_receipts_sent_day
+                    ON gateway_receipts(sent, substr(ts_utc, 1, 10));
                 CREATE TABLE IF NOT EXISTS execution_events (
                     event_uid TEXT PRIMARY KEY,
                     ts_utc TEXT NOT NULL,
@@ -573,9 +585,45 @@ class ExecutionLedger:
                 "CREATE INDEX IF NOT EXISTS idx_predictive_scout_signal_claims_expiry "
                 "ON predictive_scout_signal_claims(expires_at_utc)"
             )
-            _backfill_legacy_lane_ids(conn)
-            _backfill_legacy_trade_close_ids(conn)
-            _backfill_gateway_position_order_ids(conn)
+            # executescript/schema changes must be durable before the migration
+            # opens its own IMMEDIATE transaction.  This also makes a failed
+            # migration rollback only its row repairs and marker, leaving the
+            # additive schema safe for the retry loop.
+            conn.commit()
+            self._run_legacy_event_backfill_migration(conn)
+
+    @staticmethod
+    def _run_legacy_event_backfill_migration(conn: sqlite3.Connection) -> None:
+        if (
+            _get_state(conn, LEGACY_EVENT_BACKFILL_MIGRATION_KEY)
+            == LEGACY_EVENT_BACKFILL_MIGRATION_VERSION
+        ):
+            return
+
+        # Serialize the check/repair/marker sequence across cold-start workers.
+        # The second check is mandatory: another initializer may finish while
+        # this connection waits for the write lock.  Marker insertion is in the
+        # same transaction as every row update, so an exception rolls both back
+        # and the next initializer safely retries the complete migration.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if (
+                _get_state(conn, LEGACY_EVENT_BACKFILL_MIGRATION_KEY)
+                != LEGACY_EVENT_BACKFILL_MIGRATION_VERSION
+            ):
+                _backfill_legacy_lane_ids(conn)
+                _backfill_legacy_trade_close_ids(conn)
+                _backfill_gateway_position_order_ids(conn)
+                _set_state(
+                    conn,
+                    LEGACY_EVENT_BACKFILL_MIGRATION_KEY,
+                    LEGACY_EVENT_BACKFILL_MIGRATION_VERSION,
+                    _now(),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     def _write_report(self, summary: ExecutionLedgerSummary) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)

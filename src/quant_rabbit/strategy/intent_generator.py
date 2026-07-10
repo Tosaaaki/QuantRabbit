@@ -2894,6 +2894,26 @@ def _pre_entry_forecast_cycle_id(snapshot: BrokerSnapshot, *, pair_charts_path: 
     return f"pre-entry-forecast-refresh:{fetched}:{charts_generated}"
 
 
+_FORECAST_HIT_RATES_UNSET = object()
+
+
+def _forecast_seed_hit_rates(data_root: Path | None) -> Any:
+    """Load one immutable resolved-projection calibration snapshot.
+
+    Forecast telemetry emitted later in the same pass is PENDING and therefore
+    cannot affect hit-rate calibration. Sharing this snapshot across pairs is
+    semantically equivalent to rescanning after each append, without the
+    pair-amplified full-ledger I/O.
+    """
+    artifact_root = data_root or (ROOT / "data")
+    try:
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+
+        return compute_hit_rates(artifact_root)
+    except Exception:
+        return None
+
+
 def _append_forecast_seed_lanes(
     lanes: list[dict[str, Any]],
     charts: dict[str, dict[str, Any]] | None,
@@ -2930,11 +2950,22 @@ def _append_forecast_seed_lanes(
     seeds: list[dict[str, Any]] = []
     seeded_keys: set[tuple[Any, Any, Any, Any]] = set()
     forecasts_by_pair: dict[str, Any] = {}
+    shared_hit_rates: Any = None
+    hit_rates_loaded = False
     for pair in sorted(charts):
         quote = snapshot.quotes.get(pair)
         if quote is None:
             continue
-        forecast = _forecast_seed_for_pair(pair, charts, snapshot, data_root=data_root)
+        if not hit_rates_loaded:
+            shared_hit_rates = _forecast_seed_hit_rates(data_root)
+            hit_rates_loaded = True
+        forecast = _forecast_seed_for_pair(
+            pair,
+            charts,
+            snapshot,
+            data_root=data_root,
+            hit_rates=shared_hit_rates,
+        )
         if forecast is None:
             continue
         _record_forecast_seed_telemetry(
@@ -3412,6 +3443,7 @@ def _forecast_seed_for_pair(
     snapshot: BrokerSnapshot,
     *,
     data_root: Path | None = None,
+    hit_rates: Any = _FORECAST_HIT_RATES_UNSET,
 ) -> Any | None:
     per_tf = charts.get(pair)
     raw_chart = per_tf.get("__raw_chart") if isinstance(per_tf, dict) else None
@@ -3446,7 +3478,6 @@ def _forecast_seed_for_pair(
         from quant_rabbit.strategy.forward_projection import detect_forward_projections
         from quant_rabbit.strategy.path_projection import detect_paths
         from quant_rabbit.strategy.pattern_signals import detect_pattern_signals
-        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
         from quant_rabbit.strategy.reversal_signal import detect_reversal
     except Exception:
         return None
@@ -3495,10 +3526,8 @@ def _forecast_seed_for_pair(
         reversal_short = detect_reversal(raw_chart, Side.SHORT.value)
     except Exception:
         reversal_short = None
-    try:
-        hit_rates = compute_hit_rates(artifact_root)
-    except Exception:
-        hit_rates = None
+    if hit_rates is _FORECAST_HIT_RATES_UNSET:
+        hit_rates = _forecast_seed_hit_rates(artifact_root)
     regime_label = _forecast_seed_regime_label(raw_chart)
     try:
         forecast = synthesize_forecast(
@@ -13376,10 +13405,9 @@ def _transaction_id_is_behind(actual: str, expected: str) -> bool:
         return actual != expected
 
 
-def _iter_jsonl_dicts(path: Path) -> tuple[dict[str, Any], ...]:
+def _iter_jsonl_dicts(path: Path) -> Iterable[dict[str, Any]]:
     if not path.exists():
-        return ()
-    items: list[dict[str, Any]] = []
+        return
     try:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
@@ -13391,10 +13419,9 @@ def _iter_jsonl_dicts(path: Path) -> tuple[dict[str, Any], ...]:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(item, dict):
-                    items.append(item)
+                    yield item
     except OSError:
-        return ()
-    return tuple(items)
+        return
 
 
 def _parse_telemetry_time(value: object) -> datetime | None:

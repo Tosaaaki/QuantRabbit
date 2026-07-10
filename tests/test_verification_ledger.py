@@ -8,9 +8,11 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
+import quant_rabbit.verification_ledger as verification_ledger_module
 from quant_rabbit.cli import main
-from quant_rabbit.verification_ledger import VerificationLedger
+from quant_rabbit.verification_ledger import VerificationLedger, VerificationLedgerSummary
 
 
 class VerificationLedgerTest(unittest.TestCase):
@@ -373,6 +375,203 @@ class VerificationLedgerTest(unittest.TestCase):
         self.assertEqual(evidence["reason"], "close_gate_evidence_missing")
         self.assertEqual(evidence["event_uid"], "gateway:gpt_decision:missing:T-missing")
 
+    def test_legacy_gateway_receipt_backfill_reader_runs_only_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            _seed_execution_events(db_path)
+            _seed_legacy_gateway_receipt(
+                db_path,
+                trade_id="T-once",
+                decision_path=root / "legacy-gpt-decision.json",
+            )
+            ledger = VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            )
+
+            with mock.patch(
+                "quant_rabbit.verification_ledger._gateway_receipt_close_gate_observations",
+                wraps=verification_ledger_module._gateway_receipt_close_gate_observations,
+            ) as receipt_reader:
+                _run_ledger(ledger, files, now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc))
+                _run_ledger(ledger, files, now=datetime(2026, 6, 21, 0, 10, tzinfo=timezone.utc))
+
+            self.assertEqual(receipt_reader.call_count, 1)
+            with sqlite3.connect(db_path) as conn:
+                marker = conn.execute(
+                    "SELECT status, cursor FROM verification_backfill_state"
+                ).fetchone()
+                normalized = conn.execute(
+                    """
+                    SELECT status
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-once'
+                    """
+                ).fetchone()
+
+        self.assertEqual(marker[0], "COMPLETE")
+        self.assertGreaterEqual(int(marker[1]), 1)
+        self.assertEqual(normalized[0], "PASS")
+
+    def test_legacy_backfill_captures_receipt_committed_before_atomic_scan_and_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            _seed_execution_events(db_path)
+            _seed_legacy_gateway_receipt(
+                db_path,
+                trade_id="T-before",
+                decision_path=root / "before.json",
+            )
+            ledger = VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            )
+            original_effect_metrics = verification_ledger_module._effect_metrics
+
+            def append_receipt_during_old_scan_insert_window(*args: object, **kwargs: object) -> dict[str, object]:
+                _append_legacy_gateway_receipt(
+                    db_path,
+                    trade_id="T-raced",
+                    decision_path=root / "raced.json",
+                    generated_at_utc="2026-06-21T00:01:00+00:00",
+                )
+                return original_effect_metrics(*args, **kwargs)
+
+            with mock.patch(
+                "quant_rabbit.verification_ledger._effect_metrics",
+                side_effect=append_receipt_during_old_scan_insert_window,
+            ):
+                first_summary = _run_ledger(
+                    ledger,
+                    files,
+                    now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc),
+                )
+
+            with sqlite3.connect(db_path) as conn:
+                first_observation_count = conn.execute(
+                    "SELECT COUNT(*) FROM verification_observations"
+                ).fetchone()[0]
+                marker = conn.execute(
+                    "SELECT status, cursor FROM verification_backfill_state"
+                ).fetchone()
+                raced = conn.execute(
+                    """
+                    SELECT status
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-raced'
+                    """
+                ).fetchone()
+
+            self.assertEqual(first_summary.observations_inserted, first_observation_count)
+            self.assertEqual(marker[0], "COMPLETE")
+            self.assertGreaterEqual(int(marker[1]), 2)
+            self.assertEqual(raced[0], "PASS")
+
+            _run_ledger(
+                ledger,
+                files,
+                now=datetime(2026, 6, 21, 0, 10, tzinfo=timezone.utc),
+            )
+            with sqlite3.connect(db_path) as conn:
+                raced_count = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-raced'
+                    """
+                ).fetchone()[0]
+            self.assertEqual(raced_count, 1)
+
+    def test_legacy_gateway_receipt_backfill_failure_does_not_write_complete_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            _seed_execution_events(db_path)
+            _seed_legacy_gateway_receipt(
+                db_path,
+                trade_id="T-retry",
+                decision_path=root / "legacy-gpt-decision.json",
+            )
+            ledger = VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            )
+
+            with mock.patch(
+                "quant_rabbit.verification_ledger._gateway_receipt_close_gate_observations",
+                side_effect=sqlite3.OperationalError("forced legacy receipt read failure"),
+            ):
+                with self.assertRaises(sqlite3.OperationalError):
+                    _run_ledger(ledger, files, now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc))
+
+            with sqlite3.connect(db_path) as conn:
+                marker_count = conn.execute(
+                    "SELECT COUNT(*) FROM verification_backfill_state"
+                ).fetchone()[0]
+            self.assertEqual(marker_count, 0)
+
+            _run_ledger(ledger, files, now=datetime(2026, 6, 21, 0, 10, tzinfo=timezone.utc))
+            with sqlite3.connect(db_path) as conn:
+                marker = conn.execute(
+                    "SELECT status FROM verification_backfill_state"
+                ).fetchone()
+                normalized = conn.execute(
+                    """
+                    SELECT status
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-retry'
+                    """
+                ).fetchone()
+
+        self.assertEqual(marker[0], "COMPLETE")
+        self.assertEqual(normalized[0], "PASS")
+
+    def test_event_only_multi_trade_close_normalizes_each_event_to_its_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            _seed_multi_trade_close_events(db_path)
+            ledger = VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            )
+
+            _run_ledger(ledger, files, now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc))
+
+            with sqlite3.connect(db_path) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT subject_id, status, severity, evidence_json
+                    FROM verification_observations
+                    WHERE source='execution_ledger'
+                      AND check_name='close_gate_evidence'
+                    ORDER BY subject_id, status
+                    """
+                ).fetchall()
+
+        self.assertEqual([(row[0], row[1], row[2]) for row in rows], [
+            ("T-event-1", "PASS", "INFO"),
+            ("T-event-2", "PASS", "INFO"),
+        ])
+        self.assertEqual(
+            [json.loads(row[3])["trade_id"] for row in rows],
+            ["T-event-1", "T-event-2"],
+        )
+
 
 def _fixtures(root: Path) -> dict[str, Path]:
     now = "2026-06-03T00:00:00+00:00"
@@ -623,6 +822,175 @@ def _seed_execution_events(path: Path) -> None:
             VALUES ('2026-06-02T22:00:00.123456789Z', 'TRADE_CLOSED', 'EUR_USD', 'SHORT', 'MARKET_ORDER_TRADE_CLOSE', -100.0)
             """
         )
+
+
+def _run_ledger(
+    ledger: VerificationLedger,
+    files: dict[str, Path],
+    *,
+    now: datetime,
+) -> VerificationLedgerSummary:
+    return ledger.run(
+        snapshot_path=files["snapshot"],
+        order_intents_path=files["intents"],
+        gpt_decision_path=files["gpt"],
+        live_order_path=files["live_order"],
+        position_execution_path=files["position_execution"],
+        thesis_evolution_path=files["thesis_evolution"],
+        position_thesis_path=files["position_thesis"],
+        forecast_persistence_path=files["forecast_persistence"],
+        ai_backtest_path=files["ai_backtest"],
+        outcome_mart_path=files["outcome_mart"],
+        post_trade_learning_path=files["post_trade_learning"],
+        ai_attack_advice_path=files["ai_attack_advice"],
+        learning_audit_path=files["learning_audit"],
+        now=now,
+    )
+
+
+def _close_gate_evidence(trade_id: str) -> dict[str, object]:
+    return {
+        "trade_id": trade_id,
+        "pair": "EUR_USD",
+        "side": "LONG",
+        "unrealized_pl_jpy": -125.0,
+        "loss_side_close": True,
+        "gate_a_invalidated": True,
+        "gate_a_reason": "fresh position_thesis REVIEW_CLOSE",
+        "gate_b_standing_authorized": True,
+        "gate_b_explicit_operator_authorized": False,
+        "explicit_gate_b_required": False,
+        "profitability_p0_context_required": True,
+        "profitability_p0_context_cited": True,
+        "timing_audit_required": True,
+        "timing_evidence_cited": True,
+        "hard_timing_gate_required": False,
+        "same_direction_support_conflict": None,
+    }
+
+
+def _seed_legacy_gateway_receipt(path: Path, *, trade_id: str, decision_path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE gateway_receipts (
+                receipt_uid TEXT PRIMARY KEY,
+                ts_utc TEXT,
+                kind TEXT,
+                status TEXT,
+                sent INTEGER,
+                lane_id TEXT,
+                lane_ids_json TEXT,
+                path TEXT,
+                payload_json TEXT,
+                inserted_at_utc TEXT
+            )
+            """
+        )
+    _append_legacy_gateway_receipt(
+        path,
+        trade_id=trade_id,
+        decision_path=decision_path,
+        generated_at_utc="2026-06-21T00:00:00+00:00",
+    )
+
+
+def _append_legacy_gateway_receipt(
+    path: Path,
+    *,
+    trade_id: str,
+    decision_path: Path,
+    generated_at_utc: str,
+) -> None:
+    receipt_payload = {
+        "generated_at_utc": generated_at_utc,
+        "status": "ACCEPTED",
+        "decision": {"action": "CLOSE", "close_trade_ids": [trade_id]},
+        "close_gate_evidence": [_close_gate_evidence(trade_id)],
+    }
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO gateway_receipts(
+                receipt_uid, ts_utc, kind, status, sent, lane_id,
+                lane_ids_json, path, payload_json, inserted_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"receipt:{trade_id}",
+                generated_at_utc,
+                "gpt_decision",
+                "ACCEPTED",
+                0,
+                None,
+                "[]",
+                str(decision_path),
+                json.dumps(receipt_payload),
+                generated_at_utc,
+            ),
+        )
+
+
+def _seed_multi_trade_close_events(path: Path) -> None:
+    close_trade_ids = ["T-event-1", "T-event-2"]
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            );
+            CREATE TABLE execution_events (
+                event_uid TEXT,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                exit_reason TEXT,
+                realized_pl_jpy REAL,
+                raw_json TEXT
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sync_state(key, value, updated_at_utc)
+            VALUES ('last_oanda_transaction_id', '104', '2026-06-21T00:00:00+00:00')
+            """
+        )
+        for trade_id in close_trade_ids:
+            raw_payload = {
+                "generated_at_utc": "2026-06-21T00:00:00+00:00",
+                "status": "ACCEPTED",
+                "decision": {
+                    "action": "CLOSE",
+                    "close_trade_ids": close_trade_ids,
+                },
+                "close_gate_evidence": [_close_gate_evidence(trade_id)],
+            }
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    event_uid, ts_utc, event_type, trade_id, pair, side,
+                    exit_reason, realized_pl_jpy, raw_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"gateway:gpt_decision:close:{trade_id}",
+                    "2026-06-21T00:00:00+00:00",
+                    "GATEWAY_GPT_CLOSE_ACCEPTED",
+                    trade_id,
+                    "EUR_USD",
+                    "LONG",
+                    "GPT_CLOSE_ACCEPTED",
+                    None,
+                    json.dumps(raw_payload),
+                ),
+            )
 
 
 if __name__ == "__main__":

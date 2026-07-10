@@ -816,6 +816,56 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(kept["forecast_direction"], "DOWN")
             self.assertNotIn("forecast_watch_only", kept)
 
+    def test_forecast_seed_lanes_share_one_hit_rate_snapshot_across_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime(2026, 7, 10, tzinfo=timezone.utc),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", bid=1.1683, ask=1.1685),
+                    "USD_JPY": Quote("USD_JPY", bid=158.34, ask=158.36),
+                },
+            )
+            charts = {"EUR_USD": {}, "USD_JPY": {}}
+            hit_rates = {
+                "directional_forecast_up": {
+                    "EUR_USD:TREND": {"hit_rate": 0.7, "samples": 20}
+                }
+            }
+
+            with patch(
+                "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+                return_value=hit_rates,
+            ) as compute_hit_rates, patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=None,
+            ) as forecast_for_pair:
+                result = _append_forecast_seed_lanes(
+                    [],
+                    charts,
+                    snapshot,
+                    data_root=root,
+                    forecast_cycle_id="cycle-shared-calibration",
+                )
+
+            self.assertEqual(result, [])
+            compute_hit_rates.assert_called_once_with(root)
+            self.assertEqual(forecast_for_pair.call_count, 2)
+            for call in forecast_for_pair.call_args_list:
+                self.assertIs(call.kwargs["hit_rates"], hit_rates)
+
+    def test_jsonl_dict_reader_streams_valid_dict_rows(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _iter_jsonl_dicts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.jsonl"
+            path.write_text('{"row": 1}\nnot-json\n[2]\n{"row": 3}\n')
+
+            rows = _iter_jsonl_dicts(path)
+
+            self.assertIs(iter(rows), rows)
+            self.assertEqual(list(rows), [{"row": 1}, {"row": 3}])
+
     def test_bidask_replay_precision_seed_adds_exact_limit_harvest_lane(self) -> None:
         from quant_rabbit.strategy.intent_generator import _order_variants_for
 

@@ -55,14 +55,17 @@ if TYPE_CHECKING:  # avoid runtime import cycle with indicators.py
 #       to end.
 RSI_HALF_RANGE: float = 14.5
 
-# STOCH_HALF_RANGE = 14.5
-#   (a) Market reality: Stoch %K is bounded [0, 100] with mean 50; on FX
-#       intraday Stoch(14,3,3) the 1-stdev half-range is ≈14-15, same
-#       footprint as RSI(14) (which is why the source research brief calls
-#       them collinear).
-#   (b) Constant rather than market-derived: same reason as RSI_HALF_RANGE.
-#   (c) Replace via: same as RSI_HALF_RANGE.
-STOCH_HALF_RANGE: float = 14.5
+# STOCH_RSI_HALF_RANGE = 0.145
+#   (a) `IndicatorSet.stoch_rsi` is defined on [0, 1], not [0, 100].
+#       0.145 is the exact unit conversion of the original 14.5-point
+#       fallback dispersion, preserving its intended Z-like magnitude while
+#       centering at 0.5. Treating this field as [0, 100] inverted nearly every
+#       live StochRSI vote (1.0 overbought became a strong LONG contribution).
+#   (b) Constant rather than market-derived: same fallback reason as
+#       RSI_HALF_RANGE; the factor of 100 is the indicator's defined scale.
+#   (c) Replace via: rolling normalization from `normalize.py` once that
+#       series is plumbed through the chart reader end to end.
+STOCH_RSI_HALF_RANGE: float = 0.145
 
 # AROON_RANGE = 100.0
 #   (a) Market reality: Aroon Up and Aroon Down are each bounded [0, 100],
@@ -174,7 +177,7 @@ def compute_family_scores(
         TrendScore = mean( z(price - EMA50)/ATR, z(MACD_hist),
                            sign(SuperTrend), z(Aroon_up - Aroon_down) )
         MeanRevScore = mean( z(BB %B - 0.5), z(RSI - 50)/14.5,
-                             z(Stoch - 50)/14.5, z(VWAP_dist) )
+                             z(StochRSI - 0.5)/0.145, z(VWAP_dist) )
             * (-1 if extended)
         BreakoutScore = mean( z(BB_width pct rank), z(ATR pct rank),
                               1{Donchian_break}, 1{recent_BOS} )
@@ -259,11 +262,11 @@ def compute_family_scores(
     if rsi is not None:
         mean_rev_components["rsi_inverted"] = -((rsi - 50.0) / RSI_HALF_RANGE)
 
-    # (3) Stoch %K (or stoch_rsi as a proxy on this codebase) — same logic.
+    # (3) StochRSI is emitted on [0, 1] by indicators._stoch_rsi. Values
+    # above 0.5 imply mean-reversion SHORT pressure; below imply LONG.
     stoch = getattr(indicators, "stoch_rsi", None)
     if stoch is not None:
-        # stoch_rsi is on [0, 100] in this codebase (see indicators.py).
-        mean_rev_components["stoch_inverted"] = -((stoch - 50.0) / STOCH_HALF_RANGE)
+        mean_rev_components["stoch_inverted"] = -((stoch - 0.5) / STOCH_RSI_HALF_RANGE)
 
     # (4) VWAP distance — extended above VWAP → mean-rev SHORT bias.
     vwap = getattr(indicators, "vwap", None)

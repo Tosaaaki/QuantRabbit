@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import unittest
@@ -155,6 +156,114 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(second, 0)
             self.assertEqual(scan_calls, 1)
             self.assertEqual(len(load_ledger(root)), 1)
+
+    def test_record_projections_caches_one_key_scan_across_pairs_in_same_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            eur_sig = _Sig(
+                "liquidity_sweep_low",
+                "UP",
+                15,
+                0.9,
+                12.0,
+                "M5 equal-lows at 1.16800 (4.0pip down)",
+            )
+            jpy_sig = _Sig(
+                "liquidity_sweep_high",
+                "DOWN",
+                15,
+                0.8,
+                10.0,
+                "M5 equal-highs at 158.400 (4.0pip up)",
+            )
+
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+
+            ledger_mod._PROJECTION_KEY_CACHE.clear()
+            original_scan = ledger_mod._scan_existing_projection_keys_from_handle
+            scan_calls = 0
+
+            def observed_scan(*args: object, **kwargs: object) -> set[tuple]:
+                nonlocal scan_calls
+                scan_calls += 1
+                return original_scan(*args, **kwargs)
+
+            with mock.patch.object(ledger_mod, "_scan_existing_projection_keys_from_handle", side_effect=observed_scan):
+                first = record_projections(
+                    [eur_sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id="cycle-cache-all-pairs",
+                )
+                second = record_projections(
+                    [jpy_sig],
+                    pair="USD_JPY",
+                    current_price=158.350,
+                    data_root=root,
+                    cycle_id="cycle-cache-all-pairs",
+                )
+                duplicate = record_projections(
+                    [eur_sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id="cycle-cache-all-pairs",
+                )
+
+            self.assertEqual((first, second, duplicate), (1, 1, 0))
+            self.assertEqual(scan_calls, 1)
+            self.assertEqual(len(load_ledger(root)), 2)
+
+    def test_projection_key_cache_invalidates_when_ledger_inode_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sig = _Sig(
+                "liquidity_sweep_low",
+                "UP",
+                15,
+                0.9,
+                12.0,
+                "M5 equal-lows at 1.16800 (4.0pip down)",
+            )
+            cycle_id = "cycle-inode-replacement"
+
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+
+            ledger_mod._PROJECTION_KEY_CACHE.clear()
+            self.assertEqual(
+                record_projections(
+                    [sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id=cycle_id,
+                ),
+                1,
+            )
+            path = root / ledger_mod.LEDGER_FILENAME
+            original_stat = path.stat()
+            original_text = path.read_text()
+            replacement_text = original_text.replace("liquidity_sweep_low", "liquidity_sweep_alt")
+            self.assertEqual(len(replacement_text), len(original_text))
+            replacement = root / "replacement.jsonl"
+            replacement.write_text(replacement_text)
+            os.utime(replacement, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            os.replace(replacement, path)
+
+            self.assertEqual(path.stat().st_size, original_stat.st_size)
+            self.assertEqual(path.stat().st_mtime_ns, original_stat.st_mtime_ns)
+            self.assertEqual(
+                record_projections(
+                    [sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id=cycle_id,
+                ),
+                1,
+            )
+            self.assertEqual(len(load_ledger(root)), 2)
 
     def test_record_projections_dedupes_same_cycle_pair_signal_race(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -380,6 +489,31 @@ class VerifyTest(unittest.TestCase):
             self.assertEqual(counts["HIT"], 1)
             entries = load_ledger(root)
             self.assertEqual(entries[0].resolution_status, "HIT")
+
+    def test_unexpired_pending_verification_does_not_rewrite_ledger(self) -> None:
+        tmp, root = self._setup(
+            {"direction": "UP", "lead_time_min": 10, "window": 60, "entry_price": 1.1700},
+            ts_offset_min=1,
+        )
+        with tmp:
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+
+            path = root / ledger_mod.LEDGER_FILENAME
+            before = path.read_bytes()
+            with mock.patch.object(
+                ledger_mod,
+                "_write_ledger_to_handle",
+                wraps=ledger_mod._write_ledger_to_handle,
+            ) as write_ledger:
+                counts = verify_pending(
+                    root,
+                    quotes_by_pair={"EUR_USD": {"bid": 1.1700, "ask": 1.1701}},
+                    atr_pips_by_pair={"EUR_USD": 10.0},
+                )
+
+            self.assertEqual(counts["PENDING"], 1)
+            write_ledger.assert_not_called()
+            self.assertEqual(path.read_bytes(), before)
 
     def test_directional_up_miss(self) -> None:
         tmp, root = self._setup({"direction": "UP", "lead_time_min": 5, "window": 10, "entry_price": 1.1700})

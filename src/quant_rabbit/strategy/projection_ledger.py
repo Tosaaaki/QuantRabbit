@@ -78,7 +78,10 @@ CONFIDENCE_DAMPING = float(os.environ.get("QR_PROJECTION_CONFIDENCE_DAMPING", "0
 CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_MULT", "1.5"))
 # Multiplier when a detector has 0% hit-rate
 CONFIDENCE_MIN_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_MULT", "0.2"))
-_PROJECTION_KEY_CACHE: dict[tuple[str, str, str], tuple[tuple[int, int], set[tuple]]] = {}
+_PROJECTION_KEY_CACHE: dict[
+    tuple[str, str],
+    tuple[tuple[int, int, int, int, int], set[tuple]],
+] = {}
 _HIT_RATE_CACHE: dict[
     tuple[str, int],
     tuple[tuple[int, int], Dict[str, Dict[str, Dict[str, float]]]],
@@ -436,6 +439,9 @@ def _existing_projection_keys_from_handle(
 ) -> set[tuple]:
     if not cycle_id:
         return set()
+    # The projection identity already contains the pair. Cache every key for a
+    # cycle together so a 26-pair forecast pass scans the append-only ledger
+    # once instead of once per pair.
     cache_id = _projection_key_cache_id(handle, cycle_id=cycle_id, pair=pair)
     stat_token = _projection_key_cache_stat(handle)
     cached = _PROJECTION_KEY_CACHE.get(cache_id)
@@ -463,12 +469,13 @@ def _scan_existing_projection_keys_from_handle(
             item = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if str(item.get("cycle_id") or "") != cycle_id or str(item.get("pair") or "") != pair:
+        if str(item.get("cycle_id") or "") != cycle_id:
             continue
+        item_pair = str(item.get("pair") or "")
         keys.add(
             _projection_key(
                 cycle_id=cycle_id,
-                pair=pair,
+                pair=item_pair,
                 signal_name=str(item.get("signal_name", "")),
                 direction=str(item.get("direction", "")),
                 entry_price=item.get("entry_price"),
@@ -493,18 +500,25 @@ def _cache_projection_keys_for_handle(
     )
 
 
-def _projection_key_cache_id(handle: IO[str], *, cycle_id: str, pair: str) -> tuple[str, str, str]:
+def _projection_key_cache_id(handle: IO[str], *, cycle_id: str, pair: str) -> tuple[str, str]:
+    del pair  # Pair is part of each projection key; the cache is cycle-wide.
     name = getattr(handle, "name", "")
     try:
         path = os.path.realpath(os.fspath(name))
     except (TypeError, ValueError):
         path = f"fd:{handle.fileno()}"
-    return (path, cycle_id, pair)
+    return (path, cycle_id)
 
 
-def _projection_key_cache_stat(handle: IO[str]) -> tuple[int, int]:
+def _projection_key_cache_stat(handle: IO[str]) -> tuple[int, int, int, int, int]:
     stat = os.fstat(handle.fileno())
-    return (int(stat.st_size), int(stat.st_mtime_ns))
+    return (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+    )
 
 
 def _extract_target_price_from_rationale(rationale: str) -> Optional[float]:
@@ -642,6 +656,15 @@ def _verify_pending_unlocked(
     entries = _load_ledger_from_handle(ledger_handle) if ledger_handle is not None else load_ledger(data_root)
     if not entries:
         return {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
+
+    # Only unresolved/retryable rows can change. Tracking this small subset
+    # avoids a 179MB truncate+rewrite when a verifier pass merely observes
+    # unexpired rows or immutable outcomes.
+    original_resolution_state = {
+        index: (entry.resolution_status, entry.resolved_at_utc, entry.resolution_evidence)
+        for index, entry in enumerate(entries)
+        if entry.resolution_status == "PENDING" or _retryable_truth_timeout(entry)
+    }
 
     quotes_by_pair = quotes_by_pair or {}
     atr_pips_by_pair = atr_pips_by_pair or {}
@@ -851,10 +874,15 @@ def _verify_pending_unlocked(
                 )
                 counts["MISS"] += 1
         e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-    if ledger_handle is not None:
-        _write_ledger_to_handle(entries, ledger_handle)
-    else:
-        write_ledger(entries, data_root)
+    changed = any(
+        original != (entries[index].resolution_status, entries[index].resolved_at_utc, entries[index].resolution_evidence)
+        for index, original in original_resolution_state.items()
+    )
+    if changed:
+        if ledger_handle is not None:
+            _write_ledger_to_handle(entries, ledger_handle)
+        else:
+            write_ledger(entries, data_root)
     return counts
 
 

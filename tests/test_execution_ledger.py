@@ -7,8 +7,14 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
-from quant_rabbit.execution_ledger import ExecutionLedger, _events_from_transaction
+from quant_rabbit.execution_ledger import (
+    LEGACY_EVENT_BACKFILL_MIGRATION_KEY,
+    LEGACY_EVENT_BACKFILL_MIGRATION_VERSION,
+    ExecutionLedger,
+    _events_from_transaction,
+)
 from quant_rabbit.models import AccountSummary
 from quant_rabbit.strategy.entry_thesis_ledger import (
     PendingEntryThesis,
@@ -197,12 +203,18 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=12) as executor:
                 results = list(executor.map(reserve, range(12)))
+            with sqlite3.connect(root / "cold-ledger.db") as conn:
+                migration_rows = conn.execute(
+                    "SELECT value FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                ).fetchall()
 
         self.assertEqual(sum(result.reserved for result in results), 2)
         self.assertEqual(
             sum(result.status == "CONCURRENT_CAP_REACHED" for result in results),
             10,
         )
+        self.assertEqual(migration_rows, [(LEGACY_EVENT_BACKFILL_MIGRATION_VERSION,)])
 
     def test_predictive_scout_broker_reflection_does_not_double_count_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -493,6 +505,10 @@ class ExecutionLedgerTest(unittest.TestCase):
             ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
             with sqlite3.connect(root / "ledger.db") as conn:
                 conn.execute("UPDATE execution_events SET lane_id = NULL WHERE event_type='ORDER_ACCEPTED'")
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                )
                 conn.commit()
 
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
@@ -842,6 +858,10 @@ class ExecutionLedgerTest(unittest.TestCase):
             ledger.record_gateway_receipt(kind="position_execution", receipt_path=receipt)
             with sqlite3.connect(root / "ledger.db") as conn:
                 conn.execute("UPDATE execution_events SET order_id = NULL WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'")
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                )
                 conn.commit()
 
             ledger.record_gateway_receipt(kind="position_execution", receipt_path=root / "missing.json")
@@ -1069,6 +1089,10 @@ class ExecutionLedgerTest(unittest.TestCase):
             ledger.sync_oanda_transactions(FakeTradeCloseAcceptClient(), since_transaction_id="500")
             with sqlite3.connect(root / "ledger.db") as conn:
                 conn.execute("UPDATE execution_events SET trade_id = NULL WHERE event_type='ORDER_ACCEPTED'")
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                )
                 conn.commit()
 
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
@@ -1078,6 +1102,128 @@ class ExecutionLedgerTest(unittest.TestCase):
                     "SELECT trade_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
                 ).fetchone()
             self.assertEqual(row[0], "T501")
+
+    def test_legacy_backfill_migration_does_not_rescan_unattributed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.sync_oanda_transactions(
+                FakeManualBrokerCloseClient(),
+                since_transaction_id="700",
+            )
+            with sqlite3.connect(root / "ledger.db") as conn:
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                )
+                conn.commit()
+
+            # Simulate the first initialization after upgrading an existing DB.
+            # Manual/tagless OANDA rows legitimately remain without a lane.
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                unattributed = conn.execute(
+                    "SELECT COUNT(*) FROM execution_events WHERE source='oanda' AND lane_id IS NULL"
+                ).fetchone()[0]
+                migration_value = conn.execute(
+                    "SELECT value FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                ).fetchone()[0]
+            self.assertGreater(unattributed, 0)
+            self.assertEqual(migration_value, LEGACY_EVENT_BACKFILL_MIGRATION_VERSION)
+
+            # A durable marker must keep later receipt/sync initialization from
+            # reparsing the same legitimate no-lane rows forever.
+            with (
+                patch(
+                    "quant_rabbit.execution_ledger._backfill_legacy_lane_ids",
+                    side_effect=AssertionError("legacy lane backfill reran"),
+                ),
+                patch(
+                    "quant_rabbit.execution_ledger._backfill_legacy_trade_close_ids",
+                    side_effect=AssertionError("legacy trade-id backfill reran"),
+                ),
+                patch(
+                    "quant_rabbit.execution_ledger._backfill_gateway_position_order_ids",
+                    side_effect=AssertionError("legacy order-id backfill reran"),
+                ),
+            ):
+                ledger.record_gateway_receipt(
+                    kind="live_order",
+                    receipt_path=root / "still-missing.json",
+                )
+
+    def test_legacy_backfill_migration_rolls_back_marker_and_updates_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                conn.execute("UPDATE execution_events SET lane_id = NULL WHERE event_type='ORDER_ACCEPTED'")
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                )
+                conn.commit()
+
+            with patch(
+                "quant_rabbit.execution_ledger._backfill_legacy_trade_close_ids",
+                side_effect=RuntimeError("migration interrupted"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "migration interrupted"):
+                    ledger.record_gateway_receipt(
+                        kind="live_order",
+                        receipt_path=root / "missing.json",
+                    )
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                lane_after_failure = conn.execute(
+                    "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
+                ).fetchone()[0]
+                marker_after_failure = conn.execute(
+                    "SELECT value FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                ).fetchone()
+            self.assertIsNone(lane_after_failure)
+            self.assertIsNone(marker_after_failure)
+
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "retry-missing.json")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                lane_after_retry = conn.execute(
+                    "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
+                ).fetchone()[0]
+                marker_after_retry = conn.execute(
+                    "SELECT value FROM sync_state WHERE key = ?",
+                    (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
+                ).fetchone()[0]
+            self.assertEqual(
+                lane_after_retry,
+                "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+            )
+            self.assertEqual(marker_after_retry, LEGACY_EVENT_BACKFILL_MIGRATION_VERSION)
+
+    def test_schema_adds_predictive_scout_sent_day_expression_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                plan = conn.execute(
+                    """
+                    EXPLAIN QUERY PLAN
+                    SELECT rowid, payload_json
+                    FROM gateway_receipts
+                    WHERE sent = 1
+                      AND substr(ts_utc, 1, 10) = ?
+                    """,
+                    ("2026-07-10",),
+                ).fetchall()
+            self.assertTrue(
+                any("idx_gateway_receipts_sent_day" in str(row[3]) for row in plan),
+                plan,
+            )
 
 
 class FakeTransactionClient:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.analysis.candles import Candle
@@ -128,6 +129,23 @@ class FamilyScoresTrendingMarketTest(unittest.TestCase):
 
 
 class FamilyScoresMeanReversionTest(unittest.TestCase):
+    def test_stoch_rsi_uses_zero_to_one_scale_and_correct_mean_reversion_side(self) -> None:
+        overbought = replace(_empty_indicator_set(), stoch_rsi=1.0)
+        neutral = replace(_empty_indicator_set(), stoch_rsi=0.5)
+        oversold = replace(_empty_indicator_set(), stoch_rsi=0.0)
+
+        overbought_scores = compute_family_scores(overbought)
+        neutral_scores = compute_family_scores(neutral)
+        oversold_scores = compute_family_scores(oversold)
+
+        self.assertLess(overbought_scores.mean_rev_score, 0.0)
+        self.assertEqual(neutral_scores.mean_rev_score, 0.0)
+        self.assertGreater(oversold_scores.mean_rev_score, 0.0)
+        self.assertAlmostEqual(
+            overbought_scores.mean_rev_score,
+            -oversold_scores.mean_rev_score,
+        )
+
     def test_anti_persistent_market_has_smaller_trend_score(self) -> None:
         # An AR(1)-with-negative-correlation series mean-reverts; trend
         # score should be small in absolute terms vs a clean ramp.

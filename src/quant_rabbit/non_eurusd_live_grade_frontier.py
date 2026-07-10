@@ -1288,30 +1288,37 @@ def _forecast_artifact_summary(*, forecast_history_path: Path, projection_ledger
 def _jsonl_summary(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"path": str(path), "status": "missing", "rows": 0, "sha256": None}
-    raw = path.read_bytes()
+    digest = hashlib.sha256()
     rows = 0
     malformed = 0
     latest = None
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        rows += 1
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            malformed += 1
-            continue
-        if isinstance(item, dict):
-            ts = item.get("timestamp_utc") or item.get("timestamp_emitted_utc") or item.get("generated_at_utc")
-            if isinstance(ts, str) and (latest is None or ts > latest):
-                latest = ts
+    with path.open("rb") as handle:
+        for raw_line in handle:
+            digest.update(raw_line)
+            # Keep the legacy `decode(...).splitlines()` semantics within each
+            # binary line. This preserves CR-only and Unicode line separators,
+            # invalid UTF-8 replacement, and trailing-newline behavior without
+            # retaining the entire ledger in memory.
+            for line in raw_line.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                rows += 1
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if isinstance(item, dict):
+                    ts = item.get("timestamp_utc") or item.get("timestamp_emitted_utc") or item.get("generated_at_utc")
+                    if isinstance(ts, str) and (latest is None or ts > latest):
+                        latest = ts
     return {
         "path": str(path),
         "status": "present",
         "rows": rows,
         "malformed_rows": malformed,
         "latest_timestamp_utc": latest,
-        "sha256": hashlib.sha256(raw).hexdigest(),
+        "sha256": digest.hexdigest(),
     }
 
 

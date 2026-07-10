@@ -7056,6 +7056,49 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(digest["steps_ok"], ["broker-snapshot"])
         self.assertEqual(len(digest["steps_failed"]), 1)
         self.assertEqual(digest["steps_failed"][0]["step"], "news-health --strict")
+        self.assertEqual(
+            digest["step_timings"],
+            [
+                {
+                    "index": 0,
+                    "occurrence": 1,
+                    "step": "broker-snapshot",
+                    "status": "OK",
+                    "rc": 0,
+                    "seconds": 0.1,
+                },
+                {
+                    "index": 1,
+                    "occurrence": 1,
+                    "step": "news-health --strict",
+                    "status": "FAILED",
+                    "rc": 1,
+                    "seconds": 0.1,
+                },
+            ],
+        )
+        self.assertAlmostEqual(digest["total_step_seconds"], 0.2)
+        self.assertEqual([row["index"] for row in digest["slowest_steps"]], [0, 1])
+
+    def test_cycle_digest_distinguishes_repeated_step_occurrences(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        digest = _cycle_digest(
+            kind="cycle_sidecars_digest",
+            step_results=[
+                {"step": "execution-ledger-sync", "status": "OK", "rc": 0, "seconds": 2.0},
+                {"step": "generate-intents", "status": "OK", "rc": 0, "seconds": 7.5},
+                {"step": "execution-ledger-sync", "status": "OK", "rc": 0, "seconds": 1.5},
+            ],
+            aborted=False,
+        )
+
+        self.assertEqual(
+            [row["occurrence"] for row in digest["step_timings"]],
+            [1, 1, 2],
+        )
+        self.assertEqual(digest["slowest_steps"][0]["step"], "generate-intents")
+        self.assertAlmostEqual(digest["total_step_seconds"], 11.0)
 
     def test_cycle_digest_surfaces_predictive_scout_operator_review_eligibility(self) -> None:
         from quant_rabbit.cli import _cycle_digest

@@ -26,6 +26,10 @@ from quant_rabbit.paths import (
 )
 
 
+_LEGACY_CLOSE_GATE_BACKFILL_KEY = "gateway_receipts_close_gate_v1"
+_LEGACY_CLOSE_GATE_BACKFILL_COMPLETE = "COMPLETE"
+
+
 @dataclass(frozen=True)
 class VerificationLedgerSummary:
     db_path: Path
@@ -41,6 +45,12 @@ class VerificationLedgerSummary:
     profit_factor: float | None
     win_rate: float | None
     expectancy_jpy: float | None
+
+
+@dataclass(frozen=True)
+class _LedgerCloseGateScan:
+    observations: tuple[dict[str, Any], ...] = ()
+    legacy_backfill_cursor: int | None = None
 
 
 class VerificationLedger:
@@ -209,20 +219,25 @@ class VerificationLedger:
                 payloads["broker_snapshot"].payload,
             )
         )
-        observations.extend(
-            _ledger_close_gate_observations(
-                self.db_path,
-                inserted_at_utc=run_id,
-            )
-        )
-        observations = _dedupe_observations(observations)
-
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         measurements = _measurements_from_effect(run_id, window_hours=window_hours, effect=effect)
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            close_gate_scan = _ledger_close_gate_observations(
+                conn,
+                inserted_at_utc=run_id,
+            )
+            observations.extend(close_gate_scan.observations)
+            observations = _dedupe_observations(observations)
             observations_inserted = sum(_insert_observation(conn, item) for item in observations)
             measurements_inserted = sum(_insert_measurement(conn, item) for item in measurements)
+            if close_gate_scan.legacy_backfill_cursor is not None:
+                _mark_legacy_close_gate_backfill_complete(
+                    conn,
+                    cursor=close_gate_scan.legacy_backfill_cursor,
+                    updated_at_utc=run_id,
+                )
 
         blocking = [
             item
@@ -309,6 +324,13 @@ class VerificationLedger:
                     ON effect_measurements(ts_utc);
                 CREATE INDEX IF NOT EXISTS idx_effect_measurements_metric
                     ON effect_measurements(segment, metric_name);
+
+                CREATE TABLE IF NOT EXISTS verification_backfill_state (
+                    backfill_key TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    cursor INTEGER NOT NULL,
+                    updated_at_utc TEXT NOT NULL
+                );
                 """
             )
 
@@ -658,45 +680,66 @@ def _gpt_decision_observations(run_id: str, path: Path, payload: dict[str, Any] 
     return observations
 
 
-def _ledger_close_gate_observations(db_path: Path, *, inserted_at_utc: str) -> list[dict[str, Any]]:
-    if not db_path.exists():
-        return []
+def _ledger_close_gate_observations(
+    conn: sqlite3.Connection,
+    *,
+    inserted_at_utc: str,
+) -> _LedgerCloseGateScan:
     collected: list[dict[str, Any]] = []
+    legacy_backfill_cursor: int | None = None
+    legacy_scan_attempted = False
     try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            tables = {
-                str(row[0])
-                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
-            if "gateway_receipts" in tables:
-                collected.extend(_gateway_receipt_close_gate_observations(conn, inserted_at_utc=inserted_at_utc))
-            if "execution_events" in tables:
-                collected.extend(_execution_event_close_gate_observations(conn, inserted_at_utc=inserted_at_utc))
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if (
+            "gateway_receipts" in tables
+            and {"ts_utc", "kind", "path", "payload_json"}.issubset(
+                _table_columns(conn, "gateway_receipts")
+            )
+            and not _legacy_close_gate_backfill_is_complete(conn)
+        ):
+            legacy_scan_attempted = True
+            legacy_scan = _gateway_receipt_close_gate_observations(
+                conn,
+                inserted_at_utc=inserted_at_utc,
+            )
+            collected.extend(legacy_scan.observations)
+            legacy_backfill_cursor = legacy_scan.legacy_backfill_cursor
+        if "execution_events" in tables:
+            collected.extend(_execution_event_close_gate_observations(conn, inserted_at_utc=inserted_at_utc))
     except sqlite3.Error:
-        return []
-    return _dedupe_observations(collected)
+        if legacy_scan_attempted:
+            raise
+        return _LedgerCloseGateScan()
+    return _LedgerCloseGateScan(
+        observations=tuple(_dedupe_observations(collected)),
+        legacy_backfill_cursor=legacy_backfill_cursor,
+    )
 
 
 def _gateway_receipt_close_gate_observations(
     conn: sqlite3.Connection,
     *,
     inserted_at_utc: str,
-) -> list[dict[str, Any]]:
+) -> _LedgerCloseGateScan:
     columns = _table_columns(conn, "gateway_receipts")
     required = {"ts_utc", "kind", "path", "payload_json"}
     if not required.issubset(columns):
-        return []
+        return _LedgerCloseGateScan()
     rows = conn.execute(
         """
-        SELECT ts_utc, path, payload_json
+        SELECT rowid AS receipt_rowid, ts_utc, path, payload_json
         FROM gateway_receipts
         WHERE kind = 'gpt_decision'
-        ORDER BY ts_utc ASC
+        ORDER BY rowid ASC
         """
     ).fetchall()
     observations: list[dict[str, Any]] = []
+    cursor = 0
     for row in rows:
+        cursor = max(cursor, _int_or_zero(row["receipt_rowid"]))
         payload = _json_dict(row["payload_json"])
         if payload is None:
             continue
@@ -721,7 +764,48 @@ def _gateway_receipt_close_gate_observations(
                 context={},
             )
         )
-    return observations
+    return _LedgerCloseGateScan(
+        observations=tuple(observations),
+        legacy_backfill_cursor=cursor,
+    )
+
+
+def _legacy_close_gate_backfill_is_complete(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        """
+        SELECT status
+        FROM verification_backfill_state
+        WHERE backfill_key = ?
+        """,
+        (_LEGACY_CLOSE_GATE_BACKFILL_KEY,),
+    ).fetchone()
+    return bool(row and str(row["status"] or "").upper() == _LEGACY_CLOSE_GATE_BACKFILL_COMPLETE)
+
+
+def _mark_legacy_close_gate_backfill_complete(
+    conn: sqlite3.Connection,
+    *,
+    cursor: int,
+    updated_at_utc: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO verification_backfill_state(
+            backfill_key, status, cursor, updated_at_utc
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(backfill_key) DO UPDATE SET
+            status = excluded.status,
+            cursor = excluded.cursor,
+            updated_at_utc = excluded.updated_at_utc
+        """,
+        (
+            _LEGACY_CLOSE_GATE_BACKFILL_KEY,
+            _LEGACY_CLOSE_GATE_BACKFILL_COMPLETE,
+            max(0, int(cursor)),
+            updated_at_utc,
+        ),
+    )
 
 
 def _execution_event_close_gate_observations(
@@ -746,17 +830,16 @@ def _execution_event_close_gate_observations(
     observations: list[dict[str, Any]] = []
     for row in rows:
         trade_id = str(row["trade_id"] or "").strip()
+        if not trade_id:
+            continue
         payload = _json_dict(row["raw_json"])
         if payload is None:
             payload = {
                 "generated_at_utc": row["ts_utc"],
                 "status": "ACCEPTED",
-                "decision": {"action": "CLOSE", "close_trade_ids": [trade_id] if trade_id else []},
+                "decision": {"action": "CLOSE", "close_trade_ids": [trade_id]},
             }
-        elif trade_id and not _payload_close_trade_ids(payload):
-            payload = dict(payload)
-            payload["status"] = payload.get("status") or "ACCEPTED"
-            payload["decision"] = {"action": "CLOSE", "close_trade_ids": [trade_id]}
+        payload = _scope_execution_close_payload(payload, trade_id=trade_id)
         ts_utc = str(payload.get("generated_at_utc") or row["ts_utc"] or inserted_at_utc)
         context = {"event_uid": row["event_uid"]} if row["event_uid"] else {}
         observations.extend(
@@ -779,6 +862,31 @@ def _execution_event_close_gate_observations(
             )
         )
     return observations
+
+
+def _scope_execution_close_payload(payload: dict[str, Any], *, trade_id: str) -> dict[str, Any]:
+    scoped = dict(payload)
+    decision_payload = payload.get("decision")
+    decision = dict(decision_payload) if isinstance(decision_payload, dict) else {}
+    decision["action"] = "CLOSE"
+    decision["close_trade_ids"] = [trade_id]
+    scoped["status"] = "ACCEPTED"
+    scoped["decision"] = decision
+
+    raw_evidence = payload.get("close_gate_evidence")
+    scoped_evidence: list[dict[str, Any]] = []
+    if isinstance(raw_evidence, list):
+        for item in raw_evidence:
+            if not isinstance(item, dict):
+                continue
+            evidence_trade_id = str(item.get("trade_id") or "").strip()
+            if evidence_trade_id and evidence_trade_id != trade_id:
+                continue
+            evidence = dict(item)
+            evidence["trade_id"] = trade_id
+            scoped_evidence.append(evidence)
+    scoped["close_gate_evidence"] = scoped_evidence
+    return scoped
 
 
 def _close_gate_observations_from_payload(

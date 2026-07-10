@@ -719,6 +719,7 @@ def _refresh_current_forecast_history(
     try:
         from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
         from quant_rabbit.strategy.intent_generator import (
+            _forecast_seed_hit_rates,
             _forecast_seed_for_pair,
             _forecast_seed_regime_label,
             _load_pair_charts,
@@ -761,6 +762,8 @@ def _refresh_current_forecast_history(
     skipped: dict[str, str] = {}
     projection_recorded = 0
     projection_skipped: dict[str, str] = {}
+    shared_hit_rates: Any = None
+    hit_rates_loaded = False
     for pair in unique_pairs:
         if _forecast_history_has_cycle_pair(data_root, pair, cycle_id):
             skipped[pair] = "already_recorded_for_cycle"
@@ -772,7 +775,16 @@ def _refresh_current_forecast_history(
         if quote is None:
             skipped[pair] = "quote_missing"
             continue
-        forecast = _forecast_seed_for_pair(pair, charts, snapshot)
+        if not hit_rates_loaded:
+            shared_hit_rates = _forecast_seed_hit_rates(data_root)
+            hit_rates_loaded = True
+        forecast = _forecast_seed_for_pair(
+            pair,
+            charts,
+            snapshot,
+            data_root=data_root,
+            hit_rates=shared_hit_rates,
+        )
         if forecast is None:
             skipped[pair] = "forecast_unavailable"
             continue
@@ -3000,6 +3012,29 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
     the full artifacts (`data/order_intents.json`, `data/pair_charts.json`, …)
     with targeted reads when it needs depth, instead of re-printing them.
     """
+    occurrences: dict[str, int] = {}
+    step_timings: list[dict[str, Any]] = []
+    for index, result in enumerate(step_results):
+        step = str(result.get("step") or "")
+        occurrences[step] = occurrences.get(step, 0) + 1
+        try:
+            seconds = float(result.get("seconds", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        step_timings.append(
+            {
+                "index": index,
+                "occurrence": occurrences[step],
+                "step": step,
+                "status": result.get("status"),
+                "rc": result.get("rc"),
+                "seconds": seconds,
+            }
+        )
+    slowest_steps = sorted(
+        step_timings,
+        key=lambda row: (-float(row["seconds"]), int(row["index"])),
+    )[:5]
     digest: dict[str, Any] = {
         "kind": kind,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -3007,6 +3042,9 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         "steps_failed": [r for r in step_results if r.get("status") not in ("OK", "SKIPPED_AFTER_ABORT")],
         "steps_ok": [r["step"] for r in step_results if r.get("status") == "OK"],
         "steps_skipped": [r["step"] for r in step_results if r.get("status") == "SKIPPED_AFTER_ABORT"],
+        "step_timings": step_timings,
+        "total_step_seconds": round(sum(float(row["seconds"]) for row in step_timings), 3),
+        "slowest_steps": slowest_steps,
     }
 
     snapshot = _read_json_quiet(DEFAULT_BROKER_SNAPSHOT)

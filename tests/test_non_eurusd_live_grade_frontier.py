@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -16,6 +17,7 @@ from quant_rabbit.non_eurusd_live_grade_frontier import (
     _active_board_evidence_tp_sort_bucket,
     _artifact_is_current,
     _frontier_sort_key,
+    _jsonl_summary,
     _next_action,
     _next_active_path,
     _proof_mapper_is_current,
@@ -65,6 +67,52 @@ def _write_execution_db(path: Path) -> None:
 
 
 class NonEurusdLiveGradeFrontierTests(unittest.TestCase):
+    def test_jsonl_summary_stream_preserves_legacy_decode_and_splitline_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "projection_ledger.jsonl"
+            raw = b"".join(
+                (
+                    b"\n",
+                    b'{"timestamp_utc":"2026-07-01T00:00:00Z","note":"\xff"}\r\n',
+                    b"not-json\r[]\n",
+                    b'{"timestamp_emitted_utc":"2026-07-02T00:00:00Z"}',
+                    "\u2028".encode("utf-8"),
+                    b'{"generated_at_utc":"2026-07-03T00:00:00Z"}',
+                )
+            )
+            path.write_bytes(raw)
+
+            summary = _jsonl_summary(path)
+
+        self.assertEqual(
+            summary,
+            {
+                "path": str(path),
+                "status": "present",
+                "rows": 5,
+                "malformed_rows": 1,
+                "latest_timestamp_utc": "2026-07-03T00:00:00Z",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        )
+
+    def test_jsonl_summary_trailing_newline_changes_only_raw_sha(self) -> None:
+        row = b'{"timestamp_utc":"2026-07-03T00:00:00Z"}'
+        summaries = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for suffix in (b"", b"\n"):
+                path = Path(tmp) / f"projection_{len(suffix)}.jsonl"
+                raw = row + suffix
+                path.write_bytes(raw)
+                summaries.append((_jsonl_summary(path), raw))
+
+        for summary, raw in summaries:
+            self.assertEqual(summary["rows"], 1)
+            self.assertEqual(summary["malformed_rows"], 0)
+            self.assertEqual(summary["latest_timestamp_utc"], "2026-07-03T00:00:00Z")
+            self.assertEqual(summary["sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertNotEqual(summaries[0][0]["sha256"], summaries[1][0]["sha256"])
+
     def test_ranks_non_eurusd_frontier_and_keeps_blocker_breakdown(self) -> None:
         now = datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
         aud_jpy = "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT"
