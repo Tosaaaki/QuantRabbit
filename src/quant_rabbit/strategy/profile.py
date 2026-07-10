@@ -749,7 +749,7 @@ def _predictive_scout_profile_supported(intent: OrderIntent) -> bool:
         return False
     if intent.order_type != OrderType.LIMIT or intent.entry is None:
         return False
-    if abs(int(intent.units)) != MIN_PRODUCTION_LOT_UNITS:
+    if abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS:
         return False
     if intent.side.value == "LONG":
         return intent.tp > intent.entry > intent.sl

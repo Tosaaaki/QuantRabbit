@@ -912,6 +912,41 @@ class DailyTargetLedgerTest(unittest.TestCase):
                 200_000 * (RiskPolicy().min_per_trade_risk_pct / 100.0),
             )
 
+    def test_automated_per_trade_floor_tracks_current_broker_nav_not_day_open_balance(self) -> None:
+        from quant_rabbit.risk import RiskPolicy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 7, 10, 12, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=150_000.0,
+                    balance_jpy=200_000.0,
+                    unrealized_pl_jpy=-50_000.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(
+                start_balance_jpy=200_000.0,
+                daily_risk_budget_jpy=4_000.0,
+                snapshot=snapshot,
+                now_utc=now,
+            )
+
+            expected = 150_000.0 * (RiskPolicy().min_per_trade_risk_pct / 100.0)
+            self.assertEqual(summary.sizing_nav_jpy, 150_000.0)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, expected, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_pct_nav, 1.0, places=6)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["sizing_nav_jpy"], 150_000.0)
+            self.assertAlmostEqual(payload["per_trade_risk_pct_nav"], 1.0, places=6)
+            self.assertIn("latest broker raw NAV", (root / "target.md").read_text())
+
     def test_target_trades_per_day_persists_across_runs(self) -> None:
         """Once an operator sets a pace, subsequent ledger runs keep it
         without requiring the flag again — mirrors how daily_risk_budget_jpy

@@ -2030,12 +2030,12 @@ class TraderBrain:
             order_type=order_type,
             method=method,
         )
-        # SCOUT evidence is defined at exactly 1,000 units.  The score still
-        # ranks the candidate, but it must not mutate the experimental vehicle
-        # into a gateway-rejected or statistically different lot size.
+        # SCOUT units are finalized from current-NAV/SL risk before the GPT
+        # packet is built. The score still ranks the candidate, but it must not
+        # resize a verifier-bound experiment after that evidence boundary.
         size_multiple = 1.0 if is_predictive_scout else _size_multiple(adjusted_score, settings)
         if is_predictive_scout:
-            rationale.insert(0, "predictive SCOUT fixes score sizing at the 1,000-unit vehicle")
+            rationale.insert(0, "predictive SCOUT preserves its pre-verifier NAV-risk units")
         action = ACTION_SEND_ENTRY if status == "LIVE_READY" and not blockers else ACTION_NO_TRADE
         estimated_margin_jpy = _optional_float(risk_metrics.get("estimated_margin_jpy"))
         return LaneScore(

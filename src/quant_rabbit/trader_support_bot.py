@@ -3270,7 +3270,9 @@ def _near_ready_evidence_needed(blocker_codes: list[str]) -> list[str]:
             "current rail/entry geometry proving the lane is not a chase and has acceptable reward/risk after spread"
         )
     if "margin_or_min_lot" in groups:
-        needs.append("raw-NAV/margin capacity sufficient for the broker 1000-unit production floor and risk budget")
+        needs.append(
+            "raw-NAV/risk/margin capacity sufficient for at least one broker integer unit"
+        )
     if "strategy_profile" in groups:
         needs.append("new strategy-profile evidence for the same pair/side/method instead of BLOCK_UNTIL_NEW_EVIDENCE")
     if "manual_overlap" in groups:
@@ -6960,17 +6962,17 @@ def _build_repair_requests(
         elif waits_for_margin_capacity:
             frontier_status = FRONTIER_MARGIN_CAPACITY_WAIT_STATUS
             frontier_problem = (
-                "Repair-frontier lanes are blocked by the minimum production lot, current risk budget, "
+                "Repair-frontier lanes are blocked by the broker integer minimum, current risk budget, "
                 "geometry, or margin capacity, not by a missing Codex code path."
             )
             frontier_why_now = (
-                "The 1000u floor prevents structurally spread-dominated micro orders; lowering it to force a "
-                "repair lane live would recreate the sub-lot loss loop."
+                "OANDA accepts positive integer units; sub-1000u receipts are allowed when the "
+                "same spread, geometry, expectancy, and risk gates pass."
             )
             frontier_clearance = [
-                f"{code} clears only when free margin, daily risk budget, and current geometry can fund at least the minimum production lot.",
+                f"{code} clears only when free margin, daily risk budget, and current geometry can fund at least one integer unit.",
                 "Wait for open positions to harvest TP/free margin, reduce other broker exposure through approved paths, or regenerate intents after broker truth changes.",
-                "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass RiskEngine, or emit sub-1000u live receipts as a repair.",
+                "Do not bypass RiskEngine or weaken spread/post-cost gates; size down to the NAV/SL result instead.",
             ]
             frontier_verification_commands = [
                 "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",

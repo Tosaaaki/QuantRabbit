@@ -22,10 +22,12 @@ from quant_rabbit.paths import DEFAULT_PROFIT_PARTIAL_CLOSE_STATE
 from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 
 
-# Minimums are broker/execution-shape constants, not market predictions.
-# OANDA accepts integer FX units, but closing tiny sub-1000u remainders would
-# leave spread-dominated dust. Keep one micro-lot on the runner and round close
-# requests to 100u so fills stay operationally meaningful.
+# These are profit-partial workflow thresholds, not an entry-size floor.
+# OANDA accepts positive integer FX units and sub-1,000u positions remain valid.
+# The partial-close bot only splits positions from 2,000u upward and keeps a
+# 1,000u runner so it does not fragment a small profitable position into many
+# broker close transactions; smaller positions stay intact for their TP/normal
+# management path. Operators can override the workflow thresholds explicitly.
 MIN_POSITION_UNITS_FOR_PROFIT_PARTIAL = int(os.environ.get("QR_PROFIT_PARTIAL_MIN_UNITS", "2000"))
 MIN_RUNNER_UNITS_AFTER_PROFIT_PARTIAL = int(os.environ.get("QR_PROFIT_PARTIAL_MIN_RUNNER_UNITS", "1000"))
 PROFIT_PARTIAL_ROUND_UNITS = int(os.environ.get("QR_PROFIT_PARTIAL_ROUND_UNITS", "100"))

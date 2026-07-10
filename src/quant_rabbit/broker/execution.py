@@ -1601,6 +1601,17 @@ class LiveOrderGateway:
         )
         policy_path = intents_path.parent.parent / "config" / "predictive_scout_policy.json"
         policy = predictive_scout_policy(policy_path)
+        metadata = intent.metadata or {}
+        candidate_risk_jpy = _positive_float(
+            metadata.get("predictive_scout_fresh_actual_initial_risk_jpy")
+        )
+        broker_active_risk_jpy = _metadata_float(
+            metadata,
+            "predictive_scout_active_initial_risk_jpy",
+        )
+        concurrent_risk_cap_jpy = _positive_float(
+            metadata.get("predictive_scout_concurrent_risk_cap_jpy")
+        )
         try:
             max_daily = int(policy.get("max_sent_per_campaign_day"))
             max_concurrent = int(policy.get("max_concurrent"))
@@ -1619,6 +1630,16 @@ class LiveOrderGateway:
                 "refusing broker POST because predictive SCOUT reservation caps exceed the "
                 "canonical shared campaign limits",
             ).__dict__
+        if (
+            candidate_risk_jpy is None
+            or broker_active_risk_jpy is None
+            or broker_active_risk_jpy < 0.0
+            or concurrent_risk_cap_jpy is None
+        ):
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_POST_RESERVATION_FAILED",
+                "refusing broker POST because fresh candidate, broker-active, and concurrent-cap JPY risk are not durably available",
+            ).__dict__
         try:
             reservation = ExecutionLedger(
                 db_path=db_path,
@@ -1634,6 +1655,9 @@ class LiveOrderGateway:
                 max_daily=max_daily,
                 max_concurrent=max_concurrent,
                 broker_active_total=predictive_scout_concurrent_count(snapshot),
+                candidate_risk_jpy=candidate_risk_jpy,
+                broker_active_risk_jpy=broker_active_risk_jpy,
+                concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
                 broker_active_signal_ids=predictive_scout_broker_signal_ids(snapshot),
             )
         except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
@@ -1658,6 +1682,11 @@ class LiveOrderGateway:
                 "PREDICTIVE_SCOUT_CONCURRENT_CAP_REACHED_AT_RESERVATION",
                 f"atomic SCOUT reservation found {reservation.active_slots} broker/reflection-aware "
                 f"active slots already occupied (cap {max_concurrent})",
+            ).__dict__
+        if reservation.status == "CONCURRENT_RISK_CAP_REACHED":
+            return RiskIssue(
+                "PREDICTIVE_SCOUT_CONCURRENT_NAV_RISK_CAP_REACHED_AT_RESERVATION",
+                f"atomic SCOUT reservation found aggregate initial risk {reservation.aggregate_risk_jpy:.4f} JPY above current cap {reservation.concurrent_risk_cap_jpy:.4f} JPY",
             ).__dict__
         if not reservation.reserved:
             return RiskIssue(
@@ -1856,7 +1885,7 @@ def _scaled_units_for_intent(intent: OrderIntent, size_multiple: float) -> tuple
                 [
                     RiskIssue(
                         "PREDICTIVE_SCOUT_SIZE_MULTIPLE_FORBIDDEN",
-                        "predictive SCOUT is a fixed 1000u forward experiment; "
+                        "predictive SCOUT units are fixed by current-NAV/SL risk before verification; "
                         f"size_multiple must remain 1.0, received {size_multiple:.4g}",
                     )
                 ],
@@ -3265,6 +3294,13 @@ def _predictive_scout_verified_packet_mismatches(
         "sl": intent.sl,
         "forecast_cycle_id": str(metadata.get("forecast_cycle_id") or ""),
         "rule_digest": str(metadata.get("predictive_scout_rule_digest") or ""),
+        "risk_tier": str(metadata.get("predictive_scout_risk_tier") or "").upper(),
+        "planned_initial_risk_jpy": _optional_float(
+            metadata.get("predictive_scout_planned_initial_risk_jpy")
+        ),
+        "sizing_digest": str(
+            metadata.get("predictive_scout_sizing_digest") or ""
+        ),
         "generated_at_utc": str(metadata.get("predictive_scout_generated_at_utc") or ""),
         "expires_at_utc": str(metadata.get("predictive_scout_expires_at_utc") or ""),
     }
@@ -3278,6 +3314,11 @@ def _predictive_scout_verified_packet_mismatches(
         "sl": _optional_float(lane.get("sl")),
         "forecast_cycle_id": str(scout.get("forecast_cycle_id") or ""),
         "rule_digest": str(scout.get("rule_digest") or ""),
+        "risk_tier": str(scout.get("risk_tier") or "").upper(),
+        "planned_initial_risk_jpy": _optional_float(
+            scout.get("planned_initial_risk_jpy")
+        ),
+        "sizing_digest": str(scout.get("sizing_digest") or ""),
         "generated_at_utc": str(scout.get("generated_at_utc") or ""),
         "expires_at_utc": str(scout.get("expires_at_utc") or ""),
     }
@@ -3967,7 +4008,7 @@ def _selected_intent_is_self_improvement_profitability_repair(
             units = abs(int(intent.get("units")))
         except (TypeError, ValueError):
             return False
-        if units != MIN_PRODUCTION_LOT_UNITS:
+        if units < MIN_PRODUCTION_LOT_UNITS:
             return False
         if intent_matches_profitability_worst_segment(intent, worst_segment):
             return False
@@ -4159,6 +4200,7 @@ def _predictive_scout_receipt_from_intent(intent: OrderIntent) -> dict[str, Any]
     if not predictive_scout_intent_claimed(intent):
         return None
     rule = metadata.get("bidask_replay_precision_seed_rule")
+    risk_plan = metadata.get("predictive_scout_risk_plan")
     return {
         "predictive_scout": True,
         "predictive_scout_vehicle_id": predictive_scout_vehicle_id(intent),
@@ -4171,6 +4213,43 @@ def _predictive_scout_receipt_from_intent(intent: OrderIntent) -> dict[str, Any]
         "entry": intent.entry,
         "take_profit": intent.tp,
         "stop_loss": intent.sl,
+        "predictive_scout_risk_tier": metadata.get("predictive_scout_risk_tier"),
+        "predictive_scout_nav_jpy_at_sizing": metadata.get(
+            "predictive_scout_nav_jpy_at_sizing"
+        ),
+        "predictive_scout_max_risk_pct_nav": metadata.get(
+            "predictive_scout_max_risk_pct_nav"
+        ),
+        "predictive_scout_max_loss_jpy": metadata.get(
+            "predictive_scout_max_loss_jpy"
+        ),
+        "predictive_scout_effective_max_loss_jpy": metadata.get(
+            "predictive_scout_effective_max_loss_jpy"
+        ),
+        "predictive_scout_planned_initial_risk_jpy": metadata.get(
+            "predictive_scout_planned_initial_risk_jpy"
+        ),
+        "predictive_scout_planned_initial_risk_pct_nav": metadata.get(
+            "predictive_scout_planned_initial_risk_pct_nav"
+        ),
+        "predictive_scout_fresh_actual_initial_risk_jpy": metadata.get(
+            "predictive_scout_fresh_actual_initial_risk_jpy"
+        ),
+        "predictive_scout_active_initial_risk_jpy": metadata.get(
+            "predictive_scout_active_initial_risk_jpy"
+        ),
+        "predictive_scout_aggregate_initial_risk_jpy": metadata.get(
+            "predictive_scout_aggregate_initial_risk_jpy"
+        ),
+        "predictive_scout_concurrent_risk_cap_jpy": metadata.get(
+            "predictive_scout_concurrent_risk_cap_jpy"
+        ),
+        "predictive_scout_sizing_digest": metadata.get(
+            "predictive_scout_sizing_digest"
+        ),
+        "predictive_scout_risk_plan": (
+            dict(risk_plan) if isinstance(risk_plan, dict) else None
+        ),
         "forecast_cycle_id": metadata.get("forecast_cycle_id"),
         "forecast_direction": metadata.get("forecast_direction"),
         "forecast_confidence": metadata.get("forecast_confidence"),

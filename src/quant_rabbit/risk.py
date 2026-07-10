@@ -79,28 +79,14 @@ from .operator_manual import (
 # `/accounts/{id}/instruments` marginRate once that adapter is wired.
 OANDA_JP_RETAIL_FX_MARGIN_RATE = 0.04
 
-# Minimum order size (units) the production trader will emit or accept.
-#
-# What this represents: the lot size below which expected pip-target reward is
-# dominated by the OANDA spread cost on the round trip. At 1u in a JPY-quoted
-# pair the JPY-per-pip is 0.01 JPY; a 1.3-pip normal spread already costs more
-# than any realistic pip target captured at micro size, so the trade is
-# guaranteed to lose money once spread is paid. The 1000u floor matches the
-# existing rounding granularity used in `_risk_budgeted_units` (which floors
-# >=1000-units results to the nearest 1000) and the broker-supplied 1000u
-# default trade granularity for FX retail accounts.
-#
-# Why it is a constant rather than market-derived: spread × micro-lot
-# economics is a broker-policy reality, not a session-by-session market
-# condition. The floor moves only when the broker offers a fundamentally
-# different minimum trade size; intra-day liquidity does not change it.
-# Per AGENT_CONTRACT §3.5, this constant carries its (a)/(b)/(c) docstring
-# right here.
-#
-# What should replace it: if the broker contract changes (e.g. tighter
-# spreads + true micro-lot pricing where 100u becomes economic), revisit
-# this floor — do not bypass it in the moment.
-MIN_PRODUCTION_LOT_UNITS = 1000
+# OANDA has already accepted integer-size orders below 1,000 units on this
+# account (including 201u, 322u and 2u).  Lot size scales both gross reward and
+# spread cost linearly, so a sub-1,000 order is not intrinsically negative;
+# economic viability comes from the existing bid/ask spread, TP/SL geometry,
+# and post-cost expectancy gates.  The only broker-size floor is therefore one
+# integer unit.  Keep the historical name as a compatibility alias because it
+# is referenced across risk, sizing, and receipt code.
+MIN_PRODUCTION_LOT_UNITS = 1
 
 # Hedge timing metadata is an execution contract, not prompt-only prose.
 #
@@ -144,15 +130,11 @@ SPREAD_FLOOR_COMPARISON_EPSILON_PIPS = 1e-6
 
 
 def _min_lot_test_override_active() -> bool:
-    """Whether the production minimum-lot gate is disabled for the current
-    process.
+    """Legacy test switch retained for compatibility.
 
-    Production behavior: `MIN_PRODUCTION_LOT_UNITS` is enforced by both
-    `intent_generator._risk_budgeted_units` (sub-floor → 0 units → DRY_RUN_BLOCKED)
-    and `RiskEngine.validate` (`MIN_LOT_VIOLATION` BLOCK). Some unit tests
-    deliberately exercise sub-1000 unit fixtures (broker-API edge cases,
-    legacy receipt replay). They opt out by setting `QR_ALLOW_TEST_MICRO_LOT=1`
-    in the test's setUp.
+    The production floor is now the broker integer minimum (1u), so positive
+    integer test orders no longer need this override.  Older fixtures may
+    still set it harmlessly.
     """
     return os.environ.get("QR_ALLOW_TEST_MICRO_LOT", "").strip() in {
         "1", "true", "TRUE", "yes", "YES",
@@ -788,7 +770,11 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             and original_cap is not None
             and original_cap < proof_cap <= normal_cap
             and metrics.risk_jpy <= proof_cap + 1e-9
-            and _loss_asymmetry_tp_proof_collection_shape_allowed(intent, metadata)
+            and _loss_asymmetry_tp_proof_collection_shape_allowed(
+                intent,
+                metadata,
+                metrics,
+            )
         ):
             return []
     if mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE:
@@ -801,7 +787,11 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             and original_cap is not None
             and original_cap < proof_cap <= normal_cap
             and metrics.risk_jpy <= proof_cap + 1e-9
-            and _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(intent, metadata)
+            and _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
+                intent,
+                metadata,
+                metrics,
+            )
         ):
             return []
     if (
@@ -893,6 +883,7 @@ def _loss_asymmetry_tp_relaxation_shape_allowed(
 def _loss_asymmetry_tp_proof_collection_shape_allowed(
     intent: OrderIntent,
     metadata: dict,
+    metrics: RiskMetrics,
 ) -> bool:
     """Validate thin exact TP proof before allowing min-lot evidence collection."""
 
@@ -912,6 +903,16 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
         "PAIR_SIDE_METHOD_VEHICLE",
         "PAIR_SIDE_METHOD",
     }:
+        return False
+    if metadata.get("positive_rotation_proof_collection_min_lot_sizing") is not True:
+        return False
+    if not _exact_min_lot_cap_lift_matches(
+        intent,
+        metadata,
+        metrics,
+        units_key="positive_rotation_proof_collection_min_lot_units",
+        loss_key="positive_rotation_proof_collection_min_lot_loss_jpy",
+    ):
         return False
     tp_trades = _to_int(metadata.get("capture_take_profit_trades"))
     tp_wins = _to_int(metadata.get("capture_take_profit_wins"))
@@ -950,6 +951,7 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
 def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
     intent: OrderIntent,
     metadata: dict,
+    metrics: RiskMetrics,
 ) -> bool:
     """Validate OANDA firepower min-lot metadata before accepting the cap lift."""
 
@@ -986,7 +988,65 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
     min_lot_units = _to_int(metadata.get("positive_rotation_oanda_campaign_min_lot_units"))
     if min_lot_loss is None or effective_cap is None or min_lot_loss > effective_cap + 1e-9:
         return False
-    return min_lot_units == MIN_PRODUCTION_LOT_UNITS
+    if min_lot_units != MIN_PRODUCTION_LOT_UNITS:
+        return False
+    return _exact_min_lot_cap_lift_matches(
+        intent,
+        metadata,
+        metrics,
+        units_key="positive_rotation_oanda_campaign_min_lot_units",
+        loss_key="positive_rotation_oanda_campaign_min_lot_loss_jpy",
+    )
+
+
+def _exact_min_lot_cap_lift_matches(
+    intent: OrderIntent,
+    metadata: dict,
+    metrics: RiskMetrics,
+    *,
+    units_key: str,
+    loss_key: str,
+) -> bool:
+    """Bind a legacy minimum-size cap lift to the exact 1u receipt.
+
+    These narrow evidence-collection modes may only lift an average-winner
+    cap enough to fund the current broker minimum.  After the production floor
+    moved from 1,000u to 1u, accepting an old 1,000u metadata packet would turn
+    that exception into a large risk-cap bypass.  Require the actual order,
+    declared units, declared minimum loss, effective cap, and freshly computed
+    RiskEngine loss to describe the same one-unit exposure.
+    """
+
+    actual_units = abs(int(intent.units))
+    declared_units = _to_int(metadata.get(units_key))
+    declared_loss = _to_float(metadata.get(loss_key))
+    effective_cap = _to_float(
+        metadata.get("loss_asymmetry_guard_effective_max_loss_jpy")
+    )
+    if (
+        actual_units != MIN_PRODUCTION_LOT_UNITS
+        or declared_units != MIN_PRODUCTION_LOT_UNITS
+        or declared_loss is None
+        or declared_loss <= 0.0
+        or effective_cap is None
+        or effective_cap <= 0.0
+        or metrics.risk_jpy <= 0.0
+    ):
+        return False
+    return bool(
+        math.isclose(
+            declared_loss,
+            metrics.risk_jpy,
+            rel_tol=1e-6,
+            abs_tol=1e-4,
+        )
+        and math.isclose(
+            effective_cap,
+            declared_loss,
+            rel_tol=1e-6,
+            abs_tol=1e-4,
+        )
+    )
 
 
 def _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
@@ -2093,7 +2153,7 @@ class RiskPolicy:
     #     explicit operator pace, or improve strategy expectancy so backtest
     #     pace falls naturally below the cap.
     max_target_trades_per_day: int | None = 30
-    # Floor on per_trade_risk_budget as a fraction of starting equity.
+    # Floor on per_trade_risk_budget as a fraction of the latest broker NAV.
     # (a) market reality: the per-trade slice must fund a position whose
     #     ATR-derived TP meaningfully exceeds round-trip spread, or every
     #     "win" is noise-scale. The old 0.05% floor (~100 JPY at 200k NAV)
@@ -2296,26 +2356,6 @@ class RiskEngine:
             issues.append(RiskIssue("OWNER_NOT_TRADER", f"order owner must be trader, got {intent.owner.value}"))
         if intent.units <= 0:
             issues.append(RiskIssue("BAD_UNITS", f"units must be positive, got {intent.units}"))
-        # Fix C (2026-05-12) defense-in-depth: even if intent_generator's
-        # Fix B path is bypassed (manual stage-live-order, replayed legacy
-        # receipt, ad-hoc CLI scripts), the gateway must refuse sub-floor
-        # lots. Sub-MIN_PRODUCTION_LOT_UNITS lots cannot capture a pip
-        # target larger than the broker spread on the round trip, so the
-        # trade is structurally unprofitable. `QR_ALLOW_TEST_MICRO_LOT=1`
-        # disables this for fixtures that intentionally exercise micro
-        # sizes.
-        if (
-            0 < abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS
-            and not _min_lot_test_override_active()
-        ):
-            issues.append(
-                RiskIssue(
-                    "MIN_LOT_VIOLATION",
-                    f"order size {abs(int(intent.units))}u is below the "
-                    f"{MIN_PRODUCTION_LOT_UNITS}u production floor; round-trip "
-                    "spread cost would dominate any realistic pip target.",
-                )
-            )
         if not intent.thesis.strip():
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(_hedge_metadata_issues(intent))

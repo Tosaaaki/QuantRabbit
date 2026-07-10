@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "enabled": true,
   "mode": "FORWARD_EVIDENCE_ONLY",
   "allowed_sources": [
@@ -8,9 +8,27 @@
   "order_types": [
     "LIMIT"
   ],
-  "units": 1000,
+  "risk_tiers": {
+    "DISCOVERY": {
+      "max_risk_pct_nav": 0.1
+    },
+    "EMERGING": {
+      "max_risk_pct_nav": 0.25
+    },
+    "ESTABLISHED": {
+      "max_risk_pct_nav": 0.5
+    },
+    "STRONG": {
+      "max_risk_pct_nav": 0.75
+    },
+    "PROVEN": {
+      "max_risk_pct_nav": 1.0
+    }
+  },
+  "max_per_trade_risk_pct_nav": 1.0,
+  "max_concurrent_risk_pct_nav": 2.0,
   "max_concurrent": 2,
-  "max_sent_per_campaign_day": 8,
+  "max_sent_per_campaign_day": 30,
   "max_ttl_minutes": 90,
   "minimum_replay_samples": 30,
   "minimum_active_days": 5,
@@ -25,5 +43,5 @@
   "promotion_min_positive_day_rate": 0.6667,
   "promotion_one_sided_confidence": 0.95,
   "promotion_requires_all_resolved_exit_expectancy_lower_bound_positive": true,
-  "notes": "This policy authorizes continuous bounded 1000u forward evidence collection from reproducible contrarian forecast-failure hypotheses only. Historical S5 PF is immediate-entry hypothesis evidence, not proof of the passive LIMIT vehicle. Every vehicle+forecast-cycle signal is atomically claimed before POST; the fixed attached TP/SL is not modified by adaptive position paths. A loss forces six-hour backoff; three losses with cumulative negative net quarantine the stable selector/exit vehicle. Promotion requires all resolved forward exits with no duplicate-signal anomaly; this policy does not permit MARKET entries or relax spread/news/margin/guardian gates."
+  "notes": "This policy authorizes continuous bounded current-NAV/SL-risk-sized forward evidence collection from reproducible contrarian forecast-failure hypotheses only. Historical S5 PF is immediate-entry hypothesis evidence, not proof of the passive LIMIT vehicle. DISCOVERY starts at no more than 0.10% current NAV risk; only normalized exact-vehicle forward R evidence can step the cap toward 1.00%. OANDA integer units down to 1u are allowed when spread, geometry, post-cost expectancy, and every risk gate pass; small absolute contribution is compensated through up to the campaign target pace of 30 independent reservations, never by bypassing cooldown or duplicate-signal rules. Every vehicle+forecast-cycle signal is atomically claimed before POST; the attached TP/SL and verifier-bound units are not modified by adaptive position paths. A loss forces six-hour backoff; three losses with cumulative negative net quarantine the stable selector/exit vehicle. Promotion requires all resolved forward exits with no duplicate-signal anomaly; this policy does not permit MARKET entries or relax spread/news/margin/guardian gates."
 }

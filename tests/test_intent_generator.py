@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.models import (
+    AccountSummary,
     BrokerSnapshot,
     MarketContext,
     OrderIntent,
@@ -25,7 +27,6 @@ from quant_rabbit.models import (
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
-    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
     MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
@@ -48,10 +49,12 @@ from quant_rabbit.strategy.intent_generator import (
     _oanda_campaign_firepower_shape_matches_method,
     _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
+    _predictive_scout_nav_risk_metadata,
     _range_indicators_for_lane,
     _range_seed_direction,
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
+    _risk_budgeted_units,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLaneLossStreak, SameDayLossStreak
 from tests.support_bidask_rules import (
@@ -987,6 +990,94 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_tp_pips"], 10.0)
         self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_stop_pips"], 7.0)
 
+    def test_predictive_scout_discovery_units_derive_from_current_nav_and_stop_distance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            config_root = root / "config"
+            data_root.mkdir()
+            config_root.mkdir()
+            policy = json.loads(
+                (Path(__file__).parents[1] / "config" / "predictive_scout_policy.json").read_text()
+            )
+            (config_root / "predictive_scout_policy.json").write_text(
+                json.dumps(policy),
+                encoding="utf-8",
+            )
+            ExecutionLedger(
+                db_path=data_root / "execution_ledger.db",
+                report_path=root / "execution_ledger.md",
+            )._init_db()
+            now = datetime(2026, 7, 10, 3, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "USD_CAD": Quote("USD_CAD", bid=1.4158, ask=1.4159, timestamp_utc=now),
+                },
+                account=AccountSummary(
+                    nav_jpy=200_000.0,
+                    balance_jpy=200_000.0,
+                    margin_available_jpy=200_000.0,
+                    last_transaction_id="100",
+                    fetched_at_utc=now,
+                ),
+                home_conversions={"CAD": 108.0},
+            )
+            lane = {
+                "predictive_scout": True,
+                "desk": "failure_trader",
+                "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT",
+                "forecast_cycle_id": "cycle-current-nav",
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.55,
+                "forecast_horizon_min": 45,
+                "bidask_replay_precision_seed_rule": {
+                    "forecast_direction": "DOWN",
+                    "faded_direction": "DOWN",
+                    "horizon_bucket": "31-60m",
+                    "confidence_bucket": "0.50-0.65",
+                    "granularity": "S5",
+                },
+            }
+            runtime_metadata = {
+                "predictive_scout": True,
+                "predictive_scout_source": "BIDASK_REPLAY_PRECISION",
+                "predictive_scout_rule_name": "unit-test-rule",
+                "predictive_scout_rule_digest": "unit-test-digest",
+            }
+
+            metadata, max_loss_jpy = _predictive_scout_nav_risk_metadata(
+                lane,
+                pair="USD_CAD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                method=TradeMethod.BREAKOUT_FAILURE,
+                entry=1.4159,
+                tp=1.4169,
+                sl=1.4152,
+                snapshot=snapshot,
+                runtime_metadata=runtime_metadata,
+                data_root=data_root,
+            )
+            units = _risk_budgeted_units(
+                "USD_CAD",
+                1.4159,
+                1.4152,
+                max_loss_jpy=float(max_loss_jpy or 0.0),
+                snapshot=snapshot,
+                side=Side.LONG,
+                loss_budget_target=True,
+            )
+
+        self.assertEqual(metadata["predictive_scout_nav_risk_plan_status"], "READY")
+        self.assertEqual(metadata["predictive_scout_risk_tier"], "DISCOVERY")
+        self.assertEqual(metadata["predictive_scout_nav_jpy_at_sizing"], 200_000.0)
+        self.assertEqual(max_loss_jpy, 200.0)
+        risk_per_unit_jpy = abs(1.4159 - 1.4152) * 108.0
+        self.assertEqual(units, 2645)
+        self.assertLessEqual(units * risk_per_unit_jpy, max_loss_jpy)
+        self.assertGreater((units + 1) * risk_per_unit_jpy, max_loss_jpy)
+
     def test_predictive_scout_loss_warn_uses_exact_vehicle_gate_without_blocking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1312,7 +1403,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
-    def test_min_lot_diagnostic_uses_loss_asymmetry_effective_cap(self) -> None:
+    def test_sub1000_sizing_uses_loss_asymmetry_effective_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "capture_economics.json").write_text(
@@ -1345,11 +1436,12 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
-        self.assertEqual(result["intent"]["units"], 0)
+        self.assertEqual(result["intent"]["units"], 125)
         self.assertEqual(metadata["max_loss_jpy"], 50.0)
-        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+        self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
         self.assertNotIn("MIN_LOT_SIZE_UNAVAILABLE", issue_codes)
-        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", result["live_blocker_codes"])
+        self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+        self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
         self.assertNotIn("BAD_UNITS", result["live_blocker_codes"])
 
     def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
@@ -1904,7 +1996,7 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(path, packaged)
 
-    def test_matching_oanda_campaign_firepower_can_lift_avg_win_cap_to_min_lot(self) -> None:
+    def test_matching_oanda_campaign_firepower_does_not_need_one_unit_floor_lift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_oanda_campaign_firepower_report(root, exit_shape="tp2_sl1")
@@ -1961,15 +2053,11 @@ class IntentGeneratorTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
             self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
-            self.assertEqual(result["intent"]["units"], 1000)
+            self.assertEqual(result["intent"]["units"], 398)
             self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 50.0)
-            self.assertEqual(
-                metadata["loss_asymmetry_guard_mode"],
-                LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
-            )
-            self.assertGreater(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
-            self.assertLessEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_min_lot_sizing"])
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
+            self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
             self.assertEqual(
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
@@ -1982,7 +2070,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 result["live_blocker_codes"],
             )
 
-    def test_non_matching_oanda_campaign_firepower_does_not_lift_min_lot(self) -> None:
+    def test_non_matching_oanda_campaign_firepower_keeps_avg_win_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_oanda_campaign_firepower_report(root, pair="GBP_USD", side="SHORT")
@@ -2020,10 +2108,10 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
-            self.assertEqual(result["intent"]["units"], 0)
+            self.assertEqual(result["intent"]["units"], 398)
             self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
-            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
 
     def test_oanda_campaign_firepower_requires_current_exit_shape_match(self) -> None:
@@ -2075,7 +2163,7 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
-            self.assertEqual(result["intent"]["units"], 0)
+            self.assertEqual(result["intent"]["units"], 398)
             self.assertEqual(metadata["oanda_campaign_exit_shape"], "tp1_sl1")
             self.assertFalse(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
             self.assertEqual(metadata["positive_rotation_oanda_campaign_current_reward_risk"], 2.0)
@@ -2092,7 +2180,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 metadata["positive_rotation_oanda_campaign_vehicle_mismatch_reason"],
             )
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
-            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
 
     def test_oanda_campaign_firepower_requires_lane_vehicle_identity(self) -> None:
@@ -2142,8 +2230,9 @@ class IntentGeneratorTest(unittest.TestCase):
                 "not allowed by the lane vehicle identity",
                 metadata["positive_rotation_oanda_campaign_vehicle_mismatch_reason"],
             )
+            self.assertEqual(result["intent"]["units"], 398)
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
-            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
 
     def test_oanda_campaign_vehicle_reprice_reports_deeper_limit_entry(self) -> None:
@@ -2555,7 +2644,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_by_code)
             self.assertNotIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, result["live_blocker_codes"])
 
-    def test_thin_tp_collection_lifts_only_to_min_lot_when_cap_blocks_evidence(self) -> None:
+    def test_thin_tp_collection_uses_sub1000_units_without_floor_lift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "capture_economics.json").write_text(
@@ -2618,13 +2707,12 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_by_code = {issue["code"]: issue for issue in result["risk_issues"]}
 
-            self.assertEqual(result["intent"]["units"], 1000)
+            self.assertEqual(result["intent"]["units"], 398)
             self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 50.0)
-            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "TP_PROOF_COLLECTION_MIN_LOT")
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
             self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
-            self.assertGreater(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
-            self.assertLessEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
-            self.assertTrue(metadata["positive_rotation_proof_collection_min_lot_sizing"])
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
+            self.assertNotIn("positive_rotation_proof_collection_min_lot_sizing", metadata)
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROOF_COLLECTION_HARVEST")
             self.assertTrue(metadata["positive_rotation_proof_collection_ready"])
             self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_by_code)
@@ -2958,7 +3046,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
-    def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
+    def test_sub1000_sizing_uses_loss_streak_adjusted_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data_root = root / "data"
@@ -2988,12 +3076,13 @@ class IntentGeneratorTest(unittest.TestCase):
             result = payload["results"][0]
 
         issue_codes = {item["code"] for item in result["risk_issues"]}
-        self.assertEqual(result["intent"]["units"], 0)
-        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+        self.assertEqual(result["intent"]["units"], 628)
+        self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
         self.assertNotIn("MIN_LOT_SIZE_UNAVAILABLE", issue_codes)
-        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", result["live_blocker_codes"])
+        self.assertIn("SAME_DAY_LOSS_STREAK", issue_codes)
+        self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", result["live_blocker_codes"])
         self.assertNotIn("BAD_UNITS", result["live_blocker_codes"])
-        self.assertTrue(any("loss budget can only fund" in blocker for blocker in result["live_blockers"]))
+        self.assertFalse(any("loss budget can only fund" in blocker for blocker in result["live_blockers"]))
         self.assertFalse(any("units must be positive" in blocker for blocker in result["live_blockers"]))
 
     def test_forecast_seed_telemetry_skips_stale_quote(self) -> None:
@@ -14231,14 +14320,12 @@ class NavPctSizingTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
 
 
-class MinLotFloorIntentTest(unittest.TestCase):
-    """Coverage for 2026-05-12 emergency fix B in
-    `_risk_budgeted_units` + the `MARGIN_TOO_THIN_FOR_MIN_LOT` BLOCK that
-    the intent_generator now emits when the budget can only fund a
-    sub-`MIN_PRODUCTION_LOT_UNITS` lot. The bug surfaced when 470901 (201u
-    EUR/USD), 470904 (322u AUD/JPY), 470907 (2u GBP/USD) all filled at
-    micro size after a tight-margin cycle. Each lot's round-trip spread
-    cost exceeded any realistic pip target — guaranteed-loss trades.
+class IntegerUnitSizingIntentTest(unittest.TestCase):
+    """Coverage for integer-unit sizing and the true one-unit budget floor.
+
+    OANDA accepts whole FX units, so viable sub-1000u orders must retain their
+    loss- and margin-bounded size. Zero units are reserved for geometry whose
+    effective loss or margin budget cannot fund even one whole unit.
     """
 
     def _stub_snapshot(self, margin_used: float = 0.0, margin_available: float = 200000.0, positions=()):
@@ -14267,20 +14354,8 @@ class MinLotFloorIntentTest(unittest.TestCase):
             ),
         )
 
-    def setUp(self) -> None:
-        import os
-        self._prior = os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
-
-    def tearDown(self) -> None:
-        import os
-        if self._prior is None:
-            os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
-        else:
-            os.environ["QR_ALLOW_TEST_MICRO_LOT"] = self._prior
-
-    def test_risk_budgeted_units_returns_zero_when_budget_subfloor(self) -> None:
-        # Budget so small that loss_budget_units < 1000.
-        # max_loss_jpy=50 JPY, stop ≈ 20 pip → loss_budget ≈ 159 units.
+    def test_risk_budgeted_units_returns_sub1000_integer_when_budget_supports_it(self) -> None:
+        # max_loss_jpy=50 JPY, stop ≈ 20 pip → loss budget ≈ 159 units.
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
         units = _risk_budgeted_units(
             "EUR_USD",
@@ -14289,9 +14364,20 @@ class MinLotFloorIntentTest(unittest.TestCase):
             max_loss_jpy=50.0,
             snapshot=self._stub_snapshot(),
         )
+        self.assertEqual(units, 159)
+
+    def test_risk_budgeted_units_returns_zero_when_loss_budget_is_below_one_unit(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=0.1,
+            snapshot=self._stub_snapshot(),
+        )
         self.assertEqual(units, 0)
 
-    def test_min_lot_block_reports_loss_budget_subfloor_separately_from_margin(self) -> None:
+    def test_unit_floor_block_reports_loss_budget_below_one_separately_from_margin(self) -> None:
         from quant_rabbit.models import Side
         from quant_rabbit.strategy.intent_generator import _min_lot_block_issue
 
@@ -14299,7 +14385,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
             pair="EUR_USD",
             entry=1.17290,
             sl=1.17490,
-            max_loss_jpy=50.0,
+            max_loss_jpy=0.1,
             snapshot=self._stub_snapshot(margin_available=200000.0),
             side=Side.SHORT,
         )
@@ -14308,7 +14394,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
         self.assertIn("loss budget", issue["message"])
         self.assertNotIn("margin headroom", issue["message"])
 
-    def test_min_lot_block_still_reports_margin_subfloor_when_margin_is_the_cap(self) -> None:
+    def test_unit_floor_block_reports_margin_below_one_when_margin_is_the_cap(self) -> None:
         from quant_rabbit.models import Side
         from quant_rabbit.strategy.intent_generator import _min_lot_block_issue
 
@@ -14317,14 +14403,14 @@ class MinLotFloorIntentTest(unittest.TestCase):
             entry=1.17290,
             sl=1.17490,
             max_loss_jpy=2000.0,
-            snapshot=self._stub_snapshot(margin_available=10.0),
+            snapshot=self._stub_snapshot(margin_available=1.0),
             side=Side.SHORT,
         )
 
         self.assertEqual(issue["code"], "MARGIN_TOO_THIN_FOR_MIN_LOT")
         self.assertIn("margin headroom", issue["message"])
 
-    def test_min_lot_block_reports_combined_loss_and_margin_subfloor(self) -> None:
+    def test_unit_floor_block_reports_combined_loss_and_margin_below_one(self) -> None:
         from quant_rabbit.models import Side
         from quant_rabbit.strategy.intent_generator import _min_lot_block_issue
 
@@ -14332,8 +14418,8 @@ class MinLotFloorIntentTest(unittest.TestCase):
             pair="EUR_USD",
             entry=1.17290,
             sl=1.17490,
-            max_loss_jpy=50.0,
-            snapshot=self._stub_snapshot(margin_available=10.0),
+            max_loss_jpy=0.1,
+            snapshot=self._stub_snapshot(margin_available=1.0),
             side=Side.SHORT,
         )
 
@@ -14378,7 +14464,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
 
-        self.assertEqual(units, 6_000)
+        self.assertEqual(units, 6_369)
 
     def test_risk_budgeted_units_ignores_manual_opposing_units_for_hedge_target(self) -> None:
         import os
@@ -14432,7 +14518,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
 
-        self.assertEqual(units, 1_000)
+        self.assertEqual(units, 1_300)
 
     def test_risk_budgeted_units_uses_manual_exposure_for_broker_margin_offset(self) -> None:
         import os
@@ -14669,8 +14755,8 @@ class MinLotFloorIntentTest(unittest.TestCase):
         self.assertEqual(with_move["same_pair_add_type"], "PYRAMID_WITH_MOVE")
         self.assertEqual(with_move["same_pair_with_move_add_pips"], 8.0)
 
-    def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
-        # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
+    def test_risk_budgeted_units_preserves_integer_precision_near_1000(self) -> None:
+        # max_loss_jpy ~315 JPY → loss budget ≈ 1003 whole units.
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
         units = _risk_budgeted_units(
             "EUR_USD",
@@ -14679,10 +14765,9 @@ class MinLotFloorIntentTest(unittest.TestCase):
             max_loss_jpy=315.0,
             snapshot=self._stub_snapshot(),
         )
-        self.assertGreaterEqual(units, 1000)
-        self.assertEqual(units % 1000, 0)  # rounded down to 1000-step
+        self.assertEqual(units, 1003)
 
-    def test_risk_budgeted_units_returns_5000_for_clear_budget(self) -> None:
+    def test_risk_budgeted_units_preserves_integer_precision_for_clear_budget(self) -> None:
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
         units = _risk_budgeted_units(
             "EUR_USD",
@@ -14691,8 +14776,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
             max_loss_jpy=2000.0,
             snapshot=self._stub_snapshot(),
         )
-        self.assertGreaterEqual(units, 5000)
-        self.assertEqual(units % 1000, 0)
+        self.assertEqual(units, 6369)
 
     def test_loss_budget_target_can_exceed_base_units_under_sl_free(self) -> None:
         import os
@@ -14726,23 +14810,20 @@ class MinLotFloorIntentTest(unittest.TestCase):
                 os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior_nav_pct
 
         self.assertEqual(normal_units, 3000)
-        self.assertGreater(event_units, normal_units)
-        self.assertEqual(event_units % 1000, 0)
+        self.assertEqual(event_units, 6369)
 
-    def test_test_micro_lot_override_restores_legacy_fallback(self) -> None:
+    def test_legacy_micro_lot_env_does_not_change_integer_sizing(self) -> None:
         import os
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
-        os.environ["QR_ALLOW_TEST_MICRO_LOT"] = "1"
-        units = _risk_budgeted_units(
-            "EUR_USD",
-            entry=1.17290,
-            sl=1.17490,
-            max_loss_jpy=50.0,
-            snapshot=self._stub_snapshot(),
-        )
-        # Override active → falls back to legacy `max(1, int(max_units))`.
-        self.assertGreater(units, 0)
-        self.assertLess(units, 1000)
+        with patch.dict(os.environ, {"QR_ALLOW_TEST_MICRO_LOT": "1"}):
+            units = _risk_budgeted_units(
+                "EUR_USD",
+                entry=1.17290,
+                sl=1.17490,
+                max_loss_jpy=50.0,
+                snapshot=self._stub_snapshot(),
+            )
+        self.assertEqual(units, 159)
 
     def test_account_none_keeps_legacy_fallback_for_test_fixtures(self) -> None:
         # Fixture-style snapshot without an account must not trigger the

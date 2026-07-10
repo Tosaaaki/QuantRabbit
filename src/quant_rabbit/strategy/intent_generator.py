@@ -30,7 +30,9 @@ from quant_rabbit.predictive_scout import (
     PREDICTIVE_SCOUT_SOURCE,
     predictive_scout_intent_issues,
     predictive_scout_metadata_supported,
+    predictive_scout_nav_risk_plan,
     predictive_scout_policy,
+    predictive_scout_sizing_digest,
 )
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
@@ -3260,12 +3262,89 @@ def _predictive_scout_runtime_metadata(
         "predictive_scout_generated_at_utc": generated_at.isoformat(),
         "predictive_scout_expires_at_utc": expires_at.isoformat(),
         "predictive_scout_ttl_minutes": ttl_minutes,
-        "predictive_scout_units": MIN_PRODUCTION_LOT_UNITS,
         "predictive_scout_policy_schema_version": policy.get("schema_version"),
         "predictive_scout_promotion_allowed": False,
         "broker_stop_loss_mode": "INTENT_SL",
         "predictive_scout_live_permission_claimed": False,
     }
+
+
+def _predictive_scout_nav_risk_metadata(
+    lane: dict[str, Any],
+    *,
+    pair: str,
+    side: Side,
+    order_type: OrderType,
+    method: TradeMethod,
+    entry: float,
+    tp: float,
+    sl: float,
+    snapshot: BrokerSnapshot,
+    runtime_metadata: dict[str, Any],
+    data_root: Path | None,
+) -> tuple[dict[str, Any], float | None]:
+    """Resolve the exact-vehicle current-NAV cap before GPT verification."""
+
+    if lane.get("predictive_scout") is not True:
+        return {}, None
+    root = data_root or (ROOT / "data")
+    provisional_metadata = {
+        "desk": lane.get("desk"),
+        "campaign_role": lane.get("campaign_role"),
+        "bidask_replay_precision_seed_rule": lane.get(
+            "bidask_replay_precision_seed_rule"
+        ),
+        "forecast_cycle_id": lane.get("forecast_cycle_id"),
+        "forecast_direction": lane.get("forecast_direction"),
+        "forecast_confidence": lane.get("forecast_confidence"),
+        "forecast_horizon_min": lane.get("forecast_horizon_min"),
+        **runtime_metadata,
+    }
+    provisional = OrderIntent(
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        units=MIN_PRODUCTION_LOT_UNITS,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        thesis="predictive SCOUT NAV-risk sizing probe",
+        owner=Owner.TRADER,
+        market_context=MarketContext(
+            regime="predictive SCOUT sizing",
+            narrative="exact-vehicle forward risk tier",
+            chart_story="pre-verifier sizing probe",
+            method=method,
+            invalidation="canonical intent SL",
+        ),
+        metadata=provisional_metadata,
+    )
+    plan = predictive_scout_nav_risk_plan(
+        provisional,
+        snapshot=snapshot,
+        execution_ledger_db_path=root / "execution_ledger.db",
+        policy_path=root.parent / "config" / "predictive_scout_policy.json",
+    )
+    max_loss = _optional_float(plan.get("max_loss_jpy"))
+    status = str(plan.get("status") or "UNAVAILABLE").upper()
+    metadata: dict[str, Any] = {
+        "predictive_scout_nav_risk_plan_status": status,
+        "predictive_scout_risk_plan": dict(plan),
+        "predictive_scout_risk_tier": plan.get("tier"),
+        "predictive_scout_nav_jpy_at_sizing": plan.get("nav_jpy"),
+        "predictive_scout_max_risk_pct_nav": plan.get("max_risk_pct_nav"),
+        "predictive_scout_max_loss_jpy": plan.get("max_loss_jpy"),
+        "predictive_scout_normalized_resolved_count": plan.get("resolved_count"),
+        "predictive_scout_raw_resolved_count": plan.get("raw_resolved_count"),
+        "predictive_scout_net_r": plan.get("net_r"),
+        "predictive_scout_profit_factor_r": plan.get("profit_factor_r"),
+        "predictive_scout_one_sided_95_mean_lower_r": plan.get(
+            "one_sided_95_mean_lower_r"
+        ),
+    }
+    if status != "READY" or max_loss is None or max_loss <= 0.0:
+        return metadata, 0.0
+    return metadata, max_loss
 
 
 def _record_forecast_seed_telemetry(
@@ -5570,13 +5649,10 @@ class IntentGenerator:
             )
             # Force DRY_RUN_BLOCKED downstream.
             risk_allowed = False
-        # Fix B (2026-05-12): _risk_budgeted_units returns 0 when the
-        # current margin headroom can only support a sub-1000u lot. Surface
-        # that as a BLOCK so the intent becomes DRY_RUN_BLOCKED — never
-        # LIVE_READY — and the gateway never receives a fillable receipt at
-        # an unprofitable lot size. 2026-05-12T07:46 UTC produced 201u
-        # EUR_USD, 322u AUD_JPY, 2u GBP_USD entries whose spread cost
-        # dominated any pip target; this gate stops the same pattern.
+        # `_risk_budgeted_units` returns 0 only when the loss or margin budget
+        # cannot fund even one broker integer unit. Sub-1,000 positive sizes
+        # are valid; their spread economics are judged by the same per-unit
+        # spread/TP/post-cost gates as larger orders.
         if int(intent.units) == 0 and not _min_lot_test_override_active():
             intent_max_loss_jpy = _optional_float((intent.metadata or {}).get("max_loss_jpy"))
             min_lot_issue = _min_lot_block_issue(
@@ -6623,7 +6699,7 @@ def _loss_asymmetry_tp_proof_collection_min_lot_plan(
 
     A 5-19 trade exact TP sample is not "proved" enough to use the normal
     TP_PROVEN_RELAXED cap. But if Wilson-stressed expectancy is positive and the
-    current loss-asymmetry cap cannot even fund 1000u, the stated proof
+    current loss-asymmetry cap cannot even fund one broker integer unit, the stated proof
     collection path is otherwise unreachable. This helper permits only the
     minimum loss budget required for the production lot, and only while that
     budget remains inside the normal equity-derived per-trade cap.
@@ -8966,7 +9042,7 @@ def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
         return False
     if intent.order_type != OrderType.LIMIT or intent.entry is None:
         return False
-    if abs(int(intent.units)) != MIN_PRODUCTION_LOT_UNITS:
+    if abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS:
         return False
     if not _non_market_attached_harvest_shape(intent):
         return False
@@ -9034,11 +9110,6 @@ def _intent_from_lane(
         chart_context=chart_context,
         lane=lane,
     )
-    if lane.get("predictive_scout") is True:
-        # Forward evidence starts at the broker production floor.  The normal
-        # loss and margin budgets may still reduce this to zero and block it;
-        # they must never scale a SCOUT above the minimum lot.
-        recovery_target_units = MIN_PRODUCTION_LOT_UNITS
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
         side=side,
@@ -9378,6 +9449,32 @@ def _intent_from_lane(
         snapshot=snapshot,
         data_root=data_root,
     )
+    predictive_scout_risk_metadata, predictive_scout_max_loss_jpy = (
+        _predictive_scout_nav_risk_metadata(
+            lane,
+            pair=pair,
+            side=side,
+            order_type=order_type,
+            method=method,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            snapshot=snapshot,
+            runtime_metadata=predictive_scout_metadata,
+            data_root=data_root,
+        )
+    )
+    predictive_scout_metadata.update(predictive_scout_risk_metadata)
+    if predictive_scout_max_loss_jpy is not None:
+        effective_max_loss_jpy = (
+            min(effective_max_loss_jpy, predictive_scout_max_loss_jpy)
+            if predictive_scout_max_loss_jpy > 0.0
+            else 0.0
+        )
+        predictive_scout_metadata["predictive_scout_effective_max_loss_jpy"] = round(
+            effective_max_loss_jpy,
+            4,
+        )
     geometry_metadata = _geometry_metadata(
         pair,
         side,
@@ -9415,8 +9512,44 @@ def _intent_from_lane(
         side=side,
         position_intent=position_intent,
         target_units_override=recovery_target_units,
-        loss_budget_target=bool(macro_event_sizing_metadata.get("macro_event_size_up")),
+        loss_budget_target=bool(
+            macro_event_sizing_metadata.get("macro_event_size_up")
+            or lane.get("predictive_scout") is True
+        ),
     )
+    if lane.get("predictive_scout") is True:
+        planned_risk_per_min_lot = _min_lot_loss_budget_jpy(
+            pair=pair,
+            entry=entry,
+            sl=sl,
+            snapshot=snapshot,
+        )
+        planned_initial_risk_jpy = (
+            planned_risk_per_min_lot
+            * (abs(int(units)) / MIN_PRODUCTION_LOT_UNITS)
+            if planned_risk_per_min_lot is not None and units >= MIN_PRODUCTION_LOT_UNITS
+            else None
+        )
+        sizing_nav = _optional_float(
+            predictive_scout_metadata.get("predictive_scout_nav_jpy_at_sizing")
+        )
+        predictive_scout_metadata.update(
+            {
+                "predictive_scout_units": abs(int(units)),
+                "predictive_scout_planned_initial_risk_jpy": (
+                    round(planned_initial_risk_jpy, 4)
+                    if planned_initial_risk_jpy is not None
+                    else None
+                ),
+                "predictive_scout_planned_initial_risk_pct_nav": (
+                    round((planned_initial_risk_jpy / sizing_nav) * 100.0, 6)
+                    if planned_initial_risk_jpy is not None
+                    and sizing_nav is not None
+                    and sizing_nav > 0.0
+                    else None
+                ),
+            }
+        )
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
     required_receipt, watch_override_reason = _forecast_watch_live_override_receipt(
         lane,
@@ -9469,7 +9602,7 @@ def _intent_from_lane(
         event_risk="; ".join(str(item) for item in event_blockers[:2]),
         session=session_bucket or "generated dry-run",
     )
-    return OrderIntent(
+    intent = OrderIntent(
         pair=pair,
         side=side,
         order_type=order_type,
@@ -9567,6 +9700,23 @@ def _intent_from_lane(
             **matrix_metadata,
         },
     )
+    if lane.get("predictive_scout") is True:
+        sizing_digest = predictive_scout_sizing_digest(intent)
+        intent.metadata["predictive_scout_sizing_digest"] = sizing_digest
+        risk_plan = intent.metadata.get("predictive_scout_risk_plan")
+        if isinstance(risk_plan, dict):
+            risk_plan["planned_initial_risk_jpy"] = intent.metadata.get(
+                "predictive_scout_planned_initial_risk_jpy"
+            )
+            risk_plan["planned_initial_risk_pct_nav"] = intent.metadata.get(
+                "predictive_scout_planned_initial_risk_pct_nav"
+            )
+            risk_plan["effective_max_loss_jpy"] = intent.metadata.get(
+                "predictive_scout_effective_max_loss_jpy"
+            )
+            risk_plan["units"] = abs(int(intent.units))
+            risk_plan["sizing_digest"] = sizing_digest
+    return intent
 
 
 def _same_day_loss_streak_issues(
@@ -15057,30 +15207,18 @@ def _risk_budgeted_units(
         candidates = [target_units, loss_budget_units]
         if margin_budget_units is not None:
             candidates.append(margin_budget_units)
-        max_units = max(1.0, min(candidates))
+        max_units = max(0.0, min(candidates))
     else:
         max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
-    if max_units >= 1000:
-        return max(1000, int(max_units // 1000) * 1000)
-    # 2026-05-12 emergency fix B: when margin headroom can only support
-    # sub-MIN_PRODUCTION_LOT_UNITS, refuse to emit a fillable intent.
-    # Returning 0 propagates `intent.units == 0`, which the build-intent
-    # caller turns into a `MARGIN_TOO_THIN_FOR_MIN_LOT` BLOCK so the lane
-    # becomes DRY_RUN_BLOCKED instead of being staged at a few hundred
-    # units (where the OANDA spread cost dominates any pip target — the
-    # 470901/470904/470907 sequence on 2026-05-12T07:46 UTC).
-    #
-    # The floor only fires when the broker snapshot carries an account
-    # (production). Test fixtures that construct a snapshot without an
-    # `AccountSummary` keep the historical micro-lot fallback so they
-    # can still exercise legacy geometry/narrative edge cases without
-    # rewriting every fixture; `QR_ALLOW_TEST_MICRO_LOT=1` is the
-    # explicit opt-out for callers that want the old behavior even with
-    # an account present.
+    # OANDA accepts integer FX units. Preserve the NAV/SL result at one-unit
+    # granularity instead of snapping every viable order down to a fixed 1,000u
+    # multiple. Spread and post-cost expectancy gates decide whether the setup
+    # is economic; size only scales the absolute JPY contribution.
+    if max_units >= MIN_PRODUCTION_LOT_UNITS:
+        return max(MIN_PRODUCTION_LOT_UNITS, int(max_units))
     if (
         max_units < MIN_PRODUCTION_LOT_UNITS
         and snapshot.account is not None
-        and not _min_lot_test_override_active()
     ):
         return 0
     return max(1, int(max_units))
@@ -15116,9 +15254,8 @@ def _min_lot_block_issue(
                 "message": (
                     f"equity-derived loss budget can only fund "
                     f"{loss_budget_units:.0f}u and available margin headroom can only fund "
-                    f"{margin_budget_units:.0f}u for {pair}; refusing to emit a "
-                    f"sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because round-trip spread cost "
-                    "would dominate the pip target. Free margin alone is insufficient; wait for "
+                    f"{margin_budget_units:.0f}u for {pair}; neither can fund the broker "
+                    f"integer minimum of {MIN_PRODUCTION_LOT_UNITS}u. Free margin alone is insufficient; wait for "
                     "tighter market-derived geometry, higher explicit per-trade budget evidence, "
                     "and enough freed margin to fund the production lot."
                 ),
@@ -15130,9 +15267,8 @@ def _min_lot_block_issue(
                 "message": (
                     f"equity-derived loss budget can only fund "
                     f"{loss_budget_units:.0f}u for {pair} at the current "
-                    f"{stop_pips:.1f}pip stop; refusing to emit a "
-                    f"sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because "
-                    "round-trip spread cost would dominate the pip target. "
+                    f"{stop_pips:.1f}pip stop, below the broker integer minimum "
+                    f"of {MIN_PRODUCTION_LOT_UNITS}u. "
                     "Wait for tighter market-derived geometry or explicit "
                     "operator pace/equity evidence that raises the per-trade budget."
                 ),
@@ -15143,9 +15279,8 @@ def _min_lot_block_issue(
                 "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
                 "message": (
                     f"available margin headroom can only fund "
-                    f"{margin_budget_units:.0f}u for {pair}; refusing to "
-                    f"emit a sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because "
-                    "round-trip spread cost would dominate the pip target. "
+                    f"{margin_budget_units:.0f}u for {pair}, below the broker "
+                    f"integer minimum of {MIN_PRODUCTION_LOT_UNITS}u. "
                     "Free margin or wait for open positions to harvest TP."
                 ),
                 "severity": "BLOCK",
@@ -15155,16 +15290,16 @@ def _min_lot_block_issue(
             "code": "CONVERSION_RATE_MISSING_FOR_MIN_LOT",
             "message": (
                 f"{pair} cannot be sized against JPY because the quote-currency "
-                "conversion is missing; refusing to infer a production lot."
+                "conversion is missing; refusing to infer an integer order size."
             ),
             "severity": "BLOCK",
         }
     return {
         "code": "MIN_LOT_SIZE_UNAVAILABLE",
         "message": (
-            f"{pair} resolved to 0 units before the production "
-            f"{MIN_PRODUCTION_LOT_UNITS}u floor; refusing to emit a "
-            "sub-floor receipt until sizing inputs are repaired."
+            f"{pair} resolved below the broker integer minimum of "
+            f"{MIN_PRODUCTION_LOT_UNITS}u; refusing a zero-unit receipt until "
+            "sizing inputs are repaired."
         ),
         "severity": "BLOCK",
     }

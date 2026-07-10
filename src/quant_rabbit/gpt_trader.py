@@ -1716,7 +1716,12 @@ from quant_rabbit.predictive_scout import (
     predictive_scout_geometry_claimed,
     predictive_scout_metadata_supported,
 )
-from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, _spread_session_multiplier_from_tag
+from quant_rabbit.risk import (
+    MARGIN_AWARE_BASKET_BUFFER,
+    MIN_PRODUCTION_LOT_UNITS,
+    RiskPolicy,
+    _spread_session_multiplier_from_tag,
+)
 from quant_rabbit.self_improvement_guards import (
     FORECAST_ADVERSE_PATH_BLOCKER_CODE,
     forecast_adverse_path_exempted_by_tp_harvest_repair,
@@ -5151,8 +5156,39 @@ def _predictive_scout_lane_verification_issues(
     issues: list[VerificationIssue] = []
     if str(lane.get("order_type") or "").upper() != "LIMIT":
         issues.append(VerificationIssue("PREDICTIVE_SCOUT_LIMIT_ONLY", "predictive SCOUT must use LIMIT"))
-    if _optional_int(lane.get("units")) != 1000:
-        issues.append(VerificationIssue("PREDICTIVE_SCOUT_MIN_LOT_REQUIRED", "predictive SCOUT must use exactly 1000 units"))
+    if (_optional_int(lane.get("units")) or 0) < MIN_PRODUCTION_LOT_UNITS:
+        issues.append(
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_MIN_LOT_REQUIRED",
+                f"predictive SCOUT must use at least the {MIN_PRODUCTION_LOT_UNITS}u production floor",
+            )
+        )
+    tier = str(scout.get("risk_tier") or "").upper()
+    nav_jpy = _optional_float(scout.get("nav_jpy_at_sizing"))
+    max_risk_pct = _optional_float(scout.get("max_risk_pct_nav"))
+    max_loss_jpy = _optional_float(scout.get("max_loss_jpy"))
+    planned_risk_jpy = _optional_float(scout.get("planned_initial_risk_jpy"))
+    sizing_digest = str(scout.get("sizing_digest") or "")
+    if (
+        tier not in {"DISCOVERY", "EMERGING", "ESTABLISHED", "STRONG", "PROVEN"}
+        or nav_jpy is None
+        or nav_jpy <= 0.0
+        or max_risk_pct is None
+        or max_risk_pct <= 0.0
+        or max_risk_pct > 1.0
+        or max_loss_jpy is None
+        or max_loss_jpy <= 0.0
+        or planned_risk_jpy is None
+        or planned_risk_jpy <= 0.0
+        or planned_risk_jpy > max_loss_jpy
+        or not sizing_digest.startswith("psd-")
+    ):
+        issues.append(
+            VerificationIssue(
+                "PREDICTIVE_SCOUT_NAV_RISK_PACKET_INVALID",
+                "predictive SCOUT must carry its pre-verifier current-NAV risk tier, cap, planned SL risk, and sizing digest",
+            )
+        )
     if scout.get("promotion_allowed") is not False:
         issues.append(
             VerificationIssue(
@@ -6350,6 +6386,32 @@ def _predictive_scout_lane_packet(
         "ttl_minutes": metadata.get("predictive_scout_ttl_minutes"),
         "promotion_allowed": metadata.get("predictive_scout_promotion_allowed"),
         "broker_stop_loss_mode": metadata.get("broker_stop_loss_mode"),
+        "risk_tier": metadata.get("predictive_scout_risk_tier"),
+        "nav_jpy_at_sizing": metadata.get("predictive_scout_nav_jpy_at_sizing"),
+        "max_risk_pct_nav": metadata.get("predictive_scout_max_risk_pct_nav"),
+        "max_loss_jpy": metadata.get("predictive_scout_max_loss_jpy"),
+        "effective_max_loss_jpy": metadata.get(
+            "predictive_scout_effective_max_loss_jpy"
+        ),
+        "planned_initial_risk_jpy": metadata.get(
+            "predictive_scout_planned_initial_risk_jpy"
+        ),
+        "planned_initial_risk_pct_nav": metadata.get(
+            "predictive_scout_planned_initial_risk_pct_nav"
+        ),
+        "fresh_actual_initial_risk_jpy": metadata.get(
+            "predictive_scout_fresh_actual_initial_risk_jpy"
+        ),
+        "active_initial_risk_jpy": metadata.get(
+            "predictive_scout_active_initial_risk_jpy"
+        ),
+        "aggregate_initial_risk_jpy": metadata.get(
+            "predictive_scout_aggregate_initial_risk_jpy"
+        ),
+        "concurrent_risk_cap_jpy": metadata.get(
+            "predictive_scout_concurrent_risk_cap_jpy"
+        ),
+        "sizing_digest": metadata.get("predictive_scout_sizing_digest"),
         "order_type": intent.get("order_type"),
         "units": intent.get("units"),
         "rule": _small_dict(
@@ -6762,7 +6824,9 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         "remaining_target_jpy": target.get("remaining_target_jpy"),
         "remaining_risk_budget_jpy": target.get("remaining_risk_budget_jpy"),
         "open_risk_jpy": target.get("open_risk_jpy"),
+        "sizing_nav_jpy": target.get("sizing_nav_jpy"),
         "per_trade_risk_budget_jpy": target.get("per_trade_risk_budget_jpy"),
+        "per_trade_risk_pct_nav": target.get("per_trade_risk_pct_nav"),
         "target_trades_per_day": target.get("target_trades_per_day"),
     }
 
@@ -9469,7 +9533,7 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
                 return False
             if str(lane.get("order_type") or "").upper() != "LIMIT":
                 return False
-            if _optional_int(lane.get("units")) != 1000:
+            if (_optional_int(lane.get("units")) or 0) < MIN_PRODUCTION_LOT_UNITS:
                 return False
             if intent_matches_profitability_worst_segment(lane, worst_segment):
                 return False

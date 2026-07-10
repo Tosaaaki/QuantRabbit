@@ -685,7 +685,9 @@ def _refresh_daily_target_after_snapshot_refresh_if_required(
         "target_status": summary.status,
         "remaining_target_jpy": summary.remaining_target_jpy,
         "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
+        "sizing_nav_jpy": getattr(summary, "sizing_nav_jpy", None),
         "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
+        "per_trade_risk_pct_nav": getattr(summary, "per_trade_risk_pct_nav", None),
         "snapshot_fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
     }
 
@@ -6629,7 +6631,9 @@ def main(argv: list[str] | None = None) -> int:
                     "target_trades_per_day": summary.target_trades_per_day,
                     "target_trades_per_day_source": summary.target_trades_per_day_source,
                     "target_trades_per_day_basis_return_pct": summary.target_trades_per_day_basis_return_pct,
+                    "sizing_nav_jpy": summary.sizing_nav_jpy,
                     "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
+                    "per_trade_risk_pct_nav": summary.per_trade_risk_pct_nav,
                     "unprotected_positions": summary.unprotected_positions,
                 },
                 ensure_ascii=False,

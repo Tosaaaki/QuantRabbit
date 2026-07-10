@@ -539,16 +539,16 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
-    def test_tp_proof_collection_min_lot_mode_defends_thin_evidence_receipts(self) -> None:
+    def test_tp_proof_collection_cap_lift_is_bound_to_exact_one_unit_receipt(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.LONG,
             order_type=OrderType.LIMIT,
-            units=1000,
+            units=1,
             entry=1.17300,
             tp=1.17600,
             sl=1.17130,
-            thesis="thin_tp_collection_can_fund_min_lot_without_claiming_proven",
+            thesis="thin_tp_collection_can_fund_exact_broker_minimum_without_claiming_proven",
             market_context=MarketContext(
                 regime="RANGE current; RANGE_ROTATION campaign lane",
                 narrative="thin exact broker TP harvest shape has positive stressed payoff",
@@ -558,13 +558,13 @@ class RiskEngineTest(unittest.TestCase):
             ),
             metadata={
                 "capture_economics_status": "NEGATIVE_EXPECTANCY",
-                "capture_avg_win_jpy": 50.0,
+                "capture_avg_win_jpy": 0.05,
                 "capture_avg_loss_jpy": 1100.0,
                 "loss_asymmetry_guard_active": True,
                 "loss_asymmetry_guard_mode": "TP_PROOF_COLLECTION_MIN_LOT",
-                "loss_asymmetry_guard_loss_cap_jpy": 50.0,
+                "loss_asymmetry_guard_loss_cap_jpy": 0.05,
                 "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
-                "loss_asymmetry_guard_effective_max_loss_jpy": 266.4,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 0.2664,
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                 "attach_take_profit_on_fill": True,
                 "tp_target_intent": "HARVEST",
@@ -578,6 +578,9 @@ class RiskEngineTest(unittest.TestCase):
                 "capture_take_profit_avg_loss_jpy": 0.0,
                 "capture_take_profit_losses": 0,
                 "capture_market_close_expectancy_jpy": -892.1,
+                "positive_rotation_proof_collection_min_lot_sizing": True,
+                "positive_rotation_proof_collection_min_lot_units": 1,
+                "positive_rotation_proof_collection_min_lot_loss_jpy": 0.2664,
             },
         )
 
@@ -586,7 +589,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
-    def test_oanda_firepower_min_lot_mode_defends_matching_harvest_receipts(self) -> None:
+    def test_legacy_oanda_firepower_min_lot_mode_no_longer_bypasses_loss_cap(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.LONG,
@@ -633,8 +636,61 @@ class RiskEngineTest(unittest.TestCase):
 
         decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
 
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_oanda_firepower_min_lot_cap_lift_is_bound_to_exact_one_unit_receipt(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="matching_oanda_firepower_can_fund_only_the_exact_broker_minimum",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="OANDA firepower vehicle matches this attached TP harvest shape",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 0.05,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT",
+                "loss_asymmetry_guard_loss_cap_jpy": 0.05,
+                "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 0.2664,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_oanda_campaign_min_lot_sizing": True,
+                "positive_rotation_oanda_campaign_min_lot_units": 1,
+                "positive_rotation_oanda_campaign_min_lot_loss_jpy": 0.2664,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": 8.0,
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(
+            intent,
+            snapshot(),
+        )
+
         self.assertTrue(decision.allowed, decision.block_reasons)
-        self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+        self.assertNotIn(
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+            {issue.code for issue in decision.issues},
+        )
 
     def test_oanda_firepower_min_lot_mode_requires_matching_vehicle(self) -> None:
         intent = OrderIntent(
@@ -4582,25 +4638,11 @@ class RiskEngineTest(unittest.TestCase):
 
 
 class MinLotFloorTest(unittest.TestCase):
-    """Coverage for 2026-05-12 emergency fix C — `RiskEngine.validate` must
-    refuse sub-`MIN_PRODUCTION_LOT_UNITS` orders even if the caller skipped
-    intent_generator's fix B path. The 470901/470904/470907 sequence on
-    2026-05-12T07:46 UTC fired three sub-1000u entries (201u / 322u / 2u)
-    whose round-trip spread cost dominated any pip target; this gate is
-    the second-line defense so a manual `stage-live-order` or replayed
-    legacy receipt cannot reach the broker at micro size.
+    """One OANDA integer unit is the production floor.
+
+    Risk, spread, reward/risk, and margin may still reject a small order, but
+    positive integer size alone must not do so.  Zero remains an invalid order.
     """
-
-    def setUp(self) -> None:
-        import os
-        self._prior = os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
-
-    def tearDown(self) -> None:
-        import os
-        if self._prior is None:
-            os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
-        else:
-            os.environ["QR_ALLOW_TEST_MICRO_LOT"] = self._prior
 
     def _intent(self, units: int):
         return OrderIntent(
@@ -4611,63 +4653,34 @@ class MinLotFloorTest(unittest.TestCase):
             tp=1.17000,
             sl=1.17500,
             thesis="min_lot_floor_test",
+            market_context=MarketContext(
+                regime="RANGE current",
+                narrative="integer NAV-risk sizing boundary",
+                chart_story="passive sizing contract fixture",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.17500 invalidates the short thesis",
+            ),
         )
 
-    def test_999_units_blocked_with_min_lot_violation(self) -> None:
-        decision = _capped_engine().validate(self._intent(999), snapshot())
-        codes = {issue.code for issue in decision.issues}
-        self.assertIn("MIN_LOT_VIOLATION", codes)
-        self.assertFalse(decision.allowed)
+    def test_all_positive_integer_units_pass_the_size_boundary(self) -> None:
+        for units in (1, 2, 322, 999):
+            with self.subTest(units=units):
+                decision = _capped_engine().validate(self._intent(units), snapshot())
+                codes = {issue.code for issue in decision.issues}
+                self.assertNotIn("BAD_UNITS", codes)
+                self.assertNotIn("MIN_LOT_VIOLATION", codes)
+                self.assertTrue(decision.allowed, decision.block_reasons)
 
-    def test_322_units_blocked_with_min_lot_violation(self) -> None:
-        # The exact 470904 AUD/JPY SHORT 322u scenario.
-        decision = _capped_engine().validate(self._intent(322), snapshot())
-        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-
-    def test_2_units_blocked_with_min_lot_violation(self) -> None:
-        # The exact 470907 GBP/USD SHORT 2u scenario.
-        decision = _capped_engine().validate(self._intent(2), snapshot())
-        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-
-    def test_1000_units_passes_min_lot_floor(self) -> None:
-        decision = _capped_engine().validate(self._intent(1000), snapshot())
-        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-
-    def test_5000_units_passes_min_lot_floor(self) -> None:
-        decision = _capped_engine().validate(self._intent(5000), snapshot())
-        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-
-    def test_zero_units_does_not_fire_min_lot_violation(self) -> None:
-        # `units == 0` is BAD_UNITS territory (intent didn't reach broker
-        # path at all), not MIN_LOT_VIOLATION. The gate covers sub-floor
-        # *fillable* sizes.
+    def test_zero_units_is_bad_units(self) -> None:
         decision = _capped_engine().validate(self._intent(0), snapshot())
         codes = {issue.code for issue in decision.issues}
         self.assertNotIn("MIN_LOT_VIOLATION", codes)
         self.assertIn("BAD_UNITS", codes)
 
-    def test_qr_allow_test_micro_lot_disables_gate(self) -> None:
-        import os
-        os.environ["QR_ALLOW_TEST_MICRO_LOT"] = "1"
-        decision = _capped_engine().validate(self._intent(500), snapshot())
-        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-
-    def test_short_side_negative_units_also_gated(self) -> None:
-        # OrderIntent units carries the sign for SHORT in some code paths;
-        # the gate checks `abs()` so SHORT micro orders are caught too.
+    def test_production_floor_is_one_integer_unit(self) -> None:
         from quant_rabbit.risk import MIN_PRODUCTION_LOT_UNITS
-        intent = OrderIntent(
-            pair="EUR_USD",
-            side=Side.SHORT,
-            order_type=OrderType.MARKET,
-            units=500,
-            tp=1.17000,
-            sl=1.17500,
-            thesis="short_micro_lot_negative_path",
-        )
-        decision = _capped_engine().validate(intent, snapshot())
-        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
-        self.assertEqual(MIN_PRODUCTION_LOT_UNITS, 1000)
+
+        self.assertEqual(MIN_PRODUCTION_LOT_UNITS, 1)
 
 
 if __name__ == "__main__":

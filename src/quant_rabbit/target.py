@@ -111,7 +111,9 @@ class DailyTargetSnapshot:
     target_trades_per_day: int
     target_trades_per_day_source: str
     target_trades_per_day_basis_return_pct: float | None
+    sizing_nav_jpy: float
     per_trade_risk_budget_jpy: float
+    per_trade_risk_pct_nav: float
     open_risk_jpy: float
     remaining_risk_budget_jpy: float
     positions: tuple[TargetPositionRisk, ...]
@@ -158,7 +160,9 @@ class DailyTargetSummary:
     target_trades_per_day: int
     target_trades_per_day_source: str
     target_trades_per_day_basis_return_pct: float | None
+    sizing_nav_jpy: float
     per_trade_risk_budget_jpy: float
+    per_trade_risk_pct_nav: float
     unprotected_positions: int
 
 
@@ -261,6 +265,17 @@ class DailyTargetLedger:
                 "daily target state requires --start-balance, a previous state file, "
                 "or a broker snapshot with account summary on first run"
             )
+        # Sizing is an instantaneous portfolio decision, so its percentage
+        # denominator must be the latest broker NAV rather than the campaign
+        # day's opening balance. The opening balance remains the denominator
+        # for the whole-day loss budget so losses cannot reset that allowance.
+        # Keeping both bases explicit fixes the former `sizing_basis=raw_nav`
+        # mismatch where the 1% floor was actually 1% of day-open equity.
+        sizing_nav = _sizing_nav_jpy(
+            snapshot=snapshot,
+            previous=previous,
+            fallback_jpy=start_balance,
+        )
         explicit_target_profit = _coalesce_float(target_profit_jpy)
         if explicit_target_profit is not None:
             if explicit_target_profit <= 0:
@@ -312,9 +327,9 @@ class DailyTargetLedger:
             active_pct = explicit_pct
             risk_budget = round(start_balance * (explicit_pct / 100.0), 4)
         elif previous_pct is not None and previous_pct > 0:
-            # An earlier CLI invocation set daily_risk_pct. Re-derive from
-            # current NAV every cycle so automation honors the operator's
-            # NAV% choice without freezing a JPY snapshot.
+            # An earlier CLI invocation set daily_risk_pct. Re-derive from the
+            # campaign opening balance every cycle so automation honors the
+            # operator's percentage without letting a loss reset the day cap.
             active_pct = previous_pct
             risk_budget = round(start_balance * (previous_pct / 100.0), 4)
         else:
@@ -421,7 +436,7 @@ class DailyTargetLedger:
         # Per AGENT_CONTRACT §3.5 + feedback_high_conviction_execution.md:
         # if pace × budget drives per-trade below an equity-derived floor,
         # the math has broken — every lane will exceed cap and lock the
-        # campaign out. Apply the policy floor (% of starting equity) ONLY
+        # campaign out. Apply the policy floor (% of current broker NAV) ONLY
         # when the pace came from automated derivation (backtest / previous
         # state / policy default). Operator-explicit CLI pace is treated as
         # a deliberate override; do not silently mutate it.
@@ -435,7 +450,7 @@ class DailyTargetLedger:
             and policy.min_per_trade_risk_pct > 0
             and "cli" not in str(pace_source or "")
         ):
-            equity_floor = round(start_balance * (policy.min_per_trade_risk_pct / 100.0), 4)
+            equity_floor = round(sizing_nav * (policy.min_per_trade_risk_pct / 100.0), 4)
             if equity_floor > per_trade_risk_budget:
                 per_trade_risk_budget = equity_floor
                 per_trade_floor_applied = True
@@ -444,6 +459,10 @@ class DailyTargetLedger:
                     if pace_source
                     else "min_per_trade_pct_floor"
                 )
+        per_trade_risk_pct_nav = round(
+            (per_trade_risk_budget / sizing_nav) * 100.0,
+            6,
+        )
 
         positions = (
             tuple(_position_risk(position, snapshot.quotes, snapshot.home_conversions) for position in snapshot.positions)
@@ -572,7 +591,9 @@ class DailyTargetLedger:
             target_trades_per_day_basis_return_pct=round(pace_basis_return_pct, 4)
             if pace_basis_return_pct is not None
             else None,
+            sizing_nav_jpy=round(sizing_nav, 4),
             per_trade_risk_budget_jpy=per_trade_risk_budget,
+            per_trade_risk_pct_nav=per_trade_risk_pct_nav,
             open_risk_jpy=open_risk,
             remaining_risk_budget_jpy=remaining_risk_budget,
             positions=positions,
@@ -619,7 +640,9 @@ class DailyTargetLedger:
             target_trades_per_day=state.target_trades_per_day,
             target_trades_per_day_source=state.target_trades_per_day_source,
             target_trades_per_day_basis_return_pct=state.target_trades_per_day_basis_return_pct,
+            sizing_nav_jpy=state.sizing_nav_jpy,
             per_trade_risk_budget_jpy=state.per_trade_risk_budget_jpy,
+            per_trade_risk_pct_nav=state.per_trade_risk_pct_nav,
             unprotected_positions=state.unprotected_positions,
         )
 
@@ -719,7 +742,9 @@ class DailyTargetLedger:
                 if state.target_trades_per_day_basis_return_pct is not None
                 else "`n/a`"
             ),
-            f"- Per-trade risk cap: `{state.per_trade_risk_budget_jpy:.0f} JPY`",
+            f"- Sizing NAV: `{state.sizing_nav_jpy:.0f} JPY` (latest broker raw NAV)",
+            f"- Per-trade risk cap: `{state.per_trade_risk_budget_jpy:.0f} JPY` "
+            f"(`{state.per_trade_risk_pct_nav:.4f}%` of sizing NAV)",
             f"- Current equity estimate: `{state.current_equity_jpy:.0f} JPY`",
             "",
             "## Blockers",
@@ -867,6 +892,27 @@ def _account_unrealized_pl(snapshot: BrokerSnapshot | None, previous: dict[str, 
     if snapshot.account is not None:
         return round(float(snapshot.account.unrealized_pl_jpy), 4)
     return round(sum(position.unrealized_pl_jpy for position in snapshot.positions), 4)
+
+
+def _sizing_nav_jpy(
+    *,
+    snapshot: BrokerSnapshot | None,
+    previous: dict[str, Any],
+    fallback_jpy: float,
+) -> float:
+    """Return the latest positive raw NAV used as the sizing denominator."""
+
+    if snapshot is not None and snapshot.account is not None:
+        nav = float(snapshot.account.nav_jpy)
+        if nav > 0.0:
+            return nav
+    previous_nav = _coalesce_float(
+        previous.get("current_equity_jpy"),
+        previous.get("current_equity_raw"),
+    )
+    if previous_nav is not None and previous_nav > 0.0:
+        return previous_nav
+    return float(fallback_jpy)
 
 
 def _current_equity_jpy(

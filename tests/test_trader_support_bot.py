@@ -4078,7 +4078,7 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
         self.assertNotEqual(request["status"], FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS)
 
-    def test_frontier_min_lot_margin_floor_is_capacity_wait_not_code_repair(self) -> None:
+    def test_frontier_integer_unit_margin_floor_is_capacity_wait_not_code_repair(self) -> None:
         now = datetime(2026, 6, 24, 8, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4098,8 +4098,7 @@ class TraderSupportBotTest(unittest.TestCase):
                             ],
                             "live_blockers": [
                                 (
-                                    "available margin headroom can only fund 861u for EUR_USD; "
-                                    "refusing to emit a sub-1000u receipt"
+                                    "available margin headroom cannot fund one integer unit for EUR_USD"
                                 )
                             ],
                             "intent": {
@@ -4110,7 +4109,7 @@ class TraderSupportBotTest(unittest.TestCase):
                                 "metadata": {
                                     "self_improvement_p0_repair_live_ready": True,
                                     "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
-                                    "broker_margin_free_units": 861,
+                                    "broker_margin_free_units": 0,
                                     "sizing_actual_reward_jpy": 0.0,
                                     "sizing_actual_risk_jpy": 0.0,
                                 },
@@ -4157,9 +4156,10 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(top["code"], "MARGIN_TOO_THIN_FOR_MIN_LOT")
         self.assertEqual(request["status"], "FRONTIER_MARGIN_CAPACITY_WAIT")
         self.assertEqual(request["source_findings"], ["MARGIN_TOO_THIN_FOR_MIN_LOT"])
-        self.assertIn("minimum production lot", request["problem"])
+        self.assertIn("broker integer minimum", request["problem"])
         self.assertIn("free margin", " ".join(request["clearance_conditions"]))
-        self.assertIn("Do not lower", " ".join(request["clearance_conditions"]))
+        self.assertIn("at least one integer unit", " ".join(request["clearance_conditions"]))
+        self.assertIn("Do not bypass", " ".join(request["clearance_conditions"]))
 
     def test_frontier_combined_loss_margin_floor_is_capacity_wait_not_margin_only(self) -> None:
         now = datetime(2026, 6, 24, 8, 15, tzinfo=timezone.utc)
@@ -4181,8 +4181,8 @@ class TraderSupportBotTest(unittest.TestCase):
                             ],
                             "live_blockers": [
                                 (
-                                    "loss budget can only fund 159u and margin headroom can only fund "
-                                    "861u for EUR_USD; free margin alone is insufficient"
+                                    "loss budget and margin headroom both round below one integer "
+                                    "unit for EUR_USD"
                                 )
                             ],
                             "intent": {
@@ -4193,7 +4193,7 @@ class TraderSupportBotTest(unittest.TestCase):
                                 "metadata": {
                                     "self_improvement_p0_repair_live_ready": True,
                                     "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
-                                    "broker_margin_free_units": 861,
+                                    "broker_margin_free_units": 0,
                                     "sizing_actual_reward_jpy": 0.0,
                                     "sizing_actual_risk_jpy": 0.0,
                                 },

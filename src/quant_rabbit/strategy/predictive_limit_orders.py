@@ -11,7 +11,7 @@ Reads:
 For each pair with a HIGH-CONVICTION setup (Grade A: ≥4 aligned
 projection signals OR an ACTIVE path projection), this module
 generates a LIMIT order at the predicted entry level. It also allows
-smaller Grade B "early-turn" liquidity-sweep limits when price is
+stricter Grade B "early-turn" liquidity-sweep limits when price is
 already at an extreme and the sweep target is near; this catches the
 start of a move without waiting for the whole M15/H1 confirmation stack.
 
@@ -25,6 +25,7 @@ Each generated LIMIT has:
 - Price = predicted target (rounded to OANDA tick)
 - TP = next step in path OR ATR-based default
 - SL = None (SL-free)
+- Units = None (deferred to current-NAV / SL-risk intent sizing)
 - Time-in-force = GTD (expire after `LIMIT_TTL_MIN`)
 
 The CLI command `generate-predictive-limits` writes them to
@@ -50,14 +51,10 @@ LIMIT_TTL_MIN = float(os.environ.get("QR_PREDICTIVE_LIMIT_TTL_MIN", "90"))
 # Minimum aligned signal count to qualify as Grade A
 GRADE_A_MIN_ALIGNED = int(os.environ.get("QR_GRADE_A_MIN_ALIGNED", "4"))
 GRADE_A_MIN_SCORE = float(os.environ.get("QR_GRADE_A_MIN_SCORE", "25.0"))
-# Grade B is intentionally smaller and stricter on context. It is for
-# early turns at extremes, not for generic weak signals.
+# Grade B is intentionally stricter on context. It is for early turns at
+# extremes, not for generic weak signals; size is decided by the later
+# current-NAV / SL-risk intent path rather than by this timing classifier.
 GRADE_B_MIN_ALIGNED = int(os.environ.get("QR_GRADE_B_MIN_ALIGNED", "1"))
-# Default unit size for predictive limits
-PREDICTIVE_LIMIT_UNITS = int(os.environ.get("QR_PREDICTIVE_LIMIT_UNITS", "5000"))
-PREDICTIVE_LIMIT_GRADE_B_UNITS = int(
-    os.environ.get("QR_PREDICTIVE_LIMIT_GRADE_B_UNITS", str(max(1000, PREDICTIVE_LIMIT_UNITS // 2)))
-)
 EARLY_TURN_EXTREME_PCTILE = float(os.environ.get("QR_EARLY_TURN_EXTREME_PCTILE", "0.25"))
 EARLY_TURN_EXTREME_7D_PCTILE = float(os.environ.get("QR_EARLY_TURN_EXTREME_7D_PCTILE", "0.10"))
 
@@ -68,11 +65,14 @@ class PredictiveLimitOrder:
     side: str  # "LONG" | "SHORT"
     limit_price: float
     take_profit_price: Optional[float]
-    units: int
     rationale: str
     source: str  # "liquidity_sweep_fade" | "path_step_b" | etc
     grade: str  # "A" | "B"
     gtd_utc: str  # ISO
+    # Predictive LIMITs are timing evidence, not sized intents. Keeping an
+    # explicit null preserves the advisory artifact schema while preventing a
+    # fixed 5,000u/1,000u value from bypassing later NAV/SL-risk sizing.
+    units: None = field(init=False, default=None)
 
 
 def _is_disabled() -> bool:
@@ -134,7 +134,6 @@ def generate_limits_from_projections(
         _append_unique(out, seen_order_keys, PredictiveLimitOrder(
             pair=pair, side=side, limit_price=limit_price,
             take_profit_price=tp_price,
-            units=PREDICTIVE_LIMIT_UNITS,
             rationale=f"path Step B '{step_b.label}' at {limit_price}; full path: {getattr(path, 'rationale', '')[:120]}",
             source="path_step_b",
             grade="A",
@@ -165,14 +164,12 @@ def generate_limits_from_projections(
         else:
             continue
         grade = "A"
-        units = PREDICTIVE_LIMIT_UNITS
         context_note = f"{need_aligned} aligned signals"
         if need_aligned < GRADE_A_MIN_ALIGNED:
             early_context = _early_turn_context(pair_chart, fade_side)
             if need_aligned < GRADE_B_MIN_ALIGNED or early_context is None:
                 continue
             grade = "B"
-            units = PREDICTIVE_LIMIT_GRADE_B_UNITS
             context_note = f"{need_aligned} aligned {_signal_word(need_aligned)}; early-turn {early_context}"
         # TP: counter-direction ATR distance from sweep
         ind = None
@@ -191,7 +188,6 @@ def generate_limits_from_projections(
             pair=pair, side=fade_side,
             limit_price=_round_price(pair, target_price),
             take_profit_price=tp_price,
-            units=units,
             rationale=f"{signal_name} fade {fade_side} @ {target_price}; {context_note}",
             source="liquidity_sweep_fade",
             grade=grade,
@@ -242,9 +238,9 @@ def _same_predictive_trap(left: PredictiveLimitOrder, right: PredictiveLimitOrde
     return abs(float(left.take_profit_price) - float(right.take_profit_price)) <= tolerance + epsilon
 
 
-def _predictive_order_rank(order: PredictiveLimitOrder) -> tuple[int, int]:
+def _predictive_order_rank(order: PredictiveLimitOrder) -> tuple[int]:
     grade_rank = 2 if str(order.grade).upper() == "A" else 1
-    return grade_rank, int(order.units)
+    return (grade_rank,)
 
 
 def _signal_word(count: int) -> str:

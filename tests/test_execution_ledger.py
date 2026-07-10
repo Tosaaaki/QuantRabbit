@@ -146,7 +146,11 @@ class ExecutionLedgerTest(unittest.TestCase):
 
     @staticmethod
     def _scout_reservation_payload(
-        *, signal_id: str, vehicle_id: str, expires_at_utc: str
+        *,
+        signal_id: str,
+        vehicle_id: str,
+        expires_at_utc: str,
+        candidate_risk_jpy: float = 100.0,
     ) -> dict[str, object]:
         return {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -158,6 +162,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                 "predictive_scout_signal_id": signal_id,
                 "predictive_scout_vehicle_id": vehicle_id,
                 "predictive_scout_expires_at_utc": expires_at_utc,
+                "predictive_scout_fresh_actual_initial_risk_jpy": candidate_risk_jpy,
             },
             "sent": False,
         }
@@ -191,6 +196,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                         max_daily=2,
                         max_concurrent=10,
                         broker_active_total=0,
+                        candidate_risk_jpy=100.0,
+                        broker_active_risk_jpy=0.0,
+                        concurrent_risk_cap_jpy=1000.0,
                     )
                 )
 
@@ -239,6 +247,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 max_daily=1,
                 max_concurrent=2,
                 broker_active_total=0,
+                candidate_risk_jpy=100.0,
+                broker_active_risk_jpy=0.0,
+                concurrent_risk_cap_jpy=1000.0,
             )
 
         self.assertFalse(result.reserved)
@@ -277,6 +288,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                     max_daily=8,
                     max_concurrent=2,
                     broker_active_total=0,
+                    candidate_risk_jpy=100.0,
+                    broker_active_risk_jpy=0.0,
+                    concurrent_risk_cap_jpy=1000.0,
                 )
 
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -292,6 +306,53 @@ class ExecutionLedgerTest(unittest.TestCase):
             2,
         )
         self.assertEqual(claim_count, 2)
+
+    def test_predictive_scout_atomic_reservation_enforces_aggregate_nav_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+            expires_at = (
+                datetime.now(timezone.utc) + timedelta(minutes=45)
+            ).isoformat()
+
+            def reserve(signal_id: str):
+                return ledger.reserve_predictive_scout_gateway_payload(
+                    kind="live_order",
+                    receipt_path=root / f"{signal_id}.json",
+                    payload=self._scout_reservation_payload(
+                        signal_id=signal_id,
+                        vehicle_id=f"vehicle-{signal_id}",
+                        expires_at_utc=expires_at,
+                        candidate_risk_jpy=150.0,
+                    ),
+                    signal_id=signal_id,
+                    experiment_id=f"experiment-{signal_id}",
+                    vehicle_id=f"vehicle-{signal_id}",
+                    expires_at_utc=expires_at,
+                    max_daily=8,
+                    max_concurrent=2,
+                    broker_active_total=0,
+                    candidate_risk_jpy=150.0,
+                    broker_active_risk_jpy=0.0,
+                    concurrent_risk_cap_jpy=200.0,
+                )
+
+            first = reserve("risk-1")
+            second = reserve("risk-2")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                claim_count = conn.execute(
+                    "SELECT COUNT(*) FROM predictive_scout_signal_claims"
+                ).fetchone()[0]
+
+        self.assertTrue(first.reserved)
+        self.assertFalse(second.reserved)
+        self.assertEqual(second.status, "CONCURRENT_RISK_CAP_REACHED")
+        self.assertEqual(second.aggregate_risk_jpy, 300.0)
+        self.assertEqual(second.concurrent_risk_cap_jpy, 200.0)
+        self.assertEqual(claim_count, 1)
 
     def test_predictive_scout_cold_start_parallel_initialization_fails_closed_without_lock_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -319,6 +380,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                     max_daily=8,
                     max_concurrent=2,
                     broker_active_total=0,
+                    candidate_risk_jpy=100.0,
+                    broker_active_risk_jpy=0.0,
+                    concurrent_risk_cap_jpy=1000.0,
                 )
 
             with ThreadPoolExecutor(max_workers=12) as executor:
@@ -359,6 +423,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 max_daily=8,
                 max_concurrent=2,
                 broker_active_total=0,
+                candidate_risk_jpy=100.0,
+                broker_active_risk_jpy=0.0,
+                concurrent_risk_cap_jpy=1000.0,
             )
             second = ledger.reserve_predictive_scout_gateway_payload(
                 kind="live_order",
@@ -375,6 +442,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 max_daily=8,
                 max_concurrent=2,
                 broker_active_total=1,
+                candidate_risk_jpy=100.0,
+                broker_active_risk_jpy=100.0,
+                concurrent_risk_cap_jpy=1000.0,
                 broker_active_signal_ids={"signal-first"},
             )
 
@@ -412,6 +482,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                     max_daily=8,
                     max_concurrent=2,
                     broker_active_total=broker_total,
+                    candidate_risk_jpy=100.0,
+                    broker_active_risk_jpy=100.0 * broker_total,
+                    concurrent_risk_cap_jpy=1000.0,
                     broker_active_signal_ids=broker_signals,
                 )
 
@@ -468,6 +541,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 max_daily=8,
                 max_concurrent=2,
                 broker_active_total=0,
+                candidate_risk_jpy=100.0,
+                broker_active_risk_jpy=0.0,
+                concurrent_risk_cap_jpy=1000.0,
             )
             second = ledger.reserve_predictive_scout_gateway_payload(
                 kind="live_order",
@@ -484,6 +560,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 max_daily=8,
                 max_concurrent=2,
                 broker_active_total=1,
+                candidate_risk_jpy=100.0,
+                broker_active_risk_jpy=100.0,
+                concurrent_risk_cap_jpy=1000.0,
                 broker_active_signal_ids={"older-filled-signal"},
             )
 

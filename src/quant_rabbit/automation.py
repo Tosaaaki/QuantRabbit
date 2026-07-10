@@ -848,6 +848,12 @@ def _fixed_predictive_scout_size_plan(
     selected_lane_id: str | None,
     selected_lane_size_multiple: float | None,
 ) -> tuple[dict[str, float], float | None]:
+    """Lock post-intent multipliers without forcing a fixed unit count.
+
+    Predictive SCOUT units are already derived from current NAV and canonical
+    SL risk in intent generation.  A 1.0 multiplier preserves those exact
+    verifier-bound units at the final AI-to-gateway boundary.
+    """
     claimed = _predictive_scout_lane_ids(intents_path, lane_ids)
     if not claimed:
         return dict(size_multiples), selected_lane_size_multiple
@@ -3064,9 +3070,10 @@ class AutoTradeCycle:
             self._write_report(summary, generated_at)
             return summary
 
-        # Reassert the fixed SCOUT vehicle at the final AI-trader → gateway
-        # boundary.  This also protects cycles that consume a stale/external
-        # TraderDecision created before TraderBrain learned the invariant.
+        # Reassert the verifier-bound SCOUT units at the final AI-trader →
+        # gateway boundary. This also protects cycles that consume an
+        # external TraderDecision created before TraderBrain learned the
+        # post-intent multiplier invariant.
         basket_size_multiples, selected_lane_size_multiple = (
             _fixed_predictive_scout_size_plan(
                 intents_path=self.intents_path,

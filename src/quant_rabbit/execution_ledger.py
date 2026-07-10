@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import math
 import os
 import stat
 import sqlite3
@@ -73,6 +74,8 @@ class PredictiveScoutReservationResult:
     status: str
     daily_reserved: int
     active_slots: int
+    aggregate_risk_jpy: float = 0.0
+    concurrent_risk_cap_jpy: float = 0.0
 
 
 class ExecutionLedger:
@@ -243,6 +246,9 @@ class ExecutionLedger:
         max_daily: int,
         max_concurrent: int,
         broker_active_total: int,
+        candidate_risk_jpy: float,
+        broker_active_risk_jpy: float,
+        concurrent_risk_cap_jpy: float,
         broker_active_signal_ids: set[str] | None = None,
     ) -> PredictiveScoutReservationResult:
         """Atomically claim one signal plus its shared daily/concurrent slot.
@@ -259,6 +265,33 @@ class ExecutionLedger:
             raise ValueError("predictive SCOUT reservation identity is incomplete")
         if max_daily <= 0 or max_concurrent <= 0:
             raise ValueError("predictive SCOUT reservation caps must be positive")
+        candidate_risk_jpy = float(candidate_risk_jpy)
+        broker_active_risk_jpy = float(broker_active_risk_jpy)
+        concurrent_risk_cap_jpy = float(concurrent_risk_cap_jpy)
+        if (
+            not math.isfinite(candidate_risk_jpy)
+            or candidate_risk_jpy <= 0.0
+            or not math.isfinite(broker_active_risk_jpy)
+            or broker_active_risk_jpy < 0.0
+            or not math.isfinite(concurrent_risk_cap_jpy)
+            or concurrent_risk_cap_jpy <= 0.0
+        ):
+            raise ValueError(
+                "predictive SCOUT reservation requires finite positive candidate/cap risk and non-negative broker-active risk"
+            )
+        payload_candidate_risk = _predictive_scout_reserved_risk_jpy(payload)
+        if (
+            payload_candidate_risk is None
+            or not math.isclose(
+                payload_candidate_risk,
+                candidate_risk_jpy,
+                rel_tol=1e-9,
+                abs_tol=1e-6,
+            )
+        ):
+            raise ValueError(
+                "predictive SCOUT reservation candidate risk does not match its durable receipt"
+            )
         expiry = _parse_utc(expires_at_utc)
         if expiry is None:
             raise ValueError("predictive SCOUT reservation expiry must be timezone-aware UTC")
@@ -353,10 +386,11 @@ class ExecutionLedger:
                 )
             daily_reserved = len(daily_budget_keys)
             unreflected_claims = 0
+            unreflected_risk_jpy = 0.0
             for row in conn.execute(
                 """
                 SELECT signal_id, reserved_at_utc, expires_at_utc,
-                       broker_reflected_at_utc
+                       broker_reflected_at_utc, payload_json
                 FROM predictive_scout_signal_claims
                 """
             ).fetchall():
@@ -376,8 +410,24 @@ class ExecutionLedger:
                     and claimed_signal not in broker_signals
                     and not was_reflected
                 ):
+                    try:
+                        claim_payload = json.loads(row["payload_json"])
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise ValueError(
+                            "predictive SCOUT active reservation risk payload is unreadable"
+                        ) from exc
+                    claim_risk = _predictive_scout_reserved_risk_jpy(
+                        claim_payload
+                    )
+                    if claim_risk is None:
+                        raise ValueError(
+                            "predictive SCOUT active reservation lacks exact candidate risk"
+                        )
                     unreflected_claims += 1
+                    unreflected_risk_jpy += claim_risk
             active_slots = broker_active_total + unreflected_claims
+            active_risk_jpy = broker_active_risk_jpy + unreflected_risk_jpy
+            aggregate_risk_jpy = active_risk_jpy + candidate_risk_jpy
 
             if duplicate is not None:
                 return PredictiveScoutReservationResult(
@@ -385,6 +435,8 @@ class ExecutionLedger:
                     status="DUPLICATE_SIGNAL",
                     daily_reserved=daily_reserved,
                     active_slots=active_slots,
+                    aggregate_risk_jpy=aggregate_risk_jpy,
+                    concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
                 )
             if daily_reserved >= max_daily:
                 return PredictiveScoutReservationResult(
@@ -392,6 +444,8 @@ class ExecutionLedger:
                     status="DAILY_CAP_REACHED",
                     daily_reserved=daily_reserved,
                     active_slots=active_slots,
+                    aggregate_risk_jpy=aggregate_risk_jpy,
+                    concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
                 )
             if active_slots >= max_concurrent:
                 return PredictiveScoutReservationResult(
@@ -399,6 +453,17 @@ class ExecutionLedger:
                     status="CONCURRENT_CAP_REACHED",
                     daily_reserved=daily_reserved,
                     active_slots=active_slots,
+                    aggregate_risk_jpy=aggregate_risk_jpy,
+                    concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
+                )
+            if aggregate_risk_jpy > concurrent_risk_cap_jpy + 1e-6:
+                return PredictiveScoutReservationResult(
+                    reserved=False,
+                    status="CONCURRENT_RISK_CAP_REACHED",
+                    daily_reserved=daily_reserved,
+                    active_slots=active_slots,
+                    aggregate_risk_jpy=aggregate_risk_jpy,
+                    concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
                 )
 
             claim = conn.execute(
@@ -423,6 +488,8 @@ class ExecutionLedger:
                     status="DUPLICATE_SIGNAL",
                     daily_reserved=daily_reserved,
                     active_slots=active_slots,
+                    aggregate_risk_jpy=aggregate_risk_jpy,
+                    concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
                 )
             receipt_inserted = _insert_gateway_receipt(
                 conn,
@@ -458,6 +525,8 @@ class ExecutionLedger:
             status="RESERVED",
             daily_reserved=daily_reserved + 1,
             active_slots=active_slots + 1,
+            aggregate_risk_jpy=aggregate_risk_jpy,
+            concurrent_risk_cap_jpy=concurrent_risk_cap_jpy,
         )
 
     def _connect(self) -> sqlite3.Connection:
@@ -2094,6 +2163,41 @@ def _predictive_scout_budget_keys(
             lane_id = str(payload.get("lane_id") or "").strip()
             return {f"legacy-generated:{generated_at}:{lane_id}"}
     return {fallback}
+
+
+def _predictive_scout_reserved_risk_jpy(payload: Any) -> float | None:
+    """Extract one exact fresh candidate-risk value from a SCOUT payload."""
+
+    values: list[float] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("predictive_scout") is True:
+                raw = value.get(
+                    "predictive_scout_fresh_actual_initial_risk_jpy"
+                )
+                try:
+                    parsed = float(raw)
+                except (TypeError, ValueError):
+                    parsed = 0.0
+                if math.isfinite(parsed) and parsed > 0.0:
+                    values.append(parsed)
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(payload)
+    if not values:
+        return None
+    first = values[0]
+    if any(
+        not math.isclose(value, first, rel_tol=1e-9, abs_tol=1e-6)
+        for value in values[1:]
+    ):
+        return None
+    return first
 
 
 def _now() -> str:

@@ -72,7 +72,7 @@ class _NonmatchingBidaskRulesMixin:
 
 class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
 
-    def test_predictive_scout_score_cannot_resize_fixed_1000_unit_vehicle(self) -> None:
+    def test_predictive_scout_score_cannot_resize_preverified_nav_risk_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
@@ -113,7 +113,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             decision = brain.run(_snapshot())
 
         self.assertEqual(decision.scores[0].size_multiple, 1.0)
-        self.assertIn("fixes score sizing", " ".join(decision.scores[0].rationale))
+        self.assertIn("pre-verifier NAV-risk units", " ".join(decision.scores[0].rationale))
 
     def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:
         policy = RiskPolicy()

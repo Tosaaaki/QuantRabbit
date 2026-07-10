@@ -21,6 +21,7 @@ from quant_rabbit.forecast_precision import (
 )
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.predictive_scout import predictive_scout_sizing_digest
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
 
@@ -608,6 +609,34 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(scout_receipt["predictive_scout"])
             self.assertTrue(scout_receipt["predictive_scout_vehicle_id"].startswith("psv-"))
             self.assertTrue(scout_receipt["predictive_scout_experiment_id"].startswith("psx-"))
+            self.assertEqual(scout_receipt["predictive_scout_risk_tier"], "DISCOVERY")
+            self.assertEqual(scout_receipt["predictive_scout_nav_jpy_at_sizing"], 200_000.0)
+            self.assertEqual(scout_receipt["predictive_scout_max_risk_pct_nav"], 0.10)
+            self.assertEqual(
+                scout_receipt["predictive_scout_planned_initial_risk_jpy"],
+                75.6,
+            )
+            self.assertAlmostEqual(
+                scout_receipt["predictive_scout_fresh_actual_initial_risk_jpy"],
+                75.6,
+                places=6,
+            )
+            self.assertEqual(
+                scout_receipt["predictive_scout_active_initial_risk_jpy"],
+                0.0,
+            )
+            self.assertAlmostEqual(
+                scout_receipt["predictive_scout_aggregate_initial_risk_jpy"],
+                75.6,
+                places=6,
+            )
+            self.assertEqual(
+                scout_receipt["predictive_scout_concurrent_risk_cap_jpy"],
+                4000.0,
+            )
+            self.assertTrue(
+                scout_receipt["predictive_scout_sizing_digest"].startswith("psd-")
+            )
             self.assertEqual(
                 {
                     "pair": scout_receipt["pair"],
@@ -1144,6 +1173,44 @@ class LiveOrderGatewayTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in staged["risk_issues"]}
             self.assertIn("PREDICTIVE_SCOUT_EXPIRED_BEFORE_POST", issue_codes)
 
+    def test_predictive_scout_accepts_preverified_sub_1000_units_within_nav_risk_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"QR_PREDICTIVE_SCOUT_LIVE_ENABLED": "1"},
+        ):
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_predictive_scout_policy(root)
+            intents = _predictive_scout_intents(
+                data_root,
+                now=datetime.now(timezone.utc),
+            )
+            payload = json.loads(intents.read_text())
+            intent = payload["results"][0]["intent"]
+            intent["units"] = 500
+            intent["metadata"]["predictive_scout_units"] = 500
+            intent["metadata"]["predictive_scout_planned_initial_risk_jpy"] = 37.8
+            intent["metadata"]["predictive_scout_planned_initial_risk_pct_nav"] = 0.0189
+            intent["metadata"]["predictive_scout_sizing_digest"] = (
+                predictive_scout_sizing_digest(
+                    execution_module._intent_from_json(intent)
+                )
+            )
+            intents.write_text(json.dumps(payload), encoding="utf-8")
+
+            summary = LiveOrderGateway(
+                client=_predictive_scout_client(),
+                strategy_profile=_profile(root, pair="USD_CAD"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=intents, lane_id=PREDICTIVE_SCOUT_LANE_ID)
+
+            self.assertEqual(summary.status, "STAGED")
+            staged = json.loads((root / "request.json").read_text())
+            self.assertEqual(staged["order_request"]["units"], "500")
+            self.assertEqual(staged["predictive_scout_receipt"]["units"], 500)
+
     def test_sent_predictive_scout_is_indexed_before_gateway_returns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
@@ -1324,6 +1391,12 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 payload = json.loads(base_intents.read_text())
                 payload["results"][0]["intent"]["metadata"]["forecast_cycle_id"] = (
                     f"parallel-forecast-cycle-{index}"
+                )
+                parallel_intent = payload["results"][0]["intent"]
+                parallel_intent["metadata"]["predictive_scout_sizing_digest"] = (
+                    predictive_scout_sizing_digest(
+                        execution_module._intent_from_json(parallel_intent)
+                    )
                 )
                 intents_path = data_root / f"parallel-intents-{index}.json"
                 intents_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1900,7 +1973,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "STAGED")
             payload = json.loads((root / "request.json").read_text())
             scaled_units = int(payload["order_request"]["units"])
-            self.assertGreaterEqual(scaled_units, 1000)
+            self.assertGreaterEqual(scaled_units, 1)
             self.assertLess(scaled_units, 3000)
             self.assertEqual(payload["scaled_units"], scaled_units)
             self.assertLessEqual(payload["risk_metrics"]["risk_jpy"], 250.0)
@@ -3045,7 +3118,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertEqual(scaled, 1153)
         self.assertEqual(issues, [])
 
-    def test_score_size_multiple_keeps_min_lot_floor(self) -> None:
+    def test_score_size_multiple_preserves_integer_unit_downsize(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             client = FakeExecutionClient()
@@ -3066,21 +3139,21 @@ class LiveOrderGatewayTest(unittest.TestCase):
             payload = json.loads((root / "request.json").read_text())
             order_result = payload["orders"][0]
             self.assertEqual(order_result["requested_units"], 1000)
-            self.assertEqual(order_result["scaled_units"], 1000)
-            self.assertEqual(order_result["order_request"]["units"], "1000")
+            self.assertEqual(order_result["scaled_units"], 950)
+            self.assertEqual(order_result["order_request"]["units"], "950")
             issue_codes = {issue["code"] for issue in order_result["risk_issues"]}
-            self.assertIn("SIZE_MULTIPLE_CLAMPED_TO_MIN_LOT", issue_codes)
+            self.assertNotIn("SIZE_MULTIPLE_CLAMPED_TO_MIN_LOT", issue_codes)
             self.assertNotIn("MIN_LOT_VIOLATION", issue_codes)
 
-    def test_capacity_downsize_below_min_lot_blocks_lane(self) -> None:
+    def test_capacity_downsize_accepts_positive_sub_1000_units(self) -> None:
         scaled, issues = execution_module._scaled_units(
             1000,
             0.95,
             sub_min_lot_mode="block",
         )
 
-        self.assertIsNone(scaled)
-        self.assertEqual(["BASKET_CAPACITY_BELOW_MIN_LOT"], [issue.code for issue in issues])
+        self.assertEqual(scaled, 950)
+        self.assertEqual(issues, [])
 
     def test_portfolio_position_cap_scales_with_target_trade_pace(self) -> None:
         execution_module._target_trades_per_day_from_state = lambda path=None: 12
@@ -3169,9 +3242,14 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     live_enabled=True,
                 ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
 
-                self.assertEqual(summary.status, "BLOCKED")
+                self.assertEqual(summary.status, "STAGED")
                 payload = json.loads((root / "request.json").read_text())
-                self.assertIn("LOSS_CAP_EXCEEDED", {issue["code"] for issue in payload["risk_issues"]})
+                self.assertLess(payload["scaled_units"], payload["requested_units"])
+                self.assertLessEqual(payload["risk_metrics"]["risk_jpy"], 100.0)
+                self.assertIn(
+                    "SIZE_MULTIPLE_CLIPPED_TO_LOSS_CAP",
+                    {issue["code"] for issue in payload["risk_issues"]},
+                )
         finally:
             execution_module._per_trade_risk_from_state = original_reader
 
@@ -4332,6 +4410,20 @@ def _predictive_scout_intents(
         "method": "BREAKOUT_FAILURE",
         "invalidation": "attached replay stop trades",
     }
+    intent["metadata"].update(
+        {
+            "predictive_scout_risk_tier": "DISCOVERY",
+            "predictive_scout_nav_jpy_at_sizing": 200_000.0,
+            "predictive_scout_max_risk_pct_nav": 0.10,
+            "predictive_scout_max_loss_jpy": 200.0,
+            "predictive_scout_effective_max_loss_jpy": 200.0,
+            "predictive_scout_planned_initial_risk_jpy": 75.6,
+            "predictive_scout_planned_initial_risk_pct_nav": 0.0378,
+        }
+    )
+    intent["metadata"]["predictive_scout_sizing_digest"] = (
+        predictive_scout_sizing_digest(execution_module._intent_from_json(intent))
+    )
     intents.write_text(json.dumps(payload))
     return intents
 
@@ -4363,6 +4455,11 @@ def _write_predictive_scout_verified_decision(
         "predictive_scout": {
             "forecast_cycle_id": metadata["forecast_cycle_id"],
             "rule_digest": metadata["predictive_scout_rule_digest"],
+            "risk_tier": metadata["predictive_scout_risk_tier"],
+            "planned_initial_risk_jpy": metadata[
+                "predictive_scout_planned_initial_risk_jpy"
+            ],
+            "sizing_digest": metadata["predictive_scout_sizing_digest"],
             "generated_at_utc": metadata["predictive_scout_generated_at_utc"],
             "expires_at_utc": metadata["predictive_scout_expires_at_utc"],
         },
@@ -4408,12 +4505,20 @@ def _write_predictive_scout_policy(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "enabled": True,
                 "mode": "FORWARD_EVIDENCE_ONLY",
                 "allowed_sources": ["BIDASK_REPLAY_PRECISION"],
                 "order_types": ["LIMIT"],
-                "units": 1000,
+                "risk_tiers": {
+                    "DISCOVERY": {"max_risk_pct_nav": 0.10},
+                    "EMERGING": {"max_risk_pct_nav": 0.25},
+                    "ESTABLISHED": {"max_risk_pct_nav": 0.50},
+                    "STRONG": {"max_risk_pct_nav": 0.75},
+                    "PROVEN": {"max_risk_pct_nav": 1.00},
+                },
+                "max_per_trade_risk_pct_nav": 1.0,
+                "max_concurrent_risk_pct_nav": 2.0,
                 "max_concurrent": 2,
                 "max_sent_per_campaign_day": 8,
                 "max_ttl_minutes": 90,

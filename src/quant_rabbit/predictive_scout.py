@@ -25,7 +25,7 @@ DEFAULT_PREDICTIVE_SCOUT_POLICY = ROOT / "config" / "predictive_scout_policy.jso
 PREDICTIVE_SCOUT_SOURCE = "BIDASK_REPLAY_PRECISION"
 PREDICTIVE_SCOUT_LIVE_ENV = "QR_PREDICTIVE_SCOUT_LIVE_ENABLED"
 PREDICTIVE_SCOUT_MAX_TTL_MINUTES = 90
-PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY = 8
+PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY = 30
 PREDICTIVE_SCOUT_MAX_CONCURRENT = 2
 PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS = 60
 PREDICTIVE_SCOUT_LOSS_COOLDOWN_HOURS = 6
@@ -35,6 +35,21 @@ PREDICTIVE_SCOUT_MIN_ACTIVE_DAYS = 5
 PREDICTIVE_SCOUT_MIN_PROFIT_FACTOR = 1.2
 PREDICTIVE_SCOUT_MIN_POSITIVE_DAY_RATE = 2.0 / 3.0
 PREDICTIVE_SCOUT_PROMOTION_MIN_RESOLVED_EXITS = 30
+PREDICTIVE_SCOUT_NORMALIZATION_UNITS = 1000
+PREDICTIVE_SCOUT_POLICY_SCHEMA_VERSION = 2
+PREDICTIVE_SCOUT_MAX_PER_TRADE_RISK_PCT_NAV = 1.0
+PREDICTIVE_SCOUT_MAX_CONCURRENT_RISK_PCT_NAV = 2.0
+# These are named forward-evidence risk tiers, not discretionary lot
+# multipliers.  Each percentage is applied to fresh broker NAV and converted
+# to units from the intent's market-derived stop distance by the caller.  A
+# tier may only advance from normalized, exact-vehicle forward outcomes.
+PREDICTIVE_SCOUT_RISK_TIER_PCT_NAV = {
+    "DISCOVERY": 0.10,
+    "EMERGING": 0.25,
+    "ESTABLISHED": 0.50,
+    "STRONG": 0.75,
+    "PROVEN": 1.00,
+}
 
 
 def predictive_scout_policy(path: Path | None = None) -> dict[str, Any]:
@@ -203,7 +218,7 @@ def predictive_scout_intent_issues(
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_POLICY_INVALID",
-                "predictive SCOUT policy must be schema v1 forward-evidence-only, LIMIT/1000u, at most two concurrent, capped at eight broker-POST reservations, six-hour post-loss cooldown, negative-vehicle quarantine, and never auto-promote",
+                "predictive SCOUT policy must be schema v2 forward-evidence-only with named NAV-risk tiers, no fixed units, at most 1% NAV per trade / 2% concurrent, capped broker-POST reservations, loss cooldown, negative-vehicle quarantine, and no auto-promotion",
             )
         )
     elif policy.get("enabled") is not True:
@@ -288,12 +303,21 @@ def predictive_scout_intent_issues(
                 "SCOUT must carry campaign_role=BIDASK_REPLAY_CONTRARIAN_SCOUT so broker truth can enforce the one-active cap",
             )
         )
-    expected_units = _positive_int(policy.get("units"), MIN_PRODUCTION_LOT_UNITS)
-    if expected_units != MIN_PRODUCTION_LOT_UNITS or abs(int(intent.units)) != MIN_PRODUCTION_LOT_UNITS:
+    if abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS:
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_MIN_LOT_REQUIRED",
-                f"SCOUT must use exactly the broker production floor {MIN_PRODUCTION_LOT_UNITS}u",
+                f"SCOUT NAV-risk sizing resolved below the broker production floor {MIN_PRODUCTION_LOT_UNITS}u",
+            )
+        )
+    elif _policy_contract_valid(policy):
+        issues.extend(
+            _predictive_scout_risk_plan_issues(
+                intent,
+                snapshot=snapshot,
+                ledger_path=ledger_path,
+                policy_path=policy_path
+                or data_root.parent / "config" / "predictive_scout_policy.json",
             )
         )
     if intent.entry is None or not _intent_geometry_valid(intent):
@@ -507,6 +531,178 @@ def predictive_scout_intent_issues(
     return issues
 
 
+def _predictive_scout_risk_plan_issues(
+    intent: OrderIntent,
+    *,
+    snapshot: BrokerSnapshot | None,
+    ledger_path: Path,
+    policy_path: Path,
+) -> list[dict[str, str]]:
+    plan = predictive_scout_nav_risk_plan(
+        intent,
+        snapshot=snapshot,
+        execution_ledger_db_path=ledger_path,
+        policy_path=policy_path,
+    )
+    if plan.get("status") != "READY":
+        return [
+            _issue(
+                "PREDICTIVE_SCOUT_NAV_RISK_PLAN_UNAVAILABLE",
+                f"SCOUT NAV-risk plan failed closed with status={plan.get('status')}; refresh policy, ledger, and broker NAV before staging",
+            )
+        ]
+    metadata = intent.metadata or {}
+    current = {
+        "tier": str(plan.get("tier") or "").upper(),
+        "nav_jpy": _optional_positive_float(plan.get("nav_jpy")),
+        "max_risk_pct_nav": _optional_positive_float(
+            plan.get("max_risk_pct_nav")
+        ),
+        "max_loss_jpy": _optional_positive_float(plan.get("max_loss_jpy")),
+    }
+    actual = {
+        "tier": str(metadata.get("predictive_scout_risk_tier") or "").upper(),
+        "nav_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_nav_jpy_at_sizing")
+        ),
+        "max_risk_pct_nav": _optional_positive_float(
+            metadata.get("predictive_scout_max_risk_pct_nav")
+        ),
+        "max_loss_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_max_loss_jpy")
+        ),
+    }
+    # NAV is expected to move between intent generation and the gateway's
+    # fresh broker snapshot. Requiring byte-for-byte equality would make every
+    # otherwise valid SCOUT stale on the next tick. Authenticate the original
+    # sizing equation, keep its digest immutable, and then enforce the smaller
+    # of the original and current NAV caps against actual planned SL risk.
+    declared_equation_valid = bool(
+        actual["nav_jpy"] is not None
+        and actual["max_risk_pct_nav"] is not None
+        and actual["max_loss_jpy"] is not None
+        and math.isclose(
+            float(actual["max_loss_jpy"]),
+            float(actual["nav_jpy"])
+            * (float(actual["max_risk_pct_nav"]) / 100.0),
+            rel_tol=1e-9,
+            abs_tol=1e-4,
+        )
+    )
+    current_contract_match = bool(
+        actual["tier"] == current["tier"]
+        and actual["max_risk_pct_nav"] is not None
+        and current["max_risk_pct_nav"] is not None
+        and math.isclose(
+            float(actual["max_risk_pct_nav"]),
+            float(current["max_risk_pct_nav"]),
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        )
+    )
+    issues: list[dict[str, str]] = []
+    if not declared_equation_valid or not current_contract_match:
+        issues.append(
+            _issue(
+                "PREDICTIVE_SCOUT_NAV_RISK_PLAN_MISMATCH",
+                "SCOUT tier/risk-percent or its original NAV×percent=max-loss equation does not match the current exact-vehicle normalized forward plan",
+            )
+        )
+    planned_risk = _optional_positive_float(
+        metadata.get("predictive_scout_planned_initial_risk_jpy")
+    )
+    fresh_actual_risk = _predictive_scout_intent_initial_risk_jpy(
+        intent,
+        snapshot,
+    )
+    current_max_loss = current["max_loss_jpy"]
+    declared_max_loss = actual["max_loss_jpy"]
+    applicable_max_loss = (
+        min(float(current_max_loss), float(declared_max_loss))
+        if current_max_loss is not None and declared_max_loss is not None
+        else None
+    )
+    if (
+        planned_risk is None
+        or applicable_max_loss is None
+        or planned_risk > applicable_max_loss + 1e-4
+    ):
+        issues.append(
+            _issue(
+                "PREDICTIVE_SCOUT_PLANNED_RISK_INVALID",
+                "SCOUT requires positive planned initial SL risk no greater than the current NAV-risk tier cap",
+            )
+        )
+    if fresh_actual_risk is None:
+        issues.append(
+            _issue(
+                "PREDICTIVE_SCOUT_FRESH_ACTUAL_RISK_UNAVAILABLE",
+                "SCOUT current units/entry/SL or quote-to-JPY conversion cannot be recomputed from the fresh broker snapshot",
+            )
+        )
+    else:
+        metadata["predictive_scout_fresh_actual_initial_risk_jpy"] = round(
+            fresh_actual_risk,
+            8,
+        )
+        if (
+            applicable_max_loss is None
+            or fresh_actual_risk > applicable_max_loss + 1e-4
+        ):
+            issues.append(
+                _issue(
+                    "PREDICTIVE_SCOUT_FRESH_ACTUAL_RISK_CAP_EXCEEDED",
+                    "SCOUT fresh units/entry/SL/conversion risk exceeds the smaller of the original and current NAV-tier caps",
+                )
+            )
+        active_risk = predictive_scout_active_initial_risk_jpy(snapshot)
+        current_nav = current["nav_jpy"]
+        concurrent_pct = _optional_positive_float(
+            plan.get("max_concurrent_risk_pct_nav")
+        )
+        if active_risk is None or current_nav is None or concurrent_pct is None:
+            issues.append(
+                _issue(
+                    "PREDICTIVE_SCOUT_CONCURRENT_RISK_UNAVAILABLE",
+                    "SCOUT cannot prove current-NAV aggregate initial risk for active broker SCOUT exposure",
+                )
+            )
+        else:
+            concurrent_cap = float(current_nav) * (concurrent_pct / 100.0)
+            aggregate_risk = active_risk + fresh_actual_risk
+            metadata["predictive_scout_active_initial_risk_jpy"] = round(
+                active_risk,
+                8,
+            )
+            metadata["predictive_scout_aggregate_initial_risk_jpy"] = round(
+                aggregate_risk,
+                8,
+            )
+            metadata["predictive_scout_concurrent_risk_cap_jpy"] = round(
+                concurrent_cap,
+                8,
+            )
+            if aggregate_risk > concurrent_cap + 1e-4:
+                issues.append(
+                    _issue(
+                        "PREDICTIVE_SCOUT_CONCURRENT_NAV_RISK_CAP_EXCEEDED",
+                        "active plus candidate SCOUT initial risk exceeds the current-NAV concurrent risk cap",
+                    )
+                )
+    declared_digest = str(
+        metadata.get("predictive_scout_sizing_digest") or ""
+    ).strip()
+    expected_digest = predictive_scout_sizing_digest(intent)
+    if declared_digest != expected_digest:
+        issues.append(
+            _issue(
+                "PREDICTIVE_SCOUT_SIZING_DIGEST_MISMATCH",
+                "SCOUT units, geometry, or NAV-risk metadata changed after the pre-verifier sizing digest was written",
+            )
+        )
+    return issues
+
+
 def _execution_ledger_last_transaction_id(db_path: Path) -> str | None:
     if not db_path.exists():
         return None
@@ -598,6 +794,122 @@ def predictive_scout_concurrent_count(snapshot: BrokerSnapshot | None) -> int:
     return count
 
 
+def predictive_scout_active_initial_risk_jpy(
+    snapshot: BrokerSnapshot | None,
+) -> float | None:
+    """Return fresh initial-SL risk for every broker-active SCOUT.
+
+    Missing geometry or conversion fails closed whenever a SCOUT object is
+    active.  The 2% aggregate cap must be based on current NAV and current
+    quote-to-JPY conversion, not on its entry-time declared percentage.
+    """
+
+    if snapshot is None:
+        return None
+    total = 0.0
+    for position in snapshot.positions:
+        if not predictive_scout_broker_raw_claimed(position.raw):
+            continue
+        risk = _predictive_scout_geometry_risk_jpy(
+            pair=position.pair,
+            units=position.units,
+            entry=position.entry_price,
+            stop_loss=position.stop_loss,
+            snapshot=snapshot,
+        )
+        if risk is None:
+            return None
+        total += risk
+    for order in snapshot.orders:
+        if order.trade_id or not predictive_scout_broker_raw_claimed(order.raw):
+            continue
+        stop_loss = _raw_nested_positive_float(order.raw, "stopLossOnFill", "price")
+        risk = _predictive_scout_geometry_risk_jpy(
+            pair=str(order.pair or ""),
+            units=order.units,
+            entry=order.price,
+            stop_loss=stop_loss,
+            snapshot=snapshot,
+        )
+        if risk is None:
+            return None
+        total += risk
+    return total
+
+
+def _predictive_scout_intent_initial_risk_jpy(
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot | None,
+) -> float | None:
+    if snapshot is None:
+        return None
+    return _predictive_scout_geometry_risk_jpy(
+        pair=intent.pair,
+        units=intent.units,
+        entry=intent.entry,
+        stop_loss=intent.sl,
+        snapshot=snapshot,
+    )
+
+
+def _predictive_scout_geometry_risk_jpy(
+    *,
+    pair: str,
+    units: Any,
+    entry: Any,
+    stop_loss: Any,
+    snapshot: BrokerSnapshot,
+) -> float | None:
+    try:
+        parsed_units = abs(int(units))
+        parsed_entry = float(entry)
+        parsed_stop = float(stop_loss)
+    except (TypeError, ValueError):
+        return None
+    conversion = _predictive_scout_quote_to_jpy(pair, snapshot)
+    if (
+        parsed_units < MIN_PRODUCTION_LOT_UNITS
+        or not math.isfinite(parsed_entry)
+        or not math.isfinite(parsed_stop)
+        or parsed_entry <= 0.0
+        or parsed_stop <= 0.0
+        or math.isclose(parsed_entry, parsed_stop, rel_tol=0.0, abs_tol=0.0)
+        or conversion is None
+    ):
+        return None
+    return abs(parsed_entry - parsed_stop) * parsed_units * conversion
+
+
+def _predictive_scout_quote_to_jpy(
+    pair: str,
+    snapshot: BrokerSnapshot,
+) -> float | None:
+    parts = str(pair or "").upper().split("_", 1)
+    if len(parts) != 2:
+        return None
+    quote_ccy = parts[1]
+    if quote_ccy == "JPY":
+        return 1.0
+    home_conversion = _optional_positive_float(
+        snapshot.home_conversions.get(quote_ccy)
+    )
+    if home_conversion is not None:
+        return home_conversion
+    conversion_quote = snapshot.quotes.get(f"{quote_ccy}_JPY")
+    if conversion_quote is None:
+        return None
+    return _optional_positive_float(max(conversion_quote.bid, conversion_quote.ask))
+
+
+def _raw_nested_positive_float(raw: Any, *keys: str) -> float | None:
+    value = raw
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return _optional_positive_float(value)
+
+
 def predictive_scout_broker_vehicle_counts(
     snapshot: BrokerSnapshot | None,
 ) -> dict[str, int]:
@@ -677,7 +989,6 @@ def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
         "pair": intent.pair.upper(),
         "side": intent.side.value,
         "order_type": intent.order_type.value,
-        "units": abs(int(intent.units)),
         "method": (
             intent.market_context.method.value if intent.market_context is not None else ""
         ),
@@ -692,6 +1003,94 @@ def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
     return "psv-" + _stable_digest(payload)[:24]
 
 
+def predictive_scout_sizing_digest(intent: OrderIntent) -> str:
+    """Authenticate one pre-verifier NAV-risk sizing decision.
+
+    The stable vehicle id intentionally excludes units so changing NAV cannot
+    reset cooldown or quarantine.  This digest does the opposite: it binds the
+    exact signal packet to its units, geometry, and material sizing metadata so
+    a later gateway cannot silently upsize an AI-verified intent.
+    """
+
+    metadata = intent.metadata or {}
+    payload = {
+        "vehicle_id": predictive_scout_vehicle_id(intent),
+        "pair": intent.pair.upper(),
+        "side": intent.side.value,
+        "order_type": intent.order_type.value,
+        "units": abs(int(intent.units)),
+        "entry": intent.entry,
+        "tp": intent.tp,
+        "sl": intent.sl,
+        "forecast_cycle_id": str(metadata.get("forecast_cycle_id") or ""),
+        "forecast_direction": str(metadata.get("forecast_direction") or "").upper(),
+        "forecast_confidence": _safe_float(metadata.get("forecast_confidence"), 0.0),
+        "forecast_horizon_min": _nonnegative_int(metadata.get("forecast_horizon_min")),
+        "source": str(metadata.get("predictive_scout_source") or "").upper(),
+        "rule_name": str(metadata.get("predictive_scout_rule_name") or ""),
+        "rule_digest": str(metadata.get("predictive_scout_rule_digest") or ""),
+        "risk_tier": str(metadata.get("predictive_scout_risk_tier") or "").upper(),
+        "nav_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_nav_jpy_at_sizing")
+        ),
+        "max_risk_pct_nav": _optional_positive_float(
+            metadata.get("predictive_scout_max_risk_pct_nav")
+        ),
+        "max_loss_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_max_loss_jpy")
+        ),
+        "planned_initial_risk_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_planned_initial_risk_jpy")
+        ),
+    }
+    return "psd-" + _stable_digest(payload)[:24]
+
+
+def _predictive_scout_receipt_sizing_digest(receipt: dict[str, Any]) -> str:
+    """Recompute the sizing digest from a durable gateway receipt."""
+
+    payload = {
+        "vehicle_id": str(receipt.get("predictive_scout_vehicle_id") or ""),
+        "pair": str(receipt.get("pair") or "").upper(),
+        "side": str(receipt.get("side") or "").upper(),
+        "order_type": str(receipt.get("order_type") or "").upper(),
+        "units": _strict_positive_int(receipt.get("units")),
+        "entry": receipt.get("entry"),
+        "tp": receipt.get("take_profit"),
+        "sl": receipt.get("stop_loss"),
+        "forecast_cycle_id": str(receipt.get("forecast_cycle_id") or ""),
+        "forecast_direction": str(
+            receipt.get("forecast_direction") or ""
+        ).upper(),
+        "forecast_confidence": _safe_float(
+            receipt.get("forecast_confidence"),
+            0.0,
+        ),
+        "forecast_horizon_min": _nonnegative_int(
+            receipt.get("forecast_horizon_min")
+        ),
+        "source": str(receipt.get("predictive_scout_source") or "").upper(),
+        "rule_name": str(receipt.get("predictive_scout_rule_name") or ""),
+        "rule_digest": str(receipt.get("predictive_scout_rule_digest") or ""),
+        "risk_tier": str(
+            receipt.get("predictive_scout_risk_tier") or ""
+        ).upper(),
+        "nav_jpy": _optional_positive_float(
+            receipt.get("predictive_scout_nav_jpy_at_sizing")
+        ),
+        "max_risk_pct_nav": _optional_positive_float(
+            receipt.get("predictive_scout_max_risk_pct_nav")
+        ),
+        "max_loss_jpy": _optional_positive_float(
+            receipt.get("predictive_scout_max_loss_jpy")
+        ),
+        "planned_initial_risk_jpy": _optional_positive_float(
+            receipt.get("predictive_scout_planned_initial_risk_jpy")
+        ),
+    }
+    return "psd-" + _stable_digest(payload)[:24]
+
+
 def predictive_scout_experiment_id(intent: OrderIntent) -> str:
     """Unique id for one forecast cycle's exact forward experiment."""
 
@@ -703,6 +1102,11 @@ def predictive_scout_experiment_id(intent: OrderIntent) -> str:
         "entry": intent.entry,
         "tp": intent.tp,
         "sl": intent.sl,
+        "units": abs(int(intent.units)),
+        "planned_initial_risk_jpy": _optional_positive_float(
+            metadata.get("predictive_scout_planned_initial_risk_jpy")
+        ),
+        "sizing_digest": predictive_scout_sizing_digest(intent),
     }
     return "psx-" + _stable_digest(payload)[:24]
 
@@ -823,11 +1227,12 @@ def predictive_scout_forward_proof(
         "requirements": {
             "minimum_resolved_exits": min_resolved,
             "all_filled_must_be_resolved": True,
-            "one_sided_95_mean_lower_jpy_must_exceed": 0.0,
-            "minimum_profit_factor": min_pf,
+            "one_sided_95_mean_lower_r_must_exceed": 0.0,
+            "minimum_profit_factor_r": min_pf,
             "minimum_active_days": min_days,
-            "minimum_positive_day_rate": min_positive_day_rate,
+            "minimum_positive_day_rate_r": min_positive_day_rate,
             "all_exit_reasons_and_financing_included": True,
+            "all_resolved_exits_require_initial_risk_normalization": True,
             "one_broker_order_per_vehicle_forecast_signal": True,
             "every_resolved_trade_has_one_independent_signal": True,
         },
@@ -845,29 +1250,48 @@ def _predictive_scout_vehicle_proof_row(
     min_positive_day_rate: float,
 ) -> dict[str, Any]:
     outcomes = list(state.get("outcomes") or [])
-    values = [float(item["net_jpy"]) for item in outcomes]
-    resolved_count = len(values)
-    wins = sum(1 for value in values if value > 0.0)
-    losses = sum(1 for value in values if value < 0.0)
-    gross_profit = sum(value for value in values if value > 0.0)
-    gross_loss_abs = abs(sum(value for value in values if value < 0.0))
-    mean = sum(values) / resolved_count if resolved_count else None
-    lower = _one_sided_mean_lower_95(values)
-    profit_factor = gross_profit / gross_loss_abs if gross_loss_abs > 0.0 else None
-    daily_net: dict[str, float] = {}
+    jpy_values = [_safe_float(item.get("net_jpy"), 0.0) for item in outcomes]
+    normalized = [
+        item
+        for item in outcomes
+        if _optional_finite_float(item.get("net_r")) is not None
+        and _optional_finite_float(item.get("net_jpy_per_1000u")) is not None
+    ]
+    r_values = [float(item["net_r"]) for item in normalized]
+    per_1000_values = [float(item["net_jpy_per_1000u"]) for item in normalized]
+    resolved_count = len(jpy_values)
+    normalized_count = len(r_values)
+    raw_wins = sum(1 for value in jpy_values if value > 0.0)
+    raw_losses = sum(1 for value in jpy_values if value < 0.0)
+    wins = sum(1 for value in r_values if value > 0.0)
+    losses = sum(1 for value in r_values if value < 0.0)
+    gross_profit_jpy = sum(value for value in jpy_values if value > 0.0)
+    gross_loss_abs_jpy = abs(sum(value for value in jpy_values if value < 0.0))
+    gross_profit_r = sum(value for value in r_values if value > 0.0)
+    gross_loss_abs_r = abs(sum(value for value in r_values if value < 0.0))
+    mean_jpy = sum(jpy_values) / resolved_count if resolved_count else None
+    lower_jpy = _one_sided_mean_lower_95(jpy_values)
+    mean_r = sum(r_values) / normalized_count if normalized_count else None
+    lower_r = _one_sided_mean_lower_95(r_values)
+    profit_factor_r = (
+        gross_profit_r / gross_loss_abs_r if gross_loss_abs_r > 0.0 else None
+    )
+    daily_net_r: dict[str, float] = {}
     exit_reasons: dict[str, int] = {}
-    for item in outcomes:
+    for item in normalized:
         day = str(item.get("resolved_day_utc") or "unknown")
-        daily_net[day] = daily_net.get(day, 0.0) + float(item["net_jpy"])
+        daily_net_r[day] = daily_net_r.get(day, 0.0) + float(item["net_r"])
+    for item in outcomes:
         for reason in item.get("exit_reasons", []) or ["UNKNOWN"]:
             key = str(reason or "UNKNOWN")
             exit_reasons[key] = exit_reasons.get(key, 0) + 1
-    active_days = len(daily_net)
-    positive_days = sum(1 for value in daily_net.values() if value > 0.0)
+    active_days = len(daily_net_r)
+    positive_days = sum(1 for value in daily_net_r.values() if value > 0.0)
     positive_day_rate = positive_days / active_days if active_days else 0.0
     filled_count = len(state.get("filled_trade_ids") or set())
     unresolved_count = max(0, filled_count - resolved_count)
     all_filled_resolved = filled_count > 0 and unresolved_count == 0
+    complete_normalization = resolved_count > 0 and normalized_count == resolved_count
     signal_broker_refs = state.get("signal_broker_refs") or {}
     filled_signal_trade_ids = state.get("filled_signal_trade_ids") or {}
     duplicate_signal_ids = sorted(
@@ -884,18 +1308,33 @@ def _predictive_scout_vehicle_proof_row(
         and all(len(trade_ids) == 1 for trade_ids in filled_signal_trade_ids.values())
         and not duplicate_signal_ids
     )
-    profit_factor_pass = gross_loss_abs == 0.0 and gross_profit > 0.0
-    if profit_factor is not None:
-        profit_factor_pass = profit_factor >= min_profit_factor
+    profit_factor_pass = gross_loss_abs_r == 0.0 and gross_profit_r > 0.0
+    if profit_factor_r is not None:
+        profit_factor_pass = profit_factor_r >= min_profit_factor
     eligible = bool(
         all_filled_resolved
         and complete_signal_attribution
-        and resolved_count >= min_resolved
-        and lower is not None
-        and lower > 0.0
+        and complete_normalization
+        and normalized_count >= min_resolved
+        and lower_r is not None
+        and lower_r > 0.0
         and profit_factor_pass
         and active_days >= min_days
         and positive_day_rate >= min_positive_day_rate
+    )
+    risk_tier = _predictive_scout_risk_tier(
+        normalized_count=normalized_count,
+        net_r=sum(r_values),
+        gross_profit_r=gross_profit_r,
+        gross_loss_abs_r=gross_loss_abs_r,
+        profit_factor_r=profit_factor_r,
+        one_sided_95_mean_lower_r=lower_r,
+        active_days=active_days,
+        positive_day_rate_r=positive_day_rate,
+        proven=eligible,
+        all_filled_resolved=all_filled_resolved,
+        complete_signal_attribution=complete_signal_attribution,
+        complete_normalization=complete_normalization,
     )
     return {
         "predictive_scout_vehicle_id": vehicle_id,
@@ -903,9 +1342,13 @@ def _predictive_scout_vehicle_proof_row(
         "predictive_scout_rule_name": state.get("rule_name"),
         "pair": state.get("pair"),
         "side": state.get("side"),
+        "risk_tier": risk_tier,
         "sent_count": int(state.get("sent_count") or 0),
         "filled_count": filled_count,
         "resolved_count": resolved_count,
+        "normalized_resolved_count": normalized_count,
+        "normalization_missing_count": max(0, resolved_count - normalized_count),
+        "complete_normalization": complete_normalization,
         "unresolved_filled_count": unresolved_count,
         "all_filled_resolved": all_filled_resolved,
         "independent_signal_count": independent_signal_count,
@@ -919,23 +1362,248 @@ def _predictive_scout_vehicle_proof_row(
         "duplicate_signal_ids": duplicate_signal_ids,
         "wins": wins,
         "losses": losses,
-        "net_jpy": round(sum(values), 4),
-        "mean_net_jpy": round(mean, 4) if mean is not None else None,
-        "one_sided_95_mean_lower_jpy": round(lower, 4) if lower is not None else None,
-        "gross_profit_jpy": round(gross_profit, 4),
-        "gross_loss_abs_jpy": round(gross_loss_abs, 4),
-        "profit_factor": round(profit_factor, 4) if profit_factor is not None else None,
+        "raw_wins": raw_wins,
+        "raw_losses": raw_losses,
+        "net_jpy": round(sum(jpy_values), 4),
+        "mean_net_jpy": round(mean_jpy, 4) if mean_jpy is not None else None,
+        "one_sided_95_mean_lower_jpy": (
+            round(lower_jpy, 4) if lower_jpy is not None else None
+        ),
+        "gross_profit_jpy": round(gross_profit_jpy, 4),
+        "gross_loss_abs_jpy": round(gross_loss_abs_jpy, 4),
+        "net_r": round(sum(r_values), 6),
+        "mean_net_r": round(mean_r, 6) if mean_r is not None else None,
+        "one_sided_95_mean_lower_r": (
+            round(lower_r, 6) if lower_r is not None else None
+        ),
+        "gross_profit_r": round(gross_profit_r, 6),
+        "gross_loss_abs_r": round(gross_loss_abs_r, 6),
+        "profit_factor_r": (
+            round(profit_factor_r, 6) if profit_factor_r is not None else None
+        ),
+        # Backward-compatible key now deliberately points at the normalized-R
+        # PF so variable units cannot make a large JPY win dominate the proof.
+        "profit_factor": (
+            round(profit_factor_r, 6) if profit_factor_r is not None else None
+        ),
+        "net_jpy_per_1000u": round(sum(per_1000_values), 4),
+        "mean_net_jpy_per_1000u": (
+            round(sum(per_1000_values) / len(per_1000_values), 4)
+            if per_1000_values
+            else None
+        ),
         "active_days": active_days,
         "positive_days": positive_days,
+        "positive_day_rate_r": round(positive_day_rate, 6),
         "positive_day_rate": round(positive_day_rate, 6),
         "exit_reason_counts": dict(sorted(exit_reasons.items())),
         "quarantined_negative_vehicle": (
-            losses >= PREDICTIVE_SCOUT_MAX_NEGATIVE_VEHICLE_LOSSES
-            and sum(values) < 0.0
+            raw_losses >= PREDICTIVE_SCOUT_MAX_NEGATIVE_VEHICLE_LOSSES
+            and sum(jpy_values) < 0.0
         ),
         "statistically_eligible_for_operator_review": eligible,
         "automatic_promotion_allowed": False,
     }
+
+
+def _predictive_scout_risk_tier(
+    *,
+    normalized_count: int,
+    net_r: float,
+    gross_profit_r: float,
+    gross_loss_abs_r: float,
+    profit_factor_r: float | None,
+    one_sided_95_mean_lower_r: float | None,
+    active_days: int,
+    positive_day_rate_r: float,
+    proven: bool,
+    all_filled_resolved: bool,
+    complete_signal_attribution: bool,
+    complete_normalization: bool,
+) -> str:
+    if proven:
+        return "PROVEN"
+    if not (
+        all_filled_resolved
+        and complete_signal_attribution
+        and complete_normalization
+    ):
+        return "DISCOVERY"
+    pf_1_2 = _profit_factor_meets(
+        profit_factor_r,
+        gross_profit=gross_profit_r,
+        gross_loss_abs=gross_loss_abs_r,
+        minimum=1.2,
+    )
+    established = bool(
+        normalized_count >= 10
+        and pf_1_2
+        and positive_day_rate_r >= PREDICTIVE_SCOUT_MIN_POSITIVE_DAY_RATE
+    )
+    if (
+        normalized_count >= 20
+        and one_sided_95_mean_lower_r is not None
+        and one_sided_95_mean_lower_r >= 0.0
+        and active_days >= 5
+    ):
+        return "STRONG"
+    if established:
+        return "ESTABLISHED"
+    if (
+        normalized_count >= 5
+        and net_r > 0.0
+        and _profit_factor_meets(
+            profit_factor_r,
+            gross_profit=gross_profit_r,
+            gross_loss_abs=gross_loss_abs_r,
+            minimum=1.0,
+        )
+    ):
+        return "EMERGING"
+    return "DISCOVERY"
+
+
+def _profit_factor_meets(
+    value: float | None,
+    *,
+    gross_profit: float,
+    gross_loss_abs: float,
+    minimum: float,
+) -> bool:
+    if value is not None:
+        return value >= minimum
+    return gross_loss_abs == 0.0 and gross_profit > 0.0
+
+
+def predictive_scout_nav_risk_plan(
+    intent: OrderIntent,
+    *,
+    snapshot: BrokerSnapshot | None,
+    execution_ledger_db_path: Path,
+    policy_path: Path | None = None,
+) -> dict[str, Any]:
+    """Return the fail-closed NAV-loss budget for one exact SCOUT vehicle.
+
+    This function does not calculate units and never grants live permission.
+    Its output is the maximum JPY loss the intent generator may convert to
+    units from the current stop distance.  Only normalized forward outcomes
+    for the stable vehicle id can move the tier above DISCOVERY.
+    """
+
+    result: dict[str, Any] = {
+        "status": "UNAVAILABLE",
+        "tier": None,
+        "nav_jpy": None,
+        "max_risk_pct_nav": 0.0,
+        "max_loss_jpy": 0.0,
+        "resolved_count": 0,
+        "raw_resolved_count": 0,
+        "net_r": 0.0,
+        "profit_factor_r": None,
+        "one_sided_95_mean_lower_r": None,
+        "active_days": 0,
+        "positive_day_rate_r": 0.0,
+        "complete_signal_attribution": False,
+        "complete_normalization": False,
+        "max_concurrent_risk_pct_nav": 0.0,
+        "vehicle_id": predictive_scout_vehicle_id(intent),
+    }
+    policy = predictive_scout_policy(policy_path)
+    if not _policy_contract_valid(policy):
+        result["status"] = "POLICY_INVALID"
+        return result
+    if policy.get("enabled") is not True:
+        result["status"] = "POLICY_DISABLED"
+        return result
+    account = snapshot.account if snapshot is not None else None
+    nav_jpy = _optional_positive_float(getattr(account, "nav_jpy", None))
+    if nav_jpy is None:
+        result["status"] = "NAV_UNAVAILABLE"
+        return result
+    result["nav_jpy"] = round(nav_jpy, 4)
+    extracted = _predictive_scout_forward_outcomes(execution_ledger_db_path)
+    if extracted is None:
+        result["status"] = "LEDGER_UNAVAILABLE"
+        return result
+    vehicle_id = str(result["vehicle_id"])
+    state = extracted.get(vehicle_id) or {
+        "sent_count": 0,
+        "filled_trade_ids": set(),
+        "signal_broker_refs": {},
+        "filled_signal_trade_ids": {},
+        "outcomes": [],
+        "pair": intent.pair,
+        "side": intent.side.value,
+    }
+    row = _predictive_scout_vehicle_proof_row(
+        vehicle_id,
+        state,
+        min_resolved=max(
+            PREDICTIVE_SCOUT_PROMOTION_MIN_RESOLVED_EXITS,
+            _positive_int(
+                policy.get("promotion_min_resolved_exits"),
+                PREDICTIVE_SCOUT_PROMOTION_MIN_RESOLVED_EXITS,
+            ),
+        ),
+        min_days=max(
+            PREDICTIVE_SCOUT_MIN_ACTIVE_DAYS,
+            _positive_int(
+                policy.get("promotion_min_active_days"),
+                PREDICTIVE_SCOUT_MIN_ACTIVE_DAYS,
+            ),
+        ),
+        min_profit_factor=max(
+            PREDICTIVE_SCOUT_MIN_PROFIT_FACTOR,
+            _safe_float(
+                policy.get("promotion_min_profit_factor"),
+                PREDICTIVE_SCOUT_MIN_PROFIT_FACTOR,
+            ),
+        ),
+        min_positive_day_rate=max(
+            PREDICTIVE_SCOUT_MIN_POSITIVE_DAY_RATE,
+            _safe_float(
+                policy.get("promotion_min_positive_day_rate"),
+                PREDICTIVE_SCOUT_MIN_POSITIVE_DAY_RATE,
+            ),
+        ),
+    )
+    tier = str(row.get("risk_tier") or "DISCOVERY").upper()
+    tier_pct = _policy_risk_tiers(policy).get(tier)
+    max_per_trade_pct = _optional_positive_float(
+        policy.get("max_per_trade_risk_pct_nav")
+    )
+    if tier_pct is None or max_per_trade_pct is None:
+        result["status"] = "POLICY_INVALID"
+        return result
+    risk_pct = min(tier_pct, max_per_trade_pct)
+    result.update(
+        {
+            "status": "READY",
+            "tier": tier,
+            "max_risk_pct_nav": round(risk_pct, 6),
+            "max_loss_jpy": round(nav_jpy * (risk_pct / 100.0), 4),
+            "resolved_count": int(row.get("normalized_resolved_count") or 0),
+            "raw_resolved_count": int(row.get("resolved_count") or 0),
+            "net_r": _safe_float(row.get("net_r"), 0.0),
+            "profit_factor_r": row.get("profit_factor_r"),
+            "one_sided_95_mean_lower_r": row.get(
+                "one_sided_95_mean_lower_r"
+            ),
+            "active_days": int(row.get("active_days") or 0),
+            "positive_day_rate_r": _safe_float(
+                row.get("positive_day_rate_r"), 0.0
+            ),
+            "complete_signal_attribution": bool(
+                row.get("complete_signal_attribution")
+            ),
+            "complete_normalization": bool(row.get("complete_normalization")),
+            "max_concurrent_risk_pct_nav": round(
+                _safe_float(policy.get("max_concurrent_risk_pct_nav"), 0.0),
+                6,
+            ),
+        }
+    )
+    return result
 
 
 def _predictive_scout_forward_outcomes(
@@ -953,6 +1621,7 @@ def _predictive_scout_forward_outcomes(
             client_order_expr = (
                 "client_order_id" if "client_order_id" in event_columns else "NULL AS client_order_id"
             )
+            units_expr = "units" if "units" in event_columns else "NULL AS units"
             gateway_rows = con.execute(
                 f"""
                 SELECT event_type, order_id, trade_id, {client_order_expr}, raw_json
@@ -962,7 +1631,8 @@ def _predictive_scout_forward_outcomes(
             ).fetchall()
             fill_rows = con.execute(
                 f"""
-                SELECT order_id, trade_id, {client_order_expr} FROM execution_events
+                SELECT order_id, trade_id, {client_order_expr}, {units_expr}, price, raw_json
+                FROM execution_events
                 WHERE event_type = 'ORDER_FILLED' AND trade_id IS NOT NULL AND trade_id != ''
                 """
             ).fetchall()
@@ -986,6 +1656,10 @@ def _predictive_scout_forward_outcomes(
     order_to_signals: dict[str, set[tuple[str, str]]] = {}
     trade_to_signals: dict[str, set[tuple[str, str]]] = {}
     client_to_signals: dict[str, set[tuple[str, str]]] = {}
+    order_to_normalizers: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    trade_to_normalizers: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    client_to_normalizers: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    trade_normalization: dict[str, dict[str, dict[str, Any]]] = {}
     counted_signals: set[str] = set()
     for event_type, order_id, trade_id, client_order_id, raw in gateway_rows:
         try:
@@ -1012,6 +1686,7 @@ def _predictive_scout_forward_outcomes(
             )
             experiment_id = str(receipt.get("predictive_scout_experiment_id") or "")
             signal_id = _predictive_scout_receipt_signal_id(receipt, vehicle_id=vehicle_id)
+            normalizer = _predictive_scout_receipt_normalizer(receipt)
             is_post_reservation = bool(
                 payload.get("predictive_scout_post_reserved") is True
                 or str(payload.get("status") or "").upper() == "PREDICTIVE_SCOUT_POST_RESERVED"
@@ -1032,32 +1707,105 @@ def _predictive_scout_forward_outcomes(
                 order_to_vehicles.setdefault(str(order_id), set()).add(vehicle_id)
                 if signal_ref is not None:
                     order_to_signals.setdefault(str(order_id), set()).add(signal_ref)
+                if normalizer is not None:
+                    order_to_normalizers.setdefault(str(order_id), []).append(
+                        (vehicle_id, normalizer)
+                    )
             if trade_id:
                 trade_text = str(trade_id)
                 trade_to_vehicles.setdefault(trade_text, set()).add(vehicle_id)
                 if signal_ref is not None:
                     trade_to_signals.setdefault(trade_text, set()).add(signal_ref)
+                if normalizer is not None:
+                    trade_to_normalizers.setdefault(trade_text, []).append(
+                        (vehicle_id, normalizer)
+                    )
                 state["filled_trade_ids"].add(trade_text)
             if client_order_id:
                 client_to_vehicles.setdefault(str(client_order_id), set()).add(vehicle_id)
                 if signal_ref is not None:
                     client_to_signals.setdefault(str(client_order_id), set()).add(signal_ref)
-    for order_id, trade_id, client_order_id in fill_rows:
+                if normalizer is not None:
+                    client_to_normalizers.setdefault(str(client_order_id), []).append(
+                        (vehicle_id, normalizer)
+                    )
+    for order_id, trade_id, client_order_id, fill_units_raw, fill_price_raw, fill_raw in fill_rows:
         vehicle_ids: set[str] = set()
         signal_refs: set[tuple[str, str]] = set()
+        normalizer_refs: list[tuple[str, dict[str, Any]]] = []
         if order_id:
             vehicle_ids.update(order_to_vehicles.get(str(order_id), set()))
             signal_refs.update(order_to_signals.get(str(order_id), set()))
+            normalizer_refs.extend(order_to_normalizers.get(str(order_id), []))
         if trade_id:
             vehicle_ids.update(trade_to_vehicles.get(str(trade_id), set()))
             signal_refs.update(trade_to_signals.get(str(trade_id), set()))
+            normalizer_refs.extend(trade_to_normalizers.get(str(trade_id), []))
         if client_order_id:
             vehicle_ids.update(client_to_vehicles.get(str(client_order_id), set()))
             signal_refs.update(client_to_signals.get(str(client_order_id), set()))
+            normalizer_refs.extend(client_to_normalizers.get(str(client_order_id), []))
+        fill_units = _predictive_scout_fill_units(fill_units_raw, fill_raw)
+        fill_price = _predictive_scout_fill_price(fill_price_raw, fill_raw)
+        unique_normalizers: dict[tuple[str, str], dict[str, Any]] = {}
+        for vehicle_id, normalizer in normalizer_refs:
+            key = (vehicle_id, str(normalizer.get("sizing_digest") or ""))
+            previous = unique_normalizers.get(key)
+            if previous is None:
+                unique_normalizers[key] = normalizer
+            elif previous != normalizer:
+                unique_normalizers[key] = {"invalid": True}
         for vehicle_id in vehicle_ids:
             trade_text = str(trade_id)
             trade_to_vehicles.setdefault(trade_text, set()).add(vehicle_id)
             vehicles[vehicle_id]["filled_trade_ids"].add(trade_text)
+            matching = [
+                normalizer
+                for (normalizer_vehicle, _digest), normalizer in unique_normalizers.items()
+                if normalizer_vehicle == vehicle_id
+            ]
+            # Conflicting sizing receipts or a fill with unknown units cannot
+            # enter normalized proof.  The raw P/L remains attached below for
+            # cooldown/quarantine accounting.
+            if (
+                fill_units is not None
+                and fill_price is not None
+                and len(matching) == 1
+                and matching[0].get("invalid") is not True
+            ):
+                normalizer = matching[0]
+                loss_conversion = _predictive_scout_fill_loss_conversion(
+                    str(normalizer.get("pair") or ""),
+                    fill_raw,
+                )
+                stop_loss = _optional_positive_float(normalizer.get("stop_loss"))
+                actual_initial_risk = (
+                    abs(fill_price - stop_loss) * fill_units * loss_conversion
+                    if stop_loss is not None and loss_conversion is not None
+                    else None
+                )
+                record = trade_normalization.setdefault(trade_text, {}).setdefault(
+                    vehicle_id,
+                    {
+                        "filled_units": 0,
+                        "initial_risk_jpy": 0.0,
+                        "declared_units": int(normalizer["declared_units"]),
+                        "sizing_digest": str(normalizer["sizing_digest"]),
+                    },
+                )
+                if (
+                    int(record["declared_units"]) == int(normalizer["declared_units"])
+                    and str(record["sizing_digest"])
+                    == str(normalizer["sizing_digest"])
+                    and actual_initial_risk is not None
+                    and actual_initial_risk > 0.0
+                ):
+                    record["filled_units"] = int(record["filled_units"]) + fill_units
+                    record["initial_risk_jpy"] = float(
+                        record["initial_risk_jpy"]
+                    ) + actual_initial_risk
+                else:
+                    record["invalid"] = True
         broker_ref = f"order:{order_id}" if order_id else f"trade:{trade_id}"
         for vehicle_id, signal_id in signal_refs:
             trade_to_signals.setdefault(str(trade_id), set()).add((vehicle_id, signal_id))
@@ -1096,8 +1844,202 @@ def _predictive_scout_forward_outcomes(
         if not outcome["resolved"]:
             continue
         for vehicle_id in trade_to_vehicles.get(trade_id, set()):
-            vehicles[vehicle_id]["outcomes"].append(dict(outcome))
+            normalized_outcome = dict(outcome)
+            normalization = trade_normalization.get(trade_id, {}).get(vehicle_id)
+            if (
+                isinstance(normalization, dict)
+                and normalization.get("invalid") is not True
+                and int(normalization.get("filled_units") or 0) > 0
+                and int(normalization.get("filled_units") or 0)
+                <= int(normalization.get("declared_units") or 0)
+                and float(normalization.get("initial_risk_jpy") or 0.0) > 0.0
+            ):
+                filled_units = int(normalization["filled_units"])
+                initial_risk_jpy = float(normalization["initial_risk_jpy"])
+                net_jpy = float(normalized_outcome["net_jpy"])
+                normalized_outcome.update(
+                    {
+                        "normalization_status": "NORMALIZED",
+                        "filled_units": filled_units,
+                        "initial_risk_jpy": round(initial_risk_jpy, 8),
+                        "net_r": net_jpy / initial_risk_jpy,
+                        "net_jpy_per_1000u": (
+                            net_jpy * PREDICTIVE_SCOUT_NORMALIZATION_UNITS
+                            / filled_units
+                        ),
+                        "sizing_digest": normalization.get("sizing_digest"),
+                    }
+                )
+            else:
+                normalized_outcome["normalization_status"] = "MISSING"
+                normalized_outcome["net_r"] = None
+                normalized_outcome["net_jpy_per_1000u"] = None
+            vehicles[vehicle_id]["outcomes"].append(normalized_outcome)
     return vehicles
+
+
+def _predictive_scout_receipt_normalizer(
+    receipt: dict[str, Any],
+) -> dict[str, Any] | None:
+    declared_units = _strict_positive_int(receipt.get("units"))
+    if declared_units is None or declared_units < MIN_PRODUCTION_LOT_UNITS:
+        return None
+    risk_plan = (
+        receipt.get("predictive_scout_risk_plan")
+        if isinstance(receipt.get("predictive_scout_risk_plan"), dict)
+        else {}
+    )
+    planned_risk = next(
+        (
+            parsed
+            for parsed in (
+                _optional_positive_float(
+                    receipt.get("predictive_scout_planned_initial_risk_jpy")
+                ),
+                _optional_positive_float(receipt.get("planned_initial_risk_jpy")),
+                _optional_positive_float(risk_plan.get("planned_initial_risk_jpy")),
+            )
+            if parsed is not None
+        ),
+        None,
+    )
+    sizing_digest = str(
+        receipt.get("predictive_scout_sizing_digest")
+        or risk_plan.get("sizing_digest")
+        or ""
+    ).strip()
+    declared_signal_id = str(
+        receipt.get("predictive_scout_signal_id") or ""
+    ).strip()
+    expected_signal_id = _predictive_scout_expected_receipt_signal_id(receipt)
+    declared_experiment_id = str(
+        receipt.get("predictive_scout_experiment_id") or ""
+    ).strip()
+    expected_experiment_id = _predictive_scout_expected_receipt_experiment_id(
+        receipt,
+        sizing_digest=sizing_digest,
+    )
+    if (
+        planned_risk is None
+        or sizing_digest != _predictive_scout_receipt_sizing_digest(receipt)
+        or not expected_signal_id
+        or declared_signal_id != expected_signal_id
+        or not expected_experiment_id
+        or declared_experiment_id != expected_experiment_id
+    ):
+        return None
+    pair = str(receipt.get("pair") or "").upper()
+    stop_loss = _optional_positive_float(receipt.get("stop_loss"))
+    if not pair or stop_loss is None:
+        return None
+    return {
+        "declared_units": declared_units,
+        "planned_initial_risk_jpy": planned_risk,
+        "sizing_digest": sizing_digest,
+        "pair": pair,
+        "stop_loss": stop_loss,
+    }
+
+
+def _predictive_scout_fill_units(value: Any, raw: Any) -> int | None:
+    parsed = _strict_nonzero_int_abs(value)
+    if parsed is not None:
+        return parsed
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    candidates = [payload.get("units")]
+    for key in ("orderFillTransaction", "tradeOpened", "tradeReduced"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested.get("units"))
+    for candidate in candidates:
+        parsed = _strict_nonzero_int_abs(candidate)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _predictive_scout_fill_price(value: Any, raw: Any) -> float | None:
+    parsed = _optional_positive_float(value)
+    if parsed is not None:
+        return parsed
+    payload = _json_object(raw)
+    if payload is None:
+        return None
+    candidates = [payload.get("price"), payload.get("fullVWAP")]
+    opened = payload.get("tradeOpened")
+    if isinstance(opened, dict):
+        candidates.append(opened.get("price"))
+    for candidate in candidates:
+        parsed = _optional_positive_float(candidate)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _predictive_scout_fill_loss_conversion(pair: str, raw: Any) -> float | None:
+    if str(pair).upper().endswith("_JPY"):
+        return 1.0
+    payload = _json_object(raw)
+    if payload is None:
+        return None
+    nested = payload.get("homeConversionFactors")
+    nested_loss_quote = (
+        nested.get("lossQuoteHome") if isinstance(nested, dict) else None
+    )
+    candidates = [
+        payload.get("lossQuoteHomeConversionFactor"),
+        nested_loss_quote.get("factor")
+        if isinstance(nested_loss_quote, dict)
+        else None,
+    ]
+    for candidate in candidates:
+        parsed = _optional_positive_float(candidate)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _json_object(raw: Any) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _strict_positive_int(value: Any) -> int | None:
+    try:
+        parsed_float = float(value)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not math.isfinite(parsed_float)
+        or parsed_float <= 0.0
+        or not parsed_float.is_integer()
+    ):
+        return None
+    return int(parsed_float)
+
+
+def _strict_nonzero_int_abs(value: Any) -> int | None:
+    """Accept signed broker units only when they are exact non-zero integers."""
+
+    try:
+        parsed_float = float(value)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not math.isfinite(parsed_float)
+        or parsed_float == 0.0
+        or not parsed_float.is_integer()
+    ):
+        return None
+    return abs(int(parsed_float))
 
 
 def _one_sided_mean_lower_95(values: list[float]) -> float | None:
@@ -1138,9 +2080,12 @@ def write_predictive_scout_forward_proof(
                 "",
                 f"- Rule: `{item.get('predictive_scout_rule_name')}`",
                 f"- Pair/side: `{item.get('pair')} {item.get('side')}`",
+                f"- NAV-risk tier: `{item.get('risk_tier')}`",
                 f"- Sent / filled / resolved / unresolved: `{item.get('sent_count')} / {item.get('filled_count')} / {item.get('resolved_count')} / {item.get('unresolved_filled_count')}`",
-                f"- Net / mean / one-sided 95% lower: `{item.get('net_jpy')} / {item.get('mean_net_jpy')} / {item.get('one_sided_95_mean_lower_jpy')} JPY`",
-                f"- PF / positive-day rate: `{item.get('profit_factor')} / {item.get('positive_day_rate')}`",
+                f"- Normalized / missing: `{item.get('normalized_resolved_count')} / {item.get('normalization_missing_count')}`",
+                f"- Raw net JPY / normalized net R / per-1000u: `{item.get('net_jpy')} / {item.get('net_r')} / {item.get('net_jpy_per_1000u')}`",
+                f"- Mean R / one-sided 95% lower R: `{item.get('mean_net_r')} / {item.get('one_sided_95_mean_lower_r')}`",
+                f"- PF(R) / positive-day rate(R): `{item.get('profit_factor_r')} / {item.get('positive_day_rate_r')}`",
                 f"- Quarantined negative vehicle: `{item.get('quarantined_negative_vehicle')}`",
                 f"- Eligible for operator review: `{item.get('statistically_eligible_for_operator_review')}`",
                 "",
@@ -1231,8 +2176,13 @@ def _policy_contract_valid(policy: dict[str, Any]) -> bool:
         return False
     try:
         schema_version = int(policy.get("schema_version"))
-        units = int(policy.get("units"))
         max_concurrent = int(policy.get("max_concurrent"))
+        max_per_trade_risk_pct_nav = float(
+            policy.get("max_per_trade_risk_pct_nav")
+        )
+        max_concurrent_risk_pct_nav = float(
+            policy.get("max_concurrent_risk_pct_nav")
+        )
         max_daily = int(policy.get("max_sent_per_campaign_day"))
         max_ttl = int(policy.get("max_ttl_minutes"))
         minimum_samples = int(policy.get("minimum_replay_samples"))
@@ -1250,10 +2200,24 @@ def _policy_contract_valid(policy: dict[str, Any]) -> bool:
         return False
     order_types = {str(item).upper() for item in policy.get("order_types", []) or []}
     allowed_sources = {str(item).upper() for item in policy.get("allowed_sources", []) or []}
+    risk_tiers = _policy_risk_tiers(policy)
     return bool(
-        schema_version == 1
+        schema_version == PREDICTIVE_SCOUT_POLICY_SCHEMA_VERSION
         and str(policy.get("mode") or "").upper() == "FORWARD_EVIDENCE_ONLY"
-        and units == MIN_PRODUCTION_LOT_UNITS
+        and "units" not in policy
+        and risk_tiers == PREDICTIVE_SCOUT_RISK_TIER_PCT_NAV
+        and math.isclose(
+            max_per_trade_risk_pct_nav,
+            PREDICTIVE_SCOUT_MAX_PER_TRADE_RISK_PCT_NAV,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        and math.isclose(
+            max_concurrent_risk_pct_nav,
+            PREDICTIVE_SCOUT_MAX_CONCURRENT_RISK_PCT_NAV,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
         and max_concurrent == PREDICTIVE_SCOUT_MAX_CONCURRENT
         and 0 < max_daily <= PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY
         and 0 < max_ttl <= PREDICTIVE_SCOUT_MAX_TTL_MINUTES
@@ -1276,6 +2240,21 @@ def _policy_contract_valid(policy: dict[str, Any]) -> bool:
     )
 
 
+def _policy_risk_tiers(policy: dict[str, Any]) -> dict[str, float]:
+    raw = policy.get("risk_tiers")
+    if not isinstance(raw, dict):
+        return {}
+    tiers: dict[str, float] = {}
+    for name, value in raw.items():
+        if isinstance(value, dict):
+            value = value.get("max_risk_pct_nav")
+        parsed = _optional_positive_float(value)
+        if parsed is None:
+            return {}
+        tiers[str(name).upper()] = parsed
+    return tiers
+
+
 def _payload_has_predictive_scout(payload: Any) -> bool:
     if isinstance(payload, dict):
         if payload.get("predictive_scout") is True:
@@ -1288,16 +2267,29 @@ def _payload_has_predictive_scout(payload: Any) -> bool:
 
 def _predictive_scout_budget_keys(payload: Any, *, fallback: str) -> set[str]:
     signal_ids = {
-        str(receipt.get("predictive_scout_signal_id") or "").strip()
+        _predictive_scout_receipt_signal_id(
+            receipt,
+            vehicle_id=str(receipt.get("predictive_scout_vehicle_id") or ""),
+        )
         for receipt in _predictive_scout_receipts(payload)
     }
     signal_ids.discard("")
     if signal_ids:
         return {f"signal:{signal_id}" for signal_id in signal_ids}
-    experiment_ids = {
-        str(receipt.get("predictive_scout_experiment_id") or "").strip()
-        for receipt in _predictive_scout_receipts(payload)
-    }
+    experiment_ids = set()
+    for receipt in _predictive_scout_receipts(payload):
+        sizing_digest = str(
+            receipt.get("predictive_scout_sizing_digest") or ""
+        ).strip()
+        expected = _predictive_scout_expected_receipt_experiment_id(
+            receipt,
+            sizing_digest=sizing_digest,
+        )
+        declared = str(
+            receipt.get("predictive_scout_experiment_id") or ""
+        ).strip()
+        if expected and declared == expected:
+            experiment_ids.add(expected)
     experiment_ids.discard("")
     if experiment_ids:
         return {f"experiment:{experiment_id}" for experiment_id in experiment_ids}
@@ -1310,14 +2302,69 @@ def _predictive_scout_receipt_signal_id(
     vehicle_id: str,
 ) -> str:
     declared = str(receipt.get("predictive_scout_signal_id") or "").strip()
-    if declared:
-        return declared
+    expected = _predictive_scout_expected_receipt_signal_id(
+        receipt,
+        vehicle_id=vehicle_id,
+    )
+    return expected if expected and declared == expected else ""
+
+
+def _predictive_scout_expected_receipt_signal_id(
+    receipt: dict[str, Any],
+    *,
+    vehicle_id: str | None = None,
+) -> str:
+    resolved_vehicle_id = str(
+        vehicle_id or receipt.get("predictive_scout_vehicle_id") or ""
+    ).strip()
     forecast_cycle_id = str(receipt.get("forecast_cycle_id") or "").strip()
-    if not forecast_cycle_id:
+    if not resolved_vehicle_id or not forecast_cycle_id:
         return ""
     return "pss-" + _stable_digest(
-        {"vehicle_id": vehicle_id, "forecast_cycle_id": forecast_cycle_id}
+        {
+            "vehicle_id": resolved_vehicle_id,
+            "forecast_cycle_id": forecast_cycle_id,
+        }
     )[:24]
+
+
+def _predictive_scout_expected_receipt_experiment_id(
+    receipt: dict[str, Any],
+    *,
+    sizing_digest: str,
+) -> str:
+    vehicle_id = str(
+        receipt.get("predictive_scout_vehicle_id") or ""
+    ).strip()
+    forecast_cycle_id = str(receipt.get("forecast_cycle_id") or "").strip()
+    generated_at = str(
+        receipt.get("predictive_scout_generated_at_utc") or ""
+    ).strip()
+    units = _strict_positive_int(receipt.get("units"))
+    planned_risk = _optional_positive_float(
+        receipt.get("predictive_scout_planned_initial_risk_jpy")
+    )
+    if (
+        not vehicle_id
+        or not forecast_cycle_id
+        or not generated_at
+        or units is None
+        or planned_risk is None
+        or not sizing_digest
+    ):
+        return ""
+    payload = {
+        "vehicle_id": vehicle_id,
+        "forecast_cycle_id": forecast_cycle_id,
+        "generated_at_utc": generated_at,
+        "entry": receipt.get("entry"),
+        "tp": receipt.get("take_profit"),
+        "sl": receipt.get("stop_loss"),
+        "units": units,
+        "planned_initial_risk_jpy": planned_risk,
+        "sizing_digest": sizing_digest,
+    }
+    return "psx-" + _stable_digest(payload)[:24]
 
 
 def _predictive_scout_receipts(payload: Any) -> list[dict[str, Any]]:
@@ -1423,6 +2470,24 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        return None
+    return parsed
+
+
+def _optional_finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _issue(code: str, message: str) -> dict[str, str]:

@@ -19,6 +19,7 @@ from quant_rabbit.strategy.predictive_limit_orders import (
     PredictiveLimitOrder,
     apply_limit_orders,
     generate_limits_from_projections,
+    serialize_limit_orders,
 )
 
 
@@ -180,6 +181,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
 
         self.assertTrue(orders)
         self.assertTrue(all(o.side == "SHORT" for o in orders))
+        self.assertTrue(all(o.units is None for o in orders))
 
     def test_predictive_limit_fades_equal_low_by_signal_name(self) -> None:
         signals = [
@@ -205,7 +207,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         self.assertTrue(orders)
         self.assertTrue(all(o.side == "LONG" for o in orders))
 
-    def test_predictive_limit_allows_small_grade_b_early_turn_equal_low(self) -> None:
+    def test_predictive_limit_grade_b_defers_sizing_without_1000_unit_floor(self) -> None:
         signals = [
             _Sig(
                 "liquidity_sweep_low",
@@ -242,7 +244,8 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders[0].side, "LONG")
         self.assertEqual(orders[0].grade, "B")
-        self.assertLess(orders[0].units, 5000)
+        self.assertIsNone(orders[0].units)
+        self.assertIsNone(serialize_limit_orders(orders)[0]["units"])
 
     def test_predictive_limit_rejects_thin_grade_b_without_extreme_context(self) -> None:
         signals = [
@@ -895,7 +898,6 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
             side="LONG",
             limit_price=1.0997,
             take_profit_price=1.1017,
-            units=5000,
             rationale="liquidity sweep fade",
             source="liquidity_sweep_fade",
             grade="A",
@@ -905,6 +907,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         blocked = apply_limit_orders([order], broker, dry_run=False, confirm_live=False)
         self.assertEqual(broker.requests, [])
         self.assertFalse(blocked[0]["sent"])
+        self.assertIsNone(blocked[0]["units"])
         self.assertIn("PREDICTIVE_LIMIT_GATEWAY_ONLY", blocked[0]["error"])
 
         os.environ["QR_LIVE_ENABLED"] = "1"
