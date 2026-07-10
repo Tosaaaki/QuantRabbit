@@ -1506,6 +1506,7 @@ def _frontier_evidence_prompt(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     lane = _frontier_evidence_lane(non_eurusd_frontier)
     if not lane:
@@ -1518,6 +1519,7 @@ def _frontier_evidence_prompt(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     return (
         "Use non_eurusd_live_grade_frontier: "
@@ -1535,12 +1537,14 @@ def _frontier_artifact_prompt(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str | None:
     consumed = _frontier_artifact_consumption(
         frontier_lane,
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     return consumed[1] if consumed else None
 
@@ -1551,7 +1555,11 @@ def _frontier_artifact_consumption(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> tuple[str, str] | None:
+    guardian_prompt = _guardian_range_rail_trigger_prompt(guardian_events or {}, frontier_lane)
+    if guardian_prompt:
+        return ("guardian_events", guardian_prompt)
     for artifact_name, artifact in (
         ("range_rail_geometry_repair", range_rail_geometry_repair or {}),
         ("forecast_pattern_refresh", forecast_pattern_refresh or {}),
@@ -1573,6 +1581,7 @@ def _frontier_next_action_text(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     return (
         _frontier_artifact_prompt(
@@ -1580,6 +1589,7 @@ def _frontier_next_action_text(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         or frontier_lane.get("next_action")
         or non_eurusd_frontier.get("next_active_path")
@@ -1660,6 +1670,7 @@ def _frontier_supplement_prompt(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
         frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
@@ -1671,6 +1682,7 @@ def _frontier_supplement_prompt(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         return (
             f" Pair this with frontier evidence {frontier_ref}: "
@@ -1688,6 +1700,7 @@ def _frontier_supplement_prompt(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         return (
             f" Parallel non_eurusd_live_grade_frontier evidence {frontier_ref}: "
@@ -1705,6 +1718,7 @@ def _frontier_action_suffix(
     entry_frequency_recovery: dict[str, Any] | None = None,
     forecast_pattern_refresh: dict[str, Any] | None = None,
     range_rail_geometry_repair: dict[str, Any] | None = None,
+    guardian_events: dict[str, Any] | None = None,
 ) -> str:
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
     if not frontier_lane:
@@ -1715,6 +1729,7 @@ def _frontier_action_suffix(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     if _frontier_supplements_board_evidence(board_top, non_eurusd_frontier):
         return (
@@ -2118,6 +2133,7 @@ def _next_trade_enabling_action(
                 entry_frequency_recovery=entry_frequency_recovery,
                 forecast_pattern_refresh=forecast_pattern_refresh,
                 range_rail_geometry_repair=range_rail_geometry_repair,
+                guardian_events=guardian_events,
             )
         if board_top:
             suffix = ""
@@ -2131,6 +2147,7 @@ def _next_trade_enabling_action(
                     entry_frequency_recovery=entry_frequency_recovery,
                     forecast_pattern_refresh=forecast_pattern_refresh,
                     range_rail_geometry_repair=range_rail_geometry_repair,
+                    guardian_events=guardian_events,
                 )
             frontier_consumption = (
                 _frontier_artifact_consumption(
@@ -2138,6 +2155,7 @@ def _next_trade_enabling_action(
                     entry_frequency_recovery=entry_frequency_recovery,
                     forecast_pattern_refresh=forecast_pattern_refresh,
                     range_rail_geometry_repair=range_rail_geometry_repair,
+                    guardian_events=guardian_events,
                 )
                 if frontier_lane
                 else None
@@ -2152,6 +2170,7 @@ def _next_trade_enabling_action(
                     entry_frequency_recovery=entry_frequency_recovery,
                     forecast_pattern_refresh=forecast_pattern_refresh,
                     range_rail_geometry_repair=range_rail_geometry_repair,
+                    guardian_events=guardian_events,
                 )
                 return (
                     "Use the latest active_opportunity_board rerank: "
@@ -2412,6 +2431,7 @@ def _next_prompt(
         entry_frequency_recovery=entry_frequency_recovery,
         forecast_pattern_refresh=forecast_pattern_refresh,
         range_rail_geometry_repair=range_rail_geometry_repair,
+        guardian_events=guardian_events,
     )
     frontier_lane = _frontier_evidence_lane(non_eurusd_frontier or {})
     frontier_consumption = (
@@ -2420,6 +2440,7 @@ def _next_prompt(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         if frontier_lane
         else None
@@ -2434,6 +2455,7 @@ def _next_prompt(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         return (
             f"{frontier_prompt} "
@@ -2456,6 +2478,7 @@ def _next_prompt(
             entry_frequency_recovery=entry_frequency_recovery,
             forecast_pattern_refresh=forecast_pattern_refresh,
             range_rail_geometry_repair=range_rail_geometry_repair,
+            guardian_events=guardian_events,
         )
         return (
             "The board-selected range-rail path has been consumed, but the latest forecast is no longer RANGE; "

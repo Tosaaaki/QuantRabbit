@@ -2242,13 +2242,7 @@ def _range_indicators_cover_price(
 
 
 def _forecast_range_indicators(source: Any) -> dict[str, Any] | None:
-    """Expose a RANGE forecast box through the existing rail-geometry API.
-
-    This is only a fallback for RANGE_ROTATION dry-run geometry when the chart
-    packet lacks executable M5 rail keys. The forecast low/high are generated
-    from the live chart packet by directional_forecaster, so they preserve the
-    same market-derived box instead of inventing a fixed pip width.
-    """
+    """Expose a RANGE forecast box through the existing rail-geometry API."""
     if isinstance(source, dict):
         low = _optional_float(source.get("forecast_range_low_price") or source.get("range_low_price"))
         high = _optional_float(source.get("forecast_range_high_price") or source.get("range_high_price"))
@@ -2266,6 +2260,29 @@ def _forecast_range_indicators(source: Any) -> dict[str, Any] | None:
     }
 
 
+def _canonical_range_indicators(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    *,
+    forecast_source: Any = None,
+    forecast_range_authoritative: bool = False,
+) -> dict[str, Any] | None:
+    """Return the one box used to select and price a range rotation.
+
+    A current RANGE forecast is a pair-level box contract derived from the
+    same live chart packet.  Once that contract has valid low/high rails it is
+    authoritative for RANGE_ROTATION side selection and geometry, even when
+    price has moved outside the box.  Falling back to a smaller M5 box in that
+    case could make a broken range look executable.  Chart rails remain the
+    compatibility path when no valid RANGE forecast box exists.
+    """
+    if forecast_range_authoritative:
+        forecast_indicators = _forecast_range_indicators(forecast_source)
+        if forecast_indicators is not None:
+            return forecast_indicators
+    return _range_indicators_for(pair, charts)
+
+
 def _range_indicators_for_lane(
     pair: str,
     charts: dict[str, dict[str, Any]] | None,
@@ -2274,17 +2291,17 @@ def _range_indicators_for_lane(
     current_price: float,
     method: TradeMethod,
 ) -> dict[str, Any] | None:
-    chart_indicators = _range_indicators_for(pair, charts)
-    if _range_indicators_cover_price(chart_indicators, current_price):
-        return chart_indicators
-    if method != TradeMethod.RANGE_ROTATION:
-        return chart_indicators
-    if str(lane.get("forecast_direction") or "").upper() != "RANGE":
-        return chart_indicators
-    forecast_indicators = _forecast_range_indicators(lane)
-    if _range_indicators_cover_price(forecast_indicators, current_price):
-        return forecast_indicators
-    return chart_indicators
+    del current_price  # Box selection is a source contract, not a location fallback.
+    forecast_range_authoritative = (
+        method == TradeMethod.RANGE_ROTATION
+        and str(lane.get("forecast_direction") or "").upper() == "RANGE"
+    )
+    return _canonical_range_indicators(
+        pair,
+        charts,
+        forecast_source=lane,
+        forecast_range_authoritative=forecast_range_authoritative,
+    )
 
 
 def _append_current_range_phase_lanes(
@@ -4421,9 +4438,14 @@ def _range_seed_direction(
     *,
     forecast: Any | None = None,
 ) -> str | None:
-    indicators = _range_indicators_for(pair, charts)
-    if not _range_indicators_cover_price(indicators, current_price):
-        indicators = _forecast_range_indicators(forecast) if forecast is not None else indicators
+    indicators = _canonical_range_indicators(
+        pair,
+        charts,
+        forecast_source=forecast,
+        forecast_range_authoritative=(
+            str(getattr(forecast, "direction", "") or "").upper() == "RANGE"
+        ),
+    )
     if not _range_indicators_cover_price(indicators, current_price):
         return None
     support = _nearest_below(current_price, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))

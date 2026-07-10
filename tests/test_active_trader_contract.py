@@ -2495,6 +2495,193 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertFalse(payload["live_permission_allowed"])
         self.assertEqual(payload["live_side_effects"], [])
 
+    def test_guardian_range_rail_trigger_advances_parallel_frontier_wait(self) -> None:
+        now = datetime(2026, 7, 10, 0, 50, tzinfo=timezone.utc)
+        board_lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        frontier_lane_id = "range_trader:GBP_USD:LONG:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            board_top = {
+                "lane_id": board_lane_id,
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "next_action": "Collect exact EUR_USD TP proof; do not send.",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ],
+            }
+            frontier_lane = {
+                "lane_id": frontier_lane_id,
+                "pair": "GBP_USD",
+                "direction": "LONG",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "distance_to_live_ready": "3_MULTI_GATE_BLOCKED_NEGATIVE_EXPECTANCY_FORECAST_TP_PROOF_FLOOR",
+                "next_action": "Wait for the GBP_USD lower range rail; do not send.",
+                "blockers": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 129,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 2,
+                    },
+                    "top_lane": board_top,
+                    "ranked_active_lanes": [board_top],
+                },
+            )
+            _write_json(
+                paths["frontier"],
+                {
+                    "schema_version": "non_eurusd_live_grade_frontier_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NON_EURUSD_FRONTIER_FOUND",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "scanned_pairs": ["EUR_USD", "GBP_USD"],
+                    "scanned_intents": 129,
+                    "top_lane": board_top,
+                    "top_non_eurusd_lane": frontier_lane,
+                    "required_checks": {
+                        "non_eurusd_closer_than_eurusd": False,
+                        "spread_too_wide_not_ignored": False,
+                        "bidask_negative_not_ignored": False,
+                        "next_evidence_lane": frontier_lane,
+                    },
+                    "next_active_path": "WAIT_FOR_RANGE_RAIL_RECHECK for GBP_USD; do not send.",
+                },
+            )
+            _write_json(
+                paths["range_rail"],
+                {
+                    "schema_version": "range_rail_geometry_repair_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "RANGE_RAIL_RECHECK_BUILT",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "top_lane": {
+                        **frontier_lane,
+                        "range_box": {
+                            "rail_status": "RANGE_RAIL_NOT_REACHED",
+                            "box_position": 0.6667,
+                            "required_zone": "LONG_DISCOUNT_LOWER_RAIL",
+                        },
+                        "counterpart_geometry": {
+                            "status": "COUNTERPART_PRICE_GEOMETRY_INCOMPLETE",
+                            "geometry_ready": False,
+                        },
+                    },
+                    "next_actions": [
+                        {
+                            "priority": 1,
+                            "lane_id": frontier_lane_id,
+                            "action_type": "WAIT_FOR_RANGE_RAIL_RECHECK",
+                            "description": "Wait for the lower rail.",
+                            "preserve_blockers": ["RANGE_RAIL_NOT_REACHED"],
+                        }
+                    ],
+                    "next_contract_prompt": (
+                        "Consume data/range_rail_geometry_repair.json for "
+                        f"{frontier_lane_id}: next safe action is WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                    ),
+                },
+            )
+            _write_json(
+                paths["guardian_events"],
+                {
+                    "schema_version": 1,
+                    "generated_at_utc": now.isoformat(),
+                    "events": [
+                        {
+                            "event_id": "evt-gbp-range-fired",
+                            "event_type": "CONTRACT_ADD_TRIGGER",
+                            "pair": "GBP_USD",
+                            "direction": "LONG",
+                            "thesis": "GBP_USD long range rail rotation",
+                            "price_zone": "mid <= 1.3406055 fired with actual=1.3405",
+                            "severity": "P1",
+                            "recommended_review_type": "ADD_REVIEW",
+                            "dedupe_key": "GBP_USD|RANGE_RAIL|CONTRACT_ADD_TRIGGER|ADD",
+                            "action_hint": "ADD",
+                            "details": {
+                                "contract_trigger": {
+                                    "kind": "range_rail_recheck",
+                                    "lane_id": frontier_lane_id,
+                                    "pair": "GBP_USD",
+                                    "side": "LONG",
+                                    "action_hint": "ADD",
+                                    "live_permission_allowed": False,
+                                    "contract_triggers_do_not_execute": True,
+                                    "condition": {"metric": "mid", "operator": "<=", "value": 1.3406055},
+                                    "preserve_blockers": [
+                                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                                    ],
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                range_rail_geometry_repair_path=paths["range_rail"],
+                guardian_events_path=paths["guardian_events"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["selected_active_path"], "EVIDENCE_ACQUISITION")
+        for field in ("next_prompt", "next_trade_enabling_action"):
+            text = payload[field]
+            self.assertIn(frontier_lane_id, text)
+            self.assertIn("guardian_events", text)
+            self.assertIn("CONTRACT_ADD_TRIGGER fired", text)
+            self.assertIn("Do not repeat WAIT_FOR_RANGE_RAIL_RECHECK", text)
+            self.assertIn("reprice the RANGE_ROTATION counterpart", text)
+            self.assertIn("continue exact TP-proof collection", text)
+            self.assertNotIn("next safe action is WAIT_FOR_RANGE_RAIL_RECHECK", text)
+        self.assertFalse(payload["live_permission_allowed"])
+        self.assertEqual(payload["live_side_effects"], [])
+
     def test_same_shape_non_eurusd_frontier_supplements_entry_recovery_board_lane(self) -> None:
         now = datetime(2026, 7, 9, 2, 5, tzinfo=timezone.utc)
         board_lane_id = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET"

@@ -32,11 +32,15 @@ from quant_rabbit.strategy.intent_generator import (
     _append_forecast_seed_lanes,
     _forecast_context_payload,
     _forecast_seed_lane,
+    _geometry,
+    _geometry_metadata,
     _minimum_range_target_pips,
     _oanda_campaign_firepower_path_for_data_root,
     _oanda_campaign_firepower_shape_matches_method,
     _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
+    _range_indicators_for_lane,
+    _range_seed_direction,
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
 )
@@ -13717,6 +13721,173 @@ class MacroEventSizingPlanTest(unittest.TestCase):
         self.assertEqual(hedge_metadata, {})
         self.assertEqual(opposed_effective, 100.0)
         self.assertEqual(opposed_metadata, {})
+
+
+class CanonicalRangeBoxTest(unittest.TestCase):
+    @staticmethod
+    def _charts() -> dict[str, dict[str, object]]:
+        return {
+            "EUR_USD": {
+                "M5": {
+                    "atr_pips": 2.0,
+                    # A narrow micro box puts 1.17320 in its lower half.
+                    "bb_lower": 1.17300,
+                    "bb_upper": 1.17380,
+                }
+            }
+        }
+
+    def test_range_forecast_box_precedes_covering_chart_micro_box(self) -> None:
+        selected = _range_indicators_for_lane(
+            "EUR_USD",
+            self._charts(),
+            {
+                "forecast_direction": "RANGE",
+                "forecast_range_low_price": 1.17000,
+                "forecast_range_high_price": 1.17400,
+            },
+            current_price=1.17320,
+            method=TradeMethod.RANGE_ROTATION,
+        )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected["range_indicator_source"], "forecast_range_box")
+        self.assertEqual(selected["bb_lower"], 1.17000)
+        self.assertEqual(selected["bb_upper"], 1.17400)
+
+    def test_range_seed_side_uses_forecast_box_not_opposite_micro_box(self) -> None:
+        forecast = SimpleNamespace(
+            direction="RANGE",
+            range_low_price=1.17000,
+            range_high_price=1.17400,
+        )
+
+        # 1.17320 is in the upper half of the forecast box (SHORT), while the
+        # covering M5 micro box above puts it in the lower half (LONG).
+        self.assertEqual(
+            _range_seed_direction(
+                "EUR_USD",
+                self._charts(),
+                1.17320,
+                forecast=forecast,
+            ),
+            "SHORT",
+        )
+
+    def test_forecast_box_drives_generated_range_metadata(self) -> None:
+        quote = Quote("EUR_USD", bid=1.17316, ask=1.17324)
+        selected = _range_indicators_for_lane(
+            "EUR_USD",
+            self._charts(),
+            {
+                "forecast_direction": "RANGE",
+                "forecast_range_low_price": 1.17000,
+                "forecast_range_high_price": 1.17400,
+            },
+            current_price=quote.mid,
+            method=TradeMethod.RANGE_ROTATION,
+        )
+        self.assertIsNotNone(selected)
+        entry, tp, sl = _geometry(
+            "EUR_USD",
+            Side.SHORT,
+            OrderType.LIMIT,
+            quote,
+            reward_risk=1.0,
+            atr_pips=2.0,
+            range_indicators=selected,
+            chart_indicators=selected,
+        )
+        metadata = _geometry_metadata(
+            "EUR_USD",
+            Side.SHORT,
+            OrderType.LIMIT,
+            quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            range_indicators=selected,
+            chart_indicators=selected,
+            atr_pips=2.0,
+        )
+
+        self.assertEqual(metadata["range_indicator_source"], "forecast_range_box")
+        self.assertEqual(metadata["range_support"], 1.17000)
+        self.assertEqual(metadata["range_resistance"], 1.17400)
+        self.assertTrue(metadata["range_tp_is_inside_box"])
+        self.assertTrue(metadata["range_sl_outside_box"])
+        self.assertLessEqual(tp, 1.17400)
+        self.assertGreater(sl, 1.17400)
+
+    def test_price_outside_forecast_box_does_not_fallback_to_micro_box(self) -> None:
+        quote = Quote("EUR_USD", bid=1.17316, ask=1.17324)
+        selected = _range_indicators_for_lane(
+            "EUR_USD",
+            self._charts(),
+            {
+                "forecast_direction": "RANGE",
+                "forecast_range_low_price": 1.17000,
+                "forecast_range_high_price": 1.17200,
+            },
+            current_price=quote.mid,
+            method=TradeMethod.RANGE_ROTATION,
+        )
+        self.assertIsNotNone(selected)
+        entry, tp, sl = _geometry(
+            "EUR_USD",
+            Side.LONG,
+            OrderType.LIMIT,
+            quote,
+            reward_risk=1.0,
+            atr_pips=2.0,
+            range_indicators=selected,
+            chart_indicators=selected,
+        )
+        metadata = _geometry_metadata(
+            "EUR_USD",
+            Side.LONG,
+            OrderType.LIMIT,
+            quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            range_indicators=selected,
+            chart_indicators=selected,
+            atr_pips=2.0,
+        )
+
+        self.assertEqual(selected["range_indicator_source"], "forecast_range_box")
+        self.assertNotEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+        self.assertNotIn("range_tp_is_inside_box", metadata)
+        self.assertNotIn("range_sl_outside_box", metadata)
+
+    def test_non_range_and_invalid_forecast_keep_chart_rails(self) -> None:
+        chart = self._charts()["EUR_USD"]["M5"]
+        non_range = _range_indicators_for_lane(
+            "EUR_USD",
+            self._charts(),
+            {
+                "forecast_direction": "UP",
+                "forecast_range_low_price": 1.17000,
+                "forecast_range_high_price": 1.17400,
+            },
+            current_price=1.17320,
+            method=TradeMethod.BREAKOUT_FAILURE,
+        )
+        invalid_range = _range_indicators_for_lane(
+            "EUR_USD",
+            self._charts(),
+            {
+                "forecast_direction": "RANGE",
+                "forecast_range_low_price": 1.17400,
+                "forecast_range_high_price": 1.17000,
+            },
+            current_price=1.17320,
+            method=TradeMethod.RANGE_ROTATION,
+        )
+
+        self.assertEqual(non_range, chart)
+        self.assertEqual(invalid_range, chart)
 
 
 class RangeRewardRiskFloorTest(unittest.TestCase):
