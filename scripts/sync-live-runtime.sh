@@ -77,17 +77,46 @@ LIVE_BRANCH="${QR_SYNC_LIVE_BRANCH:-$DEFAULT_LIVE_BRANCH}"
 AUTOMATION_FILE="${QR_SYNC_AUTOMATION_FILE:-$DEFAULT_AUTOMATION_FILE}"
 WEEKEND_TASK_STATE_FILE="${QR_WEEKEND_TASK_STATE_FILE:-$DEFAULT_WEEKEND_TASK_STATE_FILE}"
 
+resolve_git_common_dir() {
+  local root="$1"
+  local label="$2"
+  local common_dir inside_work_tree
+
+  if [[ ! -d "$root" ]]; then
+    echo "[sync-live-runtime] missing $label: $root" >&2
+    return 2
+  fi
+  if ! inside_work_tree="$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)"; then
+    echo "[sync-live-runtime] missing $label: $root" >&2
+    return 2
+  fi
+  if [[ "$inside_work_tree" != "true" ]]; then
+    echo "[sync-live-runtime] missing $label: $root" >&2
+    return 2
+  fi
+  if ! common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+    echo "[sync-live-runtime] cannot resolve git common directory for $label: $root" >&2
+    return 2
+  fi
+  if [[ ! -d "$common_dir" ]]; then
+    echo "[sync-live-runtime] missing git common directory for $label: $common_dir" >&2
+    return 2
+  fi
+  (cd "$common_dir" && pwd -P)
+}
+
 if [[ ! -x "$QR_PYTHON" ]]; then
   echo "[sync-live-runtime] QR_PYTHON is not executable: $QR_PYTHON" >&2
   exit 2
 fi
 
-if [[ ! -d "$DEV_ROOT/.git" ]]; then
-  echo "[sync-live-runtime] missing development git repo: $DEV_ROOT" >&2
-  exit 2
-fi
-if [[ ! -d "$LIVE_ROOT" ]]; then
-  echo "[sync-live-runtime] missing live worktree: $LIVE_ROOT" >&2
+DEV_GIT_COMMON_DIR="$(resolve_git_common_dir "$DEV_ROOT" "development git repo")" || exit "$?"
+LIVE_GIT_COMMON_DIR="$(resolve_git_common_dir "$LIVE_ROOT" "live worktree")" || exit "$?"
+readonly DEV_GIT_COMMON_DIR LIVE_GIT_COMMON_DIR
+if [[ "$DEV_GIT_COMMON_DIR" != "$LIVE_GIT_COMMON_DIR" ]]; then
+  echo "[sync-live-runtime] development and live worktrees do not share the same git common directory." >&2
+  echo "[sync-live-runtime] development common dir: $DEV_GIT_COMMON_DIR" >&2
+  echo "[sync-live-runtime] live common dir: $LIVE_GIT_COMMON_DIR" >&2
   exit 2
 fi
 
@@ -338,6 +367,17 @@ sync_live_worktree() {
   assert_only_report_drift "$LIVE_ROOT" "live"
 }
 
+assert_live_target() {
+  local expected_sha="$1"
+  local live_head live_branch_head
+  live_head="$(git -C "$LIVE_ROOT" rev-parse HEAD)"
+  live_branch_head="$(git -C "$LIVE_ROOT" rev-parse "refs/heads/$LIVE_BRANCH")"
+  if [[ "$live_head" != "$expected_sha" || "$live_branch_head" != "$expected_sha" ]]; then
+    echo "[sync-live-runtime] live sync mismatch: expected=$expected_sha HEAD=$live_head $LIVE_BRANCH=$live_branch_head" >&2
+    exit 7
+  fi
+}
+
 verify_automation() {
   if [[ "${QR_SYNC_SKIP_AUTOMATION_CHECK:-0}" == "1" ]]; then
     return 0
@@ -450,5 +490,6 @@ fi
 copy_local_runtime_files
 sync_live_worktree "$MAIN_BRANCH"
 verify_automation
+assert_live_target "$(git -C "$DEV_ROOT" rev-parse "$MAIN_BRANCH")"
 
 echo "[sync-live-runtime] OK: source=${SOURCE_BRANCH:-<live-only>} main=$(git -C "$DEV_ROOT" rev-parse --short "$MAIN_BRANCH") live=$(git -C "$LIVE_ROOT" rev-parse --short HEAD)"

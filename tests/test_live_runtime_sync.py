@@ -12,6 +12,74 @@ SYNC = ROOT / "scripts" / "sync-live-runtime.sh"
 
 
 class LiveRuntimeSyncTest(unittest.TestCase):
+    def test_promotes_from_clean_detached_linked_development_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            source = Path(tmp) / "source"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            _run(["git", "worktree", "add", "--detach", str(source), "feature"], cwd=repo)
+
+            result = _sync(source, live, source_branch="feature")
+
+            self.assertTrue((source / ".git").is_file())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            feature_head = _git(repo, "rev-parse", "feature")
+            self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
+
+    def test_rejects_unrelated_development_clone_before_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            clone = root / "clone"
+            live = root / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            _run(["git", "clone", "--local", str(repo), str(clone)], cwd=root)
+            main_before = _git(repo, "rev-parse", "main")
+
+            result = _sync(clone, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("do not share the same git common directory", result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), main_before)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), main_before)
+
+    def test_rejects_post_merge_live_target_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            live_before = _git(live, "rev-parse", "HEAD")
+            post_merge = repo / ".git" / "hooks" / "post-merge"
+            post_merge.write_text(
+                "#!/bin/sh\n"
+                f"exec git reset --hard {live_before} >/dev/null\n"
+            )
+            post_merge.chmod(0o755)
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 7)
+            self.assertIn("live sync mismatch", result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), _git(repo, "rev-parse", "feature"))
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), live_before)
+
     def test_promotes_source_to_main_and_live_after_preserving_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
