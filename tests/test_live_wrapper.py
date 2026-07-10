@@ -155,7 +155,17 @@ class LiveWrapperTest(unittest.TestCase):
             response = data / "codex_trader_decision_response.json"
             gpt_decision = data / "gpt_trader_decision.json"
             response.write_text('{"action":"REQUEST_EVIDENCE"}\n')
-            gpt_decision.write_text('{"status":"ACCEPTED","decision":{"action":"REQUEST_EVIDENCE"}}\n')
+            gpt_decision.write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {"action": "REQUEST_EVIDENCE"},
+                        "input_packet": {"active_path": {"status": "NO_TRADE_WITH_CAUSE"}},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             os.utime(response, (100.0, 100.0))
             os.utime(gpt_decision, (101.0, 101.0))
 
@@ -199,7 +209,17 @@ class LiveWrapperTest(unittest.TestCase):
             gpt_decision = data / "gpt_trader_decision.json"
             autotrade_report = docs / "autotrade_cycle_report.md"
             response.write_text('{"action":"REQUEST_EVIDENCE"}\n')
-            gpt_decision.write_text('{"status":"ACCEPTED","decision":{"action":"REQUEST_EVIDENCE"}}\n')
+            gpt_decision.write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {"action": "REQUEST_EVIDENCE"},
+                        "input_packet": {"active_path": {"status": "NO_TRADE_WITH_CAUSE"}},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             autotrade_report.write_text("# consumed\n")
             os.utime(response, (100.0, 100.0))
             os.utime(gpt_decision, (101.0, 101.0))
@@ -724,6 +744,7 @@ def _wrapper_env(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                f'if [[ "${{1:-}}" == "-" ]]; then exec "{sys.executable}" "$@"; fi',
                 "{",
                 "  printf 'QR_LIVE_ENABLED=%s\\n' \"${QR_LIVE_ENABLED:-}\"",
                 "  printf 'QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE:-}\"",

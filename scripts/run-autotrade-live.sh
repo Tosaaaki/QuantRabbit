@@ -307,9 +307,25 @@ json_string_value() {
   if [[ ! -f "$path" ]]; then
     return 1
   fi
-  grep -E "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$path" \
-    | head -n 1 \
-    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+  "$QR_PYTHON" - "$path" "$key" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text())
+except (OSError, json.JSONDecodeError, ValueError):
+    raise SystemExit(1)
+
+key = sys.argv[2]
+if key == "action" and isinstance(payload.get("decision"), dict):
+    value = payload["decision"].get("action")
+else:
+    value = payload.get(key)
+if not isinstance(value, str):
+    raise SystemExit(1)
+print(value)
+PY
 }
 
 gpt_handoff_needs_refresh() {
