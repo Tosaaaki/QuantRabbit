@@ -204,6 +204,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     "price_zone": "prior observation retained as evidence",
                 }
             }
+            selected["direction"] = None
             sibling = _event(
                 severity="P2",
                 event_id="event-sibling-must-not-leak",
@@ -321,12 +322,17 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 paths=paths,
                 now=NOW,
                 env={},
-                subprocess_run=_fake_codex_with_prompt(calls, prompts, _valid_receipt()),
+                subprocess_run=_fake_codex_with_prompt(
+                    calls,
+                    prompts,
+                    _valid_receipt(action="HOLD", side="NONE"),
+                ),
             )
 
             self.assertEqual(result["status"], "RECEIPT_WRITTEN")
             self.assertEqual(len(prompts), 1)
             self.assertIn("event_id=event-P1 pair=EUR_USD", prompts[0])
+            self.assertIn("Set side exactly to NONE", prompts[0])
             self.assertNotIn("event-sibling-must-not-leak", prompts[0])
             self.assertNotIn("NZD_CHF", prompts[0])
             self.assertNotIn("USD_CAD", prompts[0])

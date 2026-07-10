@@ -1544,12 +1544,16 @@ def _build_prompt(
     }
     selected_event_id = str(selected_event.get("event_id") or "")
     selected_pair = str(selected_event.get("pair") or "")
+    selected_side = str(selected_event.get("direction") or "NONE").upper()
+    if selected_side not in {"LONG", "SHORT"}:
+        selected_side = "NONE"
     return (
         template.rstrip()
         + "\n\n# Authoritative Single Event\n\n"
         + f"Review only event_id={selected_event_id} pair={selected_pair}. "
         + "Do not choose, inspect, or answer for any other pending/reviewed event. "
         + "Your JSON must echo this exact event_id and pair; otherwise it will be rejected. "
+        + f"Set side exactly to {selected_side}; side must be LONG, SHORT, or NONE, never UNKNOWN or N/A. "
         + "If this event alone is insufficient, return HOLD or NO_ACTION for this same identity.\n"
         + "\n\nIf the final-message capture is unavailable, also return the same JSON object as the final assistant message. "
         + f"If an explicit output file is available, use this path for the JSON object only: {paths.codex_explicit_output}.\n"

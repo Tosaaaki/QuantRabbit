@@ -22,7 +22,7 @@ Required JSON object shape:
   "event_id": "...",
   "new_information": true,
   "pair": "...",
-  "side": "...",
+  "side": "LONG|SHORT|NONE",
   "thesis_state": "ALIVE|WOUNDED|INVALIDATED|EMERGENCY",
   "reason": "...",
   "invalidation_evidence": "...",
@@ -56,6 +56,8 @@ Rules:
   `"ownership": "OPERATOR_MANUAL"` and do not authorize loss-side close or
   averaging into that exposure.
 - If evidence is insufficient or stale, choose `HOLD` or `NO_ACTION`.
+- If the selected event has no direction, set `"side": "NONE"`; never use
+  `UNKNOWN`, `N/A`, an empty string, or any value outside `LONG|SHORT|NONE`.
 - Do not add fields outside the required JSON object shape.
 
 Minimal valid fallback receipt:
@@ -67,7 +69,7 @@ If uncertain, return exactly this shape with the current event values filled in:
   "event_id": "...",
   "new_information": false,
   "pair": "...",
-  "side": "...",
+  "side": "LONG|SHORT|NONE",
   "thesis_state": "WOUNDED",
   "reason": "No safe action from current evidence",
   "invalidation_evidence": "not established",
