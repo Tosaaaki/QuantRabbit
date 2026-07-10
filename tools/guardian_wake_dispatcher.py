@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -162,6 +163,65 @@ def run_dispatcher(
     snapshot_refresh_run: Callable[..., Any] | None = None,
     codex_preflight_run: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
+    """Run one dispatcher exclusively across prompt, Codex, and artifact I/O."""
+
+    clock = _utc(now)
+    lock_path = paths.root / "logs" / ".guardian_wake_dispatcher.lock"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_handle = lock_path.open("a+")
+    except OSError as exc:
+        return {
+            "generated_at_utc": clock.isoformat(),
+            "model": MODEL,
+            "status": "DISPATCHER_LOCK_ERROR",
+            "wake_gpt": False,
+            "receipt_written": False,
+            "action_receipt_path": None,
+            "lock": {"path": str(lock_path), "error": f"{type(exc).__name__}: {exc}"},
+        }
+    try:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "generated_at_utc": clock.isoformat(),
+                "model": MODEL,
+                "status": "DISPATCHER_LOCKED",
+                "wake_gpt": False,
+                "receipt_written": False,
+                "action_receipt_path": None,
+                "lock": {
+                    "path": str(lock_path),
+                    "status": "HELD_BY_OTHER_DISPATCHER",
+                    "contender_pid": os.getpid(),
+                },
+            }
+        return _run_dispatcher_once(
+            paths=paths,
+            now=clock,
+            env=env,
+            subprocess_run=subprocess_run,
+            snapshot_refresh_run=snapshot_refresh_run,
+            codex_preflight_run=codex_preflight_run,
+        )
+    finally:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_handle.close()
+
+
+def _run_dispatcher_once(
+    *,
+    paths: DispatcherPaths,
+    now: datetime | None = None,
+    env: dict[str, str] | None = None,
+    subprocess_run: Callable[..., Any] = subprocess.run,
+    snapshot_refresh_run: Callable[..., Any] | None = None,
+    codex_preflight_run: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     clock = _utc(now)
     environ = env if env is not None else os.environ
     paths.log.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +237,10 @@ def run_dispatcher(
         dispatcher_state,
         now=clock,
         env=environ,
+    )
+    dispatcher_state, usage_limit_recovery = _release_recovered_usage_limit_backoffs(
+        dispatcher_state,
+        now=clock,
     )
     runtime_disk = _runtime_disk_state(paths.root, environ)
 
@@ -207,6 +271,8 @@ def run_dispatcher(
         result_base["pending_injection"] = pending_injection
     if usage_limit_reclassification:
         result_base["usage_limit_reclassification"] = usage_limit_reclassification
+    if usage_limit_recovery:
+        result_base["usage_limit_recovery"] = usage_limit_recovery
     # Expiry archival writes a new JSON file. Under P0 disk pressure preserve
     # the current receipt as-is and let the first recovered cycle expire it;
     # the disk guard must run before any optional archive/session growth.
@@ -739,6 +805,87 @@ def _reclassify_legacy_usage_limit_attempts(
         "retry_after_utc": retry_after.isoformat(),
         "attempt_count": len(changed),
         "dedupe_keys": changed,
+    }
+
+
+def _release_recovered_usage_limit_backoffs(
+    previous_state: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Release only quota backoffs proven obsolete by a later accepted wake.
+
+    Codex account capacity is shared across queued guardian events.  Once one
+    accepted receipt is written after a CODEX_USAGE_LIMIT failure, retaining a
+    separate 90-minute backoff on every sibling event delays market adaptation
+    despite direct evidence that capacity recovered.  Ordinary parse/runtime
+    failures are intentionally untouched.
+    """
+
+    state = dict(previous_state) if isinstance(previous_state, dict) else {}
+    reviewed = _accepted_review_records(state.get("reviewed_events"))
+    recovered_at: datetime | None = None
+    recovery_source: str | None = None
+    for dedupe_key, record in reviewed.items():
+        if str(record.get("last_status") or "").upper() not in {
+            "RECEIPT_WRITTEN",
+            "TUNING_HANDOFF_FAILED",
+        }:
+            continue
+        reviewed_at = _parse_utc(record.get("last_reviewed_at_utc"))
+        if reviewed_at is None or (recovered_at is not None and reviewed_at <= recovered_at):
+            continue
+        recovered_at = reviewed_at
+        recovery_source = dedupe_key
+    if recovered_at is None:
+        return state, None
+
+    attempts = state.get("dispatch_attempts")
+    if not isinstance(attempts, dict) or not attempts:
+        return state, None
+    released: list[str] = []
+    normalized: dict[str, Any] = {}
+    for dedupe_key, value in attempts.items():
+        if not isinstance(value, dict):
+            normalized[str(dedupe_key)] = value
+            continue
+        record = dict(value)
+        failed_at = _parse_utc(record.get("last_failed_at_utc"))
+        quota_failure = str(record.get("last_error") or "").upper() == "CODEX_USAGE_LIMIT"
+        already_released_at = _parse_utc(record.get("usage_limit_recovered_at_utc"))
+        if not quota_failure or failed_at is None or failed_at >= recovered_at:
+            normalized[str(dedupe_key)] = record
+            continue
+        if (
+            str(record.get("last_status") or "").upper() == "CODEX_USAGE_LIMIT_RECOVERED"
+            and already_released_at is not None
+            and already_released_at >= recovered_at
+        ):
+            normalized[str(dedupe_key)] = record
+            continue
+        record["attempt_count"] = 0
+        record["retry_after_utc"] = now.isoformat()
+        record["retry_budget_exhausted"] = False
+        record["last_status"] = "CODEX_USAGE_LIMIT_RECOVERED"
+        record["usage_limit_recovered_at_utc"] = recovered_at.isoformat()
+        record["usage_limit_recovery_observed_at_utc"] = now.isoformat()
+        record["usage_limit_recovery_source_dedupe_key"] = recovery_source
+        normalized[str(dedupe_key)] = record
+        released.append(str(dedupe_key))
+    if not released:
+        return state, None
+
+    state["dispatch_attempts"] = normalized
+    state["usage_limit_recovered_at_utc"] = recovered_at.isoformat()
+    state["usage_limit_recovery_observed_at_utc"] = now.isoformat()
+    state["usage_limit_recovery_source_dedupe_key"] = recovery_source
+    return state, {
+        "status": "CODEX_USAGE_LIMIT_RECOVERED",
+        "recovered_at_utc": recovered_at.isoformat(),
+        "observed_at_utc": now.isoformat(),
+        "source_dedupe_key": recovery_source,
+        "released_count": len(released),
+        "released_dedupe_keys": released,
     }
 
 
@@ -1381,18 +1528,29 @@ def _build_prompt(
     template = _read_text(paths.prompt_template)
     if not template:
         template = "Return exactly one guardian wake JSON receipt."
+    prompt_event = _prompt_selected_event(selected_event)
     prompt_payload = {
-        "selected_event": selected_event,
-        "guardian_escalation": _compact_escalation(escalation),
-        "guardian_events": events_payload,
-        "guardian_event_state": event_state,
+        "selected_event": prompt_event,
+        "guardian_escalation": _compact_escalation(escalation, selected_event=prompt_event),
+        "guardian_events": _compact_guardian_events(events_payload, selected_event=prompt_event),
+        "guardian_event_state": _compact_event_state(event_state, selected_event=selected_event),
         "broker_snapshot": _compact_broker_snapshot(broker_snapshot, pair=str(selected_event.get("pair") or "")),
-        "daily_target_state": daily_target_state,
-        "dispatcher_state": dispatcher_state,
+        "daily_target_state": _compact_daily_target_state(
+            daily_target_state,
+            pair=str(selected_event.get("pair") or ""),
+        ),
+        "dispatcher_state": _compact_dispatcher_state(dispatcher_state, selected_event=selected_event),
         "runtime_disk": runtime_disk,
     }
+    selected_event_id = str(selected_event.get("event_id") or "")
+    selected_pair = str(selected_event.get("pair") or "")
     return (
         template.rstrip()
+        + "\n\n# Authoritative Single Event\n\n"
+        + f"Review only event_id={selected_event_id} pair={selected_pair}. "
+        + "Do not choose, inspect, or answer for any other pending/reviewed event. "
+        + "Your JSON must echo this exact event_id and pair; otherwise it will be rejected. "
+        + "If this event alone is insufficient, return HOLD or NO_ACTION for this same identity.\n"
         + "\n\nIf the final-message capture is unavailable, also return the same JSON object as the final assistant message. "
         + f"If an explicit output file is available, use this path for the JSON object only: {paths.codex_explicit_output}.\n"
         + "\n\n# Dispatcher Context\n\n"
@@ -1400,25 +1558,236 @@ def _build_prompt(
         + "```json\n"
         + _json_dumps(prompt_payload, limit=60_000)
         + "\n```\n\n"
-        + "# docs/guardian_event_report.md\n\n"
-        + event_report[:20_000]
+        + "# Selected event report evidence\n\n"
+        + _selected_event_report_excerpt(event_report, selected_event=selected_event)
         + "\n"
     )
 
 
-def _compact_escalation(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _prompt_selected_event(selected_event: dict[str, Any]) -> dict[str, Any]:
+    """Preserve one top-level receipt identity and redact nested alternatives."""
+
+    compact: dict[str, Any] = {}
+    for key, value in selected_event.items():
+        compact[key] = (
+            _strip_nested_event_identities(value)
+            if isinstance(value, (dict, list))
+            else value
+        )
+    return compact
+
+
+def _strip_nested_event_identities(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_nested_event_identities(item)
+            for key, item in value.items()
+            if key not in {"event_id", "dedupe_key", "pair"}
+        }
+    if isinstance(value, list):
+        return [_strip_nested_event_identities(item) for item in value]
+    return value
+
+
+def _compact_escalation(
+    payload: dict[str, Any],
+    *,
+    selected_event: dict[str, Any],
+) -> dict[str, Any]:
+    compact = {
         key: payload.get(key)
         for key in (
             "generated_at_utc",
             "wake_gpt",
             "model_target",
             "wake_policy",
-            "wake_reason_codes",
-            "events_to_review",
             "execution_boundary",
         )
     }
+    compact["wake_reason_codes"] = list(selected_event.get("wake_reason_codes") or [])
+    compact["events_to_review"] = [selected_event]
+    return compact
+
+
+def _compact_guardian_events(
+    payload: dict[str, Any],
+    *,
+    selected_event: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": payload.get("schema_version"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "events": [selected_event],
+        "trigger_contract": _compact_selected_trigger_contract(
+            payload.get("trigger_contract"),
+            selected_event=selected_event,
+        ),
+    }
+
+
+def _compact_selected_trigger_contract(
+    payload: Any,
+    *,
+    selected_event: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Keep contract context only when the selected event is contract-derived."""
+
+    event_type = str(selected_event.get("event_type") or "").upper()
+    if not event_type.startswith("CONTRACT_") or not isinstance(payload, dict):
+        return None
+    issues = [
+        {
+            "code": issue.get("code"),
+            "severity": issue.get("severity"),
+        }
+        for issue in payload.get("issues", []) or []
+        if isinstance(issue, dict)
+    ]
+    return {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "age_seconds": payload.get("age_seconds"),
+        "entry_count": payload.get("entry_count"),
+        "issues": issues[:20],
+    }
+
+
+def _compact_daily_target_state(payload: dict[str, Any], *, pair: str) -> dict[str, Any]:
+    """Expose risk-budget scalars without leaking unrelated pair narratives."""
+
+    compact = {
+        key: payload.get(key)
+        for key in (
+            "generated_at_utc",
+            "as_of_utc",
+            "status",
+            "pace_state",
+            "current_equity_jpy",
+            "realized_pl_jpy",
+            "unrealized_pl_jpy",
+            "open_risk_jpy",
+            "daily_risk_budget_jpy",
+            "remaining_risk_budget_jpy",
+            "per_trade_risk_budget_jpy",
+            "target_return_pct",
+            "target_profit_jpy",
+            "progress_pct",
+        )
+    }
+    selected_pair = pair.upper()
+    positions = [
+        item
+        for item in payload.get("positions", []) or []
+        if isinstance(item, dict)
+        and selected_pair
+        and str(item.get("pair") or item.get("instrument") or "").upper() == selected_pair
+    ]
+    raw_unprotected_count = payload.get("unprotected_positions")
+    if isinstance(raw_unprotected_count, (int, float)) and not isinstance(raw_unprotected_count, bool):
+        global_unprotected_count: int | float | None = raw_unprotected_count
+    elif isinstance(raw_unprotected_count, list):
+        global_unprotected_count = len(raw_unprotected_count)
+    else:
+        global_unprotected_count = None
+    compact["selected_pair_positions"] = positions
+    compact["global_unprotected_position_count"] = global_unprotected_count
+    return compact
+
+
+def _compact_dispatcher_state(
+    payload: dict[str, Any],
+    *,
+    selected_event: dict[str, Any],
+) -> dict[str, Any]:
+    dedupe_key = str(selected_event.get("dedupe_key") or "")
+    attempts = payload.get("dispatch_attempts") if isinstance(payload.get("dispatch_attempts"), dict) else {}
+    pending = payload.get("pending_dispatches") if isinstance(payload.get("pending_dispatches"), dict) else {}
+    selected_attempt = attempts.get(dedupe_key) if isinstance(attempts.get(dedupe_key), dict) else {}
+    selected_pending = pending.get(dedupe_key) if isinstance(pending.get(dedupe_key), dict) else {}
+    return {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "last_status": payload.get("last_status"),
+        "selected_dispatch_attempt": {
+            key: selected_attempt.get(key)
+            for key in (
+                "attempt_count",
+                "max_attempts",
+                "last_error",
+                "last_status",
+                "last_failed_at_utc",
+                "retry_after_utc",
+                "expires_at_utc",
+                "retry_budget_exhausted",
+            )
+        }
+        if selected_attempt
+        else None,
+        "selected_pending_dispatch": {
+            key: selected_pending.get(key)
+            for key in (
+                "queued_at_utc",
+                "last_seen_at_utc",
+                "expires_at_utc",
+                "material_fingerprint",
+            )
+        }
+        if selected_pending
+        else None,
+        "usage_limit_recovered_at_utc": payload.get("usage_limit_recovered_at_utc"),
+    }
+
+
+def _compact_event_state(
+    payload: dict[str, Any],
+    *,
+    selected_event: dict[str, Any],
+) -> dict[str, Any]:
+    dedupe_key = str(selected_event.get("dedupe_key") or "")
+    events = payload.get("events") if isinstance(payload.get("events"), dict) else {}
+    selected_state = events.get(dedupe_key)
+    selected_id = str(selected_event.get("event_id") or "")
+    state_id = str(selected_state.get("event_id") or "") if isinstance(selected_state, dict) else ""
+    exact_state = isinstance(selected_state, dict) and bool(selected_id) and state_id == selected_id
+    state_summary = None
+    if exact_state:
+        state_summary = {
+            key: selected_state.get(key)
+            for key in (
+                "last_seen_at_utc",
+                "last_wake_at_utc",
+                "in_harvest_zone",
+                "margin_pressure",
+                "severity",
+                "thesis_state",
+            )
+        }
+    return {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": "EXACT_EVENT_STATE" if exact_state else "CURRENT_STATE_DIFFERS",
+        "selected_state": state_summary,
+    }
+
+
+def _selected_event_report_excerpt(
+    report: str,
+    *,
+    selected_event: dict[str, Any],
+) -> str:
+    text = str(report or "")
+    for needle in (str(selected_event.get("event_id") or ""),):
+        if not needle:
+            continue
+        index = text.find(needle)
+        if index >= 0:
+            start = text.rfind("\n- `", 0, index)
+            start = 0 if start < 0 else start + 1
+            end = text.find("\n- `", index + len(needle))
+            if end < 0:
+                end = text.find("\n## ", index + len(needle))
+            if end < 0:
+                end = min(len(text), index + len(needle) + 1_600)
+            return text[start:end][:4_000]
+    return "No pair-specific report excerpt; use the authoritative selected_event JSON only."
 
 
 def _compact_broker_snapshot(payload: dict[str, Any], *, pair: str) -> dict[str, Any]:
@@ -1426,8 +1795,6 @@ def _compact_broker_snapshot(payload: dict[str, Any], *, pair: str) -> dict[str,
     selected_quotes = {}
     if pair and pair in quotes:
         selected_quotes[pair] = quotes[pair]
-    if "USD_JPY" in quotes:
-        selected_quotes["USD_JPY"] = quotes["USD_JPY"]
     positions = [
         item
         for item in payload.get("positions", []) or []

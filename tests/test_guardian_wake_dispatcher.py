@@ -191,6 +191,172 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(prompts), 1)
             self.assertIn('"status": "RUNTIME_DISK_WARNING"', prompts[0])
 
+    def test_prompt_contains_only_authoritative_selected_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            selected = _event(severity="P1")
+            selected["details"] = {
+                "source_event": {
+                    "event_id": "nested-source-event-must-not-leak",
+                    "dedupe_key": "EUR_USD|nested_source|FAILED_ACCEPTANCE|HOLD",
+                    "pair": "EUR_USD",
+                    "event_type": "FAILED_ACCEPTANCE",
+                    "price_zone": "prior observation retained as evidence",
+                }
+            }
+            sibling = _event(
+                severity="P2",
+                event_id="event-sibling-must-not-leak",
+                pair="NZD_CHF",
+                dedupe_key="NZD_CHF|other_pending|FAILED_ACCEPTANCE|TRADE",
+            )
+            paths.events.write_text(json.dumps({"events": [selected, sibling]}))
+            paths.event_state.write_text(
+                json.dumps(
+                    {
+                        "events": {
+                            selected["dedupe_key"]: {
+                                "event_id": "state-event-must-not-leak",
+                                "pair": "EUR_USD",
+                                "details": {"mid": 1.1422},
+                            },
+                            sibling["dedupe_key"]: {"event_id": sibling["event_id"]},
+                        }
+                    }
+                )
+            )
+            paths.events.write_text(
+                json.dumps(
+                    {
+                        "events": [selected, sibling],
+                        "trigger_contract": {
+                            "status": "INVALID",
+                            "issues": [
+                                {
+                                    "code": "CONTRACT_ENTRY_DEADLINE_EXPIRED",
+                                    "severity": "BLOCK",
+                                    "message": "NZD_CHF sibling contract must not leak",
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            paths.daily_target_state.write_text(
+                json.dumps(
+                    {
+                        "status": "OPEN",
+                        "current_equity_jpy": 280_000,
+                        "positions": [
+                            {
+                                "pair": "NZD_CHF",
+                                "side": "LONG",
+                                "trade_id": "sibling-position-must-not-leak",
+                            }
+                        ],
+                        "unprotected_positions": 1,
+                    }
+                )
+            )
+            paths.event_report.write_text(
+                "\n".join(
+                    [
+                        "# Guardian Event Report",
+                        "",
+                        "## Events",
+                        "",
+                        "- `P1` `FAILED_ACCEPTANCE` `EUR_USD` `LONG`",
+                        f"  - review: `ENTRY_REVIEW` dedupe: `{selected['dedupe_key']}`",
+                        "  - report_mid: `1.142200` must not replace immutable retry observation",
+                        "- `P2` `FAILED_ACCEPTANCE` `NZD_CHF` `LONG`",
+                        f"  - review: `ENTRY_REVIEW` dedupe: `{sibling['dedupe_key']}`",
+                    ]
+                )
+                + "\n"
+            )
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "wake_gpt": True,
+                        "wake_reason_codes": ["NEW_EVENT", "SIBLING_HARVEST_MUST_NOT_LEAK"],
+                        "events_to_review": [
+                            {**selected, "wake_reason_codes": ["NEW_EVENT"]},
+                            {**sibling, "wake_reason_codes": ["NEW_EVENT"]},
+                        ],
+                    }
+                )
+            )
+            paths.dispatcher_state.write_text(
+                json.dumps(
+                    {
+                        "dispatch_attempts": {
+                            selected["dedupe_key"]: {
+                                "event_id": selected["event_id"],
+                                "attempt_count": 0,
+                                "max_attempts": 3,
+                                "last_status": "CODEX_USAGE_LIMIT_RECOVERED",
+                                "usage_limit_recovery_source_dedupe_key": (
+                                    "USD_CAD|sibling_quota_recovery|SPREAD_ANOMALY|HOLD"
+                                ),
+                            }
+                        },
+                        "pending_dispatches": {
+                            sibling["dedupe_key"]: {
+                                "event": sibling,
+                                "queued_at_utc": NOW.isoformat(),
+                                "expires_at_utc": (NOW + timedelta(hours=1)).isoformat(),
+                            }
+                        },
+                        "last_result": {"selected_event": sibling},
+                    }
+                )
+            )
+            broker_snapshot = json.loads(paths.broker_snapshot.read_text())
+            broker_snapshot["quotes"]["USD_JPY"] = {"bid": 160.0, "ask": 160.01}
+            paths.broker_snapshot.write_text(json.dumps(broker_snapshot))
+            calls: list[list[str]] = []
+            prompts: list[str] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_with_prompt(calls, prompts, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(prompts), 1)
+            self.assertIn("event_id=event-P1 pair=EUR_USD", prompts[0])
+            self.assertNotIn("event-sibling-must-not-leak", prompts[0])
+            self.assertNotIn("NZD_CHF", prompts[0])
+            self.assertNotIn("USD_CAD", prompts[0])
+            self.assertNotIn("USD_JPY", prompts[0])
+            self.assertNotIn("SIBLING_HARVEST_MUST_NOT_LEAK", prompts[0])
+            self.assertNotIn("nested-source-event-must-not-leak", prompts[0])
+            self.assertNotIn("state-event-must-not-leak", prompts[0])
+            self.assertNotIn("report_mid", prompts[0])
+
+    def test_dispatcher_lock_prevents_shared_output_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            with patch(
+                "tools.guardian_wake_dispatcher.fcntl.flock",
+                side_effect=BlockingIOError(),
+            ):
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={},
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+            self.assertEqual(result["status"], "DISPATCHER_LOCKED")
+            self.assertEqual(calls, [])
+            self.assertFalse(paths.codex_output.exists())
+            self.assertFalse(paths.action_receipt.exists())
+            self.assertFalse(paths.dispatcher_state.exists())
+
     def test_runtime_disk_recovery_retries_same_event_without_waiting_for_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -857,6 +1023,96 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 datetime.fromisoformat(attempt["retry_after_utc"]),
                 NOW + timedelta(minutes=90),
             )
+
+    def test_later_accepted_receipt_releases_only_older_usage_limit_backoffs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), wake=False)
+            selected = _event(severity="P1")
+            sibling = _event(
+                severity="P2",
+                event_id="event-P2-sibling",
+                pair="AUD_JPY",
+                dedupe_key="AUD_JPY|technical_state|TECHNICAL_STATE_CHANGE|NO_ACTION",
+            )
+            ordinary_failure = _event(
+                severity="P2",
+                event_id="event-P2-parse",
+                pair="CAD_CHF",
+                dedupe_key="CAD_CHF|technical_state|TECHNICAL_STATE_CHANGE|NO_ACTION",
+            )
+            failed_at = NOW - timedelta(minutes=10)
+            recovered_at = NOW - timedelta(minutes=5)
+
+            def attempt(event: dict, *, error: str) -> dict:
+                return {
+                    "event_id": event["event_id"],
+                    "dedupe_key": event["dedupe_key"],
+                    "event": event,
+                    "attempt_count": 3,
+                    "max_attempts": 3,
+                    "last_error": error,
+                    "last_status": error,
+                    "last_failed_at_utc": failed_at.isoformat(),
+                    "retry_after_utc": (NOW + timedelta(minutes=80)).isoformat(),
+                    "expires_at_utc": (NOW + timedelta(hours=3)).isoformat(),
+                    "retry_budget_exhausted": True,
+                }
+
+            paths.dispatcher_state.write_text(
+                json.dumps(
+                    {
+                        "reviewed_events": {
+                            "USD_CAD|spread|SPREAD_ANOMALY|HOLD": {
+                                "receipt_written": True,
+                                "last_status": "RECEIPT_WRITTEN",
+                                "last_reviewed_at_utc": recovered_at.isoformat(),
+                            }
+                        },
+                        "dispatch_attempts": {
+                            selected["dedupe_key"]: attempt(selected, error="CODEX_USAGE_LIMIT"),
+                            sibling["dedupe_key"]: attempt(sibling, error="CODEX_USAGE_LIMIT"),
+                            ordinary_failure["dedupe_key"]: attempt(
+                                ordinary_failure,
+                                error="SCHEMA_INVALID",
+                            ),
+                        },
+                        "pending_dispatches": {
+                            event["dedupe_key"]: {
+                                "event": event,
+                                "queued_at_utc": failed_at.isoformat(),
+                                "expires_at_utc": (NOW + timedelta(hours=3)).isoformat(),
+                            }
+                            for event in (selected, sibling)
+                        },
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["usage_limit_recovery"]["released_count"], 2)
+            self.assertEqual(len(calls), 1)
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertNotIn(selected["dedupe_key"], state["dispatch_attempts"])
+            sibling_attempt = state["dispatch_attempts"][sibling["dedupe_key"]]
+            self.assertEqual(sibling_attempt["attempt_count"], 0)
+            self.assertFalse(sibling_attempt["retry_budget_exhausted"])
+            self.assertEqual(sibling_attempt["last_status"], "CODEX_USAGE_LIMIT_RECOVERED")
+            self.assertEqual(
+                datetime.fromisoformat(sibling_attempt["retry_after_utc"]),
+                NOW,
+            )
+            ordinary_attempt = state["dispatch_attempts"][ordinary_failure["dedupe_key"]]
+            self.assertEqual(ordinary_attempt["attempt_count"], 3)
+            self.assertTrue(ordinary_attempt["retry_budget_exhausted"])
+            self.assertEqual(ordinary_attempt["last_status"], "SCHEMA_INVALID")
 
     def test_unsupported_codex_preflight_queues_without_full_wake(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
