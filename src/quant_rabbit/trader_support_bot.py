@@ -157,6 +157,15 @@ GLOBAL_UNLOCK_BLOCKERS = {
     "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
     "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
 }
+GLOBAL_UNLOCK_OVERLAY_GLOBAL_MARKERS = (
+    "GUARDIAN",
+    "SELF_IMPROVEMENT",
+    "PROFITABILITY",
+    "NEGATIVE_EXPECTANCY_ACTIVE",
+    "MARKET_CLOSE_LEAK",
+    "MONTH_SCALE_TP_PROGRESS",
+    "OANDA_CAMPAIGN",
+)
 ACCEPTANCE_LEAK_LOOKBACK_DAYS = 7
 REPAIR_REQUEST_CONTRACT_VERSION = "trader_support_repair_request_v1"
 REPAIR_AUTOMATION_ALLOWED_ACTIONS = [
@@ -2188,6 +2197,10 @@ def _entry_readiness_summary(
         guardian_receipt_consumption=guardian_receipt_consumption or {},
         guardian_receipt_operator_review=guardian_receipt_operator_review or {},
     )
+    lane_overlay_blockers = _lane_local_blocker_overlays(
+        active_opportunity_board or {},
+        non_eurusd_live_grade_frontier or {},
+    )
     repair_frontier: list[dict[str, Any]] = []
     repair_live_ready: list[dict[str, Any]] = []
     repair_basket_guardian_recovery: list[dict[str, Any]] = []
@@ -2201,7 +2214,10 @@ def _entry_readiness_summary(
     for item in results:
         for code in item.get("live_blocker_codes") or []:
             codes[str(code)] += 1
-        blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
+        blocker_codes = _merge_blocker_codes(
+            [str(code) for code in item.get("live_blocker_codes") or []],
+            lane_overlay_blockers.get(str(item.get("lane_id") or "").strip()),
+        )
         metadata = _intent_metadata(item)
         if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
             near_ready_lanes.append(
@@ -2470,6 +2486,76 @@ def _near_ready_lane_summary(
         "remains_unsafe_after_stale_artifacts_clear": bool(remaining_after_stale_clear),
         "ordinary_fresh_entries_must_remain_blocked": True,
     }
+
+
+def _merge_blocker_codes(base: list[str], overlay: list[str] | None = None) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in [*(base or []), *(overlay or [])]:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+    return merged
+
+
+def _lane_local_blocker_overlays(
+    active_opportunity_board: dict[str, Any],
+    non_eurusd_live_grade_frontier: dict[str, Any],
+) -> dict[str, list[str]]:
+    overlays: dict[str, list[str]] = {}
+    for artifact in (active_opportunity_board, non_eurusd_live_grade_frontier):
+        if not isinstance(artifact, dict):
+            continue
+        for lane in _artifact_lanes_for_overlay(artifact):
+            lane_id = str(lane.get("lane_id") or "").strip()
+            if not lane_id:
+                continue
+            lane_status = str(lane.get("status") or "").upper()
+            if lane_status not in {"NO_TRADE_WITH_CAUSE", "DRY_RUN_BLOCKED"}:
+                continue
+            blockers = [
+                str(code)
+                for code in lane.get("blockers") or []
+                if _is_lane_local_overlay_blocker(str(code))
+            ]
+            if not blockers:
+                continue
+            overlays[lane_id] = _merge_blocker_codes(overlays.get(lane_id, []), blockers)
+    return overlays
+
+
+def _artifact_lanes_for_overlay(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    lanes: list[dict[str, Any]] = []
+    for key in ("ranked_active_lanes", "ranked_frontier_lanes"):
+        rows = artifact.get(key)
+        if isinstance(rows, list):
+            lanes.extend(row for row in rows if isinstance(row, dict))
+    for key in ("top_lane", "top_non_eurusd_lane", "next_evidence_lane"):
+        row = artifact.get(key)
+        if isinstance(row, dict):
+            lanes.append(row)
+    required = artifact.get("required_checks")
+    if isinstance(required, dict):
+        candidates = required.get("required_pair_candidates")
+        if isinstance(candidates, dict):
+            for rows in candidates.values():
+                if isinstance(rows, list):
+                    lanes.extend(row for row in rows if isinstance(row, dict))
+        usd_cad = required.get("usd_cad_long_breakout_failure_blocker_breakdown")
+        if isinstance(usd_cad, list):
+            lanes.extend(row for row in usd_cad if isinstance(row, dict))
+    return lanes
+
+
+def _is_lane_local_overlay_blocker(code: str) -> bool:
+    text = str(code or "").strip().upper()
+    if not text or text in GLOBAL_UNLOCK_BLOCKERS:
+        return False
+    if any(marker in text for marker in GLOBAL_UNLOCK_OVERLAY_GLOBAL_MARKERS):
+        return False
+    return True
 
 
 def _near_ready_lane_sort_key(item: dict[str, Any]) -> tuple[int, int, float, str]:
@@ -2993,6 +3079,8 @@ def _near_ready_blocker_group(
         return "month_scale_replay"
     if text in FORECAST_FRONTIER_BLOCKER_CODES or "FORECAST" in text or "TELEMETRY" in text:
         return "forecast_telemetry"
+    if "TP_PROOF" in text or text in {"REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE"}:
+        return "proof_gap"
     if "BIDASK" in text or text == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
         return "bidask_replay"
     if text in FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES or "MARGIN" in text or "MIN_LOT" in text:

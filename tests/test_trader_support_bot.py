@@ -1093,6 +1093,82 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
 
+    def test_global_unlock_frontier_respects_active_board_lane_local_no_trade_blockers(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            active_board_path = root / "data" / "active_opportunity_board.json"
+            _write_json(
+                active_board_path,
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "ranked_active_lanes": [
+                        {
+                            "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+                            "pair": "NZD_CAD",
+                            "direction": "LONG",
+                            "strategy_family": "RANGE_ROTATION",
+                            "vehicle": "LIMIT",
+                            "status": "NO_TRADE_WITH_CAUSE",
+                            "blockers": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "LOCAL_TP_PROOF_ZERO_TRADES",
+                                "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+                            ],
+                        }
+                    ],
+                    "top_lane": {
+                        "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+                        "pair": "NZD_CAD",
+                        "direction": "LONG",
+                        "strategy_family": "RANGE_ROTATION",
+                        "vehicle": "LIMIT",
+                        "status": "NO_TRADE_WITH_CAUSE",
+                        "blockers": [
+                            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "LOCAL_TP_PROOF_ZERO_TRADES",
+                            "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE",
+                        ],
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    active_opportunity_board_path=active_board_path,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 0)
+            near_ready = {
+                item["lane_id"]: item
+                for item in payload["entry_readiness"]["near_ready_lanes"]
+            }
+            lane = near_ready["range_trader:NZD_CAD:LONG:RANGE_ROTATION"]
+            self.assertIn("LOCAL_TP_PROOF_ZERO_TRADES", lane["blocker_codes"])
+            self.assertIn("REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE", lane["blocker_codes"])
+            self.assertEqual(
+                lane["remaining_blocker_codes_after_global_unlock"],
+                ["LOCAL_TP_PROOF_ZERO_TRADES", "REALIZED_NEGATIVE_NO_POSITIVE_TP_SHAPE"],
+            )
+            self.assertIn("proof_gap", lane["blocker_groups"])
+
     def test_active_contract_non_eurusd_lane_overrides_legacy_shortest_path(self) -> None:
         now = datetime(2026, 7, 9, 13, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
