@@ -145,7 +145,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("QR_ALLOW_LIVE_STAGE_ONLY=1; keeping GPT handoff stage-only", result.stderr)
 
-    def test_verified_request_evidence_handoff_is_recomposed_before_gateway(self) -> None:
+    def test_unconsumed_verified_request_evidence_reaches_cycle_without_recomposition(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             capture = root / "capture.json"
@@ -178,11 +178,57 @@ class LiveWrapperTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = capture.read_text()
+            self.assertEqual(_captured_cli_commands(payload)[:2], ["autotrade-cycle", "cycle-sidecars"])
+            self.assertNotIn("trader-draft-decision", payload)
+            self.assertNotIn("gpt-trader-decision", payload)
+            self.assertIn(
+                "preserving unconsumed ACCEPTED REQUEST_EVIDENCE for one gateway-maintenance cycle",
+                result.stderr,
+            )
+
+    def test_consumed_verified_request_evidence_is_recomposed_before_next_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            data = root / "data"
+            data.mkdir()
+            docs = root / "docs"
+            docs.mkdir()
+            response = data / "codex_trader_decision_response.json"
+            gpt_decision = data / "gpt_trader_decision.json"
+            autotrade_report = docs / "autotrade_cycle_report.md"
+            response.write_text('{"action":"REQUEST_EVIDENCE"}\n')
+            gpt_decision.write_text('{"status":"ACCEPTED","decision":{"action":"REQUEST_EVIDENCE"}}\n')
+            autotrade_report.write_text("# consumed\n")
+            os.utime(response, (100.0, 100.0))
+            os.utime(gpt_decision, (101.0, 101.0))
+            os.utime(autotrade_report, (102.0, 102.0))
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
             self.assertEqual(
                 _captured_cli_commands(payload)[:3],
                 ["trader-draft-decision", "gpt-trader-decision", "autotrade-cycle"],
             )
-            self.assertIn("already verified as ACCEPTED REQUEST_EVIDENCE", result.stderr)
+            self.assertIn("already consumed as ACCEPTED REQUEST_EVIDENCE", result.stderr)
 
     def test_successful_cycle_refreshes_post_gateway_sidecars_under_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

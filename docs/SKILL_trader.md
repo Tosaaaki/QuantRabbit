@@ -546,7 +546,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
 # PositionProtectionGateway before considering fresh entry risk. Skipping the
 # wrapper leaves profit-side partial closes, profitable hedge TPs, profit-lock
 # stops, and other dependent-order protection stale.
-# `run-autotrade-live.sh` refreshes a missing/stale/non-TRADE GPT handoff before
+# `run-autotrade-live.sh` refreshes a missing/stale/rejected or consumed non-TRADE GPT handoff before
 # this gateway step when broker truth, order intents, attack advice, active
 # contract/board/frontier, or range-rail repair are newer than the response, or
 # when the newer verifier result already consumed the response as non-TRADE. The

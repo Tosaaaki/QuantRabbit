@@ -115,6 +115,13 @@ DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 ACCEPTED_GPT_GATEWAY_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE"})
+# WAIT / REQUEST_EVIDENCE never authorize a broker write, but a freshly
+# accepted verifier result still has to reach exactly one autotrade cycle so
+# existing-position maintenance and the post-cycle sidecars are not skipped.
+# Keep that one-shot cycle outcome set separate from gateway permissions.
+ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS = ACCEPTED_GPT_GATEWAY_ACTIONS | frozenset(
+    {"WAIT", "REQUEST_EVIDENCE"}
+)
 GPT_LIVE_ORDER_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING"})
 GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
 
@@ -3985,16 +3992,18 @@ class AutoTradeCycle:
     def _load_reusable_verified_gpt_handoff(self) -> GptHandoffSummary | None:
         """Reuse a just-accepted gateway verification for a pinned packet.
 
-        `autotrade-cycle --reuse-market-artifacts` is the verifier-to-gateway
-        bridge. Once `gpt-trader-decision` has accepted an external gateway
-        response, rerunning the verifier against a newer broker snapshot can
-        reject the same receipt as stale even though the live gateway will
-        fetch fresh broker truth before staging/sending. Reuse is therefore
-        allowed only for the same external receipt, the same order-intent
-        packet for TRADE receipts, and a still-present LIVE_READY lane for any
-        selected fresh-entry lane. CLOSE / CANCEL_PENDING / protection actions
-        do not select order-intent lanes, but they still need the same source
-        receipt and an unconsumed accepted verifier output.
+        `autotrade-cycle --reuse-market-artifacts` is the verifier-to-cycle
+        bridge. Once `gpt-trader-decision` has accepted an external response,
+        rerunning the verifier against a newer broker snapshot can reject the
+        same receipt as stale even though the live gateway will fetch fresh
+        broker truth before any staging/sending. Reuse is therefore allowed
+        only for the same external receipt, the same order-intent packet for
+        TRADE receipts, and a still-present LIVE_READY lane for any selected
+        fresh-entry lane. CLOSE / CANCEL_PENDING / protection actions do not
+        select order-intent lanes. WAIT / REQUEST_EVIDENCE are not gateway
+        permissions at all; they are reusable only as one-shot verified cycle
+        outcomes so position maintenance still runs. Every action still needs
+        the same source receipt and an unconsumed accepted verifier output.
         """
 
         if not self.reuse_market_artifacts or not self.use_gpt_trader:
@@ -4018,11 +4027,15 @@ class AutoTradeCycle:
         if not isinstance(decision, dict):
             return None
         action = str(decision.get("action") or "").upper()
-        if action not in ACCEPTED_GPT_GATEWAY_ACTIONS:
+        if action not in ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS:
             return None
         if not self._verified_gpt_decision_matches_source(decision, source_payload):
             return None
         if action == "TRADE" and not self._verified_gpt_entry_artifacts_still_match(verified_payload, decision):
+            return None
+        if action in {"WAIT", "REQUEST_EVIDENCE"} and not self._verified_gpt_non_entry_artifacts_still_current(
+            source_path
+        ):
             return None
         selected_lane_id = str(decision.get("selected_lane_id") or "") or None
         selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
@@ -4096,6 +4109,25 @@ class AutoTradeCycle:
             if not set(selected_lane_ids).issubset(live_ready_lane_ids):
                 return False
         return True
+
+    def _verified_gpt_non_entry_artifacts_still_current(self, source_path: Path) -> bool:
+        """Do not reuse an old non-entry conclusion after market state changed.
+
+        The shell wrapper performs the same freshness check before composing a
+        handoff, but direct CLI callers still need a Python-side fail-closed
+        guard. A newer snapshot, intent packet, or attack-advice packet means
+        the accepted WAIT / REQUEST_EVIDENCE conclusion belongs to old market
+        truth and must fall through to the normal stale-receipt explanation.
+        """
+
+        try:
+            source_mtime_ns = source_path.stat().st_mtime_ns
+            return not any(
+                path.exists() and path.stat().st_mtime_ns > source_mtime_ns
+                for path in (self.snapshot_path, self.intents_path, self.gpt_attack_advice_path)
+            )
+        except OSError:
+            return False
 
     def _verified_gpt_attack_advice_still_matches(self, verified_payload: dict[str, Any]) -> bool:
         if not self.gpt_attack_advice_path.exists():

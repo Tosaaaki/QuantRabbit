@@ -5868,116 +5868,139 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse((root / "live_order.json").exists())
             self.assertIn("GPT wait recovery attempts: `0`", (root / "report.md").read_text())
 
-    def test_reused_verified_gpt_wait_requires_fresh_receipt_before_gateway(self) -> None:
+    def test_reused_verified_nontrade_outcome_is_consumed_exactly_once(self) -> None:
         prior_telemetry = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
         os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                root = Path(tmp)
-                now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
-                target_state = _open_target_state(root)
-                snapshot = BrokerSnapshot(
-                    fetched_at_utc=now,
-                    quotes={
-                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
-                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
-                    },
-                )
-                snapshot_path = root / "snapshot.json"
-                snapshot_path.write_text(_snapshot_to_json(_with_account(snapshot)) + "\n")
-                intents_path = root / "intents.json"
-                intents_path.write_text(json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n")
-                pair_charts_path = root / "pair_charts.json"
-                pair_charts_path.write_text(json.dumps({"charts": []}) + "\n")
-                emitted = now - timedelta(minutes=90)
-                (root / "projection_ledger.jsonl").write_text(
-                    json.dumps(
+        try:
+            for action in ("WAIT", "REQUEST_EVIDENCE"):
+                with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+                    target_state = _open_target_state(root)
+                    target_payload = json.loads(target_state.read_text())
+                    target_payload.update(
                         {
-                            "timestamp_emitted_utc": emitted.isoformat().replace("+00:00", "Z"),
-                            "pair": "EUR_USD",
-                            "signal_name": "directional_forecast",
-                            "direction": "UP",
-                            "lead_time_min": 30,
-                            "confidence": 0.8,
-                            "entry_price": 1.1720,
-                            "predicted_target_price": 1.1728,
-                            "predicted_invalidation_price": 1.1710,
-                            "resolution_window_min": 60,
-                            "resolution_status": "PENDING",
-                            "cycle_id": "stale-wait-cycle",
+                            "start_balance_jpy": 200_000,
+                            "remaining_target_jpy": 20_000,
                         }
                     )
-                    + "\n"
-                )
-                response_path = root / "codex_trader_decision_response.json"
-                wait_decision = _gpt_wait_decision()
-                response_path.write_text(json.dumps(wait_decision) + "\n")
-                gpt_decision_path = root / "gpt_decision.json"
-                gpt_decision_path.write_text(
-                    json.dumps(
-                        {
-                            "generated_at_utc": now.isoformat(),
-                            "status": "ACCEPTED",
-                            "decision": {"action": "WAIT"},
-                            "verification_issues": [],
-                        }
+                    target_state.write_text(json.dumps(target_payload) + "\n")
+                    snapshot = BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                            "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                        },
                     )
-                    + "\n"
-                )
-                os.utime(snapshot_path, (100.0, 100.0))
-                os.utime(intents_path, (100.0, 100.0))
-                os.utime(response_path, (101.0, 101.0))
-                os.utime(gpt_decision_path, (102.0, 102.0))
+                    snapshot_path = root / "snapshot.json"
+                    snapshot_path.write_text(_snapshot_to_json(_with_account(snapshot)) + "\n")
+                    intents_path = root / "intents.json"
+                    intents_path.write_text(
+                        json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n"
+                    )
+                    pair_charts_path = root / "pair_charts.json"
+                    pair_charts_path.write_text(json.dumps({"charts": []}) + "\n")
+                    emitted = now - timedelta(minutes=90)
+                    (root / "projection_ledger.jsonl").write_text(
+                        json.dumps(
+                            {
+                                "timestamp_emitted_utc": emitted.isoformat().replace("+00:00", "Z"),
+                                "pair": "EUR_USD",
+                                "signal_name": "directional_forecast",
+                                "direction": "UP",
+                                "lead_time_min": 30,
+                                "confidence": 0.8,
+                                "entry_price": 1.1720,
+                                "predicted_target_price": 1.1728,
+                                "predicted_invalidation_price": 1.1710,
+                                "resolution_window_min": 60,
+                                "resolution_status": "PENDING",
+                                "cycle_id": f"verified-{action.lower()}-cycle",
+                            }
+                        )
+                        + "\n"
+                    )
+                    response_path = root / "codex_trader_decision_response.json"
+                    decision = _gpt_wait_decision()
+                    decision["action"] = action
+                    response_path.write_text(json.dumps(decision) + "\n")
+                    gpt_decision_path = root / "gpt_decision.json"
+                    gpt_decision_path.write_text(
+                        json.dumps(
+                            {
+                                "generated_at_utc": now.isoformat(),
+                                "status": "ACCEPTED",
+                                "decision": decision,
+                                "verification_issues": [],
+                            }
+                        )
+                        + "\n"
+                    )
+                    os.utime(snapshot_path, (100.0, 100.0))
+                    os.utime(intents_path, (100.0, 100.0))
+                    os.utime(response_path, (101.0, 101.0))
+                    os.utime(gpt_decision_path, (102.0, 102.0))
 
-                summary = AutoTradeCycle(
-                    client=FakeCycleClient(snapshot),
-                    snapshot_path=snapshot_path,
-                    intents_path=intents_path,
-                    intent_report_path=root / "intents.md",
-                    decision_path=root / "decision.json",
-                    decision_report_path=root / "decision.md",
-                    gpt_decision_path=gpt_decision_path,
-                    gpt_decision_report_path=root / "gpt_decision.md",
-                    gpt_attack_advice_path=root / "attack_missing.json",
-                    position_management_path=root / "pm.json",
-                    position_management_report_path=root / "pm.md",
-                    position_execution_path=root / "pe.json",
-                    position_execution_report_path=root / "pe.md",
-                    live_order_output_path=root / "live_order.json",
-                    live_order_report_path=root / "live_order.md",
-                    report_path=root / "report.md",
-                    campaign_plan_path=_campaign(root),
-                    pair_charts_path=pair_charts_path,
-                    strategy_profile_path=_candidate_profile(root),
-                    market_story_profile_path=_stories(root),
-                    receipt_promotion_report_path=root / "promotion.md",
-                    target_state_path=target_state,
-                    target_report_path=root / "target.md",
-                    gpt_target_state_path=target_state,
-                    use_gpt_trader=True,
-                    gpt_provider=StaticTraderProvider(wait_decision, source_path=response_path),
-                    reuse_market_artifacts=True,
-                    refresh_market_story=False,
-                    live_enabled=True,
-                ).run(send=True)
+                    def cycle() -> AutoTradeCycle:
+                        return AutoTradeCycle(
+                            client=FakeCycleClient(snapshot),
+                            snapshot_path=snapshot_path,
+                            intents_path=intents_path,
+                            intent_report_path=root / "intents.md",
+                            decision_path=root / "decision.json",
+                            decision_report_path=root / "decision.md",
+                            gpt_decision_path=gpt_decision_path,
+                            gpt_decision_report_path=root / "gpt_decision.md",
+                            gpt_attack_advice_path=root / "attack_missing.json",
+                            position_management_path=root / "pm.json",
+                            position_management_report_path=root / "pm.md",
+                            position_execution_path=root / "pe.json",
+                            position_execution_report_path=root / "pe.md",
+                            live_order_output_path=root / "live_order.json",
+                            live_order_report_path=root / "live_order.md",
+                            report_path=root / "report.md",
+                            campaign_plan_path=_campaign(root),
+                            pair_charts_path=pair_charts_path,
+                            strategy_profile_path=_candidate_profile(root),
+                            market_story_profile_path=_stories(root),
+                            receipt_promotion_report_path=root / "promotion.md",
+                            target_state_path=target_state,
+                            target_report_path=root / "target.md",
+                            gpt_target_state_path=target_state,
+                            use_gpt_trader=True,
+                            gpt_provider=StaticTraderProvider(decision, source_path=response_path),
+                            reuse_market_artifacts=True,
+                            refresh_market_story=False,
+                            live_enabled=True,
+                        )
 
-                projection_row = json.loads((root / "projection_ledger.jsonl").read_text())
-                # §2/§8: a consumed/already-verified receipt degrades the cycle
-                # to deterministic continuation instead of stopping it. With
-                # no current LIVE_READY lane, the root status must name the
-                # executable opportunity gap while retaining stale GPT evidence.
-                self.assertEqual(summary.status, "NO_LIVE_READY_INTENT")
-                self.assertEqual(summary.gpt_status, "STALE_DECISION")
-                self.assertEqual(projection_row["resolution_status"], "HIT")
-                self.assertFalse((root / "live_order.json").exists())
-                self.assertIn("already verified as ACCEPTED WAIT", summary.gpt_error or "")
-                report_text = (root / "report.md").read_text()
-                self.assertIn("NO_LIVE_READY_INTENT", report_text)
-            finally:
-                if prior_telemetry is None:
-                    os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
-                else:
-                    os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_telemetry
+                    first = cycle().run(send=True)
+
+                    projection_row = json.loads((root / "projection_ledger.jsonl").read_text())
+                    self.assertEqual(first.status, f"GPT_{action}")
+                    self.assertEqual(first.gpt_status, "ACCEPTED")
+                    self.assertEqual(first.gpt_action, action)
+                    self.assertTrue(first.gpt_allowed)
+                    self.assertEqual(projection_row["resolution_status"], "HIT")
+                    self.assertFalse((root / "live_order.json").exists())
+
+                    # The first report consumes this verified outcome. Reusing
+                    # the same receipt on the next cycle must require a fresh
+                    # decision without turning WAIT / REQUEST_EVIDENCE into a
+                    # gateway permission or skipping deterministic maintenance.
+                    second = cycle().run(send=True)
+
+                    self.assertEqual(second.status, "NO_LIVE_READY_INTENT")
+                    self.assertEqual(second.gpt_status, "STALE_DECISION")
+                    self.assertFalse(second.gpt_allowed)
+                    self.assertFalse((root / "live_order.json").exists())
+                    self.assertIn("already consumed by", second.gpt_error or "")
+                    self.assertIn("NO_LIVE_READY_INTENT", (root / "report.md").read_text())
+        finally:
+            if prior_telemetry is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_telemetry
 
     def test_stale_gpt_receipt_degrades_to_deterministic_position_cycle(self) -> None:
         # Regression for the 2026-06-11 cycle-poisoning bug: 13 of 25 live
@@ -6205,8 +6228,21 @@ class AutoTradeCycleTest(unittest.TestCase):
             response_path = root / "codex_trader_decision_response.json"
             wait_decision = _gpt_wait_decision()
             response_path.write_text(json.dumps(wait_decision) + "\n")
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": wait_decision,
+                        "verification_issues": [],
+                    }
+                )
+                + "\n"
+            )
             os.utime(response_path, (100.0, 100.0))
-            os.utime(snapshot_path, (101.0, 101.0))
+            os.utime(gpt_decision_path, (101.0, 101.0))
+            os.utime(snapshot_path, (102.0, 102.0))
             os.utime(intents_path, (99.0, 99.0))
 
             summary = AutoTradeCycle(
@@ -6216,7 +6252,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 intent_report_path=root / "intents.md",
                 decision_path=root / "decision.json",
                 decision_report_path=root / "decision.md",
-                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_path=gpt_decision_path,
                 gpt_decision_report_path=root / "gpt_decision.md",
                 gpt_attack_advice_path=root / "attack_missing.json",
                 position_management_path=root / "pm.json",

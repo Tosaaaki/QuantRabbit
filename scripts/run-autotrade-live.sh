@@ -314,7 +314,7 @@ json_string_value() {
 
 gpt_handoff_needs_refresh() {
   local response_path="$1"
-  local dep status action
+  local dep status action autotrade_report_path
   if [[ ! -f "$response_path" ]]; then
     echo "[run-autotrade-live] GPT handoff response missing; composing a fresh receipt: ${response_path}" >&2
     return 0
@@ -328,10 +328,27 @@ gpt_handoff_needs_refresh() {
   if [[ -f data/gpt_trader_decision.json && data/gpt_trader_decision.json -nt "$response_path" ]]; then
     status="$(json_string_value data/gpt_trader_decision.json status || true)"
     action="$(json_string_value data/gpt_trader_decision.json action || true)"
-    if [[ "$status" != "ACCEPTED" || "$action" != "TRADE" ]]; then
+    if [[ "$status" != "ACCEPTED" ]]; then
       echo "[run-autotrade-live] GPT handoff response was already verified as ${status:-UNKNOWN} ${action:-NO_ACTION}; composing a fresh receipt." >&2
       return 0
     fi
+    case "$action" in
+      TRADE)
+        ;;
+      WAIT|REQUEST_EVIDENCE|PROTECT|TIGHTEN_SL|CLOSE|CANCEL_PENDING)
+        autotrade_report_path="$(arg_value "--report" "${args[@]}" || true)"
+        autotrade_report_path="${autotrade_report_path:-docs/autotrade_cycle_report.md}"
+        if [[ -f "$autotrade_report_path" && "$autotrade_report_path" -nt data/gpt_trader_decision.json ]]; then
+          echo "[run-autotrade-live] GPT handoff response was already consumed as ACCEPTED ${action}; composing a fresh receipt." >&2
+          return 0
+        fi
+        echo "[run-autotrade-live] preserving unconsumed ACCEPTED ${action} for one gateway-maintenance cycle." >&2
+        ;;
+      *)
+        echo "[run-autotrade-live] GPT handoff response has unsupported ACCEPTED action ${action:-NO_ACTION}; composing a fresh receipt." >&2
+        return 0
+        ;;
+    esac
   fi
   return 1
 }
