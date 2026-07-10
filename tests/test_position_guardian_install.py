@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,38 @@ INSTALL = ROOT / "scripts" / "install-position-guardian.sh"
 
 
 class PositionGuardianInstallTest(unittest.TestCase):
+    def test_install_writes_launchd_logs_under_live_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            env = _install_env(live=live, home=home)
+            _install_fake_launchctl(root, env, loaded=False)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plist = home / "Library" / "LaunchAgents" / "com.quantrabbit.position-guardian.plist"
+            with plist.open("rb") as handle:
+                payload = plistlib.load(handle)
+            self.assertEqual(
+                payload["StandardOutPath"],
+                str(live / "logs" / "position_guardian.launchd.log"),
+            )
+            self.assertEqual(
+                payload["StandardErrorPath"],
+                str(live / "logs" / "position_guardian.launchd.err"),
+            )
+            self.assertTrue((live / "logs").is_dir())
+
     def test_check_preflight_does_not_install_launch_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -356,6 +389,9 @@ def _install_fake_launchctl(root: Path, env: dict[str, str], *, loaded: bool) ->
                 "    exit 0",
                 "  fi",
                 "  exit 113",
+                "fi",
+                "if [[ \"$cmd\" == \"unload\" || \"$cmd\" == \"load\" ]]; then",
+                "  exit 0",
                 "fi",
                 "printf 'unsupported fake launchctl command: %s %s\\n' \"$cmd\" \"$label\" >&2",
                 "exit 64",

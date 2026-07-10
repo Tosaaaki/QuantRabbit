@@ -453,6 +453,28 @@ class QrDiskMaintenanceTest(unittest.TestCase):
             self.assertEqual(unknown.read_text(encoding="utf-8"), "execution evidence\n")
             self.assertEqual(payload["summary"]["rotated_logs"], 1)
 
+    def test_position_guardian_launchd_logs_are_allowlisted_for_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            logs.mkdir(parents=True)
+            expected_by_name = {
+                "position_guardian.launchd.log": b"guardian stdout\n" * 1_000,
+                "position_guardian.launchd.err": b"guardian stderr\n" * 1_000,
+            }
+            for name, expected in expected_by_name.items():
+                (logs / name).write_bytes(expected)
+
+            result, payload = _run(root, "--apply", "--log-max-mb", "0.001")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["summary"]["rotated_logs"], 2)
+            for name, expected in expected_by_name.items():
+                source = logs / name
+                self.assertEqual(source.stat().st_size, 0)
+                with gzip.open(source.with_name(f"{name}.1.gz"), "rb") as handle:
+                    self.assertEqual(handle.read(), expected)
+
     def test_open_existing_log_generation_blocks_rotation_without_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

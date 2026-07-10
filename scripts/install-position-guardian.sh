@@ -11,6 +11,8 @@ MAIN_BRANCH="${QR_SYNC_MAIN_BRANCH:-main}"
 SCRIPT="$LIVE_ROOT/scripts/run-position-guardian-live.sh"
 LABEL="com.quantrabbit.position-guardian"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+STDOUT_LOG="$LIVE_ROOT/logs/position_guardian.launchd.log"
+STDERR_LOG="$LIVE_ROOT/logs/position_guardian.launchd.err"
 INTERVAL="${QR_POSITION_GUARDIAN_INTERVAL:-30}"
 ENV_FILE="${QR_OANDA_ENV_FILE:-.env.local}"
 HEARTBEAT_MAX_AGE_SECONDS="${QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS:-$((INTERVAL * 4))}"
@@ -353,6 +355,7 @@ fi
 
 command -v launchctl >/dev/null 2>&1 || die "launchctl is not available." 2
 mkdir -p "$HOME/Library/LaunchAgents"
+mkdir -p "$LIVE_ROOT/logs"
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -367,8 +370,8 @@ cat > "$PLIST" <<EOF
   </array>
   <key>StartInterval</key><integer>$INTERVAL</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/tmp/$LABEL.out.log</string>
-  <key>StandardErrorPath</key><string>/tmp/$LABEL.err.log</string>
+  <key>StandardOutPath</key><string>$STDOUT_LOG</string>
+  <key>StandardErrorPath</key><string>$STDERR_LOG</string>
 </dict>
 </plist>
 EOF
