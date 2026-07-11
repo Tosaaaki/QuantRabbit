@@ -22,6 +22,7 @@ from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 
 
 NOW = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
+SUMMER_WEEKEND = datetime(2026, 7, 11, 3, 30, tzinfo=timezone.utc)
 
 
 class GuardianEventRouterTest(unittest.TestCase):
@@ -66,6 +67,168 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(
             technical.details["material_fingerprint"]["family_consensus"]["trend"],
             "DOWN",
+        )
+
+    def test_market_closed_technical_event_stays_visible_without_waking(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        snapshot["fetched_at_utc"] = SUMMER_WEEKEND.isoformat()
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=SUMMER_WEEKEND,
+                ),
+            },
+            now=SUMMER_WEEKEND,
+        )
+        technical = next(
+            event for event in events if event.event_type == "TECHNICAL_STATE_CHANGE"
+        )
+
+        escalation, state = evaluate_guardian_escalation(
+            events=[technical],
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        self.assertFalse(escalation["wake_gpt"])
+        self.assertEqual(escalation["events_to_review"], [])
+        self.assertFalse(escalation["market_status"]["is_fx_open"])
+        self.assertEqual(
+            escalation["suppressed_events"][0]["suppressed_reason"],
+            "MARKET_CLOSED_TUNING_OBSERVATION",
+        )
+        self.assertIn(
+            "NEW_EVENT",
+            escalation["suppressed_events"][0]["suppressed_wake_reason_codes"],
+        )
+        self.assertIn(technical.dedupe_key, state["events"])
+        self.assertFalse(state["market_status"]["is_fx_open"])
+
+    def test_market_closed_suppression_does_not_stop_safety_or_manual_monitoring(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "unknown",
+                    "trade_id": "manual-outside-gateway",
+                }
+            ]
+        )
+        snapshot["fetched_at_utc"] = SUMMER_WEEKEND.isoformat()
+        events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": {}},
+            now=SUMMER_WEEKEND,
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=events,
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        event_types = {event.event_type for event in events}
+        review_types = {
+            event["event_type"] for event in escalation["events_to_review"]
+        }
+        self.assertIn("UNKNOWN_ORDER", event_types)
+        self.assertIn("TECHNICAL_INPUT_STALE", event_types)
+        self.assertIn("UNKNOWN_ORDER", review_types)
+        self.assertNotIn("TECHNICAL_INPUT_STALE", review_types)
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_technical_input_still_stale_becomes_reviewable_after_reopen(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        snapshot["fetched_at_utc"] = SUMMER_WEEKEND.isoformat()
+        stale_event = next(
+            event
+            for event in detect_guardian_events(
+                inputs={"snapshot": snapshot, "pair_charts": {}},
+                now=SUMMER_WEEKEND,
+            )
+            if event.event_type == "TECHNICAL_INPUT_STALE"
+        )
+        closed_escalation, closed_state = evaluate_guardian_escalation(
+            events=[stale_event],
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        reopened_at = datetime(2026, 7, 13, 0, 0, tzinfo=timezone.utc)
+        reopened_escalation, _ = evaluate_guardian_escalation(
+            events=[stale_event],
+            previous_state=closed_state,
+            now=reopened_at,
+        )
+
+        self.assertFalse(closed_escalation["wake_gpt"])
+        self.assertTrue(reopened_escalation["market_status"]["is_fx_open"])
+        self.assertTrue(reopened_escalation["wake_gpt"])
+        self.assertIn(
+            "MARKET_REOPEN_TECHNICAL_INPUT_STILL_STALE",
+            reopened_escalation["wake_reason_codes"],
+        )
+
+    def test_reopen_stale_review_does_not_require_a_closed_guardian_pass(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        friday_before_close = datetime(2026, 7, 10, 20, 59, tzinfo=timezone.utc)
+        snapshot["fetched_at_utc"] = friday_before_close.isoformat()
+        stale_event = next(
+            event
+            for event in detect_guardian_events(
+                inputs={"snapshot": snapshot, "pair_charts": {}},
+                now=friday_before_close,
+            )
+            if event.event_type == "TECHNICAL_INPUT_STALE"
+        )
+        open_escalation, preweekend_state = evaluate_guardian_escalation(
+            events=[stale_event],
+            previous_state={},
+            now=friday_before_close,
+        )
+        self.assertTrue(open_escalation["market_status"]["is_fx_open"])
+
+        monday_after_open = datetime(2026, 7, 12, 21, 1, tzinfo=timezone.utc)
+        reopened_escalation, _ = evaluate_guardian_escalation(
+            events=[stale_event],
+            previous_state=preweekend_state,
+            now=monday_after_open,
+        )
+
+        self.assertTrue(reopened_escalation["wake_gpt"])
+        self.assertIn(
+            "MARKET_REOPEN_TECHNICAL_INPUT_STILL_STALE",
+            reopened_escalation["wake_reason_codes"],
         )
 
     def test_negative_breakout_pressure_uses_independent_direction_not_score_sign(self) -> None:

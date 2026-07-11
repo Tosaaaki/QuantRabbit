@@ -4,6 +4,7 @@ import json
 import math
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -190,7 +191,7 @@ class LearningAuditor:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -246,7 +247,7 @@ class LearningAuditor:
         effect: dict[str, Any],
         influence: dict[str, Any],
     ) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO learning_audit_runs(
@@ -917,7 +918,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     rows: list[dict[str, Any]] = []
     if db_path.exists():
         try:
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.row_factory = sqlite3.Row
                 columns = _table_columns(conn, "execution_events")
                 exit_reason_select = ", exit_reason" if "exit_reason" in columns else ""

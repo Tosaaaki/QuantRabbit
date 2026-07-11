@@ -57,6 +57,7 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -971,7 +972,7 @@ def backfill_entry_theses_from_execution_ledger(
     already = list(already_initial)
     scanned_fills = 0
     try:
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             protection_prices = _execution_ledger_protection_prices(conn)
             rows = conn.execute(

@@ -636,10 +636,14 @@ class DailyReviewTest(unittest.TestCase):
             self.assertEqual(review["full_read_accuracy_pct"], 50.0)
             self.assertEqual(review["accuracy_30m_pct"], 50.0)
             self.assertEqual(review["accuracy_2h_pct"], 50.0)
+            self.assertEqual(review["schema_v1_legacy_predictions"], 2)
+            self.assertEqual(review["schema_v2_predictions"], 0)
+            self.assertEqual(review["legacy_v1_full_target_accuracy_pct"], 50.0)
             self.assertEqual(review["blocked_but_correct_read_count"], 1)
             self.assertEqual(review["wrong_read_traded_count"], 1)
             self.assertIn(
-                "market-read: 2/2 score-eligible resolved excluded_geometry=0 full_accuracy=50.0",
+                "market-read legacy-v1: 2/2 resolved excluded_geometry=0 "
+                "full_target_accuracy=50.0 (not direction accuracy)",
                 report.narrative_summary,
             )
             self.assertEqual(
@@ -720,7 +724,191 @@ class DailyReviewTest(unittest.TestCase):
             self.assertEqual(review["full_read_accuracy_pct"], 100.0)
             self.assertEqual(review["verdict_counts"], {"CORRECT": 1})
             self.assertIn(
-                "market-read: 1/1 score-eligible resolved excluded_geometry=1 full_accuracy=100.0",
+                "market-read legacy-v1: 1/1 resolved excluded_geometry=1 "
+                "full_target_accuracy=100.0 (not direction accuracy)",
+                report.narrative_summary,
+            )
+
+    def test_market_read_review_excludes_straddling_directional_rails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+            row = {
+                "generated_at_utc": self._ts(2),
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "start_price": 1.1000,
+                "action": "WAIT",
+                "verification_status": "ACCEPTED",
+                "next_30m_prediction": {
+                    "direction": "LONG",
+                    "target_zone": "1.0990-1.1020",
+                    "invalidation": "1.0980",
+                },
+                "next_2h_prediction": {
+                    "direction": "LONG",
+                    "target_zone": "1.0990-1.1040",
+                    "invalidation": "1.0970",
+                },
+                "best_trade_if_forced": {
+                    "direction": "LONG",
+                    "entry": "1.1000",
+                    "tp": "1.0990-1.1040",
+                    "sl": "1.0970",
+                },
+                "verdict": "CORRECT",
+                "thirty_minute_verdict": "TARGET_ONLY",
+                "two_hour_verdict": "TARGET_ONLY",
+            }
+            score_path.write_text(json.dumps(row) + "\n")
+
+            report = compute_daily_review(
+                db_path,
+                now=self.now,
+                market_read_score_path=score_path,
+            )
+
+            review = report.market_read_review
+            self.assertEqual(review["score_eligible_predictions"], 0)
+            self.assertEqual(review["geometry_ineligible_predictions"], 1)
+            self.assertEqual(review["resolved_predictions"], 0)
+            self.assertIn(
+                "market-read legacy-v1: 0/0 resolved excluded_geometry=1 "
+                "full_target_accuracy=None (not direction accuracy)",
+                report.narrative_summary,
+            )
+
+    def test_market_read_v2_reports_direction_target_and_full_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+
+            def horizon(
+                *,
+                resolution: str = "RESOLVED_MID_CANDLE_DIAGNOSTIC",
+                direction: str = "CORRECT",
+                target: str = "NOT_TOUCHED",
+                invalidation: str = "NOT_TOUCHED",
+                first: str = "NEITHER_TOUCHED",
+                full: str = "DIRECTION_CORRECT_TARGET_INCOMPLETE",
+            ) -> dict:
+                return {
+                    "resolution_status": resolution,
+                    "direction_status": direction,
+                    "target_completion_status": target,
+                    "invalidation_status": invalidation,
+                    "first_touch_status": first,
+                    "full_read_status": full,
+                    "truth_source": "MID_CANDLE_DIAGNOSTIC",
+                    "live_permission": False,
+                }
+
+            rows = [
+                {
+                    "schema_version": 2,
+                    "prediction_id": "mr2:one",
+                    "generated_at_utc": self._ts(3),
+                    "pair": "EUR_USD",
+                    "direction": "LONG",
+                    "score_eligible": True,
+                    "verdict": "FULL_READ_INCOMPLETE",
+                    "horizon_results": {
+                        "30m": horizon(),
+                        "2h": horizon(
+                            direction="WRONG",
+                            target="TOUCHED",
+                            first="TARGET_ONLY",
+                            full="TARGET_ONLY",
+                        ),
+                    },
+                    "reaction_chain": {
+                        "first_subsequent_decision": {"status": "RESOLVED"},
+                        "execution_attribution": {"status": "PARTIALLY_ATTRIBUTED"},
+                        "realized_outcome": {"status": "RESOLVED", "realized_pl_jpy": 250.0},
+                    },
+                    "originating_decision_receipt_id": "gptd:one",
+                    "direct_execution_attribution": {"status": "UNATTRIBUTED"},
+                    "direct_realized_outcome": {"status": "UNRESOLVED"},
+                },
+                {
+                    "schema_version": 2,
+                    "prediction_id": "mr2:two",
+                    "generated_at_utc": self._ts(2),
+                    "pair": "GBP_USD",
+                    "direction": "SHORT",
+                    "score_eligible": True,
+                    "verdict": "UNRESOLVED",
+                    "horizon_results": {
+                        "30m": horizon(
+                            direction="WRONG",
+                            invalidation="TOUCHED",
+                            first="INVALIDATION_ONLY",
+                            full="INVALIDATION_ONLY",
+                        ),
+                        "2h": horizon(
+                            resolution="UNRESOLVED",
+                            direction="UNRESOLVED",
+                            target="UNRESOLVED",
+                            invalidation="UNRESOLVED",
+                            first="UNRESOLVED",
+                            full="UNRESOLVED",
+                        ),
+                    },
+                    "originating_decision_receipt_id": "gptd:two",
+                    "direct_execution_attribution": {"status": "PARTIALLY_ATTRIBUTED"},
+                    "direct_realized_outcome": {"status": "PARTIALLY_RESOLVED"},
+                },
+            ]
+            score_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+            report = compute_daily_review(db_path, now=self.now, market_read_score_path=score_path)
+            review = report.market_read_review
+
+            self.assertEqual(review["schema_v1_legacy_predictions"], 0)
+            self.assertEqual(review["schema_v2_predictions"], 2)
+            self.assertEqual(review["direction_accuracy_30m_pct"], 50.0)
+            self.assertEqual(review["target_completion_30m_pct"], 0.0)
+            self.assertEqual(review["invalidation_touch_30m_pct"], 50.0)
+            self.assertEqual(review["full_read_completion_30m_pct"], 0.0)
+            self.assertEqual(review["direction_accuracy_2h_pct"], 0.0)
+            self.assertEqual(review["target_completion_2h_pct"], 100.0)
+            self.assertEqual(review["full_read_completion_2h_pct"], 100.0)
+            self.assertEqual(review["v2_resolved_horizons"], 3)
+            self.assertEqual(review["v2_unresolved_horizons"], 1)
+            self.assertEqual(
+                review["direct_origin_counts"]["originating_decision_bound"],
+                2,
+            )
+            self.assertEqual(
+                review["direct_origin_counts"]["execution_partially_attributed"],
+                1,
+            )
+            self.assertEqual(
+                review["direct_origin_counts"]["realized_outcome_resolved"],
+                0,
+            )
+            self.assertEqual(
+                review["direct_origin_counts"]["realized_outcome_partially_resolved"],
+                1,
+            )
+            self.assertEqual(
+                review["reaction_chain_counts"]["first_subsequent_decision_resolved"],
+                1,
+            )
+            self.assertEqual(review["reaction_chain_counts"]["execution_unattributed"], 1)
+            self.assertEqual(review["reaction_chain_counts"]["realized_outcome_resolved"], 1)
+            self.assertIsNone(review["full_read_accuracy_pct"])
+            self.assertIn(
+                "market-read-v2: 30m direction=50.0 target=0.0 full=0.0; "
+                "2h direction=0.0 target=100.0 full=100.0 resolved_horizons=3 "
+                "truth=MID_CANDLE_DIAGNOSTIC live_permission=false "
+                "direct_origin=2/2 direct_execution_partially_attributed=1 "
+                "direct_realized=0 direct_realized_partial=1; "
+                "prior_reaction_decision=1/2 "
+                "prior_reaction_execution_partially_attributed=1 "
+                "prior_reaction_realized=1",
                 report.narrative_summary,
             )
 

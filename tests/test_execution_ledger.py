@@ -7,6 +7,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -113,7 +114,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "second.json", payload=second)
 
             self.assertIs(first["input_packet"], input_packet)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 rows = conn.execute(
                     "SELECT payload_json FROM gateway_receipts ORDER BY ts_utc"
                 ).fetchall()
@@ -150,7 +151,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ledger.record_gateway_payload(kind="gpt_decision", receipt_path=root / "second.json", payload=retry)
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 count = conn.execute("SELECT COUNT(*) FROM gateway_receipts").fetchone()[0]
             self.assertEqual(count, 1)
 
@@ -260,7 +261,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                     )
                 )
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 claim_count = conn.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -353,7 +354,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=4) as executor:
                 results = list(executor.map(reserve, range(4)))
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 claim_count = conn.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -400,7 +401,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             first = reserve("risk-1")
             second = reserve("risk-2")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 claim_count = conn.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -445,7 +446,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=12) as executor:
                 results = list(executor.map(reserve, range(12)))
-            with sqlite3.connect(root / "cold-ledger.db") as conn:
+            with closing(sqlite3.connect(root / "cold-ledger.db")) as conn, conn:
                 migration_rows = conn.execute(
                     "SELECT value FROM sync_state WHERE key = ?",
                     (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
@@ -560,7 +561,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                 broker_total=1,
                 broker_signals={"signal-2"},
             )
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 reflected = conn.execute(
                     """
                     SELECT signal_id, broker_reflected_at_utc
@@ -689,7 +690,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(summary.transactions_inserted, 4)
             self.assertEqual(duplicate.transactions_seen, 4)
             self.assertEqual(duplicate.transactions_inserted, 0)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 tx_count = conn.execute("SELECT COUNT(*) FROM oanda_transactions").fetchone()[0]
                 event_rows = conn.execute(
                     "SELECT event_type, trade_id, realized_pl_jpy, exit_reason, side FROM execution_events ORDER BY event_uid"
@@ -729,7 +730,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             with patch.object(execution_ledger_module, "_now", return_value=baseline_at):
                 summary = ledger.sync_oanda_transactions(FakeTransactionClient())
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 coverage = conn.execute(
                     "SELECT value, updated_at_utc FROM sync_state WHERE key = ?",
                     (OANDA_TRANSACTION_COVERAGE_START_KEY,),
@@ -744,7 +745,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger._init_db()
-            with ledger._connect() as conn:
+            with closing(ledger._connect()) as conn, conn:
                 _seed_legacy_coverage_proof(
                     conn,
                     transactions=(
@@ -772,6 +773,56 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertFalse(second)
             self.assertEqual(
                 tuple(marker),
+                ("2026-05-06T16:52:01+00:00", "2026-07-11T02:00:00+00:00"),
+            )
+
+    def test_next_sync_migrates_complete_legacy_coverage_before_fetch(self) -> None:
+        """A deployed legacy DB recovers even when the broker has no new rows."""
+
+        class NoNewTransactionsClient:
+            def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+                raise AssertionError("an existing sync cursor must not be rebaselined")
+
+            def transactions_since_id(self, transaction_id: str) -> dict:
+                return {
+                    "lastTransactionID": transaction_id,
+                    "transactions": [],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger._init_db()
+            with closing(ledger._connect()) as conn, conn:
+                _seed_legacy_coverage_proof(
+                    conn,
+                    transactions=(
+                        ("100", "2026-05-06T16:52:01Z"),
+                        ("101", "2026-05-06T16:53:01Z"),
+                        ("102", "2026-05-06T16:54:01Z"),
+                    ),
+                    last_transaction_id="102",
+                    system_fill_at="2026-05-06T17:25:00Z",
+                )
+
+            with patch.object(
+                execution_ledger_module,
+                "_now",
+                return_value="2026-07-11T02:00:00+00:00",
+            ):
+                summary = ledger.sync_oanda_transactions(NoNewTransactionsClient())
+
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
+                marker = conn.execute(
+                    "SELECT value, updated_at_utc FROM sync_state WHERE key=?",
+                    (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+                ).fetchone()
+
+            self.assertEqual(summary.status, "SYNCED")
+            self.assertEqual(summary.transactions_seen, 0)
+            self.assertEqual(summary.last_transaction_id, "102")
+            self.assertEqual(
+                marker,
                 ("2026-05-06T16:52:01+00:00", "2026-07-11T02:00:00+00:00"),
             )
 
@@ -839,7 +890,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                     report_path=root / "ledger.md",
                 )
                 ledger._init_db()
-                with ledger._connect() as conn:
+                with closing(ledger._connect()) as conn, conn:
                     _seed_legacy_coverage_proof(
                         conn,
                         transactions=case["transactions"],
@@ -862,7 +913,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger._init_db()
-            with ledger._connect() as conn:
+            with closing(ledger._connect()) as conn, conn:
                 conn.execute(
                     "INSERT INTO sync_state VALUES (?, ?, ?)",
                     (
@@ -893,7 +944,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
 
             self.assertEqual(summary.status, "SYNCED")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 rows = conn.execute(
                     """
                     SELECT event_type, lane_id, client_order_id, side
@@ -925,7 +976,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 conn.execute("UPDATE execution_events SET lane_id = NULL WHERE event_type='ORDER_ACCEPTED'")
                 conn.execute(
                     "DELETE FROM sync_state WHERE key = ?",
@@ -935,7 +986,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
                 ).fetchone()
@@ -979,7 +1030,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(summary.gateway_receipts_inserted, 1)
             self.assertEqual(summary.events_inserted, 1)
             self.assertEqual(duplicate.gateway_receipts_inserted, 0)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, lane_id, order_id, trade_id, pair, side, units, tp, sl
@@ -1037,7 +1088,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.record_gateway_receipt(kind="position_execution", receipt_path=receipt)
 
             self.assertEqual(summary.events_inserted, 1)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, order_id, trade_id, pair, exit_reason, related_transaction_ids_json
@@ -1109,7 +1160,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.events_inserted, 2)
             self.assertEqual(summary.verification_observations_inserted, 2)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 rows = conn.execute(
                     """
                     SELECT event_type, trade_id, exit_reason, raw_json
@@ -1166,7 +1217,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.reconciled_gateway_events_inserted, 1)
             self.assertEqual(duplicate.reconciled_gateway_events_inserted, 0)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, source, order_id, trade_id, pair, exit_reason,
@@ -1202,7 +1253,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.reconciled_gateway_events_inserted, 1)
             self.assertEqual(duplicate.reconciled_gateway_events_inserted, 0)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, source, lane_id, order_id, trade_id, pair, side,
@@ -1237,7 +1288,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             )
 
             self.assertEqual(summary.reconciled_gateway_events_inserted, 0)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 count = conn.execute(
                     "SELECT COUNT(*) FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_RECONCILED'"
                 ).fetchone()[0]
@@ -1278,7 +1329,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             )
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger.record_gateway_receipt(kind="position_execution", receipt_path=receipt)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 conn.execute("UPDATE execution_events SET order_id = NULL WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'")
                 conn.execute(
                     "DELETE FROM sync_state WHERE key = ?",
@@ -1288,7 +1339,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             ledger.record_gateway_receipt(kind="position_execution", receipt_path=root / "missing.json")
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     "SELECT order_id FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'"
                 ).fetchone()
@@ -1331,7 +1382,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.record_gateway_receipt(kind="live_order", receipt_path=receipt)
 
             self.assertEqual(summary.events_inserted, 1)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     "SELECT event_type, lane_id, pair, side, units FROM execution_events"
                 ).fetchone()
@@ -1367,7 +1418,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.record_gateway_receipt(kind="live_order", receipt_path=receipt)
 
             self.assertEqual(summary.events_inserted, 1)
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     "SELECT event_type, lane_id, pair, side, units FROM execution_events"
                 ).fetchone()
@@ -1447,7 +1498,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.sync_oanda_transactions(FakeShortCloseClient(), since_transaction_id="100")
 
             self.assertEqual(summary.status, "SYNCED")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, trade_id, side, units, realized_pl_jpy
@@ -1465,7 +1516,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.sync_oanda_transactions(FakeProtectionClient(), since_transaction_id="100")
 
             self.assertEqual(summary.status, "SYNCED")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 rows = conn.execute(
                     """
                     SELECT event_type, trade_id, tp, sl, exit_reason
@@ -1490,7 +1541,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.sync_oanda_transactions(FakeTradeCloseAcceptClient(), since_transaction_id="500")
 
             self.assertEqual(summary.status, "SYNCED")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT event_type, order_id, trade_id, exit_reason, related_transaction_ids_json
@@ -1509,7 +1560,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger.sync_oanda_transactions(FakeTradeCloseAcceptClient(), since_transaction_id="500")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 conn.execute("UPDATE execution_events SET trade_id = NULL WHERE event_type='ORDER_ACCEPTED'")
                 conn.execute(
                     "DELETE FROM sync_state WHERE key = ?",
@@ -1519,7 +1570,7 @@ class ExecutionLedgerTest(unittest.TestCase):
 
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 row = conn.execute(
                     "SELECT trade_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
                 ).fetchone()
@@ -1533,7 +1584,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                 FakeManualBrokerCloseClient(),
                 since_transaction_id="700",
             )
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 conn.execute(
                     "DELETE FROM sync_state WHERE key = ?",
                     (LEGACY_EVENT_BACKFILL_MIGRATION_KEY,),
@@ -1544,7 +1595,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             # Manual/tagless OANDA rows legitimately remain without a lane.
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 unattributed = conn.execute(
                     "SELECT COUNT(*) FROM execution_events WHERE source='oanda' AND lane_id IS NULL"
                 ).fetchone()[0]
@@ -1581,7 +1632,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             root = Path(tmp)
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 conn.execute("UPDATE execution_events SET lane_id = NULL WHERE event_type='ORDER_ACCEPTED'")
                 conn.execute(
                     "DELETE FROM sync_state WHERE key = ?",
@@ -1599,7 +1650,7 @@ class ExecutionLedgerTest(unittest.TestCase):
                         receipt_path=root / "missing.json",
                     )
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 lane_after_failure = conn.execute(
                     "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
                 ).fetchone()[0]
@@ -1611,7 +1662,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertIsNone(marker_after_failure)
 
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "retry-missing.json")
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 lane_after_retry = conn.execute(
                     "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
                 ).fetchone()[0]
@@ -1631,7 +1682,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
             ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
 
-            with sqlite3.connect(root / "ledger.db") as conn:
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
                 plan = conn.execute(
                     """
                     EXPLAIN QUERY PLAN

@@ -82,17 +82,25 @@ Profitable manual/operator-discovered outcomes are classified separately from sy
 
 ## Market Read Review
 
-For every row in `data/market_read_predictions.jsonl`, score the market read separately from trade P/L:
+For every row in `data/market_read_predictions.jsonl`, score the market read separately from trade P/L. Keep schema-v1 rows as immutable legacy target/full evidence; its stored `CORRECT`/`WRONG`/`MIXED`/`INVALIDATED_FIRST` labels are not direction accuracy.
 
-- 30m prediction accuracy.
-- 2h prediction accuracy.
-- Full-read verdict: `CORRECT`, `WRONG`, `MIXED`, or `INVALIDATED_FIRST`; unresolved rows remain `PENDING`.
-- Whether blockers prevented a correct read from being traded.
-- Whether a wrong read still passed filters and was traded.
-- Best-trade-if-forced outcome count, separate from actual execution.
-- Codex read vs operator manual trade comparison when operator-manual comparison evidence exists; otherwise mark unknown.
+For schema v2 report, separately for 30m and 2h:
+
+- Endpoint direction accuracy (`CORRECT` / `WRONG`).
+- Target completion (`TOUCHED` / `NOT_TOUCHED`).
+- Invalidation touch and M5-derived first-touch order; same-candle TP/invalidations are ambiguous.
+- Full-read completion, without folding a correct direction but incomplete target into `WRONG`.
+- Missing/incomplete M5 truth as `UNRESOLVED`, never an endpoint-derived `*_FIRST` label.
+- Exact duplicate/coalesced and same-source conflicting/ineligible counts.
+- Direct-origin counts: top-level `originating_decision_receipt_id`, `direct_execution_attribution`, and `direct_realized_outcome`. Join only the same row's exact `(gptd, mr2)` ids to explicit gateway order/fill/trade ids and then exact trade ids to realized P/L.
+- Prior-prediction reaction counts: `reaction_chain.first_subsequent_decision`, reaction execution attribution, and reaction realized outcome. This answers what the next decision did after the prior prediction; it is not the originating prediction's own execution or P/L.
+- Both lineage paths must report `pair_or_time_inference_used=false`. Missing broker IDs stay `UNATTRIBUTED`; missing outcomes stay `UNRESOLVED`.
+
+The v2 truth source is `MID_CANDLE_DIAGNOSTIC`, read-only, and `live_permission=false`. Its bounded feedback may inform the next GPT market read but cannot change verifier, gateway, risk, sizing, or execution permission.
 
 This is discovery/execution separation. A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure. Do not turn negative expectancy, `LIVE_READY=0`, or blocker codes into a substitute for current tape prediction.
+
+Rolling 30d 4x is a product KPI, not a proved capability. Never call a point estimate, replay result, raw-JPY comparison, or small recent winning sample proof of positive expectancy, improvement, or 4x reachability. Report the strict lifetime/recent split and the remaining evidence gap.
 
 ## Required Evidence
 

@@ -6,7 +6,22 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterable, Mapping, Protocol
+
+from quant_rabbit.market_read_overlay import (
+    CODEX_MARKET_READ_AUTHOR,
+    canonical_json_sha256,
+    execution_envelope_payload,
+    quote_basis_by_pair_from_broker_payload,
+    revalidate_codex_market_read_artifacts,
+    validate_codex_market_read_provenance,
+    validate_market_read_numeric_geometry,
+)
+from quant_rabbit.market_read_ledger import (
+    market_read_feedback_summary,
+    record_market_read_prediction,
+    refresh_market_read_measurements,
+)
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -1659,6 +1674,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CAPTURE_ECONOMICS,
+    DEFAULT_CODEX_MARKET_READ_OVERLAY,
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     DEFAULT_CONTEXT_ASSET_CHARTS,
     DEFAULT_COVERAGE_OPTIMIZATION,
@@ -1666,6 +1682,7 @@ from quant_rabbit.paths import (
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
@@ -1677,6 +1694,7 @@ from quant_rabbit.paths import (
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
+    DEFAULT_MARKET_READ_EVIDENCE_PACKET,
     DEFAULT_MARKET_READ_PREDICTIONS,
     DEFAULT_MARKET_READ_SCORE_REPORT,
     DEFAULT_MARKET_STATUS,
@@ -1695,6 +1713,7 @@ from quant_rabbit.paths import (
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION_DRAFT_REPORT,
+    DEFAULT_TRADER_DECISION_BASELINE,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_VERIFICATION_LEDGER,
     DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
@@ -1846,6 +1865,17 @@ class GPTTraderDecision:
     evidence_refs: tuple[str, ...]
     operator_summary: str
     twenty_minute_plan: dict[str, Any] | None = None
+    # The scheduled Codex model may replace MARKET_READ_FIRST through the
+    # content-addressed overlay tool. It may also veto a deterministic TRADE
+    # to WAIT / REQUEST_EVIDENCE. It cannot upgrade a non-trade receipt, select
+    # another lane, resize units, expand risk, or grant live permission.
+    decision_provenance: dict[str, Any] | None = None
+    market_read_review: dict[str, Any] | None = None
+    market_read_counterargument: str = ""
+    market_read_change_summary: str = ""
+    market_read_disposition: str = ""
+    market_read_veto_reason: str = ""
+    market_read_vetoed_lane_ids: tuple[str, ...] = ()
     # Operator-directed market close on existing trader-owned positions.
     # Used only with action="CLOSE". A loss-cut and a new entry must still
     # have separate receipts: automation ends the close cycle, then the next
@@ -2119,8 +2149,14 @@ class GPTTraderBrain:
         range_rail_geometry_repair_path: Path = DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
+        market_read_baseline_path: Path = DEFAULT_TRADER_DECISION_BASELINE,
+        market_read_evidence_packet_path: Path = DEFAULT_MARKET_READ_EVIDENCE_PACKET,
+        market_read_overlay_path: Path = DEFAULT_CODEX_MARKET_READ_OVERLAY,
+        market_read_artifact_validation_required: bool = True,
+        market_read_evidence_source_overrides: Mapping[str, Path] | None = None,
         market_read_predictions_path: Path | None = None,
         market_read_score_report_path: Path | None = None,
+        execution_ledger_path: Path | None = None,
         max_lanes: int = DEFAULT_GPT_MAX_LANES,
     ) -> None:
         self.provider = provider
@@ -2162,6 +2198,33 @@ class GPTTraderBrain:
         self.range_rail_geometry_repair_path = range_rail_geometry_repair_path
         self.output_path = output_path
         self.report_path = report_path
+        self.market_read_baseline_path = (
+            market_read_baseline_path
+            if market_read_baseline_path != DEFAULT_TRADER_DECISION_BASELINE
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_TRADER_DECISION_BASELINE.name
+        )
+        self.market_read_evidence_packet_path = (
+            market_read_evidence_packet_path
+            if market_read_evidence_packet_path != DEFAULT_MARKET_READ_EVIDENCE_PACKET
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_MARKET_READ_EVIDENCE_PACKET.name
+        )
+        self.market_read_overlay_path = (
+            market_read_overlay_path
+            if market_read_overlay_path != DEFAULT_CODEX_MARKET_READ_OVERLAY
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_CODEX_MARKET_READ_OVERLAY.name
+        )
+        self.market_read_artifact_validation_required = market_read_artifact_validation_required
+        self.market_read_evidence_source_overrides = (
+            {
+                str(name): Path(path)
+                for name, path in market_read_evidence_source_overrides.items()
+            }
+            if market_read_evidence_source_overrides is not None
+            else None
+        )
         self.qr_trader_run_watchdog_path = (
             qr_trader_run_watchdog_path
             if qr_trader_run_watchdog_path != DEFAULT_QR_TRADER_RUN_WATCHDOG
@@ -2190,6 +2253,15 @@ class GPTTraderBrain:
             if market_read_score_report_path is not None
             else report_path.parent / DEFAULT_MARKET_READ_SCORE_REPORT.name
         )
+        self.execution_ledger_path = (
+            execution_ledger_path
+            if execution_ledger_path is not None
+            else (
+                DEFAULT_EXECUTION_LEDGER_DB
+                if output_path == DEFAULT_GPT_TRADER_DECISION
+                else output_path.parent / DEFAULT_EXECUTION_LEDGER_DB.name
+            )
+        )
         self.max_lanes = max_lanes
 
     def run(self, *, snapshot_path: Path) -> GPTTraderSummary:
@@ -2199,15 +2271,29 @@ class GPTTraderBrain:
             raise RuntimeError("Codex GPT verifier requires a decision response JSON")
         raw_decision = self.provider.decide(packet, GPT_TRADER_SCHEMA)
         decision = _decision_from_payload(raw_decision)
-        verification = DecisionVerifier(packet).verify(decision)
+        artifact_issues: list[tuple[str, str]] = []
+        if self.market_read_artifact_validation_required and decision.action == "TRADE":
+            artifact_issues = revalidate_codex_market_read_artifacts(
+                final_payload=raw_decision,
+                baseline_path=self.market_read_baseline_path,
+                packet_path=self.market_read_evidence_packet_path,
+                overlay_path=self.market_read_overlay_path,
+                evidence_sources=self._market_read_evidence_sources(snapshot_path),
+            )
+        verification = DecisionVerifier(
+            packet,
+            market_read_artifact_issues=artifact_issues,
+        ).verify(decision)
         status = "ACCEPTED" if verification.allowed else "REJECTED"
-        market_read_prediction = _record_market_read_prediction(
+        market_read_prediction = record_market_read_prediction(
             decision,
             packet,
             status=status,
             issues=verification.issues,
             predictions_path=self.market_read_predictions_path,
             report_path=self.market_read_score_report_path,
+            pair_charts_path=self.pair_charts_path,
+            execution_ledger_path=self.execution_ledger_path,
             now=datetime.now(timezone.utc),
         )
         result = {
@@ -2233,6 +2319,101 @@ class GPTTraderBrain:
             issues=len(verification.issues),
             close_trade_ids=decision.close_trade_ids,
         )
+
+    def _market_read_evidence_sources(self, snapshot_path: Path) -> dict[str, Path]:
+        """Return the exact source map used by the content-addressed handoff."""
+
+        configured = {
+            "broker_snapshot": snapshot_path,
+            "order_intents": self.intents_path,
+            "campaign_plan": self.campaign_plan_path,
+            "strategy_profile": self.strategy_profile_path,
+            "market_story_profile": self.market_story_profile_path,
+            "market_status": self.market_status_path,
+            "daily_target_state": self.target_state_path,
+            "pair_charts": self.pair_charts_path,
+            "context_asset_charts": self.context_asset_charts_path,
+            "broker_instruments": self.broker_instruments_path,
+            "cross_asset": self.cross_asset_path,
+            "flow": self.flow_path,
+            "currency_strength": self.currency_strength_path,
+            "levels": self.levels_path,
+            "market_context_matrix": self.market_context_matrix_path,
+            "calendar": self.calendar_path,
+            "cot": self.cot_path,
+            "option_skew": self.option_skew_path,
+            "attack_advice": self.attack_advice_path,
+            "capture_economics": self.capture_economics_path,
+            "execution_timing_audit": self.execution_timing_audit_path,
+            "coverage_optimization": self.coverage_optimization_path,
+            "learning_audit": self.learning_audit_path,
+            "verification_ledger": self.verification_ledger_path,
+            "self_improvement_audit": self.self_improvement_audit_path,
+            "projection_ledger": self.projection_ledger_path,
+            "operator_precedent": self.operator_precedent_path,
+            "manual_market_context": self.manual_market_context_path,
+            "profitability_acceptance": self.profitability_acceptance_path,
+            "news_items": self.news_items_path,
+            "news_health": self.news_health_path,
+            "trader_overrides": self.trader_overrides_path,
+            "predictive_limits": self.predictive_limits_path,
+            "qr_trader_run_watchdog": self.qr_trader_run_watchdog_path,
+            "guardian_receipt_consumption": self.guardian_receipt_consumption_path,
+            "guardian_receipt_operator_review": self.guardian_receipt_operator_review_path,
+            "active_trader_contract": self.active_trader_contract_path,
+            "active_opportunity_board": self.active_opportunity_board_path,
+            "non_eurusd_live_grade_frontier": self.non_eurusd_live_grade_frontier_path,
+            "range_rail_geometry_repair": self.range_rail_geometry_repair_path,
+            "market_read_predictions": self.market_read_predictions_path,
+        }
+        # The evidence packet records the complete source surface used by the
+        # draft command.  Standalone verifier CLI flags expose only a subset;
+        # preserve the packet's remaining exact paths, while explicit current
+        # runtime paths override them and are re-hashed below.
+        packet_sources: dict[str, Path] = {}
+        try:
+            packet_payload = json.loads(self.market_read_evidence_packet_path.read_text())
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            packet_payload = {}
+        raw_paths = packet_payload.get("source_paths") if isinstance(packet_payload, dict) else None
+        if isinstance(raw_paths, dict):
+            packet_sources = {
+                str(name): Path(path)
+                for name, path in raw_paths.items()
+                if isinstance(name, str) and isinstance(path, str) and path
+            }
+        authoritative_sources = (
+            configured
+            if self.market_read_evidence_source_overrides is None
+            else dict(self.market_read_evidence_source_overrides)
+        )
+        # Broker truth passed to this verifier is never packet-controlled.  A
+        # copied fresh snapshot named by a forged packet must not mask the
+        # stale/different --snapshot that built the actual verification input.
+        authoritative_sources["broker_snapshot"] = snapshot_path
+        if not packet_sources:
+            packet_sources = dict(configured)
+        # Packet paths only fill sources the caller cannot configure.  Every
+        # explicit/configured source above wins and is re-hashed.
+        packet_sources.update(authoritative_sources)
+        return packet_sources
+
+    def _market_read_artifact_contract(self, snapshot_path: Path) -> dict[str, Any]:
+        sources = self._market_read_evidence_sources(snapshot_path)
+        return {
+            "contract": "CODEX_MARKET_READ_ARTIFACT_BINDING_V1",
+            "required_for_action": "TRADE",
+            "validation_required": self.market_read_artifact_validation_required,
+            "baseline_path": str(self.market_read_baseline_path),
+            "evidence_packet_path": str(self.market_read_evidence_packet_path),
+            "overlay_path": str(self.market_read_overlay_path),
+            "evidence_source_paths": {
+                name: str(path) for name, path in sorted(sources.items())
+            },
+            "read_only": True,
+            "live_permission": False,
+            "may_grant_gateway_permission": False,
+        }
 
     def _input_packet(self, snapshot_path: Path) -> dict[str, Any]:
         snapshot = _load_json(snapshot_path)
@@ -2266,6 +2447,14 @@ class GPTTraderBrain:
         active_opportunity_board = _load_optional_json(self.active_opportunity_board_path)
         non_eurusd_frontier = _load_optional_json(self.non_eurusd_live_grade_frontier_path)
         range_rail_geometry_repair = _load_optional_json(self.range_rail_geometry_repair_path)
+        market_read_measurement_refresh = refresh_market_read_measurements(
+            predictions_path=self.market_read_predictions_path,
+            report_path=self.market_read_score_report_path,
+            pair_charts_path=self.pair_charts_path,
+            execution_ledger_path=self.execution_ledger_path,
+        )
+        market_read_feedback = market_read_feedback_summary(self.market_read_predictions_path)
+        market_read_feedback["measurement_refresh"] = market_read_measurement_refresh
         active_path = _active_path_packet(
             active_trader_contract=active_trader_contract,
             active_opportunity_board=active_opportunity_board,
@@ -2310,6 +2499,9 @@ class GPTTraderBrain:
         if user_alpha_continuation.get("active"):
             refs.extend(_user_alpha_evidence_refs(user_alpha_continuation))
         refs.extend(_active_path_evidence_refs(active_path))
+        market_read_feedback_ref = str(market_read_feedback.get("evidence_ref") or "").strip()
+        if market_read_feedback_ref and market_read_feedback_ref not in refs:
+            refs.append(market_read_feedback_ref)
         attack_packet = _attack_advice_packet(attack_advice)
         learning_packet = _learning_audit_packet(learning_audit)
         return {
@@ -2335,6 +2527,7 @@ class GPTTraderBrain:
                 "operator_precedent_is_advisory_only": True,
                 "manual_market_context_gates_only_precedent_usage": True,
                 "user_alpha_requires_continuation_or_exact_blocker": True,
+                "market_read_feedback_is_read_only_advisory": True,
                 "soft_close_advisory_non_blocking": (
                     "position_close_recommendations include blocks_non_close_actions; "
                     "when false, do not choose CLOSE from that advisory on the entry branch "
@@ -2347,6 +2540,9 @@ class GPTTraderBrain:
                     learning_packet,
                 ),
             },
+            "market_read_artifact_contract": self._market_read_artifact_contract(
+                snapshot_path
+            ),
             "artifact_timestamps": {
                 "daily_target_generated_at_utc": (
                     target.get("generated_at_utc") if isinstance(target, dict) else None
@@ -2398,6 +2594,7 @@ class GPTTraderBrain:
             "guardian_receipt_consumption": guardian_receipt_consumption,
             "guardian_receipt_operator_review": guardian_receipt_operator_review,
             "active_path": active_path,
+            "market_read_feedback": market_read_feedback,
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -2429,6 +2626,11 @@ class GPTTraderBrain:
     def _write_report(self, result: dict[str, Any]) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         decision = result["decision"]
+        provenance = (
+            decision.get("decision_provenance")
+            if isinstance(decision.get("decision_provenance"), dict)
+            else {}
+        )
         lines = [
             "# GPT Trader Decision Report",
             "",
@@ -2439,6 +2641,8 @@ class GPTTraderBrain:
             f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
             f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
             f"- Confidence: `{decision.get('confidence')}`",
+            f"- Decision author: `{provenance.get('author_kind') or 'unattributed'}`",
+            f"- Market-read disposition: `{decision.get('market_read_disposition') or 'none'}`",
             f"- Market read first: `{decision.get('market_read_first') or 'missing'}`",
             f"- 20m plan: `{decision.get('twenty_minute_plan') or 'missing'}`",
             f"- Specialist reviews: `{len(decision.get('specialist_reviews') or [])}`",
@@ -2475,7 +2679,8 @@ class GPTTraderBrain:
                 "",
                 "## Decision Contract",
                 "",
-                "- GPT is the discretionary reasoning layer; deterministic verification remains the execution gate.",
+                "- `decision_provenance.author_kind` identifies the decision author; deterministic verification remains the execution gate.",
+                "- A fresh `CODEX_MARKET_READ` overlay may accept a deterministic baseline or veto only a baseline `TRADE` to `WAIT` / `REQUEST_EVIDENCE`. It cannot upgrade a non-trade baseline, choose another lane, resize units, expand risk, or grant live permission.",
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
@@ -2495,12 +2700,61 @@ class GPTTraderBrain:
         self.report_path.write_text("\n".join(lines) + "\n")
 
 
+def _decision_execution_envelope_sha256(decision: GPTTraderDecision) -> str:
+    """Recreate the canonical final envelope from fields present in the receipt."""
+
+    values = asdict(decision)
+    values.pop("payload_field_order", None)
+    raw_payload = {
+        key: values[key]
+        for key in decision.payload_field_order
+        if key in values
+    }
+    return canonical_json_sha256(execution_envelope_payload(raw_payload))
+
+
+def _codex_market_read_veto_active(decision: GPTTraderDecision) -> bool:
+    provenance = decision.decision_provenance
+    if not isinstance(provenance, dict):
+        return False
+    if provenance.get("author_kind") != CODEX_MARKET_READ_AUTHOR:
+        return False
+    if decision.action not in {"WAIT", "REQUEST_EVIDENCE"}:
+        return False
+    if decision.selected_lane_id is not None or decision.selected_lane_ids:
+        return False
+    expected_disposition = (
+        "VETO_WAIT" if decision.action == "WAIT" else "VETO_REQUEST_EVIDENCE"
+    )
+    if decision.market_read_disposition != expected_disposition:
+        return False
+    provenance_issues = validate_codex_market_read_provenance(
+        action=decision.action,
+        market_read=decision.market_read_first,
+        provenance=provenance,
+        review=decision.market_read_review,
+        counterargument=decision.market_read_counterargument,
+        change_summary=decision.market_read_change_summary,
+        disposition=decision.market_read_disposition,
+        veto_reason=decision.market_read_veto_reason,
+        vetoed_lane_ids=decision.market_read_vetoed_lane_ids,
+        execution_envelope_sha256=_decision_execution_envelope_sha256(decision),
+    )
+    return not provenance_issues
+
+
 class DecisionVerifier:
-    def __init__(self, input_packet: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        input_packet: dict[str, Any],
+        *,
+        market_read_artifact_issues: Iterable[tuple[str, str]] = (),
+    ) -> None:
         self.packet = input_packet
         self.lanes = {str(lane["lane_id"]): lane for lane in input_packet.get("lanes", [])}
         self.allowed_refs = set(str(ref) for ref in input_packet.get("allowed_evidence_refs", []))
         self.close_gate_evidence: list[CloseGateEvidence] = []
+        self.market_read_artifact_issues = tuple(market_read_artifact_issues)
 
     def verify(self, decision: GPTTraderDecision) -> VerificationResult:
         issues: list[VerificationIssue] = []
@@ -2528,6 +2782,7 @@ class DecisionVerifier:
         tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
         pace_trade_lanes = _pace_trade_lanes(self.packet, tradeable_lanes)
         attack_lane_ids = _attack_recommended_tradeable_lane_ids(self.packet, tradeable_lanes)
+        codex_market_read_veto = _codex_market_read_veto_active(decision)
         exposure_blockers = _trade_exposure_blockers(self.packet)
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
@@ -2551,6 +2806,31 @@ class DecisionVerifier:
         )
 
         if decision.action == "TRADE":
+            provenance_lane_ids = (
+                decision.decision_provenance.get("baseline_selected_lane_ids")
+                if isinstance(decision.decision_provenance, dict)
+                and decision.decision_provenance.get("author_kind")
+                == CODEX_MARKET_READ_AUTHOR
+                else None
+            )
+            exact_lane_binding = (
+                "selected_lane_ids" in decision.payload_field_order
+                and len(decision.selected_lane_ids) == 1
+                and bool(decision.selected_lane_id)
+                and decision.selected_lane_ids[0] == decision.selected_lane_id
+                and (
+                    provenance_lane_ids is None
+                    or provenance_lane_ids == [decision.selected_lane_id]
+                )
+            )
+            if not exact_lane_binding:
+                issues.append(
+                    VerificationIssue(
+                        "AI_MARKET_READ_SINGLE_LANE_REQUIRED",
+                        "artifact-bound TRADE requires exactly one selected_lane_ids item equal to "
+                        "selected_lane_id and the same deterministic baseline lane",
+                    )
+                )
             if not selected_lane_ids:
                 issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id or selected_lane_ids"))
             selected_scout_lane_ids = [
@@ -2853,6 +3133,7 @@ class DecisionVerifier:
                 and not projection_trade_blockers
                 and not news_trade_blockers
                 and attack_lane_ids
+                and not codex_market_read_veto
             ):
                 issues.append(
                     VerificationIssue(
@@ -2870,6 +3151,7 @@ class DecisionVerifier:
                 and not projection_trade_blockers
                 and not news_trade_blockers
                 and pace_trade_lanes
+                and not codex_market_read_veto
             ):
                 if not _trader_exposure_present(self.packet):
                     issues.append(
@@ -3003,6 +3285,42 @@ class DecisionVerifier:
         issues: list[VerificationIssue],
     ) -> None:
         market_read = decision.market_read_first if isinstance(decision.market_read_first, dict) else {}
+        provenance = (
+            decision.decision_provenance
+            if isinstance(decision.decision_provenance, dict)
+            else None
+        )
+        execution_sha = (
+            _decision_execution_envelope_sha256(decision)
+            if provenance and provenance.get("author_kind") == CODEX_MARKET_READ_AUTHOR
+            else None
+        )
+        for code, message in validate_codex_market_read_provenance(
+            action=decision.action,
+            market_read=market_read,
+            provenance=provenance,
+            review=decision.market_read_review,
+            counterargument=decision.market_read_counterargument,
+            change_summary=decision.market_read_change_summary,
+            disposition=decision.market_read_disposition,
+            veto_reason=decision.market_read_veto_reason,
+            vetoed_lane_ids=decision.market_read_vetoed_lane_ids,
+            execution_envelope_sha256=execution_sha,
+        ):
+            issues.append(VerificationIssue(code, message))
+        for code, message in self.market_read_artifact_issues:
+            issues.append(VerificationIssue(code, message))
+        if provenance and provenance.get("author_kind") == CODEX_MARKET_READ_AUTHOR:
+            quote_basis = quote_basis_by_pair_from_broker_payload(
+                self.packet.get("broker_snapshot")
+                if isinstance(self.packet.get("broker_snapshot"), dict)
+                else {}
+            )
+            for code, message in validate_market_read_numeric_geometry(
+                market_read,
+                quote_basis_by_pair=quote_basis,
+            ):
+                issues.append(VerificationIssue(code, message))
         decision_text = _decision_contract_text(decision)
         if not market_read:
             issues.append(
@@ -3083,11 +3401,146 @@ class DecisionVerifier:
         selected_lane_ids = _selected_trade_lane_ids(decision)
         selected_lanes = [self.lanes.get(lane_id) for lane_id in selected_lane_ids]
         selected_lanes = [lane for lane in selected_lanes if isinstance(lane, dict)]
+        naked = market_read.get("naked_read") if isinstance(market_read.get("naked_read"), dict) else {}
         next_30m = market_read.get("next_30m_prediction") if isinstance(market_read.get("next_30m_prediction"), dict) else {}
         next_2h = market_read.get("next_2h_prediction") if isinstance(market_read.get("next_2h_prediction"), dict) else {}
         forced = market_read.get("best_trade_if_forced") if isinstance(market_read.get("best_trade_if_forced"), dict) else {}
 
         if decision.action == "TRADE" and selected_lanes:
+            primary_lane_id = decision.selected_lane_id or selected_lane_ids[0]
+            primary_lane = self.lanes.get(primary_lane_id)
+            primary_lane = primary_lane if isinstance(primary_lane, dict) else selected_lanes[0]
+            primary_pair = str(primary_lane.get("pair") or "").strip()
+            selected_pairs = {
+                str(lane.get("pair") or "").strip()
+                for lane in selected_lanes
+                if str(lane.get("pair") or "").strip()
+            }
+            read_pairs = {
+                "naked_read.cleanest_pair_expression": str(
+                    naked.get("cleanest_pair_expression") or ""
+                ).strip(),
+                "next_30m_prediction.pair": str(next_30m.get("pair") or "").strip(),
+                "next_2h_prediction.pair": str(next_2h.get("pair") or "").strip(),
+                "best_trade_if_forced.pair": str(forced.get("pair") or "").strip(),
+            }
+            distinct_read_pairs = {pair for pair in read_pairs.values() if pair}
+            if (
+                len(distinct_read_pairs) != 1
+                or not primary_pair
+                or distinct_read_pairs != {primary_pair}
+                or selected_pairs != {primary_pair}
+            ):
+                rendered = ", ".join(
+                    f"{field}={pair or 'missing'}" for field, pair in read_pairs.items()
+                )
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_PAIR_ACTION_CONFLICT",
+                        "TRADE market read must describe one primary selected-lane pair across naked/30m/2h/forced sections; "
+                        f"primary={primary_pair or 'missing'}, selected={sorted(selected_pairs)}, {rendered}.",
+                    )
+                )
+
+            primary_side = str(
+                primary_lane.get("direction") or primary_lane.get("side") or ""
+            ).strip().upper()
+            pair_parts = primary_pair.split("_")
+            expected_bought = expected_sold = ""
+            if len(pair_parts) == 2 and all(pair_parts):
+                base, quote = (part.upper() for part in pair_parts)
+                if primary_side == "LONG":
+                    expected_bought, expected_sold = base, quote
+                elif primary_side == "SHORT":
+                    expected_bought, expected_sold = quote, base
+            actual_bought = str(naked.get("currency_bought") or "").strip().upper()
+            actual_sold = str(naked.get("currency_sold") or "").strip().upper()
+            if (
+                not expected_bought
+                or actual_bought != expected_bought
+                or actual_sold != expected_sold
+            ):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_CURRENCY_ACTION_CONFLICT",
+                        "naked_read currency_bought/currency_sold must match the primary selected pair and side; "
+                        f"pair={primary_pair or 'missing'} side={primary_side or 'missing'} "
+                        f"expected={expected_bought or 'unknown'}/{expected_sold or 'unknown'} "
+                        f"actual={actual_bought or 'missing'}/{actual_sold or 'missing'}.",
+                    )
+                )
+            forced_direction = str(forced.get("direction") or "").strip().upper()
+            if (
+                primary_side in {"LONG", "SHORT"}
+                and forced_direction
+                and (
+                    _market_read_direction_conflicts_side(forced_direction, primary_side)
+                    or forced_direction == "RANGE"
+                )
+            ):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_DIRECTION_ACTION_CONFLICT",
+                        f"best_trade_if_forced direction {forced_direction} must match primary selected lane "
+                        f"{primary_lane_id} side {primary_side}.",
+                    )
+                )
+
+            horizon_directions = {
+                str(next_30m.get("direction") or "").strip().upper(),
+                str(next_2h.get("direction") or "").strip().upper(),
+            }
+            if "RANGE" in horizon_directions:
+                primary_method = str(primary_lane.get("method") or decision.method or "").strip().upper()
+                selected_methods = {
+                    str(lane.get("method") or "").strip().upper()
+                    for lane in selected_lanes
+                    if str(lane.get("method") or "").strip()
+                }
+                if (
+                    horizon_directions != {"RANGE"}
+                    or primary_method != "RANGE_ROTATION"
+                    or selected_methods != {"RANGE_ROTATION"}
+                ):
+                    issues.append(
+                        VerificationIssue(
+                            "MARKET_READ_RANGE_ACTION_CONFLICT",
+                            "RANGE in the 30m/2h market read can authorize TRADE only when both horizons are RANGE "
+                            f"and the primary selected lane is RANGE_ROTATION; horizons={sorted(horizon_directions)}, "
+                            f"primary_method={primary_method or 'missing'}, selected_methods={sorted(selected_methods)}.",
+                        )
+                    )
+
+            forced_vehicle = _market_read_vehicle(forced.get("vehicle"))
+            primary_vehicle = _market_read_vehicle(primary_lane.get("order_type"))
+            if str(primary_lane.get("order_type") or "").strip() and forced_vehicle != primary_vehicle:
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_VEHICLE_ACTION_CONFLICT",
+                        f"best_trade_if_forced vehicle {forced_vehicle} must match primary selected lane "
+                        f"{primary_lane_id} vehicle {primary_vehicle}.",
+                    )
+                )
+            if decision.market_read_disposition == "ACCEPT_BASELINE":
+                geometry_mismatches: list[str] = []
+                for field in ("entry", "tp", "sl"):
+                    canonical_value = _optional_float(primary_lane.get(field))
+                    forced_values = _numbers(str(forced.get(field) or ""))
+                    if canonical_value is None:
+                        continue
+                    if len(forced_values) != 1 or forced_values[0] != canonical_value:
+                        geometry_mismatches.append(
+                            f"{field}:forced={forced_values or ['missing']} canonical={canonical_value}"
+                        )
+                if geometry_mismatches:
+                    issues.append(
+                        VerificationIssue(
+                            "MARKET_READ_FORCED_EXECUTION_GEOMETRY_CONFLICT",
+                            "ACCEPT_BASELINE requires best_trade_if_forced entry/TP/SL to equal the primary canonical intent: "
+                            + "; ".join(geometry_mismatches),
+                        )
+                    )
+
             prediction_directions = (
                 str(next_30m.get("direction") or "").strip().upper(),
                 str(next_2h.get("direction") or "").strip().upper(),
@@ -4079,6 +4532,62 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        "decision_provenance": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "properties": {
+                "schema_version": {"type": "number"},
+                "author_kind": {
+                    "type": "string",
+                    "enum": ["DETERMINISTIC_BASELINE", CODEX_MARKET_READ_AUTHOR],
+                },
+                "generated_by": {"type": "string"},
+                "prepared_at_utc": {"type": "string"},
+                "model": {"type": "string"},
+                "reasoning_effort": {"type": "string"},
+                "authored_at_utc": {"type": "string"},
+                "applied_at_utc": {"type": "string"},
+                "baseline_sha256": {"type": "string"},
+                "evidence_packet_sha256": {"type": "string"},
+                "overlay_sha256": {"type": "string"},
+                "market_read_sha256": {"type": "string"},
+                "execution_envelope_sha256": {"type": "string"},
+                "baseline_execution_envelope_sha256": {"type": "string"},
+                "final_execution_envelope_sha256": {"type": "string"},
+                "baseline_action": {"type": "string"},
+                "final_action": {"type": "string"},
+                "baseline_selected_lane_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "baseline_disposition": {"type": "string"},
+                "action_downgrade_only": {"type": "boolean"},
+                "execution_fields_preserved": {"type": "boolean"},
+                "risk_envelope_not_expanded": {"type": "boolean"},
+                "live_permission_granted": {"type": "boolean"},
+            },
+        },
+        "market_read_review": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "properties": {
+                "prior_prediction_ids": {"type": "array", "items": {"type": "string"}},
+                "what_failed": {"type": "string"},
+                "adjustment": {"type": "string"},
+                "no_change_reason": {"type": "string"},
+            },
+        },
+        "market_read_counterargument": {"type": "string"},
+        "market_read_change_summary": {"type": "string"},
+        "market_read_disposition": {
+            "type": "string",
+            "enum": ["", "ACCEPT_BASELINE", "VETO_WAIT", "VETO_REQUEST_EVIDENCE"],
+        },
+        "market_read_veto_reason": {"type": "string"},
+        "market_read_vetoed_lane_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
         "selected_lane_id": {"type": ["string", "null"]},
         "selected_lane_ids": {"type": "array", "items": {"type": "string"}},
@@ -4168,7 +4677,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
 def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
     selected_lane_id = payload.get("selected_lane_id")
     selected_lane_ids = tuple(
-        dict.fromkeys(str(item) for item in payload.get("selected_lane_ids", []) or [] if str(item))
+        str(item) for item in payload.get("selected_lane_ids", []) or [] if str(item)
     )
     if not selected_lane_ids and selected_lane_id is not None:
         selected_lane_ids = (str(selected_lane_id),)
@@ -4200,6 +4709,23 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
             if isinstance(payload.get("twenty_minute_plan"), dict)
             else None
         ),
+        decision_provenance=(
+            dict(payload.get("decision_provenance"))
+            if isinstance(payload.get("decision_provenance"), dict)
+            else None
+        ),
+        market_read_review=(
+            dict(payload.get("market_read_review"))
+            if isinstance(payload.get("market_read_review"), dict)
+            else None
+        ),
+        market_read_counterargument=str(payload.get("market_read_counterargument") or ""),
+        market_read_change_summary=str(payload.get("market_read_change_summary") or ""),
+        market_read_disposition=str(payload.get("market_read_disposition") or ""),
+        market_read_veto_reason=str(payload.get("market_read_veto_reason") or ""),
+        market_read_vetoed_lane_ids=tuple(
+            str(item) for item in payload.get("market_read_vetoed_lane_ids", []) or []
+        ),
         close_trade_ids=tuple(str(item) for item in payload.get("close_trade_ids", []) or []),
         invalidation_price=_optional_float(payload.get("invalidation_price")),
         invalidation_tf=(
@@ -4220,202 +4746,6 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
     )
 
 
-def _record_market_read_prediction(
-    decision: GPTTraderDecision,
-    packet: dict[str, Any],
-    *,
-    status: str,
-    issues: tuple[VerificationIssue, ...],
-    predictions_path: Path,
-    report_path: Path,
-    now: datetime,
-) -> dict[str, Any]:
-    rows = _read_market_read_prediction_rows(predictions_path)
-    updated_rows = _score_due_market_read_rows(rows, packet, now=now)
-    market_read = decision.market_read_first if isinstance(decision.market_read_first, dict) else {}
-    if not market_read:
-        _write_market_read_prediction_rows(predictions_path, updated_rows)
-        _write_market_read_score_report(report_path, updated_rows, now=now)
-        return {
-            "status": "NO_MARKET_READ_FIRST",
-            "predictions_path": str(predictions_path),
-            "report_path": str(report_path),
-            "updated_rows": len(updated_rows),
-        }
-
-    row = _market_read_prediction_row(decision, packet, status=status, issues=issues, now=now)
-    updated_rows.append(row)
-    _write_market_read_prediction_rows(predictions_path, updated_rows)
-    _write_market_read_score_report(report_path, updated_rows, now=now)
-    return {
-        "status": "RECORDED",
-        "predictions_path": str(predictions_path),
-        "report_path": str(report_path),
-        "prediction_id": row.get("prediction_id"),
-        "pair": row.get("pair"),
-        "direction": row.get("direction"),
-        "verdict": row.get("verdict"),
-    }
-
-
-def _read_market_read_prediction_rows(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if not path.exists():
-        return rows
-    try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict):
-                    rows.append(payload)
-    except OSError:
-        return rows
-    return rows
-
-
-def _write_market_read_prediction_rows(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
-    path.write_text(text, encoding="utf-8")
-
-
-def _market_read_prediction_row(
-    decision: GPTTraderDecision,
-    packet: dict[str, Any],
-    *,
-    status: str,
-    issues: tuple[VerificationIssue, ...],
-    now: datetime,
-) -> dict[str, Any]:
-    market_read = decision.market_read_first if isinstance(decision.market_read_first, dict) else {}
-    next_30m = market_read.get("next_30m_prediction") if isinstance(market_read.get("next_30m_prediction"), dict) else {}
-    next_2h = market_read.get("next_2h_prediction") if isinstance(market_read.get("next_2h_prediction"), dict) else {}
-    naked = market_read.get("naked_read") if isinstance(market_read.get("naked_read"), dict) else {}
-    forced = market_read.get("best_trade_if_forced") if isinstance(market_read.get("best_trade_if_forced"), dict) else {}
-    pair = str(
-        next_30m.get("pair")
-        or next_2h.get("pair")
-        or forced.get("pair")
-        or naked.get("cleanest_pair_expression")
-        or ""
-    ).strip()
-    direction = str(next_30m.get("direction") or next_2h.get("direction") or forced.get("direction") or "").strip().upper()
-    generated_at = decision.generated_at_utc or now.isoformat()
-    predicted_at = _parse_utc(generated_at) or now
-    start_price = _current_market_read_price(packet, pair)
-    if start_price is None:
-        start_price = _first_number(str(forced.get("entry") or ""))
-    issue_codes = [issue.code for issue in issues]
-    row = {
-        "prediction_id": f"{generated_at}|{decision.action}|{pair}|{direction}",
-        "generated_at_utc": generated_at,
-        "recorded_at_utc": now.isoformat(),
-        "action": decision.action,
-        "verification_status": status,
-        "verification_issue_codes": issue_codes,
-        "selected_lane_id": decision.selected_lane_id,
-        "selected_lane_ids": list(decision.selected_lane_ids),
-        "pair": pair,
-        "direction": direction,
-        "start_price": start_price,
-        "horizon_30m_due_utc": (predicted_at + timedelta(minutes=30)).isoformat(),
-        "horizon_2h_due_utc": (predicted_at + timedelta(hours=2)).isoformat(),
-        "naked_read": naked,
-        "next_30m_prediction": next_30m,
-        "next_2h_prediction": next_2h,
-        "best_trade_if_forced": forced,
-        "actual_30m_price": None,
-        "actual_2h_price": None,
-        "thirty_minute_verdict": "PENDING",
-        "two_hour_verdict": "PENDING",
-        "verdict": "PENDING",
-        "blocked_but_market_read_recorded": status != "ACCEPTED" or decision.action != "TRADE",
-    }
-    row["score_eligible"] = _market_read_row_score_eligible(row)
-    _apply_market_read_verdicts(row)
-    return row
-
-
-def _score_due_market_read_rows(
-    rows: list[dict[str, Any]],
-    packet: dict[str, Any],
-    *,
-    now: datetime,
-) -> list[dict[str, Any]]:
-    scored: list[dict[str, Any]] = []
-    for row in rows:
-        item = dict(row)
-        item["score_eligible"] = _market_read_row_score_eligible(item)
-        pair = str(item.get("pair") or "").strip()
-        price = _current_market_read_price(packet, pair)
-        if price is not None:
-            due_30m = _parse_utc(item.get("horizon_30m_due_utc"))
-            due_2h = _parse_utc(item.get("horizon_2h_due_utc"))
-            if due_30m is not None and now >= due_30m and _optional_float(item.get("actual_30m_price")) is None:
-                item["actual_30m_price"] = price
-            if due_2h is not None and now >= due_2h and _optional_float(item.get("actual_2h_price")) is None:
-                item["actual_2h_price"] = price
-        _apply_market_read_verdicts(item)
-        scored.append(item)
-    return scored
-
-
-def _apply_market_read_verdicts(row: dict[str, Any]) -> None:
-    row["thirty_minute_verdict"] = _market_read_horizon_verdict(row, horizon="30m")
-    row["two_hour_verdict"] = _market_read_horizon_verdict(row, horizon="2h")
-    verdicts = [
-        str(row.get("thirty_minute_verdict") or "PENDING"),
-        str(row.get("two_hour_verdict") or "PENDING"),
-    ]
-    resolved = [verdict for verdict in verdicts if verdict != "PENDING"]
-    if not resolved or len(resolved) < 2:
-        row["verdict"] = "PENDING"
-    elif "INVALIDATED_FIRST" in resolved:
-        row["verdict"] = "INVALIDATED_FIRST"
-    elif all(verdict == "CORRECT" for verdict in resolved):
-        row["verdict"] = "CORRECT"
-    elif all(verdict == "WRONG" for verdict in resolved):
-        row["verdict"] = "WRONG"
-    else:
-        row["verdict"] = "MIXED"
-
-
-def _market_read_horizon_verdict(row: dict[str, Any], *, horizon: str) -> str:
-    actual_key = "actual_30m_price" if horizon == "30m" else "actual_2h_price"
-    prediction_key = "next_30m_prediction" if horizon == "30m" else "next_2h_prediction"
-    actual = _optional_float(row.get(actual_key))
-    start = _optional_float(row.get("start_price"))
-    if actual is None or start is None:
-        return "PENDING"
-    prediction = row.get(prediction_key) if isinstance(row.get(prediction_key), dict) else {}
-    direction = str(prediction.get("direction") or row.get("direction") or "").strip().upper()
-    invalidation_price = _first_number(str(prediction.get("invalidation") or ""))
-    if invalidation_price is not None:
-        if _market_read_longish(direction) and actual <= invalidation_price:
-            return "INVALIDATED_FIRST"
-        if _market_read_shortish(direction) and actual >= invalidation_price:
-            return "INVALIDATED_FIRST"
-    target_numbers = _numbers(str(prediction.get("target_zone") or ""))
-    if _market_read_longish(direction):
-        if target_numbers:
-            return "CORRECT" if actual >= min(target_numbers) else "WRONG"
-        return "CORRECT" if actual > start else "WRONG"
-    if _market_read_shortish(direction):
-        if target_numbers:
-            return "CORRECT" if actual <= max(target_numbers) else "WRONG"
-        return "CORRECT" if actual < start else "WRONG"
-    if not target_numbers:
-        return "MIXED" if abs(actual - start) <= max(abs(start) * 0.0005, 0.00005) else "WRONG"
-    lower = min(target_numbers)
-    upper = max(target_numbers)
-    return "CORRECT" if lower <= actual <= upper else "WRONG"
-
-
 def _market_read_longish(direction: str) -> bool:
     return direction.upper() in {"LONG", "BUY", "UP", "BULL", "BULLISH"}
 
@@ -4434,76 +4764,23 @@ def _market_read_direction_conflicts_side(direction: str, side: str) -> bool:
 
 def _market_read_target_on_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
     if _market_read_longish(direction):
-        return max(prices) <= basis
+        return min(prices) <= basis
     if _market_read_shortish(direction):
-        return min(prices) >= basis
+        return max(prices) >= basis
     return False
 
 
 def _market_read_invalidation_on_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
     if _market_read_longish(direction):
-        return min(prices) >= basis
+        return max(prices) >= basis
     if _market_read_shortish(direction):
-        return max(prices) <= basis
+        return min(prices) <= basis
     return False
-
-
-MARKET_READ_SCORE_INELIGIBLE_ISSUE_CODES = frozenset(
-    {
-        "MARKET_READ_TARGET_GEOMETRY_CONFLICT",
-        "MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT",
-        "MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT",
-    }
-)
-
-
-def _market_read_row_score_eligible(row: dict[str, Any]) -> bool:
-    """Exclude internally impossible reads while retaining blocked good reads.
-
-    REQUEST_EVIDENCE and WAIT predictions are valuable counterfactual evidence,
-    but a direction assembled with the opposite forecast's target/invalidation
-    is not a forecast outcome.  Infer geometry for legacy rows too, because
-    older accepted receipts predate the explicit ``score_eligible`` field.
-    """
-    issue_codes = {
-        str(code)
-        for code in row.get("verification_issue_codes", []) or []
-        if str(code)
-    }
-    if issue_codes & MARKET_READ_SCORE_INELIGIBLE_ISSUE_CODES:
-        return False
-    direction = str(row.get("direction") or "").strip().upper()
-    start = _optional_float(row.get("start_price"))
-    if start is not None:
-        for key in ("next_30m_prediction", "next_2h_prediction"):
-            prediction = row.get(key) if isinstance(row.get(key), dict) else {}
-            prediction_direction = str(prediction.get("direction") or direction).strip().upper()
-            targets = _numbers(str(prediction.get("target_zone") or ""))
-            invalidations = _numbers(str(prediction.get("invalidation") or ""))
-            if targets and _market_read_target_on_wrong_side(prediction_direction, start, targets):
-                return False
-            if invalidations and _market_read_invalidation_on_wrong_side(
-                prediction_direction,
-                start,
-                invalidations,
-            ):
-                return False
-    forced = row.get("best_trade_if_forced") if isinstance(row.get("best_trade_if_forced"), dict) else {}
-    forced_direction = str(forced.get("direction") or direction).strip().upper()
-    forced_entry = _first_number(str(forced.get("entry") or ""))
-    if forced_entry is not None:
-        forced_tp = _numbers(str(forced.get("tp") or ""))
-        forced_sl = _numbers(str(forced.get("sl") or ""))
-        if forced_tp and _market_read_target_on_wrong_side(forced_direction, forced_entry, forced_tp):
-            return False
-        if forced_sl and _market_read_invalidation_on_wrong_side(forced_direction, forced_entry, forced_sl):
-            return False
-    return row.get("score_eligible") is not False
 
 
 def _numbers(text: str) -> list[float]:
     values: list[float] = []
-    for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", text):
+    for match in re.finditer(r"(?<![\d.])[-+]?\d+(?:\.\d+)?", text):
         try:
             values.append(float(match.group(0)))
         except ValueError:
@@ -4564,48 +4841,6 @@ def _current_market_read_price(packet: dict[str, Any], pair: str) -> float | Non
             if price is not None:
                 return price
     return None
-
-
-def _write_market_read_score_report(
-    report_path: Path,
-    rows: list[dict[str, Any]],
-    *,
-    now: datetime,
-) -> None:
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    eligible_rows = [row for row in rows if _market_read_row_score_eligible(row)]
-    verdict_counts: dict[str, int] = {}
-    for row in eligible_rows:
-        verdict = str(row.get("verdict") or "PENDING")
-        verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-    resolved = [row for row in eligible_rows if str(row.get("verdict") or "PENDING") != "PENDING"]
-    correct = sum(1 for row in resolved if row.get("verdict") == "CORRECT")
-    accuracy = (correct / len(resolved) * 100.0) if resolved else None
-    lines = [
-        "# Market Read Score Report",
-        "",
-        f"- Generated at UTC: `{now.isoformat()}`",
-        f"- Predictions stored: `{len(rows)}`",
-        f"- Score-eligible predictions: `{len(eligible_rows)}`",
-        f"- Geometry-ineligible predictions: `{len(rows) - len(eligible_rows)}`",
-        f"- Resolved predictions: `{len(resolved)}`",
-        f"- Full-read accuracy: `{accuracy:.1f}%`" if accuracy is not None else "- Full-read accuracy: `pending`",
-        "- Verdict counts: "
-        + (", ".join(f"`{key}`={value}" for key, value in sorted(verdict_counts.items())) or "`none`"),
-        "",
-        "## Recent Predictions",
-        "",
-    ]
-    for row in rows[-12:]:
-        lines.append(
-            "- "
-            f"`{row.get('generated_at_utc')}` {row.get('pair') or 'unknown'} "
-            f"{row.get('direction') or 'UNKNOWN'} action=`{row.get('action')}` "
-            f"status=`{row.get('verification_status')}` score_eligible=`{_market_read_row_score_eligible(row)}` "
-            f"verdict=`{row.get('verdict')}` "
-            f"30m=`{row.get('thirty_minute_verdict')}` 2h=`{row.get('two_hour_verdict')}`"
-        )
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def draft_trader_decision(
@@ -5218,29 +5453,33 @@ def _draft_margin_aware_basket(
     candidate_lane_ids: list[str],
     lanes_by_id: dict[str, dict[str, Any]],
 ) -> tuple[str, ...]:
+    """Select the one exact lane that the hourly market read may authorize.
+
+    The gateway still owns portfolio-wide basket expansion and its independent
+    risk/margin checks.  The deterministic baseline, however, carries only one
+    ``market_read_first`` thesis, so publishing several pair/side lanes here
+    would let one AI read appear to authorize unrelated trades.  A later lane
+    therefore needs a fresh receipt and its own market read.
+    """
+
     margin_room = _draft_effective_margin_room(packet)
-    selected: list[str] = []
-    selected_pairs: set[str] = set()
-    cumulative_margin = 0.0
     for lane_id in candidate_lane_ids:
         lane = lanes_by_id.get(lane_id)
         if not lane:
             continue
-        if _lane_is_predictive_scout(lane):
-            return (lane_id,)
-        pair = str(lane.get("pair") or "")
-        if pair and pair in selected_pairs:
+        if lane.get("status") != "LIVE_READY":
+            continue
+        if (
+            lane.get("risk_blockers")
+            or lane.get("strategy_blockers")
+            or lane.get("live_blockers")
+        ):
             continue
         margin = _optional_float((lane.get("risk_metrics") or {}).get("estimated_margin_jpy")) or 0.0
-        if margin_room is not None and cumulative_margin + margin > margin_room:
+        if margin_room is not None and margin > margin_room:
             continue
-        selected.append(lane_id)
-        if pair:
-            selected_pairs.add(pair)
-        cumulative_margin += margin
-        if len(selected) >= BASKET_PAIR_COVERAGE_TARGET:
-            break
-    return tuple(selected)
+        return (lane_id,)
+    return ()
 
 
 def _draft_effective_margin_room(packet: dict[str, Any]) -> float | None:

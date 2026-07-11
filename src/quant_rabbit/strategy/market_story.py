@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import closing
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -362,7 +363,7 @@ def _load_day_pnl_index(db_path: Path) -> dict[str, float]:
         conn = sqlite3.connect(db_path)
     except sqlite3.Error:
         return {}
-    with conn:
+    with closing(conn) as conn, conn:
         try:
             cur = conn.execute(
                 "SELECT session_date, SUM(pl) FROM legacy_records "

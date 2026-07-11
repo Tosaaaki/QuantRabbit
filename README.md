@@ -30,7 +30,7 @@ DecaBot is a QuantRabbit-derived experiment, but it runs from `/Users/tossaki/Ap
 ```
 
 See `docs/DECABOT_BRIDGE.md` for the boundary. `cycle` can trade live when DecaBot `dry_run=false`; it does not use the QuantRabbit live gateway or main account.
-The weekend guard stops DecaBot `ai` / `monitor` / `review` launchd agents from Saturday 06:00 JST through Monday 07:00 JST and restores only the labels that were running before the pause.
+The weekend guard checks the DST-aware FX close at Saturday 06:00/07:00 JST, stops DecaBot `ai` / `monitor` / `review` launchd agents only after the New York Friday close, then restores at the Monday FX reopen (06:00 JST in New York summer time, 07:00 JST in winter). It restores only the labels that were running before the pause.
 
 ## Local Credentials
 
@@ -47,6 +47,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance 222781
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --start-balance 222781 --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli trader-draft-decision --snapshot data/broker_snapshot.json --output data/trader_decision_baseline.json --market-read-evidence-packet data/market_read_evidence_packet.json
+# The scheduled GPT/Codex trader reads the complete packet and cited sources,
+# then authors data/codex_market_read_overlay.json itself.
+PYTHONPATH=src python3 -m quant_rabbit.cli trader-apply-market-read --baseline data/trader_decision_baseline.json --packet data/market_read_evidence_packet.json --overlay data/codex_market_read_overlay.json --output data/codex_trader_decision_response.json
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision --snapshot data/broker_snapshot.json --decision-response data/codex_trader_decision_response.json
 PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
@@ -69,7 +73,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --s
 
 `generate-intents` turns campaign lanes into priced dry-run order intents when a read-only broker snapshot is available. Each receipt carries broker-truth risk metrics (`risk_jpy`, `reward_jpy`, reward/risk, spread) from `RiskEngine`. Without a snapshot it reports `NEEDS_BROKER_SNAPSHOT`; this is a hard stop, not a prompt problem.
 
-`gpt-trader-decision` builds a broker-truth input packet and verifies a Codex-created GPT decision receipt from `--decision-response`. Automation GPT means the Codex model itself, not an API-key model call from QuantRabbit. The verifier rejects any output that invents evidence, selects an unknown lane, trades while exposure is open, or uses a non-`LIVE_READY` lane. It writes `data/gpt_trader_decision.json` and `docs/gpt_trader_decision_report.md`; this command does not send broker orders.
+The scheduled handoff is `trader-draft-decision` baseline plus content-addressed evidence packet → GPT/Codex-authored overlay → `trader-apply-market-read` final receipt → `gpt-trader-decision` verification. The deterministic draft is never the final AI decision. Automation GPT means the Codex model itself, not an API-key model call from QuantRabbit or a second AI process. Each current market-read receipt binds exactly one primary pair, side, and lane; another lane requires a fresh evidence snapshot, GPT wake, overlay, verification, and receipt. No downstream component may append, substitute, expand, or recover to another deterministic lane. The verifier rejects invented evidence, unknown/stale lanes, or non-`LIVE_READY` entry lanes. It writes `data/gpt_trader_decision.json` and `docs/gpt_trader_decision_report.md`; none of these handoff commands sends broker orders.
 
 `promote-receipts` feeds successful dry-run receipts back into `data/strategy_profile.json`. It can reopen `RISK_REPAIR_CANDIDATE` only when the current receipt passes risk geometry, and can reopen `MINE_MISSED_EDGE` only when the receipt is a LIMIT or STOP-ENTRY trigger. It never auto-promotes `BLOCK_UNTIL_NEW_EVIDENCE`.
 

@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -45,6 +46,15 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.capture_economics import read_attributed_net_outcomes
+from quant_rabbit.decision_execution_lineage import (
+    DEFAULT_MARKET_READ_EXECUTION_LINKS,
+    DecisionExecutionLineageError,
+    append_execution_link,
+    attach_lineage_metadata,
+    build_execution_link,
+    lineage_from_metadata,
+    read_verified_decision_lineage,
+)
 from quant_rabbit.target import DailyTargetLedger
 from quant_rabbit.predictive_scout import (
     PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS,
@@ -205,6 +215,7 @@ class LiveOrderGateway:
         execution_ledger_db_path: Path | None = None,
         execution_ledger_report_path: Path | None = None,
         predictive_scout_canonical_ledger_db_path: Path | None = None,
+        market_read_execution_links_path: Path | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -225,6 +236,15 @@ class LiveOrderGateway:
         self.execution_ledger_report_path = execution_ledger_report_path
         self.predictive_scout_canonical_ledger_db_path = (
             predictive_scout_canonical_ledger_db_path
+        )
+        self.market_read_execution_links_path = (
+            market_read_execution_links_path
+            if market_read_execution_links_path is not None
+            else (
+                DEFAULT_MARKET_READ_EXECUTION_LINKS
+                if output_path == DEFAULT_LIVE_ORDER_REQUEST
+                else output_path.parent / DEFAULT_MARKET_READ_EXECUTION_LINKS.name
+            )
         )
         self.self_improvement_audit = self_improvement_audit
         # When the automation cycle stages a receipt that gpt-trader-decision
@@ -290,6 +310,10 @@ class LiveOrderGateway:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
+        intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
+            intent,
+            selected_lane_id=selected_lane_id,
+        )
         requested_units = intent.units
         scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
         if scaled_units is not None:
@@ -403,6 +427,7 @@ class LiveOrderGateway:
             require_receipt=predictive_scout_intent_claimed(intent),
             intent=intent,
         )
+        gpt_verified_decision_issues.extend(decision_lineage_issues)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -462,6 +487,7 @@ class LiveOrderGateway:
         entry_thesis_issues: list[dict[str, str]] = []
         ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
         ordinary_entry_claim_issues: list[dict[str, str]] = []
+        market_read_execution_link: dict[str, Any] = {"status": "NOT_RUN"}
         pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
@@ -623,11 +649,22 @@ class LiveOrderGateway:
                         "message": "entry thesis recorder raised unexpectedly",
                     }
                 )
+            market_read_execution_link, lineage_link_issue = self._record_market_read_execution_link(
+                intent=intent,
+                lane_id=selected_lane_id,
+                order_request=order_request,
+                response=response,
+                ordinary_entry_claim=ordinary_entry_claim,
+            )
+            if lineage_link_issue is not None:
+                ordinary_entry_claim_issues.append(lineage_link_issue)
+                status = "SENT_WITH_DECISION_LINEAGE_GAP"
         result = {
             "generated_at_utc": generated_at,
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
             "predictive_scout": predictive_scout_intent_claimed(intent),
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
@@ -671,6 +708,7 @@ class LiveOrderGateway:
             "response": response,
             "entry_thesis_record": entry_thesis_record,
             "ordinary_entry_claim": ordinary_entry_claim,
+            "market_read_execution_link": market_read_execution_link,
             "pre_post_reconciliation": pre_post_reconciliation,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
@@ -905,8 +943,17 @@ class LiveOrderGateway:
         entry_thesis_gap_count = sum(
             1 for item in order_results if item.get("status") == "SENT_WITH_ENTRY_THESIS_GAP"
         )
+        decision_lineage_gap_count = sum(
+            1
+            for item in order_results
+            if item.get("status") == "SENT_WITH_DECISION_LINEAGE_GAP"
+        )
         if send:
-            if entry_thesis_gap_count and blocked_count:
+            if decision_lineage_gap_count and blocked_count:
+                status = "PARTIAL_SENT_WITH_DECISION_LINEAGE_GAP"
+            elif decision_lineage_gap_count:
+                status = "SENT_WITH_DECISION_LINEAGE_GAP"
+            elif entry_thesis_gap_count and blocked_count:
                 status = "PARTIAL_SENT_WITH_ENTRY_THESIS_GAP"
             elif entry_thesis_gap_count:
                 status = "SENT_WITH_ENTRY_THESIS_GAP"
@@ -928,6 +975,18 @@ class LiveOrderGateway:
                 item.get("target_path_receipt")
                 for item in order_results
                 if isinstance(item.get("target_path_receipt"), dict)
+            ],
+            "decision_lineages": [
+                item.get("decision_lineage")
+                for item in order_results
+                if isinstance(item.get("decision_lineage"), dict)
+            ],
+            "market_read_execution_links": [
+                item.get("market_read_execution_link")
+                for item in order_results
+                if isinstance(item.get("market_read_execution_link"), dict)
+                and item.get("market_read_execution_link", {}).get("status")
+                not in {"NOT_RUN", "NOT_APPLICABLE_NO_MARKET_READ_LINEAGE"}
             ],
             "risk_issues": [issue for item in order_results for issue in item.get("risk_issues", [])],
             "strategy_issues": [issue for item in order_results for issue in item.get("strategy_issues", [])],
@@ -989,6 +1048,10 @@ class LiveOrderGateway:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
+        intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
+            intent,
+            selected_lane_id=selected_lane_id,
+        )
         requested_units = intent.units
         scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
         if scaled_units is not None:
@@ -1131,6 +1194,7 @@ class LiveOrderGateway:
             require_receipt=predictive_scout_intent_claimed(intent),
             intent=intent,
         )
+        gpt_verified_decision_issues.extend(decision_lineage_issues)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -1190,6 +1254,7 @@ class LiveOrderGateway:
         entry_thesis_issues: list[dict[str, str]] = []
         ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
         ordinary_entry_claim_issues: list[dict[str, str]] = []
+        market_read_execution_link: dict[str, Any] = {"status": "NOT_RUN"}
         pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
@@ -1344,11 +1409,22 @@ class LiveOrderGateway:
                         "message": "entry thesis recorder raised unexpectedly",
                     }
                 )
+            market_read_execution_link, lineage_link_issue = self._record_market_read_execution_link(
+                intent=intent,
+                lane_id=selected_lane_id,
+                order_request=order_request,
+                response=response,
+                ordinary_entry_claim=ordinary_entry_claim,
+            )
+            if lineage_link_issue is not None:
+                ordinary_entry_claim_issues.append(lineage_link_issue)
+                status = "SENT_WITH_DECISION_LINEAGE_GAP"
         return {
             "generated_at_utc": generated_at,
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
             "predictive_scout": predictive_scout_intent_claimed(intent),
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
@@ -1392,6 +1468,7 @@ class LiveOrderGateway:
             "response": response,
             "entry_thesis_record": entry_thesis_record,
             "ordinary_entry_claim": ordinary_entry_claim,
+            "market_read_execution_link": market_read_execution_link,
             "pre_post_reconciliation": pre_post_reconciliation,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
@@ -1420,6 +1497,113 @@ class LiveOrderGateway:
             operator_review_path=self.guardian_receipt_operator_review_path,
             broker_snapshot_path=self.broker_snapshot_path,
         )
+
+    def _intent_with_verified_decision_lineage(
+        self,
+        intent: OrderIntent,
+        *,
+        selected_lane_id: str,
+    ) -> tuple[OrderIntent, list[dict[str, str]]]:
+        """Bind one selected intent to the exact accepted GPT market read.
+
+        This is an audit binding only.  It cannot authorize a send and is
+        attached before the ordinary verifier/risk/gateway checks run.  A
+        malformed current CODEX_MARKET_READ lineage is a BLOCK; a historical
+        receipt without that contract remains lineage-unattributed rather than
+        being guessed from pair or time.
+        """
+
+        try:
+            lineage = read_verified_decision_lineage(
+                self.verified_decision_path,
+                selected_lane_id=selected_lane_id,
+            )
+            metadata = attach_lineage_metadata(intent.metadata, lineage)
+        except DecisionExecutionLineageError as exc:
+            return intent, [
+                RiskIssue(
+                    "GPT_DECISION_EXECUTION_LINEAGE_INVALID",
+                    f"current accepted GPT entry cannot be bound to immutable market-read lineage: {exc}",
+                ).__dict__
+            ]
+        return replace(intent, metadata=metadata), []
+
+    def _record_market_read_execution_link(
+        self,
+        *,
+        intent: OrderIntent,
+        lane_id: str,
+        order_request: dict[str, Any] | None,
+        response: Any,
+        ordinary_entry_claim: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str] | None]:
+        """Append an exact-ID link only after an actual gateway response."""
+
+        try:
+            lineage = lineage_from_metadata(intent.metadata)
+        except DecisionExecutionLineageError as exc:
+            return {
+                "status": "INVALID_INTENT_LINEAGE",
+                "path": str(self.market_read_execution_links_path),
+                "error": str(exc),
+            }, RiskIssue(
+                "MARKET_READ_EXECUTION_LINK_INVALID",
+                f"broker POST returned but its GPT/market-read lineage is invalid: {exc}",
+            ).__dict__
+        if lineage is None:
+            return {
+                "status": "NOT_APPLICABLE_NO_MARKET_READ_LINEAGE",
+                "path": str(self.market_read_execution_links_path),
+            }, None
+        if not isinstance(response, dict):
+            return {
+                "status": "ACTUAL_GATEWAY_RESPONSE_MISSING",
+                "path": str(self.market_read_execution_links_path),
+            }, RiskIssue(
+                "MARKET_READ_EXECUTION_LINK_RESPONSE_MISSING",
+                "broker POST returned without a JSON object, so explicit order/fill/trade ids cannot be linked",
+            ).__dict__
+        metadata = dict(intent.metadata or {})
+        client_extensions = (
+            order_request.get("clientExtensions")
+            if isinstance(order_request, dict)
+            and isinstance(order_request.get("clientExtensions"), dict)
+            else {}
+        )
+        try:
+            order_request_sha256 = str(
+                ordinary_entry_claim.get("order_request_sha256") or ""
+            ).strip() or (
+                hashlib.sha256(
+                    json.dumps(
+                        order_request or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+            link = build_execution_link(
+                lineage=lineage,
+                gateway_response=response,
+                lane_id=lane_id,
+                parent_lane_id=str(metadata.get("parent_lane_id") or "") or None,
+                forecast_cycle_id=str(metadata.get("forecast_cycle_id") or "") or None,
+                claim_id=str(ordinary_entry_claim.get("claim_id") or "") or None,
+                order_request_sha256=order_request_sha256,
+                client_extension_id=str(client_extensions.get("id") or "") or None,
+            )
+            return append_execution_link(self.market_read_execution_links_path, link), None
+        except (DecisionExecutionLineageError, OSError) as exc:
+            return {
+                "status": "WRITE_FAILED",
+                "path": str(self.market_read_execution_links_path),
+                "error": f"{type(exc).__name__}: {exc}",
+            }, RiskIssue(
+                "MARKET_READ_EXECUTION_LINK_WRITE_FAILED",
+                "broker POST returned but its explicit OANDA ids could not be appended to the decision lineage: "
+                f"{type(exc).__name__}: {exc}",
+            ).__dict__
 
     def _resolve_gateway_max_loss_jpy(self) -> float:
         default_max_loss_jpy = _per_trade_risk_from_state()
@@ -2442,6 +2626,46 @@ class LiveOrderGateway:
                 ).__dict__,
             )
 
+        try:
+            current_lineage = read_verified_decision_lineage(
+                self.verified_decision_path,
+                selected_lane_id=lane_id,
+            )
+            intent_lineage = lineage_from_metadata(intent.metadata)
+        except DecisionExecutionLineageError as exc:
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_LINEAGE_INVALID",
+                    "error": str(exc),
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_LINEAGE_INVALID",
+                    "pre-POST one-shot claim could not revalidate immutable GPT market-read lineage: "
+                    f"{exc}",
+                ).__dict__,
+            )
+        if (current_lineage is None) != (intent_lineage is None) or (
+            current_lineage is not None
+            and intent_lineage is not None
+            and (
+                current_lineage.decision_receipt_id != intent_lineage.decision_receipt_id
+                or current_lineage.market_read_prediction_id
+                != intent_lineage.market_read_prediction_id
+                or current_lineage.lineage_token != intent_lineage.lineage_token
+            )
+        ):
+            return _OrdinaryEntryPostClaimResult(
+                evidence={
+                    "status": "BLOCKED",
+                    "issue_code": "ORDINARY_ENTRY_CLAIM_LINEAGE_MISMATCH",
+                },
+                issue=RiskIssue(
+                    "ORDINARY_ENTRY_CLAIM_LINEAGE_MISMATCH",
+                    "selected intent lineage no longer matches the accepted GPT receipt at the pre-POST boundary",
+                ).__dict__,
+            )
+
         metadata = dict(intent.metadata or {})
         parent_lane_id = str(metadata.get("parent_lane_id") or "").strip()
         derived_parent_lane_id = _parent_lane_id_from_lane_id(lane_id)
@@ -2528,6 +2752,7 @@ class LiveOrderGateway:
             "forecast_cycle_id": forecast_cycle_id,
             "order_request_sha256": order_request_sha256,
             "ledger_db_path": str(claim_db_path),
+            "decision_lineage": current_lineage.to_dict() if current_lineage else None,
         }
 
         conn: sqlite3.Connection | None = None
@@ -2549,6 +2774,9 @@ class LiveOrderGateway:
                     parent_lane_id TEXT NOT NULL,
                     forecast_cycle_id TEXT NOT NULL,
                     order_request_sha256 TEXT NOT NULL,
+                    decision_receipt_id TEXT,
+                    market_read_prediction_id TEXT,
+                    decision_lineage_token TEXT,
                     status TEXT NOT NULL,
                     claimed_at_utc TEXT NOT NULL,
                     updated_at_utc TEXT NOT NULL,
@@ -2556,6 +2784,21 @@ class LiveOrderGateway:
                 )
                 """
             )
+            existing_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(ordinary_live_entry_signal_claims)"
+                )
+            }
+            for column in (
+                "decision_receipt_id",
+                "market_read_prediction_id",
+                "decision_lineage_token",
+            ):
+                if column not in existing_columns:
+                    conn.execute(
+                        f"ALTER TABLE ordinary_live_entry_signal_claims ADD COLUMN {column} TEXT"
+                    )
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_ordinary_entry_claim_receipt_parent
@@ -2627,9 +2870,11 @@ class LiveOrderGateway:
                 INSERT INTO ordinary_live_entry_signal_claims(
                     claim_id, receipt_sha256, receipt_generated_at_utc, action,
                     lane_id, parent_lane_id, forecast_cycle_id,
-                    order_request_sha256, status, claimed_at_utc, updated_at_utc,
+                    order_request_sha256, decision_receipt_id,
+                    market_read_prediction_id, decision_lineage_token,
+                    status, claimed_at_utc, updated_at_utc,
                     broker_outcome_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RESERVED_PRE_POST', ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RESERVED_PRE_POST', ?, ?, NULL)
                 """,
                 (
                     claim_id,
@@ -2640,6 +2885,9 @@ class LiveOrderGateway:
                     parent_lane_id,
                     forecast_cycle_id,
                     order_request_sha256,
+                    current_lineage.decision_receipt_id if current_lineage else None,
+                    current_lineage.market_read_prediction_id if current_lineage else None,
+                    current_lineage.lineage_token if current_lineage else None,
                     claimed_at,
                     claimed_at,
                 ),
@@ -2695,7 +2943,7 @@ class LiveOrderGateway:
                 separators=(",", ":"),
                 default=str,
             )
-            with sqlite3.connect(str(claim_db_path), timeout=5.0) as conn:
+            with closing(sqlite3.connect(str(claim_db_path), timeout=5.0)) as conn, conn:
                 conn.execute("PRAGMA busy_timeout=5000")
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("BEGIN IMMEDIATE")
@@ -2781,6 +3029,7 @@ class LiveOrderGateway:
             "status": "PREDICTIVE_SCOUT_POST_RESERVED",
             "lane_id": lane_id,
             "order_request": order_request,
+            "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
             "predictive_scout": True,
             "predictive_scout_post_reserved": True,
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
@@ -5830,6 +6079,38 @@ def _context_evidence_from_intent(intent: OrderIntent) -> dict[str, Any]:
     return evidence if isinstance(evidence, dict) else {}
 
 
+def _decision_lineage_receipt_from_intent(
+    intent: OrderIntent,
+    order_request: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    try:
+        lineage = lineage_from_metadata(intent.metadata)
+    except DecisionExecutionLineageError as exc:
+        return {
+            "status": "INVALID",
+            "error": str(exc),
+            "live_permission": False,
+        }
+    if lineage is None:
+        return None
+    client_extensions = (
+        order_request.get("clientExtensions")
+        if isinstance(order_request, dict)
+        and isinstance(order_request.get("clientExtensions"), dict)
+        else {}
+    )
+    client_extension_id = str(client_extensions.get("id") or "") or None
+    return {
+        "status": "BOUND_TO_SELECTED_INTENT",
+        **lineage.to_dict(),
+        "client_extension_id": client_extension_id,
+        "broker_lineage_token_embedded": bool(
+            client_extension_id and lineage.lineage_token in client_extension_id
+        ),
+        "live_permission": False,
+    }
+
+
 def _sizing_evidence_from_intent(
     intent: OrderIntent,
     *,
@@ -6107,6 +6388,15 @@ def _client_order_id(intent: OrderIntent) -> str:
         # role, vehicle, and lane prefix while allowing atomic reservations to
         # reconcile one exact claim rather than a same-vehicle approximation.
         base = f"{base}-{predictive_scout_signal_id(intent)}"
+    lineage_token = str(
+        (intent.metadata or {}).get("gpt_decision_lineage_token") or ""
+    ).strip()
+    if lineage_token:
+        # OANDA caps ClientExtensions.id at 128 characters.  The token is a
+        # short content address for both full 256-bit lineage ids; owner stays
+        # in `tag` and the full lane stays in `comment` unchanged.
+        suffix = f"-{lineage_token}"
+        base = f"{base[: max(0, 128 - len(suffix))]}{suffix}"
     return base[:128]
 
 

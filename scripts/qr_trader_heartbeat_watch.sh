@@ -45,13 +45,13 @@ if [ -f "$STATE_FILE" ]; then
   fi
 fi
 
-# --- 2. Skip the FX weekend close window (JST), mirroring the weekend
-#        switcher schedule: off Saturday 06:00 JST, on Monday 07:00 JST. ---
-jst_dow=$(TZ=Asia/Tokyo date +%u)   # 1=Mon … 6=Sat 7=Sun
-jst_hm=$(TZ=Asia/Tokyo date +%H%M)
-if [ "$jst_dow" = "6" ] && [ "$jst_hm" -ge 0600 ]; then exit 0; fi
-if [ "$jst_dow" = "7" ]; then exit 0; fi
-if [ "$jst_dow" = "1" ] && [ "$jst_hm" -lt 0700 ]; then exit 0; fi
+# --- 2. Skip only while the deterministic New York weekly calendar says the
+#        FX market is closed. UNKNOWN/import failure continues the heartbeat so
+#        a broken market-status dependency cannot hide a dead scheduler. ---
+market_state=$(PYTHONPATH="$LIVE_ROOT/src" /usr/bin/python3 -c \
+  'from quant_rabbit.analysis.market_status import compute_market_status; print("OPEN" if compute_market_status().is_fx_open else "CLOSED")' \
+  2>/dev/null || echo UNKNOWN)
+if [ "$market_state" = "CLOSED" ]; then exit 0; fi
 
 # --- 3. Heartbeat: newest artifact the trader cycle always writes ---
 newest_mtime=0

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import io
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +16,7 @@ from unittest.mock import patch
 
 import tools.guardian_wake_dispatcher as dispatcher_module
 import tools.guardian_tuning_metric_evaluator as tuning_evaluator_module
+import tools.guardian_tuning_review_enrich as tuning_review_enrich_tool
 from quant_rabbit.guardian_tuning_overrides import (
     resolve_forecast_confidence_floor_state,
 )
@@ -2294,13 +2297,31 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
             "proposed_adjustments": [],
         }
-        self.assertEqual(
-            dispatcher_module._validate_bot_tuning_review(
-                no_change,
-                selected_event=selected,
-            )["status"],
-            "VALID",
+        validated_no_change = dispatcher_module._validate_bot_tuning_review(
+            no_change,
+            selected_event=selected,
         )
+        self.assertEqual(validated_no_change["status"], "VALID")
+        self.assertEqual(
+            validated_no_change["review"]["evidence_acquisition"]["required_new_samples"],
+            20,
+        )
+
+        vague_no_change = {
+            **no_change,
+            "evidence_acquisition": {
+                "action_kind": "WAIT",
+                "source_ref": "later",
+                "required_new_samples": 0,
+                "success_condition": "wait",
+            },
+        }
+        vague_result = dispatcher_module._validate_bot_tuning_review(
+            vague_no_change,
+            selected_event=selected,
+        )
+        self.assertEqual(vague_result["status"], "INVALID_INCOMPLETE_REVIEW")
+        self.assertNotIn("review", vague_result)
 
     def test_test_required_review_precommits_exact_lane(self) -> None:
         selected = _technical_tuning_event(pair="EUR_USD")
@@ -2442,6 +2463,261 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(
                 json.loads(path.read_text())["bot_tuning_review"]["review_status"],
                 "TEST_REQUIRED",
+            )
+
+            downgrade = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=event,
+                receipt={"bot_tuning_review": no_change},
+                now=NOW + timedelta(minutes=3),
+            )
+            self.assertEqual(downgrade["status"], "STRUCTURED_REVIEW_REQUIRED")
+            self.assertEqual(
+                downgrade["bot_tuning_review_status"],
+                "REVIEW_DOWNGRADE_FORBIDDEN",
+            )
+            self.assertEqual(
+                json.loads(path.read_text())["bot_tuning_review"]["review_status"],
+                "TEST_REQUIRED",
+            )
+
+    def test_new_observation_may_replace_old_test_with_current_no_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            first_event = _technical_tuning_event(
+                pair="EUR_USD",
+                event_id="test-required-old-observation",
+            )
+            first = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=first_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                now=NOW,
+            )
+            self.assertEqual(first["status"], "WORK_ORDER_WRITTEN")
+
+            no_change = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            new_event = _technical_tuning_event(
+                pair="EUR_USD",
+                event_id="no-change-new-observation",
+                mid=0.581025,
+                reasons=("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",),
+            )
+            refreshed = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=new_event,
+                receipt={"bot_tuning_review": no_change},
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(refreshed["status"], "WORK_ORDER_OBSERVATION_APPENDED")
+            payload = json.loads(path.read_text())
+            self.assertNotEqual(payload["latest_observation_id"], first["observation_id"])
+            self.assertEqual(
+                payload["latest_reviewed_observation_id"],
+                payload["latest_observation_id"],
+            )
+            self.assertEqual(
+                payload["bot_tuning_review"]["review_status"],
+                "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            )
+
+    def test_hourly_enrichment_persists_idempotent_no_change_then_only_upgrades(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            event = _technical_tuning_event(
+                pair="EUR_USD",
+                event_id="hourly-no-change-review",
+            )
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=event,
+                receipt={},
+                now=NOW,
+            )
+            self.assertEqual(created["status"], "STRUCTURED_REVIEW_REQUIRED")
+            no_change = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+
+            unsafe = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=created["observation_id"],
+                review={**no_change, "live_permission_allowed": True},
+                reviewed_by="qr-trader-hourly",
+                now=NOW + timedelta(seconds=10),
+            )
+            self.assertEqual(unsafe["status"], "STRUCTURED_REVIEW_REQUIRED")
+            self.assertNotIn("bot_tuning_review", json.loads(path.read_text()))
+
+            bound_at = NOW + timedelta(minutes=1)
+            bound = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=created["observation_id"],
+                review=no_change,
+                reviewed_by="qr-trader-hourly",
+                now=bound_at,
+            )
+            self.assertEqual(bound["status"], "WORK_ORDER_REVIEW_ENRICHED")
+            payload = json.loads(path.read_text())
+            self.assertEqual(
+                payload["bot_tuning_review"]["review_status"],
+                "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            )
+            self.assertEqual(
+                payload["latest_reviewed_observation_id"],
+                created["observation_id"],
+            )
+            self.assertEqual(
+                payload["structured_review_completed_at_utc"],
+                bound_at.isoformat(),
+            )
+            self.assertEqual(
+                payload["structured_review_completed_by"],
+                "qr-trader-hourly",
+            )
+
+            bound_bytes = path.read_bytes()
+            repeated = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=created["observation_id"],
+                review=no_change,
+                reviewed_by="another-hourly-retry",
+                now=NOW + timedelta(minutes=2),
+            )
+            self.assertEqual(repeated["status"], "WORK_ORDER_REVIEW_ALREADY_BOUND")
+            self.assertEqual(path.read_bytes(), bound_bytes)
+
+            upgraded_at = NOW + timedelta(minutes=3)
+            upgraded = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=created["observation_id"],
+                review=_valid_tuning_review("EUR_USD"),
+                reviewed_by="qr-trader-hourly",
+                now=upgraded_at,
+            )
+            self.assertEqual(upgraded["status"], "WORK_ORDER_REVIEW_ENRICHED")
+            payload = json.loads(path.read_text())
+            self.assertEqual(
+                payload["bot_tuning_review"]["review_status"],
+                "TEST_REQUIRED",
+            )
+            self.assertEqual(
+                payload["structured_review_completed_at_utc"],
+                upgraded_at.isoformat(),
+            )
+
+            upgraded_bytes = path.read_bytes()
+            downgrade = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=created["observation_id"],
+                review=no_change,
+                reviewed_by="qr-trader-hourly",
+                now=NOW + timedelta(minutes=4),
+            )
+            self.assertEqual(downgrade["status"], "WORK_ORDER_REVIEW_CONFLICT")
+            self.assertEqual(downgrade["current_review_status"], "TEST_REQUIRED")
+            self.assertEqual(
+                downgrade["incoming_review_status"],
+                "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            )
+            self.assertEqual(path.read_bytes(), upgraded_bytes)
+
+            new_event = _technical_tuning_event(
+                pair="EUR_USD",
+                event_id="hourly-no-change-new-observation",
+                mid=0.581025,
+                reasons=("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",),
+            )
+            appended = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=new_event,
+                receipt={},
+                now=NOW + timedelta(minutes=5),
+            )
+            self.assertEqual(appended["status"], "STRUCTURED_REVIEW_REQUIRED")
+            self.assertNotEqual(appended["observation_id"], created["observation_id"])
+
+            rebound = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created["work_order_id"],
+                expected_observation_id=appended["observation_id"],
+                review=no_change,
+                reviewed_by="qr-trader-hourly",
+                now=NOW + timedelta(minutes=6),
+            )
+            self.assertEqual(rebound["status"], "WORK_ORDER_REVIEW_ENRICHED")
+            rebound_payload = json.loads(path.read_text())
+            self.assertEqual(
+                rebound_payload["latest_reviewed_observation_id"],
+                appended["observation_id"],
+            )
+            self.assertEqual(
+                rebound_payload["bot_tuning_review"]["review_status"],
+                "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            )
+
+    def test_hourly_review_enrich_cli_accepts_safe_no_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            event = _technical_tuning_event(
+                pair="EUR_USD",
+                event_id="hourly-no-change-cli",
+            )
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=event,
+                receipt={},
+                now=NOW,
+            )
+            review_path = root / "review.json"
+            review_path.write_text(
+                json.dumps(
+                    {
+                        **_valid_tuning_review("EUR_USD"),
+                        "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                        "proposed_adjustments": [],
+                    }
+                )
+            )
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(path),
+                        "--work-order-id",
+                        created["work_order_id"],
+                        "--expected-observation-id",
+                        created["observation_id"],
+                        "--review-json",
+                        str(review_path),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                json.loads(output.getvalue())["status"],
+                "WORK_ORDER_REVIEW_ENRICHED",
+            )
+            self.assertEqual(
+                json.loads(path.read_text())["bot_tuning_review"]["review_status"],
+                "NO_CHANGE_INSUFFICIENT_EVIDENCE",
             )
 
     def test_tuning_work_order_write_failure_is_retried_without_accepted_ack(self) -> None:
@@ -4834,6 +5110,15 @@ def _valid_tuning_review(
         "affected_bot_families": [family],
         "hypothesis": "the selected closed-candle state changed lane ranking",
         "falsifiable_experiment": "freeze the source packet and compare before/after lane scores",
+        "evidence_acquisition": {
+            "action_kind": "COLLECT_FORWARD_ENTRIES",
+            "source_ref": "logs/forecast_history.jsonl",
+            "required_new_samples": 20,
+            "success_condition": (
+                "resolve the first 20 canonical attributed post-review entries "
+                "for the selected pair and bot family"
+            ),
+        },
         "proposed_adjustments": [
             {
                 "pair": pair,

@@ -82,6 +82,8 @@ class TraderSupportBotTest(unittest.TestCase):
             "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|DOWN",
             "semantic_state_id": "semantic-eurusd-down",
             "latest_observation_id": "obs-2",
+            "latest_reviewed_observation_id": "obs-2",
+            "bot_tuning_review_validation": {"status": "VALID", "issues": []},
             "live_permission_allowed": False,
             "no_direct_oanda": True,
             "preserve_blockers": True,
@@ -131,10 +133,18 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["status"], "PENDING_HOURLY_AI_REVIEW")
         evidence = request["evidence_summary"]
         self.assertEqual(evidence["affected_pairs"], ["EUR_USD"])
+        self.assertEqual(evidence["current_reviewed_count"], 1)
+        self.assertEqual(evidence["current_unreviewed_count"], 0)
         pending = evidence["pending_work_orders"][0]
         self.assertEqual(pending["work_order_id"], "guardian-tuning-eurusd-1")
         self.assertEqual(pending["semantic_state_id"], "semantic-eurusd-down")
         self.assertEqual(pending["latest_observation_id"], "obs-2")
+        self.assertEqual(pending["latest_reviewed_observation_id"], "obs-2")
+        self.assertEqual(
+            pending["bot_tuning_review_validation"],
+            {"status": "VALID", "issues": []},
+        )
+        self.assertTrue(pending["review_current"])
         self.assertEqual(pending["review"]["affected_pairs"], ["EUR_USD"])
         self.assertEqual(pending["observations"][-1]["observation_id"], "obs-2")
         self.assertEqual(
@@ -194,6 +204,10 @@ class TraderSupportBotTest(unittest.TestCase):
             pair="GBP_USD",
             observation_ids=["gbp-obs-1"],
         )
+        eur["latest_reviewed_observation_id"] = "eur-obs-2"
+        eur["bot_tuning_review_validation"] = {"status": "VALID", "issues": []}
+        gbp["latest_reviewed_observation_id"] = "gbp-observation-stale"
+        gbp["bot_tuning_review_validation"] = {"status": "VALID", "issues": []}
         payload = {
             "schema_version": 2,
             "work_orders": [eur, gbp],
@@ -238,6 +252,14 @@ class TraderSupportBotTest(unittest.TestCase):
             item["work_order_id"]: item for item in evidence["pending_work_orders"]
         }
         self.assertEqual(set(pending_by_id), {"work-eur", "work-gbp"})
+        self.assertEqual(evidence["current_reviewed_count"], 1)
+        self.assertEqual(evidence["current_unreviewed_count"], 1)
+        self.assertTrue(pending_by_id["work-eur"]["review_current"])
+        self.assertFalse(pending_by_id["work-gbp"]["review_current"])
+        self.assertEqual(
+            pending_by_id["work-gbp"]["latest_reviewed_observation_id"],
+            "gbp-observation-stale",
+        )
         self.assertEqual(
             [item["observation_id"] for item in pending_by_id["work-eur"]["observations"]],
             ["eur-obs-1", "eur-obs-2"],
@@ -271,7 +293,7 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertNotIn("observations", evidence)
         self.assertNotIn("prior_terminal_experiments", evidence)
 
-    def test_guardian_tuning_work_order_cannot_promote_when_safety_boundary_is_missing(self) -> None:
+    def test_guardian_tuning_work_order_boundary_failure_remains_visible(self) -> None:
         malformed = {
             "status": "PENDING_HOURLY_AI_REVIEW",
             "work_order_id": "unsafe",
@@ -288,10 +310,55 @@ class TraderSupportBotTest(unittest.TestCase):
             guardian_tuning_work_order=malformed,
         )
 
-        self.assertNotIn(
-            "REVIEW_GUARDIAN_MARKET_STATE_TUNING",
-            {item["code"] for item in requests},
+        by_code = {item["code"]: item for item in requests}
+        self.assertNotIn("REVIEW_GUARDIAN_MARKET_STATE_TUNING", by_code)
+        integrity = by_code["REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"]
+        self.assertIsNone(integrity["evidence_summary"]["pending_work_order_count"])
+        self.assertEqual(
+            integrity["evidence_summary"]["queue_validation"]["status"],
+            "INVALID",
         )
+
+    def test_revision_and_counter_mismatch_never_look_like_zero_pending(self) -> None:
+        malformed = {
+            "schema_version": 2,
+            "queue_schema_revision": 3,
+            "pending_count": 0,
+            "terminal_history_count": 0,
+            "work_orders": [
+                {
+                    "status": "PENDING_HOURLY_AI_REVIEW",
+                    "work_order_id": "pending-hidden-by-counter",
+                    "event_fingerprint": "obs-1",
+                    "live_permission_allowed": False,
+                    "no_direct_oanda": True,
+                    "preserve_blockers": True,
+                }
+            ],
+            "terminal_history": [],
+        }
+
+        validation = trader_support_bot_module._guardian_tuning_queue_validation(
+            malformed
+        )
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=malformed,
+        )
+
+        self.assertEqual(validation["status"], "INVALID")
+        self.assertTrue(
+            trader_support_bot_module._guardian_tuning_work_order_pending(malformed)
+        )
+        integrity = next(
+            item
+            for item in requests
+            if item["code"] == "REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"
+        )
+        self.assertIsNone(integrity["evidence_summary"]["current_unreviewed_count"])
 
     def test_producer_shaped_tuning_work_order_derives_pair_family_and_material_reasons(self) -> None:
         work_order = {
@@ -385,6 +452,8 @@ class TraderSupportBotTest(unittest.TestCase):
 
         evidence = requests[0]["evidence_summary"]
         self.assertEqual(evidence["pending_work_order_count"], 2)
+        self.assertEqual(evidence["current_reviewed_count"], 0)
+        self.assertEqual(evidence["current_unreviewed_count"], 2)
         self.assertEqual(evidence["affected_pairs"], ["EUR_USD", "USD_JPY"])
         self.assertEqual(evidence["affected_bot_families"], ["trend", "breakout"])
         self.assertEqual(

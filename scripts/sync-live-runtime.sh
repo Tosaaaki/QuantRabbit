@@ -403,6 +403,22 @@ verify_automation() {
     echo "[sync-live-runtime] QR vNext Trader automation reasoning_effort must be high." >&2
     exit 6
   fi
+  for required in \
+    'data/trader_decision_baseline.json' \
+    'data/market_read_evidence_packet.json' \
+    'data/codex_market_read_overlay.json' \
+    'trader-apply-market-read' \
+    'the AI trader is this scheduled GPT-5.5/Codex role' \
+    'The deterministic draft is never the final AI decision' \
+    'never replace it downstream' \
+    'Strict economics split' \
+    'structured `evidence_acquisition`'
+  do
+    if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
+      echo "[sync-live-runtime] QR vNext Trader automation AI/tuning workflow is stale; missing: $required" >&2
+      exit 6
+    fi
+  done
   if grep -Fq 'After the receipt is ACCEPTED by `gpt-trader-decision`' "$AUTOMATION_FILE"; then
     echo "[sync-live-runtime] QR vNext Trader automation has stale ACCEPTED-only gateway handoff text." >&2
     exit 6

@@ -8,6 +8,7 @@ import os
 import stat
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -113,7 +114,7 @@ class ExecutionLedger:
         self._init_db()
         now = _now()
         baseline = None
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             _migrate_legacy_transaction_coverage_marker(conn, now=now)
             start_id = since_transaction_id or _get_state(conn, "last_oanda_transaction_id")
             if not start_id:
@@ -216,7 +217,7 @@ class ExecutionLedger:
             archive_root=self.gateway_input_packet_archive_root,
             storage_root=self.db_path.parent,
         )
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             receipt_inserted = _insert_gateway_receipt(
                 conn,
                 kind=kind,
@@ -328,7 +329,7 @@ class ExecutionLedger:
         if expiry <= now_dt:
             raise ValueError("predictive SCOUT reservation expiry is not in the future")
         day = now_dt.date().isoformat()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             for broker_signal in broker_signals:
                 conn.execute(
@@ -561,7 +562,7 @@ class ExecutionLedger:
 
     def _init_db_once(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;

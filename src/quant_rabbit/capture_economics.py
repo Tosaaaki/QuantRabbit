@@ -32,8 +32,9 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,12 @@ DEFAULT_CAPTURE_ECONOMICS_REPORT = ROOT / "docs" / "capture_economics_report.md"
 # 20 keeps the binomial standard error under ~11pp at p=0.5 — a documented
 # statistical floor, not a tuned market threshold.
 MIN_SAMPLE_FOR_VERDICT = 20
+
+# Lifetime capture economics is the safety truth, but it moves slowly after a
+# repair.  Keep a fixed, adjacent seven-day comparison so the trader can see
+# whether new outcomes improved without laundering a three-trade winning
+# streak into positive-expectancy proof.
+RECENT_PERFORMANCE_WINDOW_DAYS = 7
 
 # Report/action payloads are read by the trader prompt packet. Keep them short
 # so the live cycle sees the repair priorities without drowning out the
@@ -140,7 +147,7 @@ def read_attributed_system_entries(ledger_path: Path) -> list[AttributedEntry] |
     if not ledger_path.exists():
         return None
     try:
-        with sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True) as conn:
+        with closing(sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)) as conn, conn:
             conn.row_factory = sqlite3.Row
             columns = {
                 str(row["name"])
@@ -304,7 +311,7 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
     if not ledger_path.exists():
         return None
     try:
-        with sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True) as conn:
+        with closing(sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)) as conn, conn:
             conn.row_factory = sqlite3.Row
             table_names = {
                 str(row["name"])
@@ -1445,6 +1452,102 @@ def _iso_week(ts_utc: str) -> str:
     return f"{year}-W{week:02d}"
 
 
+def _outcome_timestamp(row: RealizedOutcome) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(row.ts_utc).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _recent_performance_comparison(
+    rows: list[RealizedOutcome],
+    *,
+    as_of: datetime,
+) -> dict[str, Any]:
+    end = as_of.astimezone(timezone.utc)
+    recent_start = end - timedelta(days=RECENT_PERFORMANCE_WINDOW_DAYS)
+    prior_start = recent_start - timedelta(days=RECENT_PERFORMANCE_WINDOW_DAYS)
+    timestamped = [
+        (row, timestamp)
+        for row in rows
+        if (timestamp := _outcome_timestamp(row)) is not None
+    ]
+    recent_rows = [row for row, timestamp in timestamped if recent_start <= timestamp <= end]
+    prior_rows = [row for row, timestamp in timestamped if prior_start <= timestamp < recent_start]
+    historical_rows = [row for row, timestamp in timestamped if timestamp < recent_start]
+    recent = _bucket_metrics(recent_rows)
+    prior = _bucket_metrics(prior_rows)
+    historical = _bucket_metrics(historical_rows)
+    recent_trades = int(recent.get("trades") or 0)
+    historical_trades = int(historical.get("trades") or 0)
+    recent_expectancy = _optional_float(recent.get("expectancy_jpy_per_trade"))
+    recent_net = _optional_float(recent.get("net_jpy"))
+    historical_expectancy = _optional_float(
+        historical.get("expectancy_jpy_per_trade")
+    )
+    recent_sample_sufficient = recent_trades >= MIN_SAMPLE_FOR_VERDICT
+    baseline_sample_sufficient = historical_trades >= MIN_SAMPLE_FOR_VERDICT
+    positive = bool(
+        recent_trades
+        and recent_expectancy is not None
+        and recent_expectancy > 0.0
+        and recent_net is not None
+        and recent_net > 0.0
+    )
+    if recent_trades == 0:
+        verdict = "NO_RECENT_TRADES"
+    elif not recent_sample_sufficient:
+        verdict = "RECENT_POSITIVE_LOW_SAMPLE" if positive else "RECENT_NON_POSITIVE_LOW_SAMPLE"
+    elif positive and not baseline_sample_sufficient:
+        verdict = "POSITIVE_BASELINE_INSUFFICIENT"
+    elif positive and historical_expectancy is not None and recent_expectancy > historical_expectancy:
+        verdict = "OBSERVED_IMPROVEMENT_MIN_SAMPLE"
+    elif positive:
+        verdict = "POSITIVE_NOT_IMPROVED"
+    else:
+        verdict = "NOT_IMPROVED"
+    return {
+        "window_days": RECENT_PERFORMANCE_WINDOW_DAYS,
+        "as_of_utc": end.isoformat(),
+        "recent_window": {
+            "start_utc": recent_start.isoformat(),
+            "end_utc": end.isoformat(),
+            **recent,
+        },
+        "prior_window": {
+            "start_utc": prior_start.isoformat(),
+            "end_utc": recent_start.isoformat(),
+            **prior,
+        },
+        "historical_baseline": {
+            "end_exclusive_utc": recent_start.isoformat(),
+            **historical,
+        },
+        "expectancy_delta_jpy_per_trade": (
+            round(recent_expectancy - historical_expectancy, 1)
+            if recent_expectancy is not None and historical_expectancy is not None
+            else None
+        ),
+        "verdict": verdict,
+        "recent_sample_sufficient": recent_sample_sufficient,
+        "baseline_sample_sufficient": baseline_sample_sufficient,
+        "observed_improvement": verdict == "OBSERVED_IMPROVEMENT_MIN_SAMPLE",
+        # Raw JPY point estimates cannot distinguish better entry/exit edge
+        # from a lot-size or NAV shift. Statistical and normalized R (or
+        # JPY/1,000u) lower-bound evidence must be added before this can be
+        # called proof.
+        "improvement_proven": False,
+        "proof_status": "NOT_AVAILABLE_RAW_JPY_POINT_ESTIMATE_ONLY",
+        "normalized_edge_proof_available": False,
+        "sample_gap": max(0, MIN_SAMPLE_FOR_VERDICT - recent_trades),
+        "baseline_sample_gap": max(0, MIN_SAMPLE_FOR_VERDICT - historical_trades),
+        "lifetime_status_unchanged": True,
+    }
+
+
 def _negative_exit_rows(by_exit: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     rows: list[tuple[str, dict[str, Any]]] = []
     for reason, metrics in by_exit.items():
@@ -1775,6 +1878,7 @@ def build_capture_economics(
     ledger_path: Path,
     output_path: Path = DEFAULT_CAPTURE_ECONOMICS,
     report_path: Path = DEFAULT_CAPTURE_ECONOMICS_REPORT,
+    now: datetime | None = None,
 ) -> CaptureEconomicsSummary:
     raw_rows = read_attributed_net_outcomes(ledger_path) if ledger_path.exists() else []
     evidence_read_failed = raw_rows is None and ledger_path.exists()
@@ -1815,7 +1919,12 @@ def build_capture_economics(
         repair_summary=repair_summary,
     )
 
-    generated_at = datetime.now(timezone.utc).isoformat()
+    clock = now or datetime.now(timezone.utc)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=timezone.utc)
+    clock = clock.astimezone(timezone.utc)
+    recent_performance = _recent_performance_comparison(rows, as_of=clock)
+    generated_at = clock.isoformat()
     payload = {
         "generated_at_utc": generated_at,
         "status": status,
@@ -1826,6 +1935,7 @@ def build_capture_economics(
         "by_pair_side_exit_reason": by_pair_side_exit,
         "by_pair_side_method_exit_reason": by_pair_side_method_exit,
         "by_iso_week": by_week,
+        "recent_performance": recent_performance,
         "repair_summary": repair_summary,
         "segment_repair_priorities": segment_repair_priorities,
         "action_items": action_items,
@@ -1853,6 +1963,26 @@ def build_capture_economics(
             f"- Avg win / avg loss: `{overall.get('avg_win_jpy')}` / `{overall.get('avg_loss_jpy')}` JPY",
             f"- Payoff ratio: `{overall.get('payoff_ratio')}` (breakeven at win rate: `{overall.get('breakeven_payoff_at_win_rate')}`)",
             f"- Expectancy: `{overall.get('expectancy_jpy_per_trade')}` JPY/trade, net `{overall.get('net_jpy')}` JPY",
+            "",
+            "## Recent Performance (Does Not Replace Lifetime Safety Status)",
+            "",
+            f"- Verdict: `{recent_performance.get('verdict')}`",
+            f"- Recent {RECENT_PERFORMANCE_WINDOW_DAYS}d: "
+            f"trades `{recent_performance['recent_window'].get('trades', 0)}`, "
+            f"expectancy `{recent_performance['recent_window'].get('expectancy_jpy_per_trade')}` JPY, "
+            f"net `{recent_performance['recent_window'].get('net_jpy')}` JPY",
+            f"- Prior {RECENT_PERFORMANCE_WINDOW_DAYS}d: "
+            f"trades `{recent_performance['prior_window'].get('trades', 0)}`, "
+            f"expectancy `{recent_performance['prior_window'].get('expectancy_jpy_per_trade')}` JPY, "
+            f"net `{recent_performance['prior_window'].get('net_jpy')}` JPY",
+            f"- Historical baseline before recent window: "
+            f"trades `{recent_performance['historical_baseline'].get('trades', 0)}`, "
+            f"expectancy `{recent_performance['historical_baseline'].get('expectancy_jpy_per_trade')}` JPY; "
+            f"delta `{recent_performance.get('expectancy_delta_jpy_per_trade')}` JPY/trade",
+            f"- Improvement proven: `{recent_performance.get('improvement_proven')}`; "
+            f"recent sample gap `{recent_performance.get('sample_gap')}`, "
+            f"baseline sample gap `{recent_performance.get('baseline_sample_gap')}`",
+            f"- Proof status: `{recent_performance.get('proof_status')}`; raw JPY point estimates are observation only until normalized edge and statistical lower bounds exist.",
             "",
             "## Repair Summary",
             "",

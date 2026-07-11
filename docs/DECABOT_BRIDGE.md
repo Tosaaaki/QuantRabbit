@@ -46,7 +46,7 @@ separate strategy and should remain off unless explicitly requested.
 ## Weekend Guard
 
 `qr-weekend-market-off` runs every Saturday 06:00 JST and
-`qr-weekend-market-on` runs every Monday 07:00 JST. The shared weekend switcher
+`qr-weekend-market-off` checks Saturday 06:00 and 07:00 JST and pauses only after the DST-aware New York weekly close. `qr-weekend-market-on` checks every Monday at 06:00 and 07:00 JST, restoring at the first DST-aware New York weekly market open. The shared weekend switcher
 snapshots and stops the same DecaBot launchd labels managed by `start` / `stop`:
 
 - `com.decabot.ai`

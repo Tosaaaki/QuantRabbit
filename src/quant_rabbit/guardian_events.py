@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.analysis.market_status import compute_market_status
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import Owner
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
@@ -314,6 +315,29 @@ def evaluate_guardian_escalation(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     now = _utc(now)
     previous = previous_state if isinstance(previous_state, dict) else {}
+    market_status = compute_market_status(now)
+    previous_market_status = (
+        previous.get("market_status")
+        if isinstance(previous.get("market_status"), dict)
+        else {}
+    )
+    previous_generated_at = _parse_utc(previous.get("generated_at_utc"))
+    most_recent_open = _parse_utc(market_status.most_recent_open_utc)
+    previous_has_events = isinstance(previous.get("events"), dict) and bool(
+        previous.get("events")
+    )
+    market_reopened = bool(
+        market_status.is_fx_open
+        and (
+            previous_market_status.get("is_fx_open") is False
+            or (
+                previous_generated_at is not None
+                and most_recent_open is not None
+                and previous_generated_at < most_recent_open
+            )
+            or (previous_has_events and previous_generated_at is None)
+        )
+    )
     previous_events = previous.get("events") if isinstance(previous.get("events"), dict) else {}
     dispatcher = dispatcher_state if isinstance(dispatcher_state, dict) else {}
     reviewed_events = (
@@ -343,6 +367,28 @@ def evaluate_guardian_escalation(
             else prior
         )
         reasons = _wake_reasons_for_event(event, reference)
+        market_closed_tuning_reasons: list[str] = []
+        market_closed_tuning_suppressed = bool(
+            event.event_type in TUNING_ONLY_EVENT_TYPES
+            and not market_status.is_fx_open
+        )
+        if market_closed_tuning_suppressed:
+            # A closed weekly market cannot produce a new tradable candle or
+            # technical price observation.  Keep the event, state, and report
+            # for manual/safety monitoring, but never spend GPT or mint a
+            # tuning obligation from regenerated/stale weekend inputs.
+            market_closed_tuning_reasons = list(reasons)
+            reasons = []
+        elif market_reopened and event.event_type == "TECHNICAL_INPUT_STALE":
+            # Weekend staleness is expected, but the same missing input becomes
+            # actionable operational evidence once the market reopens.  NEW_EVENT
+            # keeps the existing dispatcher contract without turning this into
+            # a market-state tuning work order.
+            reasons = list(
+                dict.fromkeys(
+                    [*reasons, "NEW_EVENT", "MARKET_REOPEN_TECHNICAL_INPUT_STILL_STALE"]
+                )
+            )
         last_wake = _parse_utc((prior or {}).get("last_wake_at_utc"))
         throttle_seconds = _event_throttle_seconds(event)
         bypass_throttle = _event_bypasses_throttle(event, reasons)
@@ -374,14 +420,23 @@ def evaluate_guardian_escalation(
                     and (now - last_wake).total_seconds() < throttle_seconds
                 )
                 diagnostics.extend(_suppressed_price_change_diagnostics(event, reference))
-                suppressed_events.append(
-                    {
-                        **event_payload,
-                        "suppressed_reason": "THROTTLED" if repeated_in_throttle else "NO_STATE_CHANGE",
-                        "throttle_seconds": throttle_seconds,
-                        "last_wake_at_utc": last_wake_at,
-                    }
-                )
+                suppressed_payload = {
+                    **event_payload,
+                    "suppressed_reason": (
+                        "MARKET_CLOSED_TUNING_OBSERVATION"
+                        if market_closed_tuning_suppressed
+                        else "THROTTLED"
+                        if repeated_in_throttle
+                        else "NO_STATE_CHANGE"
+                    ),
+                    "throttle_seconds": throttle_seconds,
+                    "last_wake_at_utc": last_wake_at,
+                }
+                if market_closed_tuning_suppressed:
+                    suppressed_payload["suppressed_wake_reason_codes"] = (
+                        market_closed_tuning_reasons
+                    )
+                suppressed_events.append(suppressed_payload)
         material_reference = (
             material_acknowledged
             or ((prior or {}).get("material_reference") if isinstance((prior or {}).get("material_reference"), dict) else None)
@@ -412,6 +467,7 @@ def evaluate_guardian_escalation(
         "wake_gpt": bool(review_events),
         "model_target": "GPT-5.5",
         "wake_policy": "state_change_only",
+        "market_status": market_status.to_dict(),
         "execution_boundary": {
             "guardian_never_trades": True,
             "gpt_wake_never_calls_oanda_directly": True,
@@ -429,6 +485,7 @@ def evaluate_guardian_escalation(
     }
     next_state = {
         "generated_at_utc": now.isoformat(),
+        "market_status": market_status.to_dict(),
         "events": next_events,
     }
     return escalation, next_state

@@ -250,6 +250,53 @@ class LiveWrapperTest(unittest.TestCase):
             )
             self.assertIn("already consumed as ACCEPTED REQUEST_EVIDENCE", result.stderr)
 
+    def test_stale_codex_market_read_receipt_is_never_overwritten_by_auto_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            data = root / "data"
+            data.mkdir()
+            response = data / "codex_trader_decision_response.json"
+            response.write_text(
+                json.dumps(
+                    {
+                        "action": "WAIT",
+                        "decision_provenance": {"author_kind": "CODEX_MARKET_READ"},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            broker_snapshot = data / "broker_snapshot.json"
+            broker_snapshot.write_text("{}\n")
+            os.utime(response, (100.0, 100.0))
+            os.utime(broker_snapshot, (200.0, 200.0))
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertEqual(_captured_cli_commands(payload)[:2], ["autotrade-cycle", "cycle-sidecars"])
+            self.assertNotIn("trader-draft-decision", payload)
+            self.assertNotIn("gpt-trader-decision", payload)
+            self.assertIn("preserving Codex-authored market-read receipt", result.stderr)
+
     def test_successful_cycle_refreshes_post_gateway_sidecars_under_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

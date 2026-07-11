@@ -626,14 +626,63 @@ def _market_read_review(
     base = {
         "status": "NO_MARKET_READ_SCORE_PATH",
         "total_predictions": 0,
+        "schema_v1_legacy_predictions": 0,
+        "schema_v2_predictions": 0,
+        "legacy_v1_score_eligible_predictions": 0,
+        "legacy_v1_resolved_predictions": 0,
+        "v2_score_eligible_predictions": 0,
+        "v2_score_ineligible_predictions": 0,
         "score_eligible_predictions": 0,
+        "score_ineligible_predictions": 0,
         "geometry_ineligible_predictions": 0,
+        "legacy_v1_geometry_ineligible_predictions": 0,
+        "v2_geometry_ineligible_predictions": 0,
+        "source_snapshot_conflict_predictions": 0,
         "resolved_predictions": 0,
         "pending_predictions": 0,
         "verdict_counts": {},
+        # Compatibility fields are schema-v1 stored target/full verdicts.  They
+        # are deliberately not populated from v2 direction outcomes.
         "accuracy_30m_pct": None,
         "accuracy_2h_pct": None,
         "full_read_accuracy_pct": None,
+        "legacy_v1_full_target_accuracy_30m_pct": None,
+        "legacy_v1_full_target_accuracy_2h_pct": None,
+        "legacy_v1_full_target_accuracy_pct": None,
+        "direction_accuracy_30m_pct": None,
+        "direction_accuracy_2h_pct": None,
+        "target_completion_30m_pct": None,
+        "target_completion_2h_pct": None,
+        "invalidation_touch_30m_pct": None,
+        "invalidation_touch_2h_pct": None,
+        "full_read_completion_30m_pct": None,
+        "full_read_completion_2h_pct": None,
+        "v2_resolved_horizons": 0,
+        "v2_unresolved_horizons": 0,
+        "v2_horizons": {},
+        "direct_origin_counts": {
+            "predictions": 0,
+            "originating_decision_bound": 0,
+            "originating_decision_unbound": 0,
+            "execution_partially_attributed": 0,
+            "execution_unattributed": 0,
+            "realized_outcome_resolved": 0,
+            "realized_outcome_partially_resolved": 0,
+            "realized_outcome_unresolved": 0,
+        },
+        "reaction_chain_counts": {
+            "predictions": 0,
+            "first_subsequent_decision_resolved": 0,
+            "first_subsequent_decision_unresolved": 0,
+            "execution_partially_attributed": 0,
+            "execution_unattributed": 0,
+            "realized_outcome_resolved": 0,
+            "realized_outcome_partially_resolved": 0,
+            "realized_outcome_unresolved": 0,
+        },
+        "v2_truth_source": "MID_CANDLE_DIAGNOSTIC",
+        "v2_read_only": True,
+        "v2_live_permission": False,
         "blocked_but_correct_read_count": 0,
         "wrong_read_traded_count": 0,
         "best_trade_if_forced_correct_count": 0,
@@ -673,34 +722,74 @@ def _market_read_review(
         out.update({"status": "UNREADABLE", "path": str(path), "error": str(exc)})
         return out
 
+    legacy_rows = [row for row in rows if row.get("schema_version") != 2]
+    v2_rows = [row for row in rows if row.get("schema_version") == 2]
     score_rows = [row for row in rows if _market_read_score_eligible(row)]
+    legacy_score_rows = [row for row in legacy_rows if _market_read_score_eligible(row)]
+    v2_score_rows = [row for row in v2_rows if _market_read_score_eligible(row)]
     verdict_counts: dict[str, int] = {}
     for row in score_rows:
-        verdict = str(row.get("verdict") or "PENDING")
+        default_verdict = "UNRESOLVED" if row.get("schema_version") == 2 else "PENDING"
+        verdict = str(row.get("verdict") or default_verdict)
         verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
-    resolved = [row for row in score_rows if str(row.get("verdict") or "PENDING") != "PENDING"]
-    pending = [row for row in score_rows if str(row.get("verdict") or "PENDING") == "PENDING"]
-    resolved_30m = [row for row in score_rows if str(row.get("thirty_minute_verdict") or "PENDING") != "PENDING"]
-    resolved_2h = [row for row in score_rows if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"]
+    legacy_resolved = [
+        row for row in legacy_score_rows if str(row.get("verdict") or "PENDING") != "PENDING"
+    ]
+    legacy_resolved_30m = [
+        row
+        for row in legacy_score_rows
+        if str(row.get("thirty_minute_verdict") or "PENDING") != "PENDING"
+    ]
+    legacy_resolved_2h = [
+        row
+        for row in legacy_score_rows
+        if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"
+    ]
+    v2_horizons = {
+        horizon: _market_read_v2_horizon_review(v2_score_rows, horizon=horizon)
+        for horizon in ("30m", "2h")
+    }
+    direct_origin_counts = _market_read_direct_origin_review(v2_rows)
+    reaction_chain_counts = _market_read_reaction_review(v2_rows)
+    v2_fully_resolved = [
+        row
+        for row in v2_score_rows
+        if all(
+            isinstance(row.get("horizon_results"), dict)
+            and isinstance(row.get("horizon_results", {}).get(horizon), dict)
+            and row.get("horizon_results", {}).get(horizon, {}).get("resolution_status")
+            == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+            for horizon in ("30m", "2h")
+        )
+    ]
+    resolved = [*legacy_resolved, *v2_fully_resolved]
+    pending = [row for row in score_rows if row not in resolved]
 
     blocked_correct = [
-        row for row in resolved
+        row for row in legacy_resolved
         if row.get("verdict") == "CORRECT"
         and (row.get("action") != "TRADE" or row.get("verification_status") != "ACCEPTED")
     ]
     wrong_traded = [
-        row for row in resolved
+        row for row in legacy_resolved
         if row.get("action") == "TRADE"
         and row.get("verification_status") == "ACCEPTED"
         and row.get("verdict") in {"WRONG", "INVALIDATED_FIRST"}
     ]
-    forced_correct = [row for row in resolved if row.get("verdict") in {"CORRECT", "MIXED"}]
-    forced_wrong = [row for row in resolved if row.get("verdict") in {"WRONG", "INVALIDATED_FIRST"}]
+    forced_correct = [
+        row for row in legacy_resolved if row.get("verdict") in {"CORRECT", "MIXED"}
+    ]
+    forced_wrong = [
+        row for row in legacy_resolved if row.get("verdict") in {"WRONG", "INVALIDATED_FIRST"}
+    ]
 
     examples = []
     for row in rows[-8:]:
+        horizon_results = row.get("horizon_results") if isinstance(row.get("horizon_results"), dict) else {}
         examples.append(
             {
+                "schema_version": row.get("schema_version", 1),
+                "prediction_id": row.get("prediction_id"),
                 "generated_at_utc": row.get("generated_at_utc"),
                 "pair": row.get("pair"),
                 "direction": row.get("direction"),
@@ -710,31 +799,81 @@ def _market_read_review(
                 "verdict": row.get("verdict"),
                 "thirty_minute_verdict": row.get("thirty_minute_verdict"),
                 "two_hour_verdict": row.get("two_hour_verdict"),
+                "horizon_results": horizon_results,
+                "originating_decision_receipt_id": row.get(
+                    "originating_decision_receipt_id"
+                ),
+                "direct_execution_attribution": row.get(
+                    "direct_execution_attribution"
+                ),
+                "direct_realized_outcome": row.get("direct_realized_outcome"),
+                "reaction_chain": row.get("reaction_chain"),
             }
         )
+
+    legacy_accuracy_30m = _pct(
+        sum(1 for row in legacy_resolved_30m if row.get("thirty_minute_verdict") == "CORRECT"),
+        len(legacy_resolved_30m),
+    )
+    legacy_accuracy_2h = _pct(
+        sum(1 for row in legacy_resolved_2h if row.get("two_hour_verdict") == "CORRECT"),
+        len(legacy_resolved_2h),
+    )
+    legacy_full_accuracy = _pct(
+        sum(1 for row in legacy_resolved if row.get("verdict") == "CORRECT"),
+        len(legacy_resolved),
+    )
 
     return {
         "status": "OK" if not malformed else "WARN_MALFORMED_ROWS",
         "path": str(path),
         "malformed_rows": malformed,
         "total_predictions": len(rows),
+        "schema_v1_legacy_predictions": len(legacy_rows),
+        "schema_v2_predictions": len(v2_rows),
+        "legacy_v1_score_eligible_predictions": len(legacy_score_rows),
+        "legacy_v1_resolved_predictions": len(legacy_resolved),
+        "v2_score_eligible_predictions": len(v2_score_rows),
+        "v2_score_ineligible_predictions": len(v2_rows) - len(v2_score_rows),
         "score_eligible_predictions": len(score_rows),
-        "geometry_ineligible_predictions": len(rows) - len(score_rows),
+        "score_ineligible_predictions": len(rows) - len(score_rows),
+        "geometry_ineligible_predictions": sum(
+            _market_read_geometry_ineligible(row) for row in rows
+        ),
+        "legacy_v1_geometry_ineligible_predictions": sum(
+            _market_read_geometry_ineligible(row) for row in legacy_rows
+        ),
+        "v2_geometry_ineligible_predictions": sum(
+            _market_read_geometry_ineligible(row) for row in v2_rows
+        ),
+        "source_snapshot_conflict_predictions": sum(
+            bool(row.get("source_snapshot_conflict")) for row in v2_rows
+        ),
         "resolved_predictions": len(resolved),
         "pending_predictions": len(pending),
         "verdict_counts": verdict_counts,
-        "accuracy_30m_pct": _pct(
-            sum(1 for row in resolved_30m if row.get("thirty_minute_verdict") == "CORRECT"),
-            len(resolved_30m),
-        ),
-        "accuracy_2h_pct": _pct(
-            sum(1 for row in resolved_2h if row.get("two_hour_verdict") == "CORRECT"),
-            len(resolved_2h),
-        ),
-        "full_read_accuracy_pct": _pct(
-            sum(1 for row in resolved if row.get("verdict") == "CORRECT"),
-            len(resolved),
-        ),
+        "accuracy_30m_pct": legacy_accuracy_30m,
+        "accuracy_2h_pct": legacy_accuracy_2h,
+        "full_read_accuracy_pct": legacy_full_accuracy,
+        "legacy_v1_full_target_accuracy_30m_pct": legacy_accuracy_30m,
+        "legacy_v1_full_target_accuracy_2h_pct": legacy_accuracy_2h,
+        "legacy_v1_full_target_accuracy_pct": legacy_full_accuracy,
+        "direction_accuracy_30m_pct": v2_horizons["30m"]["direction_accuracy_pct"],
+        "direction_accuracy_2h_pct": v2_horizons["2h"]["direction_accuracy_pct"],
+        "target_completion_30m_pct": v2_horizons["30m"]["target_completion_pct"],
+        "target_completion_2h_pct": v2_horizons["2h"]["target_completion_pct"],
+        "invalidation_touch_30m_pct": v2_horizons["30m"]["invalidation_touch_pct"],
+        "invalidation_touch_2h_pct": v2_horizons["2h"]["invalidation_touch_pct"],
+        "full_read_completion_30m_pct": v2_horizons["30m"]["full_read_completion_pct"],
+        "full_read_completion_2h_pct": v2_horizons["2h"]["full_read_completion_pct"],
+        "v2_resolved_horizons": sum(item["resolved"] for item in v2_horizons.values()),
+        "v2_unresolved_horizons": sum(item["unresolved"] for item in v2_horizons.values()),
+        "v2_horizons": v2_horizons,
+        "direct_origin_counts": direct_origin_counts,
+        "reaction_chain_counts": reaction_chain_counts,
+        "v2_truth_source": "MID_CANDLE_DIAGNOSTIC",
+        "v2_read_only": True,
+        "v2_live_permission": False,
         "blocked_but_correct_read_count": len(blocked_correct),
         "wrong_read_traded_count": len(wrong_traded),
         "best_trade_if_forced_correct_count": len(forced_correct),
@@ -742,6 +881,167 @@ def _market_read_review(
         "codex_vs_operator_manual_trade": "UNKNOWN_NO_OPERATOR_MANUAL_COMPARISON",
         "examples": examples,
     }
+
+
+_MARKET_READ_FULL_SUCCESS = frozenset({"TARGET_FIRST", "TARGET_ONLY", "RANGE_CONTAINED"})
+
+
+def _market_read_v2_horizon_review(
+    rows: list[dict[str, Any]],
+    *,
+    horizon: str,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        horizon_results = (
+            row.get("horizon_results")
+            if isinstance(row.get("horizon_results"), dict)
+            else {}
+        )
+        result = horizon_results.get(horizon)
+        results.append(result if isinstance(result, dict) else {})
+    resolved = [
+        result
+        for result in results
+        if result.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+    ]
+    direction = [result for result in resolved if result.get("direction_status") in {"CORRECT", "WRONG"}]
+    target = [
+        result
+        for result in resolved
+        if result.get("target_completion_status") in {"TOUCHED", "NOT_TOUCHED"}
+    ]
+    invalidation = [
+        result
+        for result in resolved
+        if result.get("invalidation_status") in {"TOUCHED", "NOT_TOUCHED"}
+    ]
+    full = [
+        result
+        for result in resolved
+        if not str(result.get("full_read_status") or "").startswith("UNSCORABLE")
+    ]
+    first_touch_counts: dict[str, int] = {}
+    for result in resolved:
+        status = str(result.get("first_touch_status") or "UNRESOLVED")
+        first_touch_counts[status] = first_touch_counts.get(status, 0) + 1
+    return {
+        "resolved": len(resolved),
+        "unresolved": len(results) - len(resolved),
+        "direction_scoreable": len(direction),
+        "direction_correct": sum(result.get("direction_status") == "CORRECT" for result in direction),
+        "direction_accuracy_pct": _pct(
+            sum(result.get("direction_status") == "CORRECT" for result in direction),
+            len(direction),
+        ),
+        "target_scoreable": len(target),
+        "target_touched": sum(result.get("target_completion_status") == "TOUCHED" for result in target),
+        "target_completion_pct": _pct(
+            sum(result.get("target_completion_status") == "TOUCHED" for result in target),
+            len(target),
+        ),
+        "invalidation_scoreable": len(invalidation),
+        "invalidation_touched": sum(
+            result.get("invalidation_status") == "TOUCHED" for result in invalidation
+        ),
+        "invalidation_touch_pct": _pct(
+            sum(result.get("invalidation_status") == "TOUCHED" for result in invalidation),
+            len(invalidation),
+        ),
+        "full_read_scoreable": len(full),
+        "full_read_complete": sum(
+            result.get("full_read_status") in _MARKET_READ_FULL_SUCCESS for result in full
+        ),
+        "full_read_completion_pct": _pct(
+            sum(result.get("full_read_status") in _MARKET_READ_FULL_SUCCESS for result in full),
+            len(full),
+        ),
+        "first_touch_counts": first_touch_counts,
+    }
+
+
+def _market_read_direct_origin_review(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count same-row decision execution without mixing in later reactions."""
+
+    counts = {
+        "predictions": len(rows),
+        "originating_decision_bound": 0,
+        "originating_decision_unbound": 0,
+        "execution_partially_attributed": 0,
+        "execution_unattributed": 0,
+        "realized_outcome_resolved": 0,
+        "realized_outcome_partially_resolved": 0,
+        "realized_outcome_unresolved": 0,
+    }
+    for row in rows:
+        origin_bound = bool(str(row.get("originating_decision_receipt_id") or "").strip())
+        attribution = (
+            row.get("direct_execution_attribution")
+            if isinstance(row.get("direct_execution_attribution"), dict)
+            else {}
+        )
+        realized = (
+            row.get("direct_realized_outcome")
+            if isinstance(row.get("direct_realized_outcome"), dict)
+            else {}
+        )
+        counts[
+            "originating_decision_bound"
+            if origin_bound
+            else "originating_decision_unbound"
+        ] += 1
+        counts[
+            "execution_partially_attributed"
+            if str(attribution.get("status") or "UNATTRIBUTED")
+            == "PARTIALLY_ATTRIBUTED"
+            else "execution_unattributed"
+        ] += 1
+        realized_status = str(realized.get("status") or "UNRESOLVED")
+        if realized_status == "RESOLVED":
+            counts["realized_outcome_resolved"] += 1
+        elif realized_status == "PARTIALLY_RESOLVED":
+            counts["realized_outcome_partially_resolved"] += 1
+        else:
+            counts["realized_outcome_unresolved"] += 1
+    return counts
+
+
+def _market_read_reaction_review(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        "predictions": len(rows),
+        "first_subsequent_decision_resolved": 0,
+        "first_subsequent_decision_unresolved": 0,
+        "execution_partially_attributed": 0,
+        "execution_unattributed": 0,
+        "realized_outcome_resolved": 0,
+        "realized_outcome_partially_resolved": 0,
+        "realized_outcome_unresolved": 0,
+    }
+    for row in rows:
+        chain = row.get("reaction_chain") if isinstance(row.get("reaction_chain"), dict) else {}
+        decision = chain.get("first_subsequent_decision") if isinstance(chain.get("first_subsequent_decision"), dict) else {}
+        attribution = chain.get("execution_attribution") if isinstance(chain.get("execution_attribution"), dict) else {}
+        realized = chain.get("realized_outcome") if isinstance(chain.get("realized_outcome"), dict) else {}
+        decision_status = str(decision.get("status") or "UNRESOLVED")
+        attribution_status = str(attribution.get("status") or "UNATTRIBUTED")
+        realized_status = str(realized.get("status") or "UNRESOLVED")
+        counts[
+            "first_subsequent_decision_resolved"
+            if decision_status == "RESOLVED"
+            else "first_subsequent_decision_unresolved"
+        ] += 1
+        counts[
+            "execution_partially_attributed"
+            if attribution_status == "PARTIALLY_ATTRIBUTED"
+            else "execution_unattributed"
+        ] += 1
+        if realized_status == "RESOLVED":
+            counts["realized_outcome_resolved"] += 1
+        elif realized_status == "PARTIALLY_RESOLVED":
+            counts["realized_outcome_partially_resolved"] += 1
+        else:
+            counts["realized_outcome_unresolved"] += 1
+    return counts
 
 
 _MARKET_READ_GEOMETRY_ISSUE_CODES = frozenset(
@@ -793,11 +1093,23 @@ def _market_read_score_eligible(row: dict[str, Any]) -> bool:
     return row.get("score_eligible") is not False
 
 
+def _market_read_geometry_ineligible(row: dict[str, Any]) -> bool:
+    reasons = {str(reason) for reason in row.get("score_ineligible_reasons", []) or []}
+    if any("GEOMETRY" in reason for reason in reasons):
+        return True
+    # Re-run only the geometry portion for legacy rows that predate structured
+    # ineligibility reasons.  Setting the explicit flag true prevents a source
+    # snapshot conflict (a different exclusion class) from being mislabelled.
+    geometry_probe = dict(row)
+    geometry_probe["score_eligible"] = True
+    return not _market_read_score_eligible(geometry_probe)
+
+
 def _market_read_numbers(value: object) -> list[float]:
     import re
 
     values: list[float] = []
-    for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", str(value or "")):
+    for match in re.finditer(r"(?<![\d.])[-+]?\d+(?:\.\d+)?", str(value or "")):
         try:
             values.append(float(match.group(0)))
         except ValueError:
@@ -809,9 +1121,9 @@ def _market_read_target_wrong_side(direction: str, basis: float, prices: list[fl
     if not prices:
         return False
     if direction in {"LONG", "BUY", "UP", "BULL", "BULLISH"}:
-        return max(prices) <= basis
+        return min(prices) <= basis
     if direction in {"SHORT", "SELL", "DOWN", "BEAR", "BEARISH"}:
-        return min(prices) >= basis
+        return max(prices) >= basis
     return False
 
 
@@ -819,9 +1131,9 @@ def _market_read_invalidation_wrong_side(direction: str, basis: float, prices: l
     if not prices:
         return False
     if direction in {"LONG", "BUY", "UP", "BULL", "BULLISH"}:
-        return min(prices) >= basis
+        return max(prices) >= basis
     if direction in {"SHORT", "SELL", "DOWN", "BEAR", "BEARISH"}:
-        return max(prices) <= basis
+        return min(prices) <= basis
     return False
 
 
@@ -1083,16 +1395,39 @@ def compute_daily_review(
             f"{float(latest_alpha.get('realized_pl_jpy') or 0.0):+.0f}JPY "
             f"({latest_alpha.get('classification') or 'USER_ALPHA'})"
         )
-    if market_read.get("total_predictions"):
-        eligible_predictions = market_read.get(
-            "score_eligible_predictions",
-            market_read.get("total_predictions", 0),
-        )
+    if market_read.get("schema_v2_predictions"):
+        direct_counts = market_read.get("direct_origin_counts", {})
+        reaction_counts = market_read.get("reaction_chain_counts", {})
         parts.append(
-            "market-read: "
-            f"{market_read.get('resolved_predictions', 0)}/{eligible_predictions} score-eligible resolved "
-            f"excluded_geometry={market_read.get('geometry_ineligible_predictions', 0)} "
-            f"full_accuracy={market_read.get('full_read_accuracy_pct')}"
+            "market-read-v2: "
+            f"30m direction={market_read.get('direction_accuracy_30m_pct')} "
+            f"target={market_read.get('target_completion_30m_pct')} "
+            f"full={market_read.get('full_read_completion_30m_pct')}; "
+            f"2h direction={market_read.get('direction_accuracy_2h_pct')} "
+            f"target={market_read.get('target_completion_2h_pct')} "
+            f"full={market_read.get('full_read_completion_2h_pct')} "
+            f"resolved_horizons={market_read.get('v2_resolved_horizons', 0)} "
+            "truth=MID_CANDLE_DIAGNOSTIC live_permission=false "
+            f"direct_origin={direct_counts.get('originating_decision_bound', 0)}/"
+            f"{direct_counts.get('predictions', 0)} "
+            "direct_execution_partially_attributed="
+            f"{direct_counts.get('execution_partially_attributed', 0)} "
+            f"direct_realized={direct_counts.get('realized_outcome_resolved', 0)} "
+            f"direct_realized_partial={direct_counts.get('realized_outcome_partially_resolved', 0)}; "
+            f"prior_reaction_decision={reaction_counts.get('first_subsequent_decision_resolved', 0)}/"
+            f"{reaction_counts.get('predictions', 0)} "
+            "prior_reaction_execution_partially_attributed="
+            f"{reaction_counts.get('execution_partially_attributed', 0)} "
+            f"prior_reaction_realized={reaction_counts.get('realized_outcome_resolved', 0)}"
+        )
+    if market_read.get("schema_v1_legacy_predictions"):
+        legacy_eligible = market_read.get("legacy_v1_score_eligible_predictions", 0)
+        parts.append(
+            "market-read legacy-v1: "
+            f"{market_read.get('legacy_v1_resolved_predictions', 0)}/{legacy_eligible} resolved "
+            f"excluded_geometry={market_read.get('legacy_v1_geometry_ineligible_predictions', 0)} "
+            f"full_target_accuracy={market_read.get('legacy_v1_full_target_accuracy_pct')} "
+            "(not direction accuracy)"
         )
     if not parts:
         parts.append(f"no decisive (pair, direction) signal in last {lookback_hours:.0f}h")

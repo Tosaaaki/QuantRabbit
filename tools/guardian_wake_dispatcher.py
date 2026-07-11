@@ -155,6 +155,28 @@ _TUNING_ADJUSTMENT_FIELDS = {
     "candidate_value",
     "rationale",
 }
+_TUNING_ACQUISITION_FIELDS = {
+    "action_kind",
+    "source_ref",
+    "required_new_samples",
+    "success_condition",
+}
+_TUNING_ACQUISITION_ACTION_KINDS = {
+    "ADD_PREENTRY_SIGNAL_LOG",
+    "BUILD_BID_ASK_REPLAY",
+    "COLLECT_FORWARD_ENTRIES",
+    "REFRESH_CLOSED_CANDLES",
+    "RESOLVE_ATTRIBUTED_OUTCOMES",
+}
+_TUNING_VAGUE_ACQUISITION_TEXT = {
+    "collect more",
+    "collect more evidence",
+    "later",
+    "monitor",
+    "observe",
+    "tbd",
+    "wait",
+}
 _TUNING_FORBIDDEN_PARAMETER_TOKENS = {
     "oanda",
     "gateway",
@@ -3317,7 +3339,14 @@ def enrich_tuning_work_order_review(
     reviewed_by: str,
     now: datetime,
 ) -> dict[str, Any]:
-    """Monotonically bind a current observation to a safe TEST_REQUIRED review."""
+    """Monotonically bind a current observation to one safe structured review.
+
+    A conservative ``NO_CHANGE_INSUFFICIENT_EVIDENCE`` review is durable work:
+    it records the exact evidence acquisition step without pretending that an
+    experiment is ready.  The same review is idempotent, and the only allowed
+    status change for one pending work order is the monotonic
+    ``NO_CHANGE_INSUFFICIENT_EVIDENCE`` -> ``TEST_REQUIRED`` upgrade.
+    """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(f"{path.name}.lock")
@@ -3380,9 +3409,10 @@ def enrich_tuning_work_order_review(
             if isinstance(validation.get("review"), dict)
             else {}
         )
+        incoming_status = str(normalized_review.get("review_status") or "").upper()
         if (
             validation.get("status") != "VALID"
-            or str(normalized_review.get("review_status") or "").upper() != "TEST_REQUIRED"
+            or incoming_status not in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
         ):
             return {
                 "status": "STRUCTURED_REVIEW_REQUIRED",
@@ -3399,7 +3429,9 @@ def enrich_tuning_work_order_review(
         )
         current_status = str(current_review.get("review_status") or "").upper()
         same_review = bool(
-            current_status == "TEST_REQUIRED"
+            current_status == incoming_status
+            and current_status
+            in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
             and _tuning_review_digest(current_review)
             == _tuning_review_digest(normalized_review)
             and str(current.get("latest_reviewed_observation_id") or "")
@@ -3422,16 +3454,33 @@ def enrich_tuning_work_order_review(
             == latest_observation_id
         )
         if (
-            str(current_validation.get("status") or "").upper() == "VALID"
-            and current_status not in {"", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
+            current_status == "TEST_REQUIRED"
+            and incoming_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
             and current_review_bound_to_latest
-            and current.get("review_reacquisition_required_after_abort") is not True
         ):
             return {
                 "status": "WORK_ORDER_REVIEW_CONFLICT",
                 "path": str(path),
                 "work_order_id": work_order_id,
                 "current_review_status": current_status,
+                "incoming_review_status": incoming_status,
+                "retry_required": True,
+            }
+        if (
+            str(current_validation.get("status") or "").upper() == "VALID"
+            and current_review_bound_to_latest
+            and current.get("review_reacquisition_required_after_abort") is not True
+            and not (
+                current_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+                and incoming_status == "TEST_REQUIRED"
+            )
+        ):
+            return {
+                "status": "WORK_ORDER_REVIEW_CONFLICT",
+                "path": str(path),
+                "work_order_id": work_order_id,
+                "current_review_status": current_status,
+                "incoming_review_status": incoming_status,
                 "retry_required": True,
             }
         updated = {
@@ -5765,8 +5814,17 @@ def _maybe_write_tuning_work_order_locked(
             and str(incoming_review.get("review_status") or "").upper()
             == "TEST_REQUIRED"
         )
+        review_downgrade = bool(
+            str(current_validation.get("status") or "").upper() == "VALID"
+            and str(current_review.get("review_status") or "").upper()
+            == "TEST_REQUIRED"
+            and str(incoming_review.get("review_status") or "").upper()
+            == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+            and not current_observation_needs_review
+        )
         if (
             incoming_review_validation.get("status") == "VALID"
+            and not review_downgrade
             and (
                 str(current_validation.get("status") or "").upper() != "VALID"
                 or current_observation_needs_review
@@ -5836,6 +5894,18 @@ def _maybe_write_tuning_work_order_locked(
             updated.get("latest_observation_id") == observation_id
             and updated.get("latest_reviewed_observation_id") != observation_id
         )
+        if review_downgrade:
+            return {
+                "status": "STRUCTURED_REVIEW_REQUIRED",
+                "work_order_id": updated.get("work_order_id") or work_order_id,
+                "path": str(path),
+                "event_fingerprint": updated.get("event_fingerprint") or observation_id,
+                "semantic_state_id": semantic_state_id,
+                "observation_id": observation_id,
+                "bot_tuning_review_status": "REVIEW_DOWNGRADE_FORBIDDEN",
+                "pending_count": len(pending_existing),
+                "retry_required": True,
+            }
         if incoming_review_validation.get("status") != "VALID":
             return {
                 "status": "STRUCTURED_REVIEW_REQUIRED",
@@ -6982,6 +7052,70 @@ def _validate_bot_tuning_review(
                 )
     if review_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE" and proposed_adjustments:
         issues.append("NO_CHANGE_INSUFFICIENT_EVIDENCE cannot carry proposed_adjustments")
+    acquisition_value = value.get("evidence_acquisition")
+    normalized_acquisition: dict[str, Any] | None = None
+    if acquisition_value is not None:
+        prefix = "bot_tuning_review evidence_acquisition"
+        if not isinstance(acquisition_value, dict):
+            issues.append(f"{prefix} must be an object")
+        else:
+            unexpected = sorted(set(acquisition_value) - _TUNING_ACQUISITION_FIELDS)
+            if unexpected:
+                issues.append(f"{prefix} contains unknown fields: {','.join(unexpected)}")
+            missing = sorted(_TUNING_ACQUISITION_FIELDS - set(acquisition_value))
+            if missing:
+                issues.append(f"{prefix} is missing fields: {','.join(missing)}")
+            action_kind = str(acquisition_value.get("action_kind") or "").strip().upper()
+            source_ref = str(acquisition_value.get("source_ref") or "").strip()
+            required_new_samples = acquisition_value.get("required_new_samples")
+            success_condition = str(
+                acquisition_value.get("success_condition") or ""
+            ).strip()
+            if action_kind not in _TUNING_ACQUISITION_ACTION_KINDS:
+                issues.append(f"{prefix} action_kind is not allowlisted")
+            source_parts = Path(source_ref).parts if source_ref else ()
+            if (
+                not source_ref
+                or source_ref.startswith("/")
+                or not source_parts
+                or source_parts[0] not in {"data", "logs"}
+                or ".." in source_parts
+                or len(source_ref) > 256
+                or re.fullmatch(r"[A-Za-z0-9_./:#-]+", source_ref) is None
+            ):
+                issues.append(
+                    f"{prefix} source_ref must be a bounded project-relative data/ or logs/ reference"
+                )
+            if (
+                isinstance(required_new_samples, bool)
+                or not isinstance(required_new_samples, int)
+                or not (1 <= required_new_samples <= 1000)
+            ):
+                issues.append(f"{prefix} required_new_samples must be an integer within 1..1000")
+            if (
+                len(success_condition) < 24
+                or len(success_condition) > 500
+                or success_condition.lower() in _TUNING_VAGUE_ACQUISITION_TEXT
+                or _unsafe_tuning_instruction(success_condition)
+            ):
+                issues.append(
+                    f"{prefix} success_condition must be exact, bounded, and non-executing"
+                )
+            acquisition_issue_prefix = f"{prefix} "
+            if not any(message.startswith(acquisition_issue_prefix) for message in issues):
+                normalized_acquisition = {
+                    "action_kind": action_kind,
+                    "source_ref": source_ref,
+                    "required_new_samples": required_new_samples,
+                    "success_condition": success_condition,
+                }
+    if (
+        review_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+        and normalized_acquisition is None
+    ):
+        issues.append(
+            "NO_CHANGE_INSUFFICIENT_EVIDENCE requires one structured evidence_acquisition"
+        )
     if len(normalized_families) != 1:
         issues.append("bot_tuning_review must name exactly one affected bot family")
     if review_status == "TEST_REQUIRED" and len(proposed_adjustments or []) != 1:
@@ -7004,6 +7138,8 @@ def _validate_bot_tuning_review(
         "no_direct_oanda": True,
         "preserve_blockers": True,
     }
+    if normalized_acquisition is not None:
+        review["evidence_acquisition"] = normalized_acquisition
     return {"status": "VALID", "issues": [], "review": review}
 
 

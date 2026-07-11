@@ -6,7 +6,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
+
+from quant_rabbit.weekend_task_switch import switch_tasks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +82,63 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
+
+    def test_scheduled_restore_waits_for_dst_aware_market_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            self.assertEqual(_run_switch("pause", env).returncode, 0)
+
+            with mock.patch.dict(os.environ, env, clear=True):
+                waiting = switch_tasks(
+                    "restore",
+                    require_market_open=True,
+                    now=datetime(2026, 1, 11, 21, 0, tzinfo=timezone.utc),
+                )
+                mode_after_wait = json.loads(state_file.read_text())["mode"]
+                restored = switch_tasks(
+                    "restore",
+                    require_market_open=True,
+                    now=datetime(2026, 1, 11, 22, 0, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(waiting["status"], "WAITING_FOR_MARKET_OPEN")
+            self.assertEqual(waiting["changed_count"], 0)
+            self.assertFalse(waiting["market_status"]["is_fx_open"])
+            self.assertEqual(mode_after_wait, "paused")
+            self.assertEqual(json.loads(state_file.read_text())["mode"], "restored")
+            self.assertEqual(restored["status"], "OK")
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
+
+    def test_scheduled_pause_keeps_the_last_winter_market_hour(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+
+            with mock.patch.dict(os.environ, env, clear=True):
+                waiting = switch_tasks(
+                    "pause",
+                    require_market_closed=True,
+                    now=datetime(2026, 1, 9, 21, 0, tzinfo=timezone.utc),
+                )
+                state_existed_before_close = state_file.exists()
+                paused = switch_tasks(
+                    "pause",
+                    require_market_closed=True,
+                    now=datetime(2026, 1, 9, 22, 0, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(waiting["status"], "WAITING_FOR_MARKET_CLOSE")
+            self.assertEqual(waiting["changed_count"], 0)
+            self.assertTrue(waiting["market_status"]["is_fx_open"])
+            self.assertFalse(state_existed_before_close)
+            self.assertEqual(paused["status"], "OK")
+            self.assertEqual(json.loads(state_file.read_text())["mode"], "paused")
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "PAUSED")
 
     def test_restore_reconciles_drift_after_snapshot_was_already_restored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

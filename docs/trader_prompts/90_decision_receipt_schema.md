@@ -1,8 +1,11 @@
 # Decision Receipt Schema
 
-Write `data/codex_trader_decision_response.json`. In scheduled automation,
-`trader-draft-decision` is the default read-only composer; the final authority
-is still `gpt-trader-decision` plus `LiveOrderGateway`.
+Do not hand-write `data/codex_trader_decision_response.json`. In scheduled
+automation, `trader-draft-decision` writes `data/trader_decision_baseline.json`
+and `data/market_read_evidence_packet.json`; Codex writes only
+`data/codex_market_read_overlay.json`; and `trader-apply-market-read` publishes
+the merged response. Final authority remains `gpt-trader-decision` plus
+`LiveOrderGateway`.
 
 ```json
 {
@@ -25,29 +28,63 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
       "pair": "EUR_USD",
       "direction": "LONG",
       "expected_path": "Hold the shelf and press toward the nearest liquidity pocket.",
-      "target_zone": "current target zone from the packet",
-      "invalidation": "current invalidation from the packet"
+      "target_zone": "1.1740 to 1.1750",
+      "invalidation": "1.1700"
     },
     "next_2h_prediction": {
       "pair": "EUR_USD",
       "direction": "LONG",
       "expected_path": "Extend only if the H1/H4 thesis remains alive.",
-      "target_zone": "current 2h target zone from the packet",
-      "invalidation": "current 2h invalidation from the packet"
+      "target_zone": "1.1760 to 1.1780",
+      "invalidation": "1.1685"
     },
     "best_trade_if_forced": {
       "pair": "EUR_USD",
       "direction": "LONG",
       "vehicle": "STOP",
-      "entry": "current broker-refreshed entry only",
-      "tp": "current TP from packet",
-      "sl": "current invalidation/emergency stop from packet",
+      "entry": "1.1730",
+      "tp": "1.1760",
+      "sl": "1.1700",
       "why_this_pays": "It pays only if the naked 30m/2h read reaches target before invalidation."
     }
   },
+  "decision_provenance": {
+    "schema_version": 1,
+    "author_kind": "CODEX_MARKET_READ",
+    "model": "gpt-5.5",
+    "reasoning_effort": "high",
+    "authored_at_utc": "2026-06-08T12:31:50Z",
+    "applied_at_utc": "2026-06-08T12:32:26Z",
+    "baseline_sha256": "<64hex>",
+    "evidence_packet_sha256": "<64hex>",
+    "overlay_sha256": "<64hex>",
+    "market_read_sha256": "<64hex>",
+    "execution_envelope_sha256": "<64hex>",
+    "baseline_execution_envelope_sha256": "<64hex>",
+    "final_execution_envelope_sha256": "<64hex>",
+    "baseline_action": "TRADE",
+    "final_action": "TRADE",
+    "baseline_selected_lane_ids": ["desk:PAIR:SIDE:METHOD"],
+    "baseline_disposition": "ACCEPT_BASELINE",
+    "action_downgrade_only": false,
+    "execution_fields_preserved": true,
+    "risk_envelope_not_expanded": true,
+    "live_permission_granted": false
+  },
+  "market_read_review": {
+    "prior_prediction_ids": ["mr2:<sha256>"],
+    "what_failed": "The prior 30m direction was correct but invalidation touched first.",
+    "adjustment": "Require the current shelf to hold before accepting the baseline trigger.",
+    "no_change_reason": ""
+  },
+  "market_read_counterargument": "The lift can fail back below 1.1700 before reaching target.",
+  "market_read_change_summary": "Moved target and invalidation to current quote-relative numeric levels.",
+  "market_read_disposition": "ACCEPT_BASELINE",
+  "market_read_veto_reason": "",
+  "market_read_vetoed_lane_ids": [],
   "action": "TRADE",
   "selected_lane_id": "desk:PAIR:SIDE:METHOD",
-  "selected_lane_ids": ["desk:PAIR:SIDE:METHOD", "desk:PAIR:SIDE:METHOD:MARKET"],
+  "selected_lane_ids": ["desk:PAIR:SIDE:METHOD"],
   "cancel_order_ids": [],
   "confidence": "HIGH",
   "thesis": "...",
@@ -136,15 +173,23 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
 - Specialist `role`: `macro_news`, `indicator`, `flow_levels`, `risk_audit`, `strategy`, `portfolio_context`
 - `strategy_reviews[].verdict` and `specialist_reviews[].verdict`: `SUPPORTS`, `REJECTS`, `BLOCKED`, `WATCH`. Do not encode gate reasons in the verdict string; put gate details such as `CLOSE_OPERATOR_AUTH_REQUIRED` or `NO_LIVE_READY_LANES` in `hard_gate_codes`.
 - `market_read_first.naked_read.thesis_state`: `ALIVE`, `WOUNDED`, `INVALIDATED`, `EMERGENCY`, or `UNKNOWN`.
+- `market_read_disposition`: `ACCEPT_BASELINE`, `VETO_WAIT`, or `VETO_REQUEST_EVIDENCE`. A veto is valid only when the deterministic baseline action was `TRADE`; it clears final selected lanes while preserving their ids in `market_read_vetoed_lane_ids`.
+- `decision_provenance.author_kind=CODEX_MARKET_READ` is mandatory for final `TRADE`. Its model, age, market-read digest, final execution-envelope digest, transition, and no-permission/no-risk-expansion flags must validate.
+- A current market-read receipt binds one primary pair, side, and lane. For `TRADE`, `selected_lane_ids` must contain exactly one item equal to `selected_lane_id`. A different or additional lane requires a fresh broker/evidence snapshot, GPT wake, overlay, verification, and receipt; downstream expansion, substitution, or deterministic recovery is forbidden.
 - `twenty_minute_plan.horizon_minutes`: `60` for `TRADE`, `WAIT`, and `REQUEST_EVIDENCE`; the field name is retained for compatibility, and this is the scheduled hourly decision cadence, not a market-derived holding target.
-- `cancel_order_ids` on `TRADE` or `CANCEL_PENDING` is allowed only for current trader-owned pending entry ids from the broker snapshot. For `TRADE`, the gateway cancels those ids before validating the selected basket, so use it only when replacing stale or lower-priority pending exposure with a current tradeable basket. For `CANCEL_PENDING`, the gateway cycle cancels the verified ids and sends no fresh entry in that same cycle.
+- `cancel_order_ids` on `TRADE` or `CANCEL_PENDING` is allowed only for current trader-owned pending entry ids from the broker snapshot. For `TRADE`, the gateway cancels those ids before validating the exact single selected lane, so use it only when replacing stale or lower-priority pending exposure with that current lane. For `CANCEL_PENDING`, the gateway cycle cancels the verified ids and sends no fresh entry in that same cycle.
 - `close_trade_ids` is allowed only with `action=CLOSE`. `TRADE` with `close_trade_ids` is rejected; loss-cut and re-entry must be separated by a fresh broker snapshot / intent cycle.
+
+Measurement output keeps two lineages separate. A schema-v2 prediction row's top-level `originating_decision_receipt_id`, `direct_execution_attribution`, and `direct_realized_outcome` describe that same row's originating `gptd:` receipt and exact `(gptd, mr2)` execution/P&L. Its `reaction_chain.first_subsequent_decision`, reaction execution attribution, and reaction realized outcome describe the next recorded decision after the prior prediction. Neither path may join by pair/time proximity, and reaction evidence must never be presented as the originating prediction's own execution or P/L. A pending LIMIT/STOP order may later extend from its exact gateway order id to an execution-ledger trade id only through exact `ORDER_FILLED.order_id` equality.
 
 ## Verifier Rejection Triggers
 
 - Unknown evidence refs.
 - Missing or unparseable `generated_at_utc`.
 - Missing, incomplete, or blocker-first `market_read_first`.
+- Deterministic `TRADE` without fresh valid `CODEX_MARKET_READ` provenance (`AI_MARKET_READ_REQUIRED`).
+- Codex read with missing/non-numeric/wrong-side target, invalidation, forced entry/TP/SL, or invalid `RANGE` rails.
+- Missing latest truly resolved score-eligible prior prediction review, missing counterargument/change summary, stale baseline/evidence SHA, changed execution envelope, or invalid accept/veto transition.
 - `market_read_first.naked_read` omits cleanest theme expression, 24h location,
   H1/H4 alignment, known winning trade-shape match, proposed building-style
   allowance, thesis state, or tape state.

@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from typing import Any
 from unittest.mock import patch
 
 import quant_rabbit.broker.execution as execution_module
+import quant_rabbit.decision_execution_lineage as lineage_module
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.forecast_precision import (
@@ -1054,7 +1056,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 confirm_live=True,
             )
             staged = json.loads((root / "request.json").read_text())
-            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+            with closing(sqlite3.connect(data_root / "execution_ledger.db")) as con, con:
                 claims = con.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -1420,7 +1422,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             staged = json.loads((root / "request.json").read_text())
             self.assertTrue(staged["predictive_scout_receipt_durable"])
-            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+            with closing(sqlite3.connect(data_root / "execution_ledger.db")) as con, con:
                 row = con.execute(
                     "SELECT payload_json FROM gateway_receipts WHERE sent = 1"
                 ).fetchone()
@@ -1469,7 +1471,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
             self.assertEqual(len(client.orders), 1)
             self.assertFalse((root / "request.json").exists())
-            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+            with closing(sqlite3.connect(data_root / "execution_ledger.db")) as con, con:
                 row = con.execute(
                     """
                     SELECT event_type, client_order_id, raw_json
@@ -1522,7 +1524,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 confirm_live=True,
             )
             payload = json.loads((root / "request.json").read_text())
-            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+            with closing(sqlite3.connect(data_root / "execution_ledger.db")) as con, con:
                 claims = con.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -1601,7 +1603,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 results = list(executor.map(send, range(3)))
-            with sqlite3.connect(data_root / "execution_ledger.db") as con:
+            with closing(sqlite3.connect(data_root / "execution_ledger.db")) as con, con:
                 claim_count = con.execute(
                     "SELECT COUNT(*) FROM predictive_scout_signal_claims"
                 ).fetchone()[0]
@@ -3987,7 +3989,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 confirm_live=True,
             )
             result = json.loads((root / "request.json").read_text())
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 rows = conn.execute(
                     "SELECT status, parent_lane_id, forecast_cycle_id FROM ordinary_live_entry_signal_claims"
                 ).fetchall()
@@ -3999,6 +4001,174 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertIn(
                 "ORDINARY_ENTRY_RECEIPT_ALREADY_CLAIMED",
                 {issue["code"] for issue in result["risk_issues"]},
+            )
+
+    def test_accepted_gpt_trade_lineage_reaches_request_claim_receipt_and_explicit_fill_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "lane:EUR_USD:LONG"
+            ledger_path = root / "execution_ledger.db"
+            links_path = root / "market_read_execution_links.jsonl"
+            intents = _intents(
+                root,
+                lane_id=lane_id,
+                metadata=_ordinary_claim_metadata(),
+            )
+            verified = _write_lineaged_verified_decision(root, lane_id=lane_id)
+            expected = json.loads(verified.read_text())["market_read_prediction"]
+
+            class ExplicitFillClient(FakeExecutionClient):
+                def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
+                    self.orders.append(order_request)
+                    return {
+                        "orderCreateTransaction": {"id": "101"},
+                        "orderFillTransaction": {
+                            "id": "102",
+                            "orderID": "101",
+                            "tradeOpened": {"tradeID": "200"},
+                        },
+                        "relatedTransactionIDs": ["101", "102"],
+                        "lastTransactionID": "102",
+                    }
+
+            client = ExplicitFillClient()
+            record_result = SimpleNamespace(
+                status="RECORDED",
+                issue=None,
+                to_dict=lambda: {"status": "RECORDED", "trade_id": "200"},
+            )
+            with patch(
+                "quant_rabbit.strategy.entry_thesis_ledger.record_entry_thesis_from_response_result",
+                return_value=record_result,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    execution_ledger_db_path=ledger_path,
+                    verified_decision_path=verified,
+                    market_read_execution_links_path=links_path,
+                    live_enabled=True,
+                ).run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertTrue(summary.sent)
+            self.assertEqual(len(client.orders), 1)
+            sent_request = client.orders[0]
+            client_id = sent_request["clientExtensions"]["id"]
+            self.assertLessEqual(len(client_id), 128)
+            self.assertEqual(sent_request["clientExtensions"]["tag"], "trader")
+            self.assertIn("lane=lane:EUR_USD:LONG", sent_request["clientExtensions"]["comment"])
+
+            receipt = json.loads((root / "request.json").read_text())
+            lineage = receipt["decision_lineage"]
+            self.assertEqual(lineage["decision_receipt_id"], expected["decision_receipt_id"])
+            self.assertEqual(lineage["market_read_prediction_id"], expected["prediction_id"])
+            self.assertIn(lineage["lineage_token"], client_id)
+            self.assertEqual(
+                receipt["ordinary_entry_claim"]["decision_lineage"]["decision_receipt_id"],
+                expected["decision_receipt_id"],
+            )
+            self.assertEqual(receipt["market_read_execution_link"]["status"], "RECORDED")
+            links = lineage_module.read_execution_links(links_path)
+            self.assertEqual(len(links), 1)
+            self.assertEqual(links[0]["broker_ids"]["order_ids"], ["101"])
+            self.assertEqual(links[0]["broker_ids"]["fill_transaction_ids"], ["102"])
+            self.assertEqual(links[0]["broker_ids"]["trade_ids"], ["200"])
+            self.assertFalse(links[0]["pair_or_time_inference_used"])
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
+                claim_ids = conn.execute(
+                    """
+                    SELECT decision_receipt_id, market_read_prediction_id,
+                           decision_lineage_token, status
+                    FROM ordinary_live_entry_signal_claims
+                    """
+                ).fetchone()
+            self.assertEqual(
+                claim_ids,
+                (
+                    expected["decision_receipt_id"],
+                    expected["prediction_id"],
+                    lineage["lineage_token"],
+                    "BROKER_RESPONSE_RECORDED",
+                ),
+            )
+
+    def test_batch_lineage_write_gap_stays_sent_and_one_shot_claim_prevents_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "lane:EUR_USD:LONG"
+            ledger_path = root / "execution_ledger.db"
+            intents = _intents(
+                root,
+                lane_id=lane_id,
+                metadata=_ordinary_claim_metadata(),
+            )
+            verified = _write_lineaged_verified_decision(root, lane_id=lane_id)
+
+            class ExplicitOrderClient(FakeExecutionClient):
+                def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
+                    self.orders.append(order_request)
+                    return {
+                        "orderCreateTransaction": {"id": "101"},
+                        "relatedTransactionIDs": ["101"],
+                    }
+
+            client = ExplicitOrderClient()
+            gateway = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                execution_ledger_db_path=ledger_path,
+                verified_decision_path=verified,
+                market_read_execution_links_path=root / "links.jsonl",
+                live_enabled=True,
+            )
+            with patch.object(
+                execution_module,
+                "append_execution_link",
+                side_effect=OSError("simulated lineage disk failure"),
+            ):
+                first = gateway.run_batch(
+                    intents_path=intents,
+                    lane_ids=(lane_id,),
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertEqual(first.status, "SENT_WITH_DECISION_LINEAGE_GAP")
+            self.assertTrue(first.sent)
+            self.assertEqual(first.sent_count, 1)
+            self.assertEqual(len(client.orders), 1)
+            first_receipt = json.loads((root / "request.json").read_text())
+            self.assertEqual(
+                first_receipt["orders"][0]["market_read_execution_link"]["status"],
+                "WRITE_FAILED",
+            )
+
+            retry = gateway.run_batch(
+                intents_path=intents,
+                lane_ids=(lane_id,),
+                send=True,
+                confirm_live=True,
+            )
+            self.assertEqual(retry.status, "BLOCKED")
+            self.assertFalse(retry.sent)
+            self.assertEqual(len(client.orders), 1)
+            retry_receipt = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "ORDINARY_ENTRY_RECEIPT_ALREADY_CLAIMED",
+                {
+                    issue["code"]
+                    for issue in retry_receipt["orders"][0]["risk_issues"]
+                },
             )
 
     def test_ordinary_gpt_receipt_claim_blocks_duplicate_batch_post(self) -> None:
@@ -4118,7 +4288,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 confirm_live=True,
             )
             replay_result = json.loads((root / "request.json").read_text())
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 claim_count = conn.execute(
                     "SELECT COUNT(*) FROM ordinary_live_entry_signal_claims"
                 ).fetchone()[0]
@@ -4182,7 +4352,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 send=True,
                 confirm_live=True,
             )
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 claim_status = conn.execute(
                     "SELECT status FROM ordinary_live_entry_signal_claims"
                 ).fetchone()[0]
@@ -4868,7 +5038,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 conn.execute("DELETE FROM sync_state WHERE key = 'last_oanda_transaction_id'")
             client = ReconciliationExecutionClient()
 
@@ -6531,7 +6701,7 @@ def _reconciliation_files(
     target_report = root / "daily_target_report.md"
     ExecutionLedger(db_path=ledger_path, report_path=ledger_report)._init_db()
     now = datetime.now(timezone.utc).isoformat()
-    with sqlite3.connect(ledger_path) as conn:
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
         conn.execute(
             """
             INSERT INTO sync_state(key, value, updated_at_utc)
@@ -6647,6 +6817,37 @@ def _write_ordinary_verified_decision(
         + "\n",
         encoding="utf-8",
     )
+    return path
+
+
+def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
+    path = _write_ordinary_verified_decision(
+        root,
+        lane_id=lane_id,
+        suffix="lineaged",
+    )
+    payload = json.loads(path.read_text())
+    payload["decision"]["decision_provenance"] = {
+        "author_kind": "CODEX_MARKET_READ",
+        "model": "gpt-5.5",
+        "reasoning_effort": "high",
+    }
+    payload["input_packet"] = {
+        "broker_snapshot": {
+            "fetched_at_utc": payload["generated_at_utc"],
+        }
+    }
+    decision_receipt_id = lineage_module._expected_decision_receipt_id(payload)
+    assert decision_receipt_id is not None
+    payload["market_read_prediction"] = {
+        "status": "RECORDED",
+        "schema_version": 2,
+        "prediction_id": "mr2:" + "b" * 64,
+        "decision_receipt_id": decision_receipt_id,
+        "read_only": True,
+        "live_permission": False,
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     return path
 
 
@@ -6813,7 +7014,7 @@ def _insert_exact_tp_outcomes(
             )
         )
     inserted_at = now.isoformat()
-    with sqlite3.connect(ledger_path) as conn:
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
         conn.executemany(
             """
             INSERT INTO execution_events(
@@ -6918,7 +7119,7 @@ def _insert_reconciliation_profit_close(
             ],
         }
     )
-    with sqlite3.connect(ledger_path) as conn:
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
         conn.executemany(
             """
             INSERT INTO execution_events(
@@ -7204,7 +7405,7 @@ def _write_predictive_scout_policy(root: Path) -> Path:
         db_path=root / "data" / "execution_ledger.db",
         report_path=root / "execution_ledger_report.md",
     )._init_db()
-    with sqlite3.connect(root / "data" / "execution_ledger.db") as con:
+    with closing(sqlite3.connect(root / "data" / "execution_ledger.db")) as con, con:
         con.execute(
             "INSERT INTO sync_state(key, value, updated_at_utc) VALUES ('last_oanda_transaction_id', '100', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_utc=excluded.updated_at_utc",

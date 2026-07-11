@@ -6,6 +6,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.capture_economics import (
@@ -198,7 +200,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                             }
                         ],
                     )
-                    with sqlite3.connect(db) as conn:
+                    with closing(sqlite3.connect(db)) as conn, conn:
                         raw = json.loads(
                             conn.execute(
                                 "SELECT raw_json FROM execution_events WHERE event_type='ORDER_FILLED'"
@@ -229,7 +231,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                             }
                         ],
                     )
-                    with sqlite3.connect(db) as conn:
+                    with closing(sqlite3.connect(db)) as conn, conn:
                         conn.execute(
                             f"UPDATE execution_events SET {assignment} WHERE event_type='ORDER_FILLED'"
                         )
@@ -249,7 +251,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     "UPDATE execution_events SET trade_id=NULL WHERE event_type='ORDER_FILLED'"
                 )
@@ -270,7 +272,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     UPDATE execution_events
@@ -296,7 +298,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 raw = json.loads(
                     conn.execute(
                         """
@@ -332,7 +334,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 raw = json.loads(
                     conn.execute(
                         "SELECT raw_json FROM execution_events WHERE event_type='TRADE_CLOSED'"
@@ -367,7 +369,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     UPDATE execution_events
@@ -564,7 +566,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             }
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     CREATE TABLE oanda_transactions (
@@ -638,6 +640,128 @@ class CaptureEconomicsTest(unittest.TestCase):
             report = (root / "report.md").read_text()
             self.assertIn("## Repair Summary", report)
             self.assertIn("MARKET_ORDER_TRADE_CLOSE", report)
+
+    def test_recent_positive_streak_does_not_clear_negative_lifetime_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            closes = []
+            for i in range(20):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-06-2{(i % 6) + 1}T10:{i:02d}:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 200.0 if i < 12 else -900.0,
+                        "exit_reason": (
+                            "TAKE_PROFIT_ORDER" if i < 12 else "MARKET_ORDER_TRADE_CLOSE"
+                        ),
+                    }
+                )
+            for i, pl in enumerate((1251.7, 866.4, 1427.2)):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-07-09T0{i + 3}:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": pl,
+                        "exit_reason": (
+                            "MARKET_ORDER_TRADE_CLOSE" if i == 0 else "TAKE_PROFIT_ORDER"
+                        ),
+                    }
+                )
+            db = root / "ledger.db"
+            _make_db(db, closes)
+
+            summary = build_capture_economics(
+                ledger_path=db,
+                output_path=root / "out.json",
+                report_path=root / "report.md",
+                now=datetime(2026, 7, 11, 13, 0, tzinfo=timezone.utc),
+            )
+
+            payload = json.loads((root / "out.json").read_text())
+            recent = payload["recent_performance"]
+            self.assertEqual(summary.status, "NEGATIVE_EXPECTANCY")
+            self.assertEqual(recent["recent_window"]["trades"], 3)
+            self.assertEqual(recent["verdict"], "RECENT_POSITIVE_LOW_SAMPLE")
+            self.assertFalse(recent["improvement_proven"])
+            self.assertEqual(recent["sample_gap"], 17)
+            self.assertTrue(recent["baseline_sample_sufficient"])
+            self.assertEqual(recent["historical_baseline"]["trades"], 20)
+            report = (root / "report.md").read_text()
+            self.assertIn("Recent Performance", report)
+            self.assertIn("RECENT_POSITIVE_LOW_SAMPLE", report)
+            self.assertIn("Improvement proven: `False`", report)
+
+    def test_recent_wins_without_a_historical_baseline_never_prove_improvement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": f"2026-07-{5 + (i // 4):02d}T{i % 24:02d}:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 100.0,
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                    }
+                    for i in range(20)
+                ],
+            )
+
+            summary = build_capture_economics(
+                ledger_path=db,
+                output_path=root / "out.json",
+                report_path=root / "report.md",
+                now=datetime(2026, 7, 11, 13, 0, tzinfo=timezone.utc),
+            )
+
+            recent = json.loads((root / "out.json").read_text())["recent_performance"]
+            self.assertEqual(summary.status, "POSITIVE_EXPECTANCY")
+            self.assertEqual(recent["recent_window"]["trades"], 20)
+            self.assertEqual(recent["verdict"], "POSITIVE_BASELINE_INSUFFICIENT")
+            self.assertFalse(recent["baseline_sample_sufficient"])
+            self.assertFalse(recent["improvement_proven"])
+
+    def test_raw_jpy_point_improvement_is_observed_but_never_proven(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            historical = [
+                {
+                    "ts_utc": f"2026-06-{1 + (i // 2):02d}T{i % 24:02d}:00:00Z",
+                    "pair": "EUR_USD",
+                    "pl": -1.0,
+                    "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                }
+                for i in range(20)
+            ]
+            recent_rows = [
+                {
+                    "ts_utc": f"2026-07-{5 + (i // 4):02d}T{i % 24:02d}:00:00Z",
+                    "pair": "EUR_USD",
+                    "pl": 0.1,
+                    "exit_reason": "TAKE_PROFIT_ORDER",
+                }
+                for i in range(20)
+            ]
+            db = root / "ledger.db"
+            _make_db(db, [*historical, *recent_rows])
+
+            build_capture_economics(
+                ledger_path=db,
+                output_path=root / "out.json",
+                report_path=root / "report.md",
+                now=datetime(2026, 7, 11, 13, 0, tzinfo=timezone.utc),
+            )
+
+            recent = json.loads((root / "out.json").read_text())["recent_performance"]
+            self.assertEqual(recent["verdict"], "OBSERVED_IMPROVEMENT_MIN_SAMPLE")
+            self.assertTrue(recent["observed_improvement"])
+            self.assertFalse(recent["improvement_proven"])
+            self.assertFalse(recent["normalized_edge_proof_available"])
+            self.assertEqual(
+                recent["proof_status"],
+                "NOT_AVAILABLE_RAW_JPY_POINT_ESTIMATE_ONLY",
+            )
 
     def test_partial_closes_aggregate_to_one_trade_outcome(self) -> None:
         """TRADE_REDUCED milestones + final TRADE_CLOSED on the same trade_id
@@ -728,7 +852,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             }
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO execution_events(
@@ -761,7 +885,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO execution_events(
@@ -815,7 +939,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             }
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO execution_events(
@@ -870,7 +994,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(raw_owner_db) as conn:
+            with closing(sqlite3.connect(raw_owner_db)) as conn, conn:
                 # A raw manual-owner tag is authoritative only when there is no
                 # independent system gateway/lane receipt for the fill.
                 conn.execute(
@@ -905,7 +1029,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                     }
                 ],
             )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 # Remove the valid pre-fill receipt, then append receipts that
                 # historical trade-id fallback incorrectly treated as entry
                 # attribution. Both rows occur after the fill.
@@ -939,7 +1063,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 invalid_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(invalid_db) as conn:
+            with closing(sqlite3.connect(invalid_db)) as conn, conn:
                 conn.execute(
                     "UPDATE execution_events SET raw_json='{}' WHERE event_type='TRADE_CLOSED'"
                 )
@@ -950,7 +1074,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 mismatch_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(mismatch_db) as conn:
+            with closing(sqlite3.connect(mismatch_db)) as conn, conn:
                 raw = json.loads(
                     conn.execute(
                         "SELECT raw_json FROM execution_events WHERE event_type='TRADE_CLOSED'"
@@ -971,7 +1095,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 malformed_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(malformed_db) as conn:
+            with closing(sqlite3.connect(malformed_db)) as conn, conn:
                 conn.execute(
                     "UPDATE execution_events SET raw_json='{bad' WHERE event_type='ORDER_FILLED'"
                 )
@@ -982,7 +1106,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 cash_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(cash_db) as conn:
+            with closing(sqlite3.connect(cash_db)) as conn, conn:
                 raw = json.loads(
                     conn.execute(
                         "SELECT raw_json FROM execution_events WHERE event_type='TRADE_CLOSED'"
@@ -1021,7 +1145,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 missing_marker_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(missing_marker_db) as conn:
+            with closing(sqlite3.connect(missing_marker_db)) as conn, conn:
                 conn.execute(
                     "DELETE FROM sync_state WHERE key='oanda_transaction_coverage_start_utc'"
                 )
@@ -1032,7 +1156,7 @@ class CaptureEconomicsTest(unittest.TestCase):
                 precoverage_db,
                 [{"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 100.0}],
             )
-            with sqlite3.connect(precoverage_db) as conn:
+            with closing(sqlite3.connect(precoverage_db)) as conn, conn:
                 conn.execute(
                     """
                     UPDATE sync_state SET value=?

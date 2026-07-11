@@ -5,6 +5,7 @@ import math
 import re
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -227,7 +228,7 @@ class VerificationLedger:
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         measurements = _measurements_from_effect(run_id, window_hours=window_hours, effect=effect)
 
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             close_gate_scan = _ledger_close_gate_observations(
                 conn,
@@ -297,7 +298,7 @@ class VerificationLedger:
 
     def _init_db_once(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn, conn:
             conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -1566,7 +1567,7 @@ def _execution_ledger_sync_observations(
     ledger_last = None
     if db_path.exists():
         try:
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 row = conn.execute(
                     "SELECT value FROM sync_state WHERE key='last_oanda_transaction_id'"
                 ).fetchone()
@@ -1600,7 +1601,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     rows: list[sqlite3.Row] = []
     if db_path.exists():
         try:
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.row_factory = sqlite3.Row
                 rows = list(
                     conn.execute(

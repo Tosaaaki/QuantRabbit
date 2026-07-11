@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                 db_path=db_path,
                 report_path=root / "execution_ledger.md",
             )._init_db()
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 for name in PROFITABILITY_ACCEPTANCE_INDEX_NAMES:
                     conn.execute(f"DROP INDEX {name}")
 
@@ -52,7 +53,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
 
             # Force both initializer types to converge after a real writer-lock
             # wait instead of relying on fast index DDL to happen to overlap.
-            with sqlite3.connect(db_path) as lock_holder:
+            with closing(sqlite3.connect(db_path)) as lock_holder, lock_holder:
                 lock_holder.execute("BEGIN IMMEDIATE")
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = [executor.submit(initialize, index) for index in range(2)]
@@ -74,7 +75,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                 output_path=root / "verification-hot.json",
                 report_path=root / "verification-hot.md",
             )._init_db()
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 index_rows = conn.execute(
                     """
                     SELECT name, sql
@@ -120,7 +121,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.executescript(
                     """
                     CREATE TABLE execution_events (
@@ -142,7 +143,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
             begin_seen = (threading.Event(), threading.Event())
 
             def migrate(index: int) -> tuple[tuple[str, ...], bool]:
-                with sqlite3.connect(db_path, timeout=30.0) as conn:
+                with closing(sqlite3.connect(db_path, timeout=30.0)) as conn, conn:
                     conn.set_trace_callback(
                         lambda statement: begin_seen[index].set()
                         if statement.strip().upper() == "BEGIN IMMEDIATE"
@@ -152,7 +153,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                     installed = ensure_profitability_acceptance_indexes(conn)
                     return installed, conn.in_transaction
 
-            with sqlite3.connect(db_path) as lock_holder:
+            with closing(sqlite3.connect(db_path)) as lock_holder, lock_holder:
                 lock_holder.execute("BEGIN IMMEDIATE")
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = [executor.submit(migrate, index) for index in range(2)]
@@ -166,7 +167,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                         lock_holder.rollback()
                     results = [future.result(timeout=5.0) for future in futures]
 
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 installed_indexes = {
                     str(row[0])
                     for row in conn.execute(
@@ -190,7 +191,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.executescript(
                     """
                     CREATE TABLE execution_events (
@@ -225,7 +226,11 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                 conn.set_authorizer(deny_second_index)
                 with self.assertRaises(sqlite3.DatabaseError):
                     ensure_profitability_acceptance_indexes(conn)
-                conn.set_authorizer(None)
+                # Python/SQLite combinations differ in whether ``None``
+                # immediately clears a callback after an authorization
+                # failure.  An explicit allow-all callback keeps this test on
+                # the same connection while making the retry deterministic.
+                conn.set_authorizer(lambda *_args: sqlite3.SQLITE_OK)
 
                 after_failure = {
                     str(row[0])
@@ -264,7 +269,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.executescript(
                     """
                     CREATE TABLE execution_events (
@@ -301,7 +306,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
             report_path = root / "execution_ledger.md"
             ledger = ExecutionLedger(db_path=db_path, report_path=report_path)
             ledger._init_db()
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 for name in PROFITABILITY_ACCEPTANCE_INDEX_NAMES:
                     conn.execute(f"DROP INDEX {name}")
                 _seed_realistic_close_audit(conn)
@@ -325,7 +330,7 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
                 now_utc=audit_now,
             )
 
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 evidence_plan = conn.execute(
                     """
                     EXPLAIN QUERY PLAN
@@ -379,7 +384,8 @@ class LedgerProfitabilityIndexesTest(unittest.TestCase):
         evidence_details = [str(row[3]) for row in evidence_plan]
         self.assertTrue(
             any(
-                "SEARCH v USING INDEX idx_verification_close_gate_subject_ts" in detail
+                detail.startswith("SEARCH v")
+                and "idx_verification_close_gate_subject_ts" in detail
                 for detail in evidence_details
             ),
             evidence_details,

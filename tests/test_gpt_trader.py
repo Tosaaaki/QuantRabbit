@@ -15,6 +15,15 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.market_read_overlay import (
+    CODEX_MARKET_READ_AUTHOR,
+    apply_codex_market_read_overlay,
+    baseline_core_payload,
+    canonical_json_sha256,
+    execution_envelope_payload,
+    market_read_sha256,
+    prepare_market_read_baseline,
+)
 from quant_rabbit.month_scale_residual_gate import (
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
 )
@@ -32,6 +41,348 @@ LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
 
 
 class GPTTraderBrainTest(unittest.TestCase):
+    def test_trade_revalidates_real_market_read_artifacts_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            with patch(
+                "quant_rabbit.gpt_trader.refresh_market_read_measurements",
+                return_value={
+                    "status": "NO_CHANGE",
+                    "read_only_measurement": True,
+                    "live_permission": False,
+                    "may_change_execution_permission": False,
+                },
+            ):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_trade_rejects_fake_self_declared_digests_even_with_real_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+            )
+            decision["decision_provenance"]["baseline_sha256"] = "a" * 64
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("AI_MARKET_READ_ARTIFACT_FINAL_MISMATCH", codes)
+
+    def test_trade_rejects_missing_market_read_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            _stamp_codex_market_read(decision)
+            artifacts = {
+                "baseline": root / "missing-baseline.json",
+                "packet": root / "missing-packet.json",
+                "overlay": root / "missing-overlay.json",
+            }
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_ARTIFACT_MISSING", codes)
+
+    def test_trade_rejects_evidence_mutated_after_overlay_application(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["EUR_USD"]["ask"] = 1.1722
+            files["snapshot"].write_text(json.dumps(snapshot))
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_EVIDENCE_PACKET_STALE", codes)
+
+    def test_verifier_snapshot_path_overrides_packet_broker_copy_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            packet_snapshot = root / "packet-selected-fresh-copy.json"
+            packet_snapshot.write_bytes(files["snapshot"].read_bytes())
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+                broker_snapshot_source_path=packet_snapshot,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_EVIDENCE_PACKET_STALE", codes)
+
+    def test_trade_rejects_overlay_that_skips_latest_resolved_prediction_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+            )
+            prediction_id = "mr2:" + "9" * 64
+            resolved = {
+                "schema_version": 2,
+                "prediction_id": prediction_id,
+                "score_eligible": True,
+                "source_snapshot_conflict": False,
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "action": "TRADE",
+                "verdict": "FULL_READ_INCOMPLETE",
+                "horizon_results": {
+                    "30m": {
+                        "resolution_status": "RESOLVED_MID_CANDLE_DIAGNOSTIC",
+                        "direction_status": "WRONG",
+                        "target_completion_status": "NOT_TOUCHED",
+                        "invalidation_status": "TOUCHED",
+                        "first_touch_status": "INVALIDATION_ONLY",
+                        "full_read_status": "INVALIDATION_ONLY",
+                    },
+                    "2h": {"resolution_status": "UNRESOLVED"},
+                },
+            }
+            predictions = root / "market_read_predictions.jsonl"
+            predictions.write_text(json.dumps(resolved) + "\n", encoding="utf-8")
+            sources = _market_read_artifact_sources(root, files)
+            refreshed_at = datetime.now(timezone.utc)
+            prepare_market_read_baseline(
+                baseline_path=artifacts["baseline"],
+                packet_path=artifacts["packet"],
+                evidence_sources=sources,
+                now=refreshed_at,
+            )
+            packet = json.loads(artifacts["packet"].read_text())
+            overlay = json.loads(artifacts["overlay"].read_text())
+            overlay["evidence_packet_sha256"] = packet["evidence_packet_sha256"]
+            artifacts["overlay"].write_text(json.dumps(overlay))
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            with patch(
+                "quant_rabbit.gpt_trader.refresh_market_read_measurements",
+                return_value={
+                    "status": "NO_CHANGE",
+                    "read_only_measurement": True,
+                    "live_permission": False,
+                    "may_change_execution_permission": False,
+                },
+            ):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_PRIOR_PREDICTION_NOT_REVIEWED", codes)
+
+    def test_real_apply_trade_rejects_overlay_pair_that_differs_from_primary_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["GBP_USD"] = {
+                "bid": 1.3000,
+                "ask": 1.3002,
+                "timestamp_utc": snapshot["fetched_at_utc"],
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            foreign_read = _market_read_first(pair="GBP_USD", direction="LONG")
+            foreign_read["next_30m_prediction"].update(
+                {"target_zone": "1.3020", "invalidation": "1.2980"}
+            )
+            foreign_read["next_2h_prediction"].update(
+                {"target_zone": "1.3040", "invalidation": "1.2970"}
+            )
+            foreign_read["best_trade_if_forced"].update(
+                {"entry": "1.3005", "tp": "1.3040", "sl": "1.2970"}
+            )
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+                market_read=foreign_read,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_PAIR_ACTION_CONFLICT", codes)
+
+    def test_real_apply_range_read_rejects_trend_continuation_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            range_read = _market_read_first(pair="EUR_USD", direction="LONG")
+            for key in ("next_30m_prediction", "next_2h_prediction"):
+                range_read[key]["direction"] = "RANGE"
+                range_read[key]["target_zone"] = "1.1710 to 1.1730"
+                range_read[key]["invalidation"] = "1.1690 to 1.1750"
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+                market_read=range_read,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_RANGE_ACTION_CONFLICT", codes)
+
+    def test_real_apply_trade_rejects_naked_currencies_opposite_primary_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            market_read = _market_read_first(pair="EUR_USD", direction="LONG")
+            market_read["naked_read"]["currency_bought"] = "USD"
+            market_read["naked_read"]["currency_sold"] = "EUR"
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+                market_read=market_read,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_CURRENCY_ACTION_CONFLICT", codes)
+
+    def test_real_apply_trade_rejects_forced_vehicle_and_execution_geometry_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            market_read = _market_read_first(pair="EUR_USD", direction="LONG")
+            market_read["best_trade_if_forced"].update(
+                {
+                    "vehicle": "MARKET",
+                    "entry": "1.1726",
+                    "tp": "1.1740",
+                    "sl": "1.1716",
+                }
+            )
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+                market_read=market_read,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_VEHICLE_ACTION_CONFLICT", codes)
+            self.assertIn("MARKET_READ_FORCED_EXECUTION_GEOMETRY_CONFLICT", codes)
+
     def test_draft_never_mixes_predictive_scout_with_normal_or_scout_basket(self) -> None:
         ordinary_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
         scout_a = "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
@@ -45,9 +396,24 @@ class GPTTraderBrainTest(unittest.TestCase):
         }
         packet = {
             "lanes": [
-                {"lane_id": ordinary_id, "pair": "EUR_USD", "predictive_scout": {}},
-                {"lane_id": scout_a, "pair": "USD_CAD", "predictive_scout": scout_packet},
-                {"lane_id": scout_b, "pair": "USD_JPY", "predictive_scout": scout_packet},
+                {
+                    "lane_id": ordinary_id,
+                    "pair": "EUR_USD",
+                    "status": "LIVE_READY",
+                    "predictive_scout": {},
+                },
+                {
+                    "lane_id": scout_a,
+                    "pair": "USD_CAD",
+                    "status": "LIVE_READY",
+                    "predictive_scout": scout_packet,
+                },
+                {
+                    "lane_id": scout_b,
+                    "pair": "USD_JPY",
+                    "status": "LIVE_READY",
+                    "predictive_scout": scout_packet,
+                },
             ]
         }
 
@@ -104,6 +470,41 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_rejects_deterministic_trade_without_codex_market_read_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["decision_provenance"] = None
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("AI_MARKET_READ_REQUIRED", codes)
+
+    def test_accepts_codex_market_read_veto_of_a_deterministic_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _wait_decision()
+            _stamp_codex_market_read(
+                decision,
+                disposition="VETO_WAIT",
+                baseline_action="TRADE",
+                baseline_lane_ids=[LANE_ID],
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            self.assertEqual(payload["decision"]["market_read_disposition"], "VETO_WAIT")
+
     def test_records_market_read_prediction_every_verified_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -119,10 +520,70 @@ class GPTTraderBrainTest(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["schema_version"], 2)
             self.assertEqual(rows[0]["pair"], "EUR_USD")
             self.assertEqual(rows[0]["direction"], "LONG")
-            self.assertEqual(rows[0]["verdict"], "PENDING")
-            self.assertIn("Market Read Score Report", (root / "market_read_score_report.md").read_text())
+            self.assertEqual(rows[0]["verdict"], "UNRESOLVED")
+            self.assertEqual(rows[0]["truth_source"], "MID_CANDLE_DIAGNOSTIC")
+            self.assertFalse(rows[0]["live_permission"])
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertTrue(
+                payload["market_read_prediction"]["decision_receipt_id"].startswith("gptd:")
+            )
+            report = (root / "market_read_score_report.md").read_text()
+            self.assertIn("Market Read Score Report", report)
+            self.assertIn("Direction accuracy", report)
+
+    def test_next_input_packet_includes_read_only_market_read_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+            brain.run(snapshot_path=files["snapshot"])
+
+            packet = brain._input_packet(files["snapshot"])
+
+            feedback = packet["market_read_feedback"]
+            self.assertEqual(feedback["metrics"]["rows"], 1)
+            self.assertTrue(feedback["read_only"])
+            self.assertTrue(feedback["advisory_only"])
+            self.assertFalse(feedback["live_permission"])
+            self.assertFalse(feedback["may_change_execution_permission"])
+            self.assertIn(feedback["measurement_refresh"]["status"], {"NO_CHANGE", "REFRESHED"})
+            self.assertFalse(feedback["measurement_refresh"]["live_permission"])
+            self.assertIn("market_read:feedback", packet["allowed_evidence_refs"])
+
+    def test_input_packet_exposes_sibling_market_read_artifact_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+
+            packet = brain._input_packet(files["snapshot"])
+
+            contract = packet["market_read_artifact_contract"]
+            self.assertEqual(
+                contract["baseline_path"],
+                str(root / "trader_decision_baseline.json"),
+            )
+            self.assertEqual(
+                contract["evidence_packet_path"],
+                str(root / "market_read_evidence_packet.json"),
+            )
+            self.assertEqual(
+                contract["overlay_path"],
+                str(root / "codex_market_read_overlay.json"),
+            )
+            self.assertEqual(
+                contract["evidence_source_paths"]["broker_snapshot"],
+                str(files["snapshot"]),
+            )
+            self.assertEqual(
+                contract["evidence_source_paths"]["order_intents"],
+                str(files["intents"]),
+            )
+            self.assertFalse(contract["live_permission"])
+            self.assertFalse(contract["may_grant_gateway_permission"])
 
     def test_rejects_decision_without_market_read_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -293,7 +754,8 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = _draft(root, files)
 
-            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertIn("AI_MARKET_READ_REQUIRED", summary.verification_issues)
             self.assertEqual(summary.action, "TRADE")
             self.assertEqual(summary.selected_lane_ids, (LANE_ID,))
             decision = json.loads((root / "codex_trader_decision_response.json").read_text())
@@ -302,6 +764,75 @@ class GPTTraderBrainTest(unittest.TestCase):
             brain = _brain(root, files, decision)
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
+
+    def test_draft_with_multiple_live_ready_pairs_binds_one_primary_market_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            eur_jpy_lane = "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION"
+            gbp_usd_lane = "trend_trader:GBP_USD:SHORT:TREND_CONTINUATION"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(),
+                            _result(lane_id=eur_jpy_lane, pair="EUR_JPY"),
+                            _result(
+                                lane_id=gbp_usd_lane,
+                                pair="GBP_USD",
+                                side="SHORT",
+                            ),
+                        ]
+                    }
+                )
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.action, "TRADE")
+            self.assertEqual(summary.selected_lane_id, LANE_ID)
+            self.assertEqual(summary.selected_lane_ids, (LANE_ID,))
+            baseline = json.loads(
+                (root / "codex_trader_decision_response.json").read_text()
+            )
+            self.assertEqual(baseline["selected_lane_ids"], [LANE_ID])
+            self.assertEqual(
+                baseline["market_read_first"]["best_trade_if_forced"]["pair"],
+                "EUR_USD",
+            )
+
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                baseline,
+            )
+            brain = _brain(
+                root,
+                files,
+                decision,
+                market_read_artifact_validation_required=True,
+                market_read_artifact_paths=artifacts,
+            )
+            with patch(
+                "quant_rabbit.gpt_trader.refresh_market_read_measurements",
+                return_value={
+                    "status": "NO_CHANGE",
+                    "read_only_measurement": True,
+                    "live_permission": False,
+                    "may_change_execution_permission": False,
+                },
+            ):
+                verified = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(verified.status, "ACCEPTED")
+            self.assertEqual(verified.selected_lane_ids, (LANE_ID,))
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            blocking_codes = {
+                issue["code"]
+                for issue in payload["verification_issues"]
+                if issue.get("severity", "BLOCK") == "BLOCK"
+            }
+            self.assertEqual(blocking_codes, set())
 
     def test_draft_uses_active_non_eurusd_lane_for_no_live_ready_market_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -552,7 +1083,8 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = _draft(root, files)
 
-            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertIn("AI_MARKET_READ_REQUIRED", summary.verification_issues)
             self.assertEqual(summary.action, "TRADE")
             report = (root / "trader_decision_draft.md").read_text()
             self.assertNotIn("non-layerable position EUR_USD SHORT id=472987", report)
@@ -571,7 +1103,8 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = _draft(root, files)
 
-            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertIn("AI_MARKET_READ_REQUIRED", summary.verification_issues)
             self.assertEqual(summary.action, "TRADE")
             consumption = json.loads(files["guardian_receipt_consumption"].read_text())
             self.assertTrue(consumption["normal_routing_allowed"])
@@ -697,7 +1230,8 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = _draft(root, files)
 
-            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertIn("AI_MARKET_READ_REQUIRED", summary.verification_issues)
             decision = json.loads((root / "codex_trader_decision_response.json").read_text())
             self.assertIn("user_alpha:continuation", decision["evidence_refs"])
             self.assertIn("user_alpha:continuation", decision["twenty_minute_plan"]["evidence_refs"])
@@ -736,7 +1270,8 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = _draft(root, files)
 
-            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertIn("AI_MARKET_READ_REQUIRED", summary.verification_issues)
             self.assertEqual(summary.action, "TRADE")
             self.assertEqual(summary.selected_lane_ids, (LANE_ID,))
             decision = json.loads((root / "codex_trader_decision_response.json").read_text())
@@ -1562,6 +2097,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             files["intents"].write_text(json.dumps(intents))
             files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profit_capture_miss_p0()))
             decision = _trade_decision(method="BREAKOUT_FAILURE")
+            decision["market_read_first"]["best_trade_if_forced"]["vehicle"] = "LIMIT"
             decision["evidence_refs"].extend(
                 [
                     "self_improvement:audit",
@@ -1588,6 +2124,7 @@ class GPTTraderBrainTest(unittest.TestCase):
                 json.dumps({"results": [_result(lane_id=lane_id, method="BREAKOUT_FAILURE")]})
             )
             decision = _trade_decision(lane_id=lane_id, method="BREAKOUT_FAILURE")
+            decision["market_read_first"]["best_trade_if_forced"]["vehicle"] = "LIMIT"
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1626,6 +2163,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             result["intent"]["order_type"] = "LIMIT"
             files["intents"].write_text(json.dumps({"results": [result]}))
             decision = _trade_decision(lane_id=lane_id, method="BREAKOUT_FAILURE")
+            decision["market_read_first"]["best_trade_if_forced"]["vehicle"] = "LIMIT"
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1904,6 +2442,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             files["intents"].write_text(json.dumps(intents))
             decision = _trade_decision(method="BREAKOUT_FAILURE")
+            decision["market_read_first"]["best_trade_if_forced"]["vehicle"] = "LIMIT"
             decision["evidence_refs"].extend(
                 [
                     "self_improvement:audit",
@@ -2084,7 +2623,7 @@ class GPTTraderBrainTest(unittest.TestCase):
         self.assertNotIn("Structural margin pressure", prompt)
         self.assertNotIn("All five triggers", prompt)
 
-    def test_accepts_batch_trade_when_selected_lanes_are_live_ready_and_cited(self) -> None:
+    def test_rejects_artifact_bound_trade_with_multiple_selected_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -2096,10 +2635,33 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.status, "REJECTED")
             self.assertEqual(summary.selected_lane_ids, (LANE_ID, market_lane))
             payload = json.loads((root / "gpt_decision.json").read_text())
-            self.assertEqual(payload["verification_issues"], [])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("AI_MARKET_READ_SINGLE_LANE_REQUIRED", codes)
+
+    def test_rejects_artifact_bound_trade_with_missing_or_mismatched_primary(self) -> None:
+        cases = ("missing_primary", "mismatched_primary", "missing_lane_list")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _fixtures(root)
+                decision = _trade_decision()
+                if case == "missing_primary":
+                    decision["selected_lane_id"] = None
+                elif case == "mismatched_primary":
+                    decision["selected_lane_id"] = f"{LANE_ID}:OTHER"
+                else:
+                    decision.pop("selected_lane_ids")
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("AI_MARKET_READ_SINGLE_LANE_REQUIRED", codes)
 
     def test_rejects_trade_when_selected_lane_contradicts_forecast_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2967,7 +3529,12 @@ class GPTTraderBrainTest(unittest.TestCase):
             root = Path(tmp)
             files = _fixtures(root)
             decision_response = root / "codex_decision_response.json"
-            decision_response.write_text(json.dumps(_trade_decision()))
+            decision, artifacts = _apply_real_market_read_artifacts(
+                root,
+                files,
+                _trade_decision(),
+            )
+            decision_response.write_text(json.dumps(decision))
 
             with redirect_stdout(io.StringIO()):
                 exit_code = main(
@@ -2983,16 +3550,44 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["strategy"]),
                         "--market-story-profile",
                         str(files["story"]),
+                        "--market-status",
+                        str(files["market_status"]),
                         "--target-state",
                         str(files["target"]),
                         "--attack-advice",
                         str(files["attack_advice"]),
+                        "--learning-audit",
+                        str(files["learning_audit"]),
                         "--self-improvement-audit",
                         str(files["self_improvement_audit"]),
                         "--projection-ledger",
                         str(files["projection_ledger"]),
+                        "--market-context-matrix",
+                        str(files["market_context_matrix"]),
+                        "--trader-overrides",
+                        str(files["trader_overrides"]),
+                        "--qr-trader-run-watchdog",
+                        str(files["qr_trader_run_watchdog"]),
+                        "--guardian-receipt-consumption",
+                        str(files["guardian_receipt_consumption"]),
+                        "--guardian-receipt-operator-review",
+                        str(files["guardian_receipt_operator_review"]),
+                        "--active-trader-contract",
+                        str(files["active_trader_contract"]),
+                        "--active-opportunity-board",
+                        str(files["active_opportunity_board"]),
+                        "--non-eurusd-live-grade-frontier",
+                        str(files["non_eurusd_frontier"]),
+                        "--range-rail-geometry-repair",
+                        str(files["range_rail_geometry_repair"]),
                         "--decision-response",
                         str(decision_response),
+                        "--market-read-baseline",
+                        str(artifacts["baseline"]),
+                        "--market-read-evidence-packet",
+                        str(artifacts["packet"]),
+                        "--market-read-overlay",
+                        str(artifacts["overlay"]),
                         "--output",
                         str(root / "cli_decision.json"),
                         "--report",
@@ -4091,9 +4686,6 @@ class GPTTraderBrainTest(unittest.TestCase):
             decision["market_read_first"]["next_2h_prediction"].update(
                 {"target_zone": "1.1800", "invalidation": "1.1750"}
             )
-            decision["market_read_first"]["best_trade_if_forced"].update(
-                {"entry": "1.1762", "tp": "1.1800", "sl": "1.1750"}
-            )
             decision["evidence_refs"].append("position:persistence:555")
             brain = _brain(root, files, decision)
 
@@ -4306,7 +4898,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             }
             self.assertEqual(issues["BASKET_PAIR_COVERAGE_INCOMPLETE"]["severity"], "WARN")
 
-    def test_accepts_basket_covering_every_advised_pair(self) -> None:
+    def test_rejects_multi_pair_basket_until_pair_scoped_reads_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -4315,7 +4907,15 @@ class GPTTraderBrainTest(unittest.TestCase):
             third_pair_lane = "trend_trader:GBP_USD:LONG:TREND_CONTINUATION:MARKET"
             advised = [primary_lane, second_pair_lane, third_pair_lane]
             files["intents"].write_text(
-                json.dumps({"results": [_result(lane_id=l) for l in advised]})
+                json.dumps(
+                    {
+                        "results": [
+                            _result(lane_id=primary_lane, pair="EUR_USD"),
+                            _result(lane_id=second_pair_lane, pair="EUR_JPY"),
+                            _result(lane_id=third_pair_lane, pair="GBP_USD"),
+                        ]
+                    }
+                )
             )
             files["attack_advice"].write_text(
                 json.dumps(
@@ -4335,9 +4935,10 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
-            self.assertEqual(payload["verification_issues"], [])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_PAIR_ACTION_CONFLICT", codes)
 
     def test_accepts_single_pair_basket_when_other_pairs_are_below_rank_ceiling(self) -> None:
         """High-conviction concentrated attack should not be blocked by basket
@@ -4401,7 +5002,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertNotIn("BASKET_PAIR_COVERAGE_INCOMPLETE", codes)
 
-    def test_accepts_attack_priority_lane_in_selected_basket(self) -> None:
+    def test_accepts_single_attack_priority_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -4426,9 +5027,9 @@ class GPTTraderBrainTest(unittest.TestCase):
                     }
                 )
             )
-            decision = _batch_trade_decision([priority_lane, LANE_ID])
+            decision = _trade_decision(lane_id=priority_lane)
             decision["evidence_refs"].extend(
-                ["attack:advice", f"attack:lane:{priority_lane}", f"attack:lane:{LANE_ID}"]
+                ["attack:advice", f"attack:lane:{priority_lane}"]
             )
             brain = _brain(root, files, decision)
 
@@ -4594,7 +5195,17 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("STRATEGY_REVIEW_METHOD_MISMATCH", codes)
 
 
-def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int | None = None) -> GPTTraderBrain:
+def _brain(
+    root: Path,
+    files: dict[str, Path],
+    decision: dict,
+    *,
+    max_lanes: int | None = None,
+    market_read_artifact_validation_required: bool = False,
+    market_read_artifact_paths: dict[str, Path] | None = None,
+) -> GPTTraderBrain:
+    if decision.get("action") == "TRADE" and "decision_provenance" not in decision:
+        _stamp_codex_market_read(decision)
     return GPTTraderBrain(
         provider=StaticTraderProvider(decision),
         intents_path=files["intents"],
@@ -4638,8 +5249,140 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         active_opportunity_board_path=files["active_opportunity_board"],
         non_eurusd_live_grade_frontier_path=files["non_eurusd_frontier"],
         range_rail_geometry_repair_path=files["range_rail_geometry_repair"],
+        market_read_artifact_validation_required=market_read_artifact_validation_required,
+        **(
+            {
+                "market_read_baseline_path": market_read_artifact_paths["baseline"],
+                "market_read_evidence_packet_path": market_read_artifact_paths["packet"],
+                "market_read_overlay_path": market_read_artifact_paths["overlay"],
+            }
+            if market_read_artifact_paths is not None
+            else {}
+        ),
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
+
+
+def _market_read_artifact_sources(
+    root: Path,
+    files: dict[str, Path],
+) -> dict[str, Path]:
+    predictions = root / "market_read_predictions.jsonl"
+    if not predictions.exists():
+        predictions.write_text("", encoding="utf-8")
+    return {
+        "broker_snapshot": files["snapshot"],
+        "order_intents": files["intents"],
+        "campaign_plan": files["campaign"],
+        "strategy_profile": files["strategy"],
+        "market_story_profile": files["story"],
+        "market_status": files["market_status"],
+        "daily_target_state": files["target"],
+        "pair_charts": files["pair_charts"],
+        "context_asset_charts": files["context_asset_charts"],
+        "broker_instruments": files["broker_instruments"],
+        "cross_asset": files["cross_asset"],
+        "flow": files["flow"],
+        "currency_strength": files["currency_strength"],
+        "levels": files["levels"],
+        "market_context_matrix": files["market_context_matrix"],
+        "calendar": files["calendar"],
+        "cot": files["cot"],
+        "option_skew": files["option_skew"],
+        "attack_advice": files["attack_advice"],
+        "capture_economics": files["capture_economics"],
+        "execution_timing_audit": files["execution_timing_audit"],
+        "coverage_optimization": files["coverage_optimization"],
+        "learning_audit": files["learning_audit"],
+        "verification_ledger": files["verification_ledger"],
+        "self_improvement_audit": files["self_improvement_audit"],
+        "projection_ledger": files["projection_ledger"],
+        "operator_precedent": files["operator_precedent"],
+        "manual_market_context": files["manual_market_context"],
+        "profitability_acceptance": files["profitability_acceptance"],
+        "news_items": files["news_items"],
+        "news_health": files["news_health"],
+        "trader_overrides": files["trader_overrides"],
+        "predictive_limits": files["predictive_limits"],
+        "qr_trader_run_watchdog": files["qr_trader_run_watchdog"],
+        "guardian_receipt_consumption": files["guardian_receipt_consumption"],
+        "guardian_receipt_operator_review": files["guardian_receipt_operator_review"],
+        "active_trader_contract": files["active_trader_contract"],
+        "active_opportunity_board": files["active_opportunity_board"],
+        "non_eurusd_live_grade_frontier": files["non_eurusd_frontier"],
+        "range_rail_geometry_repair": files["range_rail_geometry_repair"],
+        "market_read_predictions": predictions,
+    }
+
+
+def _apply_real_market_read_artifacts(
+    root: Path,
+    files: dict[str, Path],
+    baseline_decision: dict,
+    *,
+    market_read: dict | None = None,
+    broker_snapshot_source_path: Path | None = None,
+) -> tuple[dict, dict[str, Path]]:
+    paths = {
+        "baseline": root / "trader_decision_baseline.json",
+        "packet": root / "market_read_evidence_packet.json",
+        "overlay": root / "codex_market_read_overlay.json",
+        "output": root / "codex_trader_decision_response.json",
+    }
+    baseline = json.loads(json.dumps(baseline_decision))
+    baseline.pop("decision_provenance", None)
+    for key in (
+        "market_read_review",
+        "market_read_counterargument",
+        "market_read_change_summary",
+        "market_read_disposition",
+        "market_read_veto_reason",
+        "market_read_vetoed_lane_ids",
+    ):
+        baseline.pop(key, None)
+    paths["baseline"].write_text(json.dumps(baseline), encoding="utf-8")
+    sources = _market_read_artifact_sources(root, files)
+    if broker_snapshot_source_path is not None:
+        sources["broker_snapshot"] = broker_snapshot_source_path
+    applied_at = datetime.now(timezone.utc)
+    prepare_market_read_baseline(
+        baseline_path=paths["baseline"],
+        packet_path=paths["packet"],
+        evidence_sources=sources,
+        now=applied_at,
+    )
+    stamped = json.loads(paths["baseline"].read_text(encoding="utf-8"))
+    packet = json.loads(paths["packet"].read_text(encoding="utf-8"))
+    overlay = {
+        "schema_version": 1,
+        "author_kind": CODEX_MARKET_READ_AUTHOR,
+        "model": "gpt-5.5",
+        "reasoning_effort": "high",
+        "authored_at_utc": applied_at.isoformat(),
+        "baseline_sha256": canonical_json_sha256(baseline_core_payload(stamped)),
+        "evidence_packet_sha256": packet["evidence_packet_sha256"],
+        "baseline_disposition": "ACCEPT_BASELINE",
+        "market_read_first": market_read or baseline["market_read_first"],
+        "market_read_review": {
+            "prior_prediction_ids": [],
+            "what_failed": "NO_RESOLVED_PRIOR",
+            "adjustment": "Use current quote-relative numeric geometry.",
+            "no_change_reason": "",
+        },
+        "market_read_counterargument": "The forecast can fail before reaching its target.",
+        "market_read_change_summary": "Rebuilt the forecast from current broker truth.",
+        "market_read_veto_reason": "",
+    }
+    paths["overlay"].write_text(json.dumps(overlay), encoding="utf-8")
+    apply_codex_market_read_overlay(
+        baseline_path=paths["baseline"],
+        packet_path=paths["packet"],
+        overlay_path=paths["overlay"],
+        output_path=paths["output"],
+        evidence_sources=sources,
+        now=applied_at,
+    )
+    return json.loads(paths["output"].read_text(encoding="utf-8")), paths
 
 
 def _draft(root: Path, files: dict[str, Path]):
@@ -5710,6 +6453,7 @@ def _trade_decision(
         "market_read_first": _market_read_first(pair=pair, direction=direction),
         "action": "TRADE",
         "selected_lane_id": lane_id,
+        "selected_lane_ids": [lane_id],
         "confidence": "HIGH",
         "thesis": f"MARKET READ FIRST next 30m/next 2h {pair} {direction} path supports the live-ready continuation lane.",
         "method": method,
@@ -5732,6 +6476,59 @@ def _trade_decision(
         ],
         "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id], pair=pair),
         "operator_summary": f"Accept the verified {pair} continuation lane after the next 30m and next 2h market read.",
+    }
+
+
+def _stamp_codex_market_read(
+    decision: dict,
+    *,
+    disposition: str = "ACCEPT_BASELINE",
+    baseline_action: str = "TRADE",
+    baseline_lane_ids: list[str] | None = None,
+) -> None:
+    applied_at = datetime.now(timezone.utc).isoformat()
+    lane_ids = baseline_lane_ids
+    if lane_ids is None:
+        lane_ids = list(decision.get("selected_lane_ids") or [])
+        if not lane_ids and decision.get("selected_lane_id"):
+            lane_ids = [str(decision["selected_lane_id"])]
+    veto = disposition.startswith("VETO_")
+    decision["market_read_review"] = {
+        "prior_prediction_ids": [],
+        "what_failed": "NO_RESOLVED_PRIOR",
+        "adjustment": "Use current quote-relative numeric geometry.",
+        "no_change_reason": "",
+    }
+    decision["market_read_counterargument"] = "The forecast can fail before reaching its target."
+    decision["market_read_change_summary"] = "Rebuilt the forecast from current broker truth."
+    decision["market_read_disposition"] = disposition
+    decision["market_read_veto_reason"] = (
+        "The current forecast contradicts the deterministic entry trigger." if veto else ""
+    )
+    decision["market_read_vetoed_lane_ids"] = list(lane_ids) if veto else []
+    execution_sha = canonical_json_sha256(execution_envelope_payload(decision))
+    decision["decision_provenance"] = {
+        "schema_version": 1,
+        "author_kind": CODEX_MARKET_READ_AUTHOR,
+        "model": "gpt-5.5",
+        "reasoning_effort": "high",
+        "authored_at_utc": applied_at,
+        "applied_at_utc": applied_at,
+        "baseline_sha256": "a" * 64,
+        "evidence_packet_sha256": "b" * 64,
+        "overlay_sha256": "c" * 64,
+        "market_read_sha256": market_read_sha256(decision.get("market_read_first")),
+        "execution_envelope_sha256": execution_sha,
+        "baseline_execution_envelope_sha256": "d" * 64,
+        "final_execution_envelope_sha256": execution_sha,
+        "baseline_action": baseline_action,
+        "final_action": decision.get("action"),
+        "baseline_selected_lane_ids": list(lane_ids),
+        "baseline_disposition": disposition,
+        "action_downgrade_only": veto,
+        "execution_fields_preserved": True,
+        "risk_envelope_not_expanded": True,
+        "live_permission_granted": False,
     }
 
 
@@ -5771,9 +6568,9 @@ def _market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dic
             "pair": pair,
             "direction": direction,
             "vehicle": "STOP",
-            "entry": "1.1730",
-            "tp": "1.1760",
-            "sl": "1.1700",
+            "entry": "1.1725",
+            "tp": "1.1737",
+            "sl": "1.1717",
             "why_this_pays": "The forced trade only pays if the naked read reaches target before invalidation.",
         },
     }

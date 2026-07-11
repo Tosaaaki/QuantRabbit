@@ -57,6 +57,11 @@ from quant_rabbit.execution_timing_audit import (
 from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
+from quant_rabbit.market_read_overlay import (
+    MarketReadOverlayError,
+    apply_codex_market_read_overlay,
+    prepare_market_read_baseline,
+)
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.predictive_scout import write_predictive_scout_forward_proof
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
@@ -217,6 +222,9 @@ from quant_rabbit.paths import (
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_COT_REPORT,
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
+    DEFAULT_CODEX_MARKET_READ_OVERLAY,
+    DEFAULT_MARKET_READ_EVIDENCE_PACKET,
+    DEFAULT_TRADER_DECISION_BASELINE,
     DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPTION_SKEW_REPORT,
@@ -4929,7 +4937,115 @@ def main(argv: list[str] | None = None) -> int:
     p_draft.add_argument("--range-rail-geometry-repair", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
     p_draft.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_draft.add_argument("--report", type=Path, default=DEFAULT_TRADER_DECISION_DRAFT_REPORT)
+    p_draft.add_argument(
+        "--market-read-evidence-packet",
+        type=Path,
+        default=None,
+        help=(
+            "When set, stamp the deterministic baseline receipt and write the current "
+            "content-addressed evidence packet for a later Codex market-read overlay."
+        ),
+    )
+    p_draft.add_argument(
+        "--market-read-predictions",
+        type=Path,
+        default=DEFAULT_MARKET_READ_PREDICTIONS,
+    )
     p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
+
+    p_market_read = sub.add_parser(
+        "trader-apply-market-read",
+        help=(
+            "Merge a Codex-authored MARKET_READ_FIRST overlay into an immutable deterministic "
+            "decision envelope after revalidating baseline/evidence SHA provenance."
+        ),
+    )
+    p_market_read.add_argument("--baseline", type=Path, default=DEFAULT_TRADER_DECISION_BASELINE)
+    p_market_read.add_argument("--packet", type=Path, default=DEFAULT_MARKET_READ_EVIDENCE_PACKET)
+    p_market_read.add_argument("--overlay", type=Path, default=DEFAULT_CODEX_MARKET_READ_OVERLAY)
+    p_market_read.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
+    p_market_read.add_argument("--max-overlay-age-seconds", type=int, default=15 * 60)
+    p_market_read.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_market_read.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_market_read.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+    p_market_read.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_market_read.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_market_read.add_argument("--market-status", type=Path, default=DEFAULT_MARKET_STATUS)
+    p_market_read.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_market_read.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_market_read.add_argument("--context-asset-charts", type=Path, default=DEFAULT_CONTEXT_ASSET_CHARTS)
+    p_market_read.add_argument("--broker-instruments", type=Path, default=DEFAULT_BROKER_INSTRUMENTS)
+    p_market_read.add_argument("--cross-asset", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
+    p_market_read.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
+    p_market_read.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
+    p_market_read.add_argument("--levels", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_market_read.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_market_read.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_market_read.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
+    p_market_read.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
+    p_market_read.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_market_read.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
+    p_market_read.add_argument(
+        "--execution-timing-audit",
+        type=Path,
+        default=DEFAULT_EXECUTION_TIMING_AUDIT,
+    )
+    p_market_read.add_argument(
+        "--coverage-optimization",
+        type=Path,
+        default=DEFAULT_COVERAGE_OPTIMIZATION,
+    )
+    p_market_read.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_market_read.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_market_read.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_market_read.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_market_read.add_argument(
+        "--operator-precedent",
+        type=Path,
+        default=DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+    )
+    p_market_read.add_argument(
+        "--manual-market-context",
+        type=Path,
+        default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+    )
+    p_market_read.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
+    p_market_read.add_argument("--news-items", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
+    p_market_read.add_argument("--news-health", type=Path, default=DEFAULT_NEWS_HEALTH)
+    p_market_read.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
+    p_market_read.add_argument("--predictive-limits", type=Path, default=DEFAULT_PREDICTIVE_LIMIT_ORDERS)
+    p_market_read.add_argument(
+        "--qr-trader-run-watchdog",
+        type=Path,
+        default=DEFAULT_QR_TRADER_RUN_WATCHDOG,
+    )
+    p_market_read.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
+    p_market_read.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    )
+    p_market_read.add_argument("--active-trader-contract", type=Path, default=DEFAULT_ACTIVE_TRADER_CONTRACT)
+    p_market_read.add_argument("--active-opportunity-board", type=Path, default=DEFAULT_ACTIVE_OPPORTUNITY_BOARD)
+    p_market_read.add_argument(
+        "--non-eurusd-live-grade-frontier",
+        type=Path,
+        default=DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
+    )
+    p_market_read.add_argument(
+        "--range-rail-geometry-repair",
+        type=Path,
+        default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
+    )
+    p_market_read.add_argument(
+        "--market-read-predictions",
+        type=Path,
+        default=DEFAULT_MARKET_READ_PREDICTIONS,
+    )
 
     p_gpt = sub.add_parser("gpt-trader-decision", help="Verify a Codex-written trader decision against broker truth.")
     p_gpt.add_argument("--snapshot", type=Path, required=True)
@@ -4965,6 +5081,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_gpt.add_argument("--range-rail-geometry-repair", type=Path, default=DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
+    p_gpt.add_argument(
+        "--market-read-baseline",
+        type=Path,
+        default=DEFAULT_TRADER_DECISION_BASELINE,
+    )
+    p_gpt.add_argument(
+        "--market-read-evidence-packet",
+        type=Path,
+        default=DEFAULT_MARKET_READ_EVIDENCE_PACKET,
+    )
+    p_gpt.add_argument(
+        "--market-read-overlay",
+        type=Path,
+        default=DEFAULT_CODEX_MARKET_READ_OVERLAY,
+    )
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_gpt.add_argument("--report", type=Path, default=DEFAULT_GPT_TRADER_DECISION_REPORT)
@@ -5794,6 +5925,7 @@ def main(argv: list[str] | None = None) -> int:
         except (RuntimeError, OSError, ValueError, json.JSONDecodeError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
+        decision_provenance = _decision_provenance_from_path(args.gpt_decision_response)
         payload = {
             "status": summary.status,
             "report_path": str(summary.report_path),
@@ -5803,6 +5935,12 @@ def main(argv: list[str] | None = None) -> int:
             "selected_lane_ids": list(summary.selected_lane_ids),
             "deterministic_lane_id": summary.deterministic_lane_id,
             "decision_source": summary.decision_source,
+            "decision_author_kind": (
+                decision_provenance.get("author_kind")
+                if decision_provenance is not None
+                else None
+            ),
+            "decision_provenance": decision_provenance,
             "sent": summary.sent,
             "sent_count": summary.sent_count,
             "positions": summary.positions,
@@ -9192,6 +9330,13 @@ def main(argv: list[str] | None = None) -> int:
                 report_path=args.report,
                 max_lanes=args.max_lanes,
             )
+            market_read_baseline = None
+            if args.market_read_evidence_packet is not None:
+                market_read_baseline = prepare_market_read_baseline(
+                    baseline_path=args.output,
+                    packet_path=args.market_read_evidence_packet,
+                    evidence_sources=_market_read_evidence_sources(args),
+                )
         except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
@@ -9207,6 +9352,16 @@ def main(argv: list[str] | None = None) -> int:
                     "blockers": list(summary.blockers),
                     "verification_allowed": summary.verification_allowed,
                     "verification_issues": list(summary.verification_issues),
+                    "market_read_baseline": (
+                        {
+                            "packet_path": str(market_read_baseline.packet_path),
+                            "baseline_sha256": market_read_baseline.baseline_sha256,
+                            "evidence_packet_sha256": market_read_baseline.evidence_packet_sha256,
+                            "source_count": market_read_baseline.source_count,
+                        }
+                        if market_read_baseline is not None
+                        else None
+                    ),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -9217,6 +9372,59 @@ def main(argv: list[str] | None = None) -> int:
         # a rejected precheck should continue into the canonical verifier and
         # gateway maintenance path; only I/O/schema construction failures above
         # are command failures.
+        return 0
+
+    if args.command == "trader-apply-market-read":
+        if args.max_overlay_age_seconds <= 0:
+            print(
+                json.dumps(
+                    {"error": "--max-overlay-age-seconds must be positive"},
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        try:
+            summary = apply_codex_market_read_overlay(
+                baseline_path=args.baseline,
+                packet_path=args.packet,
+                overlay_path=args.overlay,
+                output_path=args.output,
+                evidence_sources=_market_read_evidence_sources(args),
+                max_overlay_age_seconds=args.max_overlay_age_seconds,
+            )
+        except MarketReadOverlayError as exc:
+            print(
+                json.dumps(
+                    {"status": "REJECTED", "code": exc.code, "error": exc.message},
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": "APPLIED",
+                    "output_path": str(summary.output_path),
+                    "action": summary.action,
+                    "selected_lane_ids": list(summary.selected_lane_ids),
+                    "baseline_sha256": summary.baseline_sha256,
+                    "evidence_packet_sha256": summary.evidence_packet_sha256,
+                    "overlay_sha256": summary.overlay_sha256,
+                    "execution_fields_preserved": True,
+                    "live_permission_granted": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
 
     if args.command == "gpt-trader-decision":
@@ -9248,6 +9456,10 @@ def main(argv: list[str] | None = None) -> int:
                 range_rail_geometry_repair_path=args.range_rail_geometry_repair,
                 output_path=args.output,
                 report_path=args.report,
+                market_read_baseline_path=args.market_read_baseline,
+                market_read_evidence_packet_path=args.market_read_evidence_packet,
+                market_read_overlay_path=args.market_read_overlay,
+                market_read_evidence_source_overrides=_market_read_evidence_sources(args),
                 market_read_predictions_path=args.market_read_predictions,
                 market_read_score_report_path=args.market_read_score_report,
                 max_lanes=args.max_lanes,
@@ -9509,6 +9721,72 @@ def _account_summary_from_payload(payload: object):
             datetime.fromisoformat(fetched) if isinstance(fetched, str) and fetched else datetime.now(timezone.utc)
         ),
     )
+
+
+def _market_read_evidence_sources(args: argparse.Namespace) -> dict[str, Path]:
+    names = {
+        "broker_snapshot": "snapshot",
+        "order_intents": "intents",
+        "campaign_plan": "campaign_plan",
+        "strategy_profile": "strategy_profile",
+        "market_story_profile": "market_story_profile",
+        "market_status": "market_status",
+        "daily_target_state": "target_state",
+        "pair_charts": "pair_charts",
+        "context_asset_charts": "context_asset_charts",
+        "broker_instruments": "broker_instruments",
+        "cross_asset": "cross_asset",
+        "flow": "flow",
+        "currency_strength": "currency_strength",
+        "levels": "levels",
+        "market_context_matrix": "market_context_matrix",
+        "calendar": "calendar",
+        "cot": "cot",
+        "option_skew": "option_skew",
+        "attack_advice": "attack_advice",
+        "capture_economics": "capture_economics",
+        "execution_timing_audit": "execution_timing_audit",
+        "coverage_optimization": "coverage_optimization",
+        "learning_audit": "learning_audit",
+        "verification_ledger": "verification_ledger",
+        "self_improvement_audit": "self_improvement_audit",
+        "projection_ledger": "projection_ledger",
+        "operator_precedent": "operator_precedent",
+        "manual_market_context": "manual_market_context",
+        "profitability_acceptance": "profitability_acceptance",
+        "news_items": "news_items",
+        "news_health": "news_health",
+        "trader_overrides": "trader_overrides",
+        "predictive_limits": "predictive_limits",
+        "qr_trader_run_watchdog": "qr_trader_run_watchdog",
+        "guardian_receipt_consumption": "guardian_receipt_consumption",
+        "guardian_receipt_operator_review": "guardian_receipt_operator_review",
+        "active_trader_contract": "active_trader_contract",
+        "active_opportunity_board": "active_opportunity_board",
+        "non_eurusd_live_grade_frontier": "non_eurusd_live_grade_frontier",
+        "range_rail_geometry_repair": "range_rail_geometry_repair",
+        "market_read_predictions": "market_read_predictions",
+    }
+    sources: dict[str, Path] = {}
+    for label, attribute in names.items():
+        value = getattr(args, attribute, None)
+        if value is not None:
+            sources[label] = Path(value)
+    return sources
+
+
+def _decision_provenance_from_path(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else payload
+    provenance = decision.get("decision_provenance")
+    return dict(provenance) if isinstance(provenance, dict) else None
 
 
 def _static_gpt_provider(

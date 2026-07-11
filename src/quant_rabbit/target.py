@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1707,7 +1708,7 @@ def _attributed_realized_from_execution_ledger(
     if path is None or not path.exists():
         return None
     try:
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             sync_row = conn.execute(
                 "SELECT value, updated_at_utc FROM sync_state WHERE key = 'last_oanda_transaction_id'"
             ).fetchone()

@@ -19,7 +19,10 @@ from tools.guardian_wake_dispatcher import enrich_tuning_work_order_review  # no
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Safely bind a pending guardian observation to one TEST_REQUIRED review."
+        description=(
+            "Safely bind a pending guardian observation to one TEST_REQUIRED or "
+            "NO_CHANGE_INSUFFICIENT_EVIDENCE review."
+        )
     )
     parser.add_argument(
         "--path",

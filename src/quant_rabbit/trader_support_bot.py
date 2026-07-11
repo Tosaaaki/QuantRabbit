@@ -212,6 +212,9 @@ RUNTIME_DISK_RECOVERY_MARKERS = (
     "logs/disk_maintenance_report.json",
 )
 GUARDIAN_MARKET_TUNING_REPAIR_REQUEST = "REVIEW_GUARDIAN_MARKET_STATE_TUNING"
+GUARDIAN_TUNING_QUEUE_INTEGRITY_REPAIR_REQUEST = (
+    "REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"
+)
 RANGE_RAIL_RECHECK_MONITOR_COMMAND = (
     "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-trigger-contract && "
     "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-event-router && "
@@ -489,6 +492,9 @@ class TraderSupportBot:
             entry=entry,
         )
         acceptance["artifact_freshness"] = acceptance_freshness
+        guardian_tuning_queue_validation = _guardian_tuning_queue_validation(
+            guardian_tuning_work_order
+        )
 
         blockers = _build_blockers(
             guardian=guardian,
@@ -502,6 +508,17 @@ class TraderSupportBot:
             guardian_receipt_operator_review=guardian_receipt_operator_review,
             runtime_disk=runtime_disk,
         )
+        if guardian_tuning_queue_validation["status"] == "INVALID":
+            blockers.append(
+                {
+                    "code": GUARDIAN_TUNING_QUEUE_INTEGRITY_REPAIR_REQUEST,
+                    "severity": "P1",
+                    "message": (
+                        "guardian tuning queue counts are unknown: "
+                        + "; ".join(guardian_tuning_queue_validation["issues"])
+                    ),
+                }
+            )
         status = STATUS_BLOCKED if blockers else STATUS_READY
         actions = _operator_actions(
             status=status,
@@ -528,6 +545,23 @@ class TraderSupportBot:
             oanda_history_coverage=oanda_history_coverage,
             runtime_disk=runtime_disk,
             guardian_tuning_work_order=guardian_tuning_work_order,
+        )
+        guardian_tuning_request = next(
+            (
+                item
+                for item in repair_requests
+                if item.get("code")
+                in {
+                    GUARDIAN_MARKET_TUNING_REPAIR_REQUEST,
+                    GUARDIAN_TUNING_QUEUE_INTEGRITY_REPAIR_REQUEST,
+                }
+            ),
+            {},
+        )
+        guardian_tuning_evidence = (
+            guardian_tuning_request.get("evidence_summary")
+            if isinstance(guardian_tuning_request.get("evidence_summary"), dict)
+            else {}
         )
         send_allowed = (
             status == STATUS_READY
@@ -695,6 +729,21 @@ class TraderSupportBot:
                 guardian_tuning_work_order
             ),
             "guardian_tuning_work_order_id": guardian_tuning_work_order.get("work_order_id"),
+            "guardian_tuning_queue_validation_status": guardian_tuning_queue_validation.get(
+                "status"
+            ),
+            "guardian_tuning_queue_validation_issues": guardian_tuning_queue_validation.get(
+                "issues", []
+            ),
+            "guardian_tuning_pending_work_order_count": guardian_tuning_evidence.get(
+                "pending_work_order_count", 0
+            ),
+            "guardian_tuning_current_reviewed_count": guardian_tuning_evidence.get(
+                "current_reviewed_count", 0
+            ),
+            "guardian_tuning_current_unreviewed_count": guardian_tuning_evidence.get(
+                "current_unreviewed_count", 0
+            ),
             "qr_trader_run_watchdog_status": qr_trader_run_watchdog.get("status"),
             "qr_trader_run_watchdog_severity": qr_trader_run_watchdog.get("severity"),
             "qr_trader_run_watchdog_minutes_since_last_run": qr_trader_run_watchdog.get(
@@ -836,7 +885,91 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _guardian_tuning_work_order_pending(payload: dict[str, Any] | None) -> bool:
-    return bool(_guardian_tuning_work_order_entries(payload))
+    validation = _guardian_tuning_queue_validation(payload)
+    return validation["status"] == "INVALID" or bool(
+        _guardian_tuning_work_order_entries(payload)
+    )
+
+
+def _guardian_tuning_queue_validation(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fail visible when a queue cannot safely be counted.
+
+    This support-side check intentionally does not normalize or write the
+    queue.  The lifecycle writer remains authoritative; the panel only proves
+    enough revision, counter, shape, identity, and boundary invariants to avoid
+    reporting an unreadable queue as zero pending work.
+    """
+
+    if not isinstance(payload, dict) or payload.get("_missing"):
+        return {"status": "MISSING", "issues": []}
+    issues: list[str] = []
+    revision_present = "queue_schema_revision" in payload
+    raw_entries = payload.get("work_orders")
+    if revision_present:
+        if payload.get("queue_schema_revision") != 4:
+            issues.append("queue_schema_revision must be 4")
+        if payload.get("schema_version") != 2:
+            issues.append("revision-4 queue schema_version must be 2")
+        if not isinstance(raw_entries, list):
+            issues.append("revision-4 work_orders must be a list")
+            entries: list[Any] = []
+        else:
+            entries = raw_entries
+        declared_pending = payload.get("pending_count")
+        if (
+            isinstance(declared_pending, bool)
+            or not isinstance(declared_pending, int)
+            or declared_pending != len(entries)
+        ):
+            issues.append("pending_count does not match work_orders")
+        terminal = payload.get("terminal_history")
+        if not isinstance(terminal, list):
+            issues.append("revision-4 terminal_history must be a list")
+            terminal = []
+        declared_terminal = payload.get("terminal_history_count")
+        if (
+            isinstance(declared_terminal, bool)
+            or not isinstance(declared_terminal, int)
+            or declared_terminal != len(terminal)
+        ):
+            issues.append("terminal_history_count does not match terminal_history")
+    else:
+        entries = (
+            [item for item in raw_entries if isinstance(item, dict)]
+            if isinstance(raw_entries, list)
+            else [payload]
+        )
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            issues.append(f"work_orders[{index}] must be an object")
+            continue
+        status = str(entry.get("status") or "").upper()
+        if status not in {"PENDING_HOURLY_AI_REVIEW", "PENDING", "OPEN"}:
+            continue
+        if not str(entry.get("work_order_id") or "").strip():
+            issues.append(f"work_orders[{index}] is missing work_order_id")
+        if not str(
+            entry.get("latest_observation_id")
+            or entry.get("observation_id")
+            or entry.get("event_fingerprint")
+            or ""
+        ).strip():
+            issues.append(f"work_orders[{index}] is missing observation identity")
+        if not (
+            entry.get("consumed_at_utc") in {None, ""}
+            and entry.get("live_permission_allowed") is False
+            and entry.get("no_direct_oanda") is True
+            and entry.get("preserve_blockers") is True
+        ):
+            issues.append(f"work_orders[{index}] violates the read-only safety boundary")
+    return {
+        "status": "INVALID" if issues else "VALID",
+        "issues": issues,
+        "declared_pending_count": payload.get("pending_count"),
+        "readable_entry_count": len(entries),
+    }
 
 
 def _guardian_tuning_work_order_entries(
@@ -910,7 +1043,25 @@ def _guardian_tuning_pending_work_order_views(
             or entry.get("event_fingerprint")
             or ""
         ).strip()
-        review = entry.get("bot_tuning_review")
+        latest_reviewed_observation_id = str(
+            entry.get("latest_reviewed_observation_id") or ""
+        ).strip()
+        review_validation = (
+            entry.get("bot_tuning_review_validation")
+            if isinstance(entry.get("bot_tuning_review_validation"), dict)
+            else {}
+        )
+        review = (
+            entry.get("bot_tuning_review")
+            if isinstance(entry.get("bot_tuning_review"), dict)
+            else {}
+        )
+        review_current = bool(
+            latest_observation_id
+            and latest_reviewed_observation_id == latest_observation_id
+            and str(review_validation.get("status") or "").upper() == "VALID"
+            and review
+        )
         observations = [
             dict(item)
             for item in entry.get("observations", []) or []
@@ -922,7 +1073,12 @@ def _guardian_tuning_pending_work_order_views(
                 "work_order_id": entry.get("work_order_id"),
                 "semantic_state_id": semantic_state_id or None,
                 "latest_observation_id": latest_observation_id or None,
-                "review": dict(review) if isinstance(review, dict) else {},
+                "latest_reviewed_observation_id": (
+                    latest_reviewed_observation_id or None
+                ),
+                "bot_tuning_review_validation": dict(review_validation),
+                "review_current": review_current,
+                "review": dict(review),
                 "observations": observations,
                 "selected_event": (
                     dict(selected_event) if isinstance(selected_event, dict) else {}
@@ -5963,7 +6119,53 @@ def _build_repair_requests(
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
 
-    if _guardian_tuning_work_order_pending(guardian_tuning_work_order):
+    tuning_queue_validation = _guardian_tuning_queue_validation(
+        guardian_tuning_work_order
+    )
+    if tuning_queue_validation["status"] == "INVALID":
+        requests.append(
+            _repair_request(
+                code=GUARDIAN_TUNING_QUEUE_INTEGRITY_REPAIR_REQUEST,
+                priority="P1",
+                status="QUEUE_INTEGRITY_INVALID",
+                source_findings=list(tuning_queue_validation["issues"]),
+                problem=(
+                    "The guardian tuning queue cannot be counted safely, so pending and "
+                    "reviewed totals are unknown rather than zero."
+                ),
+                why_now=(
+                    "Treating malformed or boundary-unsafe rows as absent can falsely claim "
+                    "that the hourly AI cleared its tuning backlog."
+                ),
+                evidence_summary={
+                    "queue_validation": tuning_queue_validation,
+                    "pending_work_order_count": None,
+                    "current_reviewed_count": None,
+                    "current_unreviewed_count": None,
+                    "live_permission_allowed": False,
+                    "no_direct_oanda": True,
+                    "preserve_blockers": True,
+                },
+                clearance_conditions=[
+                    "Re-read the queue with the authoritative revision-4 lifecycle validator.",
+                    "Repair by an approved lifecycle migration or restore last-good bytes; never hand-edit the queue.",
+                    "Report exact pending/reviewed counts only after revision, counters, identities, and safety boundaries validate.",
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                ],
+                suggested_files=[
+                    "data/guardian_tuning_work_order.json",
+                    "tools/guardian_wake_dispatcher.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Unsupported revision and counter mismatch remain visible with unknown counts.",
+                    "Boundary-unsafe pending rows never become a zero-backlog report.",
+                ],
+            )
+        )
+    elif _guardian_tuning_work_order_pending(guardian_tuning_work_order):
         tuning_entries = _guardian_tuning_work_order_entries(guardian_tuning_work_order)
         pending_work_orders = _guardian_tuning_pending_work_order_views(
             guardian_tuning_work_order,
@@ -6027,6 +6229,10 @@ def _build_repair_requests(
         affected_pairs = _string_list(pair_values)
         affected_families = _string_list(family_values)
         material_reason_codes = _string_list(reason_values)
+        current_reviewed_count = sum(
+            1 for item in pending_work_orders if item.get("review_current") is True
+        )
+        current_unreviewed_count = len(pending_work_orders) - current_reviewed_count
         requests.append(
             _repair_request(
                 code=GUARDIAN_MARKET_TUNING_REPAIR_REQUEST,
@@ -6050,6 +6256,8 @@ def _build_repair_requests(
                 ),
                 evidence_summary={
                     "pending_work_order_count": len(tuning_entries),
+                    "current_reviewed_count": current_reviewed_count,
+                    "current_unreviewed_count": current_unreviewed_count,
                     "pending_work_orders": pending_work_orders,
                     "affected_pairs": affected_pairs,
                     "affected_bot_families": affected_families,

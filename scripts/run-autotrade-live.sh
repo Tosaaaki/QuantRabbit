@@ -316,8 +316,12 @@ except (OSError, json.JSONDecodeError, ValueError):
     raise SystemExit(1)
 
 key = sys.argv[2]
-if key == "action" and isinstance(payload.get("decision"), dict):
-    value = payload["decision"].get("action")
+decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else payload
+if key == "action":
+    value = decision.get("action")
+elif key == "decision_author_kind":
+    provenance = decision.get("decision_provenance")
+    value = provenance.get("author_kind") if isinstance(provenance, dict) else None
 else:
     value = payload.get(key)
 if not isinstance(value, str):
@@ -328,10 +332,15 @@ PY
 
 gpt_handoff_needs_refresh() {
   local response_path="$1"
-  local dep status action autotrade_report_path
+  local dep status action author_kind autotrade_report_path
   if [[ ! -f "$response_path" ]]; then
     echo "[run-autotrade-live] GPT handoff response missing; composing a fresh receipt: ${response_path}" >&2
     return 0
+  fi
+  author_kind="$(json_string_value "$response_path" decision_author_kind || true)"
+  if [[ "$author_kind" == "CODEX_MARKET_READ" ]]; then
+    echo "[run-autotrade-live] preserving Codex-authored market-read receipt; wrapper auto-draft must not replace AI provenance, even when stale/rejected/consumed." >&2
+    return 1
   fi
   for dep in data/broker_snapshot.json data/order_intents.json data/ai_attack_advice.json data/active_trader_contract.json data/active_opportunity_board.json data/non_eurusd_live_grade_frontier.json data/range_rail_geometry_repair.json; do
     if [[ -f "$dep" && "$dep" -nt "$response_path" ]]; then

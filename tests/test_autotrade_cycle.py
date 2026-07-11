@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,12 +29,224 @@ from quant_rabbit.broker.execution import LiveOrderStageSummary
 import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit import forecast_precision
-from quant_rabbit.gpt_trader import StaticTraderProvider
+from quant_rabbit.gpt_trader import StaticTraderProvider as _ProductionStaticTraderProvider
 from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.market_read_overlay import (
+    CODEX_MARKET_READ_AUTHOR,
+    apply_codex_market_read_overlay,
+    prepare_market_read_baseline,
+)
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 from tests.support_bidask_rules import write_nonmatching_bidask_rules
+
+
+class StaticTraderProvider(_ProductionStaticTraderProvider):
+    """Publish legacy TRADE fixtures through the real AI artifact chain.
+
+    AutoTradeCycle tests exercise gateway/capacity behavior, not the overlay
+    authoring tool itself. Production rejects self-declared digest strings, so
+    this provider builds a deterministic baseline and evidence packet, writes
+    a valid GPT overlay, and returns only the production apply result. The
+    dedicated overlay/verifier tests cover forged and stale artifacts.
+    """
+
+    def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+        decision = super().decide(input_packet, schema)
+        if str(decision.get("action") or "").upper() != "TRADE":
+            return decision
+        if isinstance(decision.get("decision_provenance"), dict):
+            return decision
+
+        artifact_contract = input_packet.get("market_read_artifact_contract")
+        if not isinstance(artifact_contract, dict):
+            raise AssertionError("test GPT packet is missing the production artifact contract")
+        baseline_path = Path(str(artifact_contract["baseline_path"]))
+        packet_path = Path(str(artifact_contract["evidence_packet_path"]))
+        overlay_path = Path(str(artifact_contract["overlay_path"]))
+        evidence_sources = {
+            str(name): Path(str(path))
+            for name, path in (artifact_contract.get("evidence_source_paths") or {}).items()
+        }
+        primary_lane = _test_primary_lane(input_packet, decision)
+        primary_lane_id = str(primary_lane.get("lane_id") or "")
+        decision["selected_lane_id"] = primary_lane_id
+        decision["selected_lane_ids"] = [primary_lane_id]
+        market_read = _test_artifact_bound_market_read(input_packet, primary_lane)
+        authored_at = datetime.now(timezone.utc)
+        decision["generated_at_utc"] = authored_at.isoformat()
+        decision["market_read_first"] = market_read
+        decision.update(
+            {
+                "market_read_review": {
+                    "prior_prediction_ids": [],
+                    "what_failed": "NO_RESOLVED_PRIOR",
+                    "adjustment": "Bind the fixture read to the current selected intent geometry.",
+                    "no_change_reason": "No resolved prior prediction is present in this isolated fixture.",
+                },
+                "market_read_counterargument": (
+                    "The cited shelf can fail before the numeric target is reached."
+                ),
+                "market_read_change_summary": (
+                    "Bound the legacy fixture to the current CODEX_MARKET_READ contract."
+                ),
+                "market_read_disposition": "ACCEPT_BASELINE",
+                "market_read_veto_reason": "",
+                "market_read_vetoed_lane_ids": [],
+            }
+        )
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(
+            json.dumps(decision, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        prepared = prepare_market_read_baseline(
+            baseline_path=baseline_path,
+            packet_path=packet_path,
+            evidence_sources=evidence_sources,
+            now=authored_at,
+        )
+        packet_payload = json.loads(packet_path.read_text())
+        prior_ids = [
+            str(row.get("prediction_id"))
+            for row in packet_payload.get("recent_resolved_predictions", []) or []
+            if isinstance(row, dict) and row.get("prediction_id")
+        ]
+        review = {
+            "prior_prediction_ids": prior_ids[-1:],
+            "what_failed": "Reviewed the latest resolved fixture prediction" if prior_ids else "NO_RESOLVED_PRIOR",
+            "adjustment": "Bind the fixture read to the current selected intent geometry.",
+            "no_change_reason": "No resolved prior prediction is present in this isolated fixture." if not prior_ids else "",
+        }
+        overlay = {
+            "schema_version": 1,
+            "author_kind": CODEX_MARKET_READ_AUTHOR,
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "authored_at_utc": authored_at.isoformat(),
+            "baseline_sha256": prepared.baseline_sha256,
+            "evidence_packet_sha256": prepared.evidence_packet_sha256,
+            "baseline_disposition": "ACCEPT_BASELINE",
+            "market_read_first": market_read,
+            "market_read_review": review,
+            "market_read_counterargument": "The cited shelf can fail before the numeric target is reached.",
+            "market_read_change_summary": "Bound the fixture read to the current selected intent and evidence packet.",
+            "market_read_veto_reason": "",
+        }
+        overlay_path.write_text(
+            json.dumps(overlay, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        output_path = baseline_path.with_name("artifact_bound_decision.json")
+        apply_codex_market_read_overlay(
+            baseline_path=baseline_path,
+            packet_path=packet_path,
+            overlay_path=overlay_path,
+            output_path=output_path,
+            evidence_sources=evidence_sources,
+            now=authored_at,
+        )
+        return json.loads(output_path.read_text())
+
+
+def _test_primary_lane(input_packet: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    primary_lane_id = str(decision.get("selected_lane_id") or "")
+    if not primary_lane_id:
+        primary_lane_id = next(
+            (str(item) for item in decision.get("selected_lane_ids", []) or [] if str(item)),
+            "",
+        )
+    lane = next(
+        (
+            dict(item)
+            for item in input_packet.get("lanes", []) or []
+            if isinstance(item, dict) and str(item.get("lane_id") or "") == primary_lane_id
+        ),
+        None,
+    )
+    if lane is None:
+        raise AssertionError(f"test GPT primary lane is absent from the verifier packet: {primary_lane_id}")
+    return lane
+
+
+def _test_artifact_bound_market_read(
+    input_packet: dict[str, Any],
+    lane: dict[str, Any],
+) -> dict[str, Any]:
+    pair = str(lane.get("pair") or "")
+    direction = str(lane.get("direction") or "").upper()
+    if "_" not in pair or direction not in {"LONG", "SHORT"}:
+        raise AssertionError(f"test lane cannot form a market read: {pair} {direction}")
+    base, quote = pair.split("_", 1)
+    bought, sold = (base, quote) if direction == "LONG" else (quote, base)
+    quotes = (input_packet.get("broker_snapshot") or {}).get("quotes") or {}
+    raw_quote = quotes.get(pair) if isinstance(quotes, dict) else None
+    if not isinstance(raw_quote, dict):
+        raise AssertionError(f"test GPT packet has no quote for {pair}")
+    bid = float(raw_quote["bid"])
+    ask = float(raw_quote["ask"])
+    basis = (bid + ask) / 2.0
+    entry = float(lane.get("entry") if lane.get("entry") is not None else basis)
+    tp = float(lane.get("tp")) if lane.get("tp") is not None else None
+    sl = float(lane.get("sl")) if lane.get("sl") is not None else None
+    spread = max(ask - bid, abs(basis) * 1e-9)
+    geometry = [spread * 10.0]
+    if tp is not None:
+        geometry.append(abs(tp - entry))
+    if sl is not None:
+        geometry.append(abs(entry - sl))
+    distance = max(value for value in geometry if value > 0)
+    if direction == "LONG":
+        target_30 = max(basis + spread, tp if tp is not None and tp > basis else basis + distance * 0.5)
+        target_2h = max(target_30 + spread, tp if tp is not None and tp > target_30 else basis + distance)
+        invalidation = min(basis - spread, sl if sl is not None and sl < basis else basis - distance)
+        forced_tp = tp if tp is not None else entry + distance
+        forced_sl = sl if sl is not None else entry - distance
+    else:
+        target_30 = min(basis - spread, tp if tp is not None and tp < basis else basis - distance * 0.5)
+        target_2h = min(target_30 - spread, tp if tp is not None and tp < target_30 else basis - distance)
+        invalidation = max(basis + spread, sl if sl is not None and sl > basis else basis + distance)
+        forced_tp = tp if tp is not None else entry - distance
+        forced_sl = sl if sl is not None else entry + distance
+    order_type = str(lane.get("order_type") or "").upper()
+    vehicle = "STOP" if "STOP" in order_type else ("LIMIT" if "LIMIT" in order_type or "TOUCHED" in order_type else "MARKET")
+    return {
+        "naked_read": {
+            "currency_bought": bought,
+            "currency_sold": sold,
+            "cleanest_pair_expression": pair,
+            "is_cleanest_currency_theme": f"YES - {pair} is the selected fixture expression.",
+            "location_24h": "MIDDLE",
+            "h1_h4_alignment": "Fixture packet alignment is unchanged.",
+            "tape_state": "TREND",
+            "known_winning_trade_shape_match": "Fixture-only current intent match.",
+            "proposed_building_style_allowed": "single selected intent only",
+            "thesis_state": "ALIVE",
+            "what_price_is_trying_to_do_now": f"{pair} is testing the selected {direction} path.",
+        },
+        "next_30m_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": "Hold current quote-side structure toward the nearer numeric target.",
+            "target_zone": str(target_30),
+            "invalidation": str(invalidation),
+        },
+        "next_2h_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": "Extend toward the farther target only while invalidation remains untouched.",
+            "target_zone": str(target_2h),
+            "invalidation": str(invalidation),
+        },
+        "best_trade_if_forced": {
+            "pair": pair,
+            "direction": direction,
+            "vehicle": vehicle,
+            "entry": str(entry),
+            "tp": str(forced_tp),
+            "sl": str(forced_sl),
+            "why_this_pays": "The exact selected intent reaches its TP before its canonical invalidation.",
+        },
+    }
 
 
 def _bypass_pre_post_reconciliation(self, **kwargs):
@@ -1329,7 +1542,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             (root / "pe.json").write_text(json.dumps(overwritten, indent=2) + "\n")
             cycle._record_execution_ledger_receipts()
 
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 events = conn.execute(
                     "SELECT event_type, trade_id, exit_reason FROM execution_events ORDER BY rowid"
                 ).fetchall()
@@ -1401,7 +1614,7 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             cycle._record_execution_ledger_receipts()
 
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 observations = conn.execute(
                     """
                     SELECT subject_id, check_name, status, severity, evidence_json
@@ -1705,7 +1918,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertFalse(recovery_bypass)
 
-    def test_expanded_gpt_basket_recovers_from_stale_selected_lane(self) -> None:
+    def test_expanded_gpt_basket_rejects_stale_selected_lane_without_substitution(self) -> None:
         current_lane = LaneScore(
             lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
             pair="EUR_USD",
@@ -1754,12 +1967,111 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
             decision=decision,
-            gpt_lane_ids=(stale_gpt_lane.lane_id,),
+            gpt_lane_ids=(stale_gpt_lane.lane_id, current_lane.lane_id),
+            gpt_primary_lane_id=stale_gpt_lane.lane_id,
             margin_room_jpy=10_000.0,
         )
 
-        self.assertEqual(lane_ids, (current_lane.lane_id,))
-        self.assertEqual(size_multiples, {current_lane.lane_id: 1.0})
+        self.assertEqual(lane_ids, ())
+        self.assertEqual(size_multiples, {})
+
+    def test_expanded_gpt_basket_does_not_replace_stale_market_primary_with_same_parent_vehicle(self) -> None:
+        parent_lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+        stale_market_lane = LaneScore(
+            lane_id=f"{parent_lane_id}:MARKET",
+            pair="EUR_USD",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="MARKET",
+            entry=1.16522,
+            tp=1.16878,
+            sl=1.16401,
+            status="DRY_RUN_BLOCKED",
+            score=120.0,
+            action=ACTION_NO_TRADE,
+            blockers=("intent status is DRY_RUN_BLOCKED",),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=7_400.0,
+        )
+        current_stop_lane = replace(
+            stale_market_lane,
+            lane_id=parent_lane_id,
+            order_type="STOP-ENTRY",
+            status="LIVE_READY",
+            action=ACTION_SEND_ENTRY,
+            blockers=(),
+            score=110.0,
+        )
+        decision = TraderDecision(
+            action=ACTION_SEND_ENTRY,
+            selected_lane_id=current_stop_lane.lane_id,
+            selected_lane_score=current_stop_lane.score,
+            selected_lane_size_multiple=current_stop_lane.size_multiple,
+            generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="same parent has a current stop vehicle, but GPT selected stale market",
+            scores=(current_stop_lane, stale_market_lane),
+            positions=0,
+            orders=0,
+        )
+
+        lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
+            decision=decision,
+            gpt_lane_ids=(stale_market_lane.lane_id, current_stop_lane.lane_id),
+            gpt_primary_lane_id=stale_market_lane.lane_id,
+            margin_room_jpy=10_000.0,
+        )
+
+        self.assertEqual(lane_ids, ())
+        self.assertEqual(size_multiples, {})
+
+    def test_expanded_gpt_basket_preserves_exact_selected_lane_when_valid(self) -> None:
+        selected_lane = LaneScore(
+            lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="LONG",
+            method="BREAKOUT_FAILURE",
+            order_type="STOP-ENTRY",
+            entry=1.16522,
+            tp=1.16878,
+            sl=1.16401,
+            status="LIVE_READY",
+            score=110.0,
+            action=ACTION_SEND_ENTRY,
+            blockers=(),
+            rationale=(),
+            size_multiple=0.75,
+            estimated_margin_jpy=7_400.0,
+        )
+        unselected_lane = replace(
+            selected_lane,
+            lane_id="trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+            pair="GBP_USD",
+            method="TREND_CONTINUATION",
+            score=120.0,
+            size_multiple=1.0,
+        )
+        decision = TraderDecision(
+            action=ACTION_SEND_ENTRY,
+            selected_lane_id=unselected_lane.lane_id,
+            selected_lane_score=unselected_lane.score,
+            selected_lane_size_multiple=unselected_lane.size_multiple,
+            generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="deterministic ranking differs from the GPT-selected lane",
+            scores=(unselected_lane, selected_lane),
+            positions=0,
+            orders=0,
+        )
+
+        lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
+            decision=decision,
+            gpt_lane_ids=(selected_lane.lane_id,),
+            gpt_primary_lane_id=selected_lane.lane_id,
+            margin_room_jpy=10_000.0,
+        )
+
+        self.assertEqual(lane_ids, (selected_lane.lane_id,))
+        self.assertEqual(size_multiples, {selected_lane.lane_id: 0.75})
 
     def test_direct_send_cycle_refuses_existing_live_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3490,6 +3802,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 quotes={
                     "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
                     "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    "NZD_CAD": Quote("NZD_CAD", 0.81340, 0.81352, timestamp_utc=now),
                 },
             )
             snapshot_path = root / "snapshot.json"
@@ -4409,6 +4722,9 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
+            self.assertTrue((root / "trader_decision_baseline.json").exists())
+            self.assertTrue((root / "market_read_evidence_packet.json").exists())
+            self.assertTrue((root / "codex_market_read_overlay.json").exists())
 
     def test_gpt_close_defers_fresh_trade_until_next_cycle(self) -> None:
         prior_override = os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
@@ -4828,7 +5144,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 verification_payload["status"],
             )
             self.assertIn("verification:ledger", gpt_payload["input_packet"]["allowed_evidence_refs"])
-            with sqlite3.connect(root / "execution_ledger.db") as conn:
+            with closing(sqlite3.connect(root / "execution_ledger.db")) as conn, conn:
                 rows = conn.execute("SELECT COUNT(*) FROM verification_observations").fetchone()[0]
             self.assertGreater(rows, 0)
 
@@ -5188,7 +5504,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 db_path=ledger_path,
                 report_path=root / "execution_ledger.md",
             )._init_db()
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 stamp = datetime.now(timezone.utc).isoformat()
                 conn.executemany(
                     "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
@@ -5248,7 +5564,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.transaction_sync_calls, ["100", "100", "100"])
             live_order = json.loads((root / "live_order.json").read_text())
             self.assertEqual(live_order["pre_post_reconciliation"]["status"], "PASSED")
-            with sqlite3.connect(ledger_path) as conn:
+            with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 event_types = {
                     row[0] for row in conn.execute("SELECT event_type FROM execution_events").fetchall()
                 }
@@ -6653,7 +6969,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
-            summary = AutoTradeCycle(
+            cycle = AutoTradeCycle(
                 client=client,
                 snapshot_path=snapshot_path,
                 intents_path=intents_path,
@@ -6682,7 +6998,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 reuse_market_artifacts=True,
                 live_enabled=True,
                 max_loss_jpy=1_500,
-            ).run(send=False)
+            )
+            summary = cycle.run(send=False)
 
             self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
@@ -6690,7 +7007,92 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(len(client.snapshot_calls), 1)
             self.assertIn("reuse_existing", (root / "report.md").read_text())
 
-    def test_reuse_market_artifacts_reuses_accepted_gpt_packet_after_snapshot_refresh(self) -> None:
+            # GPTTraderBrain records the accepted prediction before publishing
+            # its verifier output. That append is unresolved and must not
+            # invalidate the exact handoff the cycle is about to consume.
+            predictions_path = root / "market_read_predictions.jsonl"
+            self.assertTrue(predictions_path.read_text().strip())
+            verified_path = root / "gpt_decision.json"
+            source_path = root / "artifact_bound_decision.json"
+            accepted_decision = json.loads(source_path.read_text())
+            os.utime(source_path, (100.0, 100.0))
+            os.utime(verified_path, (101.0, 101.0))
+            cycle.gpt_provider = _ProductionStaticTraderProvider(
+                accepted_decision,
+                source_path=source_path,
+            )
+            reusable = cycle._load_reusable_verified_gpt_handoff()
+            self.assertIsNotNone(reusable)
+            self.assertEqual(reusable.action, "TRADE")
+
+            original_verified = verified_path.read_bytes()
+            original_source = source_path.read_bytes()
+            original_predictions = predictions_path.read_bytes()
+            brain = cycle._gpt_brain()
+            original_baseline = brain.market_read_baseline_path.read_bytes()
+
+            with self.subTest("fake_sha"):
+                forged = json.loads(original_verified)
+                forged["decision"]["decision_provenance"]["baseline_sha256"] = "0" * 64
+                verified_path.write_text(json.dumps(forged) + "\n")
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+                verified_path.write_bytes(original_verified)
+
+            with self.subTest("missing_artifact"):
+                brain.market_read_baseline_path.unlink()
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+                brain.market_read_baseline_path.write_bytes(original_baseline)
+
+            with self.subTest("verified_120_minutes_ago"):
+                stale_applied_at = (
+                    datetime.now(timezone.utc) - timedelta(minutes=120)
+                ).isoformat()
+                stale = json.loads(original_verified)
+                stale["decision"]["decision_provenance"]["applied_at_utc"] = stale_applied_at
+                stale_source = json.loads(original_source)
+                stale_source["decision_provenance"]["applied_at_utc"] = stale_applied_at
+                source_path.write_text(json.dumps(stale_source) + "\n")
+                verified_path.write_text(json.dumps(stale) + "\n")
+                os.utime(source_path, (100.0, 100.0))
+                os.utime(verified_path, (101.0, 101.0))
+                self.assertFalse(
+                    cycle._verified_gpt_trade_artifacts_still_current(stale_source)
+                )
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+                source_path.write_bytes(original_source)
+                verified_path.write_bytes(original_verified)
+                os.utime(source_path, (100.0, 100.0))
+                os.utime(verified_path, (101.0, 101.0))
+
+            with self.subTest("new_resolved_prediction"):
+                resolved = {
+                    "schema_version": 2,
+                    "prediction_id": "mr2:" + "9" * 64,
+                    "score_eligible": True,
+                    "source_snapshot_conflict": False,
+                    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "LONG",
+                    "action": "TRADE",
+                    "verdict": "FULL_READ_INCOMPLETE",
+                    "horizon_results": {
+                        "30m": {
+                            "resolution_status": "RESOLVED_MID_CANDLE_DIAGNOSTIC",
+                            "direction_status": "WRONG",
+                            "target_completion_status": "NOT_TOUCHED",
+                            "invalidation_status": "TOUCHED",
+                            "first_touch_status": "INVALIDATION_ONLY",
+                            "full_read_status": "INVALIDATION_ONLY",
+                        },
+                        "2h": {"resolution_status": "UNRESOLVED"},
+                    },
+                }
+                predictions_path.write_bytes(
+                    original_predictions + (json.dumps(resolved) + "\n").encode()
+                )
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+
+    def test_reuse_market_artifacts_requires_fresh_receipt_after_snapshot_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -6795,9 +7197,10 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.gpt_status, "ACCEPTED")
-            self.assertEqual(summary.gpt_action, "TRADE")
+            self.assertEqual(summary.status, "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY")
+            self.assertEqual(summary.gpt_status, "STALE_DECISION")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
             payload = json.loads(gpt_decision_path.read_text())
             self.assertEqual(payload["status"], "ACCEPTED")
             self.assertEqual(

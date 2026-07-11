@@ -4,6 +4,7 @@ import json
 import math
 import shlex
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -793,7 +794,7 @@ def _execution_ledger_close_findings(
     if not path.exists():
         return metrics, []
     try:
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             columns = {
                 str(row[1])

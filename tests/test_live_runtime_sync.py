@@ -524,7 +524,12 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 automation_file,
                 live,
                 status="ACTIVE",
-                prompt="After the receipt is ACCEPTED by `gpt-trader-decision`, stop here.",
+                prompt="\n".join(
+                    [
+                        _current_trader_prompt_sentinel(),
+                        "After the receipt is ACCEPTED by `gpt-trader-decision`, stop here.",
+                    ]
+                ),
             )
 
             result = _sync(
@@ -551,7 +556,12 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 automation_file,
                 live,
                 status="ACTIVE",
-                prompt="STOP if `data/codex_trader_decision_response.json` was written very recently by another cycle.",
+                prompt="\n".join(
+                    [
+                        _current_trader_prompt_sentinel(),
+                        "STOP if `data/codex_trader_decision_response.json` was written very recently by another cycle.",
+                    ]
+                ),
             )
 
             result = _sync(
@@ -578,12 +588,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 automation_file,
                 live,
                 status="ACTIVE",
-                prompt="\n".join(
-                    [
-                        "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
-                        "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
-                        "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, and `data/guardian_trigger_contract.json` diffs are runtime drift and **do not** block the run.",
-                    ]
+                prompt=_current_trader_prompt_sentinel(
+                    include_current_runtime_drift=False
                 ),
             )
 
@@ -711,14 +717,29 @@ def _write_automation(
     )
 
 
-def _current_trader_prompt_sentinel() -> str:
-    return "\n".join(
-        [
-            "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
-            "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
-            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, `data/active_opportunity_board.json`, `docs/active_opportunity_board.md`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run.",
-        ]
-    )
+def _current_trader_prompt_sentinel(
+    *,
+    include_current_runtime_drift: bool = True,
+) -> str:
+    lines = [
+        "In this workflow, the AI trader is this scheduled GPT-5.5/Codex role; there is no second AI decision-maker.",
+        "The deterministic draft is never the final AI decision.",
+        "Write `data/trader_decision_baseline.json` and `data/market_read_evidence_packet.json` before the GPT market read.",
+        "Author `data/codex_market_read_overlay.json`, run `trader-apply-market-read`, and never replace it downstream with deterministic output.",
+        "Strict economics split must preserve lifetime, recent, prior, and historical results without claiming proof from a small sample.",
+        "Every insufficient-evidence tuning review must include structured `evidence_acquisition`.",
+        "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
+        "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
+    ]
+    if include_current_runtime_drift:
+        lines.append(
+            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, `data/active_opportunity_board.json`, `docs/active_opportunity_board.md`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run."
+        )
+    else:
+        lines.append(
+            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, and `data/guardian_trigger_contract.json` diffs are runtime drift and **do not** block the run."
+        )
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

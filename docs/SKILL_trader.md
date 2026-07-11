@@ -24,10 +24,16 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - `guardian-event-router` is read-only: it reads `data/guardian_trigger_contract.json` and `data/self_improvement_audit.json`, writes event/wake artifacts for GPT-5.5, and never sends, cancels, or closes broker orders.
 - When `self_improvement_audit` raises `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and the refreshed broker snapshot still has the named trader-owned pending entry id, guardian emits a `STALE_PENDING` / `PENDING_CANCEL_REVIEW` event immediately instead of waiting for the age-only stale-pending timer. This is wake evidence only; an accepted `CANCEL_PENDING` receipt and gateway re-check are still required before any live cancel.
 - Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
+- A deterministic `trader-draft-decision` is only the execution-envelope baseline. A baseline `TRADE` is expected to remain `DRAFT_REQUIRES_OPERATOR_REVIEW` with `AI_MARKET_READ_REQUIRED` until this scheduled Codex pass authors and applies a fresh market-read overlay.
+- The GPT (AI trader) choice is bounded but operational: accept the exact deterministic `TRADE`, or veto it to `WAIT` / `REQUEST_EVIDENCE`. Never upgrade a non-trade baseline, choose another lane, change units/order ids/risk, or claim live permission.
+- Each current market-read receipt binds exactly one primary pair, one side, and one lane. `selected_lane_ids` must contain exactly the same single lane as `selected_lane_id`. A second pair, side, or lane requires a fresh broker/evidence snapshot and a new GPT wake, overlay, verification, and receipt. No downstream component may append, substitute, expand, or recover to another deterministic lane.
+- Treat prediction errors as first-class evidence. Cite the latest truly resolved score-eligible v2 prediction id, separate direction/target/invalidation/first-touch/full-read outcomes, state what failed, and state the adjustment. `UNRESOLVED`, source-snapshot conflicts, and score-ineligible rows are not resolved evidence. If the conclusion is unchanged, give a concrete `no_change_reason`; do not repeat an unexamined read.
+- Keep two market-read outcome lineages distinct. Top-level `originating_decision_receipt_id`, `direct_execution_attribution`, and `direct_realized_outcome` measure this prediction's own verified decision, exact gateway ids, and exact-id P/L. `reaction_chain.first_subsequent_decision`, `reaction_chain.execution_attribution`, and `reaction_chain.realized_outcome` measure what the next decision did after the prior prediction. Neither path may infer joins from pair or time proximity, and reaction results must never be reported as the originating prediction's own execution or P/L. A pending LIMIT/STOP may gain a trade id later only when its already-attributed gateway order id exactly equals an execution-ledger `ORDER_FILLED.order_id`; a different order, same pair, or nearby timestamp never qualifies.
+- The model-written overlay is `data/codex_market_read_overlay.json`; the deterministic baseline is `data/trader_decision_baseline.json`; the content-addressed packet is `data/market_read_evidence_packet.json`; and only `trader-apply-market-read` may publish the merged `data/codex_trader_decision_response.json`.
 - Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
 - The `com.quantrabbit.guardian-wake-dispatcher` LaunchAgent may wake GPT-5.5 with read-only `codex exec`; its live default must keep `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` and `QR_GUARDIAN_ACTION_EXECUTE=0`, so wake output is review/receipt only unless a separate explicit gateway path is enabled.
 - Read `docs/guardian_event_report.md`, `data/guardian_events.json`, `data/guardian_escalation.json`, `docs/guardian_action_review.md`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, `data/guardian_tuning_work_order.json`, `data/guardian_trigger_contract.json`, `docs/guardian_trigger_contract_report.md`, `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, `data/guardian_receipt_consumption.json`, `docs/guardian_receipt_consumption_report.md`, `data/guardian_receipt_operator_review.json`, `docs/guardian_receipt_operator_review_report.md`, `data/operator_review_report.json`, and `docs/operator_review_report.md` every cycle before normal new-entry routing. Treat `docs/guardian_action_review.md` as two facts: latest dispatcher pass status and latest accepted receipt status/lifecycle. Treat `data/qr_trader_run_watchdog.json` as the local scheduled-run evidence: `BROKEN` / `STALE` is P0 operational evidence, `last_trader_run_at` must come only from trader journal/memory/decision evidence, an attempted hourly cycle stopped by the live-lock gate counts as wake/cadence evidence but not trade permission, and active or expired current/archive guardian receipts flagged as `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER` must be classified before ordinary entries.
-- Review every pending guardian tuning work order against its latest observation and matching terminal experiments. Never edit `data/guardian_tuning_work_order.json` directly. `NO_CHANGE_INSUFFICIENT_EVIDENCE` stays pending with an exact acquisition step; bind a later safe test only through `tools/guardian_tuning_review_enrich.py`.
+- Review every normalized pending guardian tuning work order against its latest observation and matching terminal experiments. Never edit `data/guardian_tuning_work_order.json` directly. Persist either a boundary-valid `NO_CHANGE_INSUFFICIENT_EVIDENCE` review with one exact acquisition step or a boundary-valid `TEST_REQUIRED` review against the current observation only through `tools/guardian_tuning_review_enrich.py`. Every `NO_CHANGE_INSUFFICIENT_EVIDENCE` review must include one structured `evidence_acquisition` naming an allowlisted `action_kind`, a project-relative `data/` or `logs/` `source_ref`, `required_new_samples` inside 1..1000, and a bounded non-executing `success_condition`; vague “wait/monitor/later” content is invalid. Repeating the identical current-observation review is idempotent; for the same observation `NO_CHANGE_INSUFFICIENT_EVIDENCE` may later upgrade to `TEST_REQUIRED`, but a bound `TEST_REQUIRED` review must never downgrade. A materially new latest observation requires its own review and may validly be `NO_CHANGE_INSUFFICIENT_EVIDENCE` even when the prior observation was `TEST_REQUIRED`. `NO_CHANGE_INSUFFICIENT_EVIDENCE` stays pending and never frees a queue slot. Before ordinary routing, report normalized pending plus `current_reviewed_count` and `current_unreviewed_count`; do not claim the backlog was processed unless `current_unreviewed_count=0` or every failed writer result is named for retry. An invalid revision/counter/identity/safety boundary means queue counts are unknown, never zero, and requires `REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY` before any cleared-backlog claim.
 - Before other tuning work, run `tools/guardian_tuning_override_reconcile.py`. A staged override without matching revision-4 terminal evidence remains dormant and blocks that lane's live send; reconciliation may confirm only an exact `CONSUMED` + `ACCEPTED_IMPROVEMENT` work-order/experiment/evidence match.
 - Then run `tools/guardian_tuning_post_activation_monitor.py`. It fixes the first 20 canonical attributed entries whose ledger row and raw OANDA entry time are both strictly after the immutable activation-ledger anchor, waits for those same 20 to resolve, and revalidates raw broker entry/close truth plus both the sealed ledger prefix and the current full-ledger first-20 truth before committing `KEEP` for a positive normalized metric or fail-closed `QUARANTINE` for a non-positive metric. Unrelated later rows may append, but a late earlier entry or financing/outcome correction invalidates the old seal and requires a new one. Once entry 20 exists, `RiskEngine` blocks that exact lane with `GUARDIAN_TUNING_POST_ACTIVATION_MONITOR_PENDING` even if this worker was skipped. A same-lane successor may follow only a prior `KEEP` whose activation, terminal, monitor, and current-ledger provenance still validates; unmonitored/quarantined/stale state cannot reset the first-20 boundary. Retry reuses an already-valid content-addressed monitor artifact. Deep override validation is cached only within one gateway phase and is cleared for a fresh final pre-POST read; it is never a process-persistent shortcut. Quarantine is not an automatic relaxation to the recorded previous value.
 - Version 1 accepts only a `TEST_REQUIRED` `forecast_confidence_floor` tightening. The review must precommit one exact five-part `lane_id` in `desk:pair:side:method:vehicle` form and the actual active floor as `current_value` before any qualifying entry; unsupported score/lookback/weight/execution parameters stay pending as `NO_CHANGE_INSUFFICIENT_EVIDENCE`. Past trades may suggest the hypothesis but cannot prove it.
@@ -292,6 +298,10 @@ Path rules:
 - A fresh `TRADE` must not contradict the naked read: SHORT market read with LONG target/invalidation geometry, LONG market read with SHORT geometry, or selected side vs market-read direction conflict requires rejection/request-evidence unless the final action explicitly resolves the contradiction.
 - A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure.
 - Final `TRADE` / `WAIT` text must reference the next 30m or next 2h prediction from `MARKET READ FIRST`.
+- Codex-authored directional 30m/2h reads require a current broker quote plus numeric target and invalidation on the correct sides. `RANGE` requires numeric lower/upper target rails bracketing the quote and strictly wider lower/upper invalidation rails. `best_trade_if_forced` always requires pair, LONG/SHORT, and numeric entry/TP/SL geometry even when the final action is non-trade.
+- Always write the strongest counterargument. Use `ACCEPT_BASELINE` only when the current numeric forecast supports the exact baseline lane; use `VETO_WAIT` / `VETO_REQUEST_EVIDENCE` when the forecast-backed counterargument makes that entry wrong. A veto reason such as session preference alone is not enough.
+- Never hand-edit execution fields into the overlay. Unknown top-level overlay fields, stale baseline/evidence SHA, stale model timestamp, missing latest resolved prediction review, or a changed final envelope must fail closed and require a fresh baseline/AI pass.
+- The final `TRADE` must keep `selected_lane_id` and the sole `selected_lane_ids` item identical to the exact baseline lane. If that lane is stale, missing, ineligible, or no longer fits, write a non-entry outcome and obtain a fresh receipt; do not use another current lane as a replacement.
 - `campaign_exposure_recovery` and deterministic recovery are fresh-entry routes, not WAIT overrides. They require a fresh accepted GPT `TRADE`/`ADD` receipt naming the lane; stale accepted `WAIT` / `REQUEST_EVIDENCE`, `gpt_allowed=false`, fresh-receipt-required errors, unresolved guardian receipt issues, missing/stale guardian receipt operator review, watchdog `normal_routing_allowed=false`, and missing market-read confirmation block the send.
 - `OANDA_CAMPAIGN_FIREPOWER_RELAXED` is capacity only. It cannot relax `NEGATIVE_EXPECTANCY`, stale GPT/non-TRADE receipts, accepted WAIT/REQUEST_EVIDENCE, missing fresh TRADE receipt, guardian hard blockers, or no current market-read confirmation.
 - Under +5%, trader must name an A/S path, a +10% extension setup gate candidate, or exact blocker.
@@ -420,13 +430,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # non-CLOSE actions and must not block separate current LIVE_READY entries on
 # other pairs or horizons.
 
-# 3. Write data/codex_trader_decision_response.json from the active decision branch
-# The scheduled trader should first let `trader-draft-decision` compose one
-# current receipt from the same broker/market/news packet that the verifier will
-# audit. The command is read-only except for the receipt/report files: it does
-# not call model APIs, send orders, cancel orders, close positions, or change
-# launchd state. It selects current LIVE_READY lanes from order_intents /
-# ai_attack_advice when clean. When LIVE_READY=0, it still reads
+# 3. Prepare the deterministic envelope, author the AI market read, then merge
+# `trader-draft-decision` first composes one current deterministic baseline from
+# the same broker/market/news packet that the verifier will audit. It also
+# writes a SHA-256-bound evidence packet. The command is read-only except for
+# the baseline/packet/report files: it does not call model APIs, send orders,
+# cancel orders, close positions, or change launchd state. It selects current
+# LIVE_READY lanes from order_intents / ai_attack_advice when clean. When
+# LIVE_READY=0, it still reads
 # active_trader_contract / active_opportunity_board /
 # non_eurusd_live_grade_frontier / range_rail_geometry_repair and uses the
 # current active top lane as the market-read/evidence-acquisition target instead
@@ -441,9 +452,30 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # `NEEDS_OPERATOR_REVIEW` classifications block ordinary TRADE / ADD.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
   --snapshot data/broker_snapshot.json \
+  --output data/trader_decision_baseline.json \
+  --market-read-evidence-packet data/market_read_evidence_packet.json
+#
+# Now act as the named discretionary author. Read the complete evidence packet,
+# current source artifacts, and latest genuinely resolved market-read feedback.
+# Write exactly `data/codex_market_read_overlay.json` with schema_version=1,
+# author_kind=CODEX_MARKET_READ, model=gpt-5.5, reasoning_effort=high, the
+# packet/baseline SHA values, authored_at_utc, baseline_disposition, a complete
+# numeric MARKET_READ_FIRST, prior-error review, strongest counterargument,
+# change summary, and veto reason (empty only for ACCEPT_BASELINE). The overlay
+# contains no action, lane, units, cancel/close ids, risk, or permission fields.
+#
+# Merge only through the fail-closed tool. It re-hashes every evidence source,
+# proves the final action transition and execution envelope, then atomically
+# publishes the verifier input. Any rejection means refresh/re-author; never
+# copy fields by hand around the failed merge.
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
+  --baseline data/trader_decision_baseline.json \
+  --packet data/market_read_evidence_packet.json \
+  --overlay data/codex_market_read_overlay.json \
   --output data/codex_trader_decision_response.json
 #
-# If broker refresh made an older receipt stale, overwrite it with one current receipt.
+# If broker refresh made the baseline/packet stale, regenerate both and author a
+# new overlay. Never reuse the old AI output against new broker truth.
 # For TRADE / WAIT / REQUEST_EVIDENCE, include `twenty_minute_plan`.
 # The field name is retained for verifier/backward compatibility, but the
 # scheduled full-trader cadence is now 60 minutes. Set `horizon_minutes=60`
@@ -456,10 +488,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
 # or `news:current`. If news-health is missing, ERROR/BLOCK, or carries BLOCK
 # issues, write a non-TRADE blocker receipt; campaign pressure must not bypass
 # stale or unsynced news.
-# If the draft reports DRAFT_REQUIRES_OPERATOR_REVIEW, do not invent a
-# deterministic workaround. Continue to `gpt-trader-decision` and the gateway
-# maintenance cycle so existing-position protection still runs, then repair the
-# named blocker or receipt bug after the handoff.
+# A deterministic baseline TRADE is expected to report
+# DRAFT_REQUIRES_OPERATOR_REVIEW / AI_MARKET_READ_REQUIRED. That status is the
+# handoff boundary, not a blocker to writing the overlay. Other draft verifier
+# issues remain real blockers. If overlay application or final verification
+# rejects, continue only to the gateway maintenance cycle so existing-position
+# protection still runs; never invent a deterministic entry workaround.
 # If current trader-owned pending entries consume portfolio capacity, either keep
 # that pending basket explicitly or name verified trader pending ids in
 # cancel_order_ids when replacing them with current MARKET participation.
@@ -550,12 +584,13 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
 # PositionProtectionGateway before considering fresh entry risk. Skipping the
 # wrapper leaves profit-side partial closes, profitable hedge TPs, profit-lock
 # stops, and other dependent-order protection stale.
-# `run-autotrade-live.sh` refreshes a missing/stale/rejected or consumed non-TRADE GPT handoff before
-# this gateway step when broker truth, order intents, attack advice, active
-# contract/board/frontier, or range-rail repair are newer than the response, or
-# when the newer verifier result already consumed the response as non-TRADE. The
-# refresh writes one fresh draft and verifier result; verifier rejection still
-# proceeds to gateway maintenance and must not become a deterministic send.
+# `run-autotrade-live.sh` may still refresh a missing or deterministic fallback
+# receipt before this gateway step. It must never overwrite a receipt whose
+# decision_provenance.author_kind is CODEX_MARKET_READ, even when broker truth
+# is newer or the receipt was rejected/consumed. A stale Codex receipt blocks
+# new risk; the next hourly AI pass must regenerate baseline/packet/overlay.
+# Verifier rejection still proceeds to gateway maintenance and must not become
+# a deterministic send.
 # This does not enable target-path live by itself. A target-path send still
 # needs QR_TARGET_PATH_LIVE_ENABLED=1 and LiveOrderGateway target-path proof.
 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \

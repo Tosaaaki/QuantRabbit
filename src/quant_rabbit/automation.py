@@ -6,7 +6,7 @@ import os
 import sys
 import sqlite3
 import shutil
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -85,9 +85,19 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.attack_advisor import AttackAdvisor
 from quant_rabbit.ai_test_bot import AITestBotBacktester
-from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
+from quant_rabbit.gpt_trader import (
+    DEFAULT_GPT_MAX_LANES,
+    GPTTraderBrain,
+    TraderModelProvider,
+    _decision_from_payload,
+)
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
+from quant_rabbit.market_read_overlay import (
+    DEFAULT_OVERLAY_MAX_AGE_SECONDS,
+    CODEX_MARKET_READ_AUTHOR,
+    revalidate_codex_market_read_artifacts,
+)
 from quant_rabbit.predictive_scout import predictive_scout_geometry_claimed
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER, RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_position_raw
@@ -2351,12 +2361,45 @@ class AutoTradeCycle:
                             return summary
                         if gpt_recovery_bypass:
                             gpt_recovery_source = "RECOVERY_HEDGE_GPT_NOT_PREFILTERED"
+                        deterministic_basket_lane_ids = basket_lane_ids
                         basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                             decision=decision,
                             gpt_lane_ids=gpt_lane_ids,
+                            gpt_primary_lane_id=gpt_summary.selected_lane_id,
                             allow_existing_pending=True,
                             margin_room_jpy=_basket_margin_room_jpy(snapshot),
                         )
+                        if not basket_lane_ids:
+                            summary = AutoTradeCycleSummary(
+                                status="GPT_DECISION_NOT_PREFILTERED",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                selected_lane_ids=gpt_lane_ids,
+                                deterministic_lane_id=deterministic_basket_lane_ids[0],
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                                gpt_recovery_source=gpt_recovery_source,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
                     order_gateway = LiveOrderGateway(
                         client=self.client,
                         strategy_profile=self.strategy_profile_path,
@@ -2956,36 +2999,37 @@ class AutoTradeCycle:
                                     already_canceled=tuple(canceled_orders),
                                 )
                             )
-                            summary = AutoTradeCycleSummary(
-                                status="GPT_DECISION_NOT_PREFILTERED",
-                                report_path=self.report_path,
-                                snapshot_path=self.snapshot_path,
-                                intents_path=self.intents_path,
-                                selected_lane_id=None,
-                                deterministic_lane_id=deterministic_lane_id,
-                                sent=False,
-                                positions=positions,
-                                orders=orders,
-                                live_ready=intent_summary.live_ready,
-                                decision_source="gpt_trader",
-                                receipt_promotions=promotion_summary.promoted,
-                                position_management_action=position_decision.action if position_decision else None,
-                                position_execution_status=position_execution.status if position_execution else None,
-                                position_execution_sent=position_execution.sent if position_execution else False,
-                                target_status=target_summary.status if target_summary else None,
-                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                                target_progress_pct=target_summary.progress_pct if target_summary else None,
-                                gpt_status=gpt_summary.status,
-                                gpt_action=gpt_summary.action,
-                                gpt_allowed=gpt_summary.allowed,
-                                gpt_issues=gpt_summary.issues,
-                                gpt_error=gpt_summary.error,
-                                gpt_wait_retries=gpt_wait_retries,
-                                gpt_recovery_source=gpt_recovery_source,
-                                campaign_exposure_required=campaign_exposure_required,
-                            )
-                            self._write_report(summary, generated_at)
-                            return summary
+                        summary = AutoTradeCycleSummary(
+                            status="GPT_DECISION_NOT_PREFILTERED",
+                            report_path=self.report_path,
+                            snapshot_path=self.snapshot_path,
+                            intents_path=self.intents_path,
+                            selected_lane_id=None,
+                            selected_lane_ids=gpt_selected_lane_ids,
+                            deterministic_lane_id=deterministic_lane_id,
+                            sent=False,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
+                            decision_source="gpt_trader",
+                            receipt_promotions=promotion_summary.promoted,
+                            position_management_action=position_decision.action if position_decision else None,
+                            position_execution_status=position_execution.status if position_execution else None,
+                            position_execution_sent=position_execution.sent if position_execution else False,
+                            target_status=target_summary.status if target_summary else None,
+                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                            target_progress_pct=target_summary.progress_pct if target_summary else None,
+                            gpt_status=gpt_summary.status,
+                            gpt_action=gpt_summary.action,
+                            gpt_allowed=gpt_summary.allowed,
+                            gpt_issues=gpt_summary.issues,
+                            gpt_error=gpt_summary.error,
+                            gpt_wait_retries=gpt_wait_retries,
+                            gpt_recovery_source=gpt_recovery_source,
+                            campaign_exposure_required=campaign_exposure_required,
+                        )
+                        self._write_report(summary, generated_at)
+                        return summary
                     else:
                         selected_lane_id = gpt_selected_lane_ids[0]
                         selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
@@ -3001,8 +3045,42 @@ class AutoTradeCycle:
             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                 decision=decision,
                 gpt_lane_ids=gpt_selected_lane_ids,
+                gpt_primary_lane_id=gpt_summary.selected_lane_id if gpt_summary else None,
                 margin_room_jpy=_basket_margin_room_jpy(snapshot),
             )
+            if not basket_lane_ids:
+                summary = AutoTradeCycleSummary(
+                    status="GPT_DECISION_NOT_PREFILTERED",
+                    report_path=self.report_path,
+                    snapshot_path=self.snapshot_path,
+                    intents_path=self.intents_path,
+                    selected_lane_id=None,
+                    selected_lane_ids=gpt_selected_lane_ids,
+                    deterministic_lane_id=deterministic_lane_id,
+                    sent=False,
+                    positions=positions,
+                    orders=orders,
+                    live_ready=intent_summary.live_ready,
+                    decision_source="gpt_trader",
+                    canceled_orders=tuple(canceled_orders),
+                    receipt_promotions=promotion_summary.promoted,
+                    position_management_action=position_decision.action if position_decision else None,
+                    position_execution_status=position_execution.status if position_execution else None,
+                    position_execution_sent=position_execution.sent if position_execution else False,
+                    target_status=target_summary.status if target_summary else None,
+                    target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                    target_progress_pct=target_summary.progress_pct if target_summary else None,
+                    gpt_status=gpt_summary.status if gpt_summary else None,
+                    gpt_action=gpt_summary.action if gpt_summary else None,
+                    gpt_allowed=gpt_summary.allowed if gpt_summary else None,
+                    gpt_issues=gpt_summary.issues if gpt_summary else None,
+                    gpt_error=gpt_summary.error if gpt_summary else None,
+                    gpt_wait_retries=gpt_wait_retries,
+                    gpt_recovery_source=gpt_recovery_source,
+                    campaign_exposure_required=campaign_exposure_required,
+                )
+                self._write_report(summary, generated_at)
+                return summary
             selected_lane_id = basket_lane_ids[0] if basket_lane_ids else selected_lane_id
             selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                 decision=decision,
@@ -3901,6 +3979,7 @@ class AutoTradeCycle:
         *,
         decision: TraderDecision,
         gpt_lane_ids: tuple[str, ...],
+        gpt_primary_lane_id: str | None = None,
         allow_existing_pending: bool = False,
         margin_room_jpy: float | None = None,
         margin_available_jpy: float | None = None,
@@ -3953,25 +4032,26 @@ class AutoTradeCycle:
                 parent_lane_ids.add(parent_lane_id)
             return True
 
-        for lane_id in gpt_lane_ids:
-            # GPT receipts can go stale between decision writing and gateway
-            # execution. Do not force a now-DRY_RUN_BLOCKED / non-prefiltered
-            # lane into LiveOrderGateway.
+        selected_lane_ids = tuple(dict.fromkeys(lane_id for lane_id in gpt_lane_ids if lane_id))
+        primary_lane_id = gpt_primary_lane_id or (selected_lane_ids[0] if selected_lane_ids else None)
+        if primary_lane_id not in selected_lane_ids or not add(
+            primary_lane_id,
+            require_current_prefilter=True,
+        ):
+            # The primary lane is the receipt's execution thesis.  If it is
+            # stale, missing, ineligible, or cannot fit the current planning
+            # envelope, a secondary/current lane must not silently replace it.
+            return (), {}
+        for lane_id in selected_lane_ids:
+            if lane_id == primary_lane_id:
+                continue
+            # Secondary selected lanes may narrow out through parent dedupe or
+            # current margin eligibility, but they can never replace primary.
             add(lane_id, require_current_prefilter=True)
-        if lane_ids:
-            # The external receipt is the discretionary execution contract.
-            # When at least one explicitly selected lane remains current,
-            # never append lower-priority deterministic lanes that GPT did
-            # not select; otherwise the report can say "only lane X" while
-            # the gateway sends lane Y as well.
-            return tuple(lane_ids), size_multiples
-
-        # If every GPT-selected lane has gone stale, recover through the
-        # current deterministic LIVE_READY basket instead of dead-ending the
-        # cycle on an obsolete receipt.
-        for score in decision.scores:
-            if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
-                add(score.lane_id, score.size_multiple)
+        # The external receipt is the discretionary execution contract.  If
+        # its exact primary selected lane is not eligible, return no plan;
+        # substituting a current deterministic lane would widen/change the
+        # AI-authored execution envelope without a fresh receipt.
         return tuple(lane_ids), size_multiples
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
@@ -4026,13 +4106,17 @@ class AutoTradeCycle:
         rerunning the verifier against a newer broker snapshot can reject the
         same receipt as stale even though the live gateway will fetch fresh
         broker truth before any staging/sending. Reuse is therefore allowed
-        only for the same external receipt, the same order-intent packet for
-        TRADE receipts, and a still-present LIVE_READY lane for any selected
-        fresh-entry lane. CLOSE / CANCEL_PENDING / protection actions do not
-        select order-intent lanes. WAIT / REQUEST_EVIDENCE are not gateway
+        only for the same external receipt. A TRADE receipt additionally needs
+        a fresh CODEX provenance timestamp and a full rebuild from the current
+        baseline, evidence packet, overlay, and named evidence sources. The
+        market-read prediction ledger binds only its resolved projection, so
+        the verifier's own unresolved append does not stale an otherwise exact
+        handoff. CLOSE / CANCEL_PENDING / protection actions do not select
+        order-intent lanes. WAIT / REQUEST_EVIDENCE are not gateway
         permissions at all; they are reusable only as one-shot verified cycle
-        outcomes so position maintenance still runs. Every action still needs
-        the same source receipt and an unconsumed accepted verifier output.
+        outcomes so position maintenance still runs. Every reusable action
+        still needs the same source receipt and an unconsumed accepted verifier
+        output.
         """
 
         if not self.reuse_market_artifacts or not self.use_gpt_trader:
@@ -4058,9 +4142,14 @@ class AutoTradeCycle:
         action = str(decision.get("action") or "").upper()
         if action not in ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS:
             return None
-        if not self._verified_gpt_decision_matches_source(decision, source_payload):
-            return None
-        if action == "TRADE" and not self._verified_gpt_entry_artifacts_still_match(verified_payload, decision):
+        if action == "TRADE":
+            if (
+                not self._verified_gpt_trade_decision_matches_source(decision, source_payload)
+                or not self._verified_gpt_trade_artifacts_still_current(source_payload)
+                or not self._verified_gpt_entry_artifacts_still_match(verified_payload, decision)
+            ):
+                return None
+        elif not self._verified_gpt_decision_matches_source(decision, source_payload):
             return None
         if action in {"WAIT", "REQUEST_EVIDENCE"} and not self._verified_gpt_non_entry_artifacts_still_current(
             source_path
@@ -4138,6 +4227,65 @@ class AutoTradeCycle:
             if not set(selected_lane_ids).issubset(live_ready_lane_ids):
                 return False
         return True
+
+    def _verified_gpt_trade_artifacts_still_current(self, decision: dict[str, Any]) -> bool:
+        """Re-prove a cached TRADE against current artifact bytes.
+
+        The ACCEPTED wrapper is only a historical verifier result. Before it
+        can be reused, require the original CODEX application to remain inside
+        the 15-minute decision window and rebuild the exact final receipt from
+        every current handoff artifact. No digest claim in the receipt is
+        trusted on its own.
+        """
+
+        provenance = decision.get("decision_provenance")
+        if not isinstance(provenance, dict):
+            return False
+        if provenance.get("author_kind") != CODEX_MARKET_READ_AUTHOR:
+            return False
+        raw_applied_at = provenance.get("applied_at_utc")
+        if not isinstance(raw_applied_at, str) or not raw_applied_at.strip():
+            return False
+        try:
+            applied_at = datetime.fromisoformat(raw_applied_at.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if applied_at.tzinfo is None:
+            return False
+        age_seconds = (datetime.now(timezone.utc) - applied_at.astimezone(timezone.utc)).total_seconds()
+        if age_seconds < -60 or age_seconds > DEFAULT_OVERLAY_MAX_AGE_SECONDS:
+            return False
+
+        brain = self._gpt_brain()
+        issues = revalidate_codex_market_read_artifacts(
+            final_payload=decision,
+            baseline_path=brain.market_read_baseline_path,
+            packet_path=brain.market_read_evidence_packet_path,
+            overlay_path=brain.market_read_overlay_path,
+            evidence_sources=brain._market_read_evidence_sources(self.snapshot_path),
+            max_overlay_age_seconds=DEFAULT_OVERLAY_MAX_AGE_SECONDS,
+        )
+        return not issues
+
+    @staticmethod
+    def _verified_gpt_trade_decision_matches_source(
+        decision: dict[str, Any],
+        source: dict[str, Any],
+    ) -> bool:
+        """Require the verifier's normalized TRADE to equal the raw receipt.
+
+        GPTTraderBrain stores the parsed dataclass form (for example, omitted
+        optional id arrays become empty arrays), while the artifact merge
+        proves the raw source JSON. Reparse that source through the same
+        production schema before comparing so normalization cannot become a
+        bypass or a false artifact mismatch.
+        """
+
+        try:
+            normalized = json.loads(json.dumps(asdict(_decision_from_payload(source))))
+            return normalized == decision
+        except (TypeError, ValueError, KeyError):
+            return False
 
     def _verified_gpt_non_entry_artifacts_still_current(self, source_path: Path) -> bool:
         """Do not reuse an old non-entry conclusion after market state changed.

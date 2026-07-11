@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.analysis.market_status import compute_market_status
+
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - kept for older local Python.
@@ -64,9 +66,36 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("pause", "restore"))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--require-market-open",
+        action="store_true",
+        help=(
+            "For scheduled restore only: keep the weekend snapshot paused until "
+            "the DST-aware New York weekly market boundary is open."
+        ),
+    )
+    parser.add_argument(
+        "--require-market-closed",
+        action="store_true",
+        help=(
+            "For scheduled pause only: keep tasks active until the DST-aware "
+            "New York weekly market boundary is closed."
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.require_market_open and args.action != "restore":
+        parser.error("--require-market-open is valid only with restore")
+    if args.require_market_closed and args.action != "pause":
+        parser.error("--require-market-closed is valid only with pause")
+    if args.require_market_open and args.require_market_closed:
+        parser.error("market-open and market-closed requirements are mutually exclusive")
     try:
-        result = switch_tasks(args.action, dry_run=args.dry_run)
+        result = switch_tasks(
+            args.action,
+            dry_run=args.dry_run,
+            require_market_open=args.require_market_open,
+            require_market_closed=args.require_market_closed,
+        )
     except TaskSwitchError as exc:
         print(json.dumps({"status": "ERROR", "error": str(exc)}, indent=2), file=sys.stderr)
         return 1
@@ -74,15 +103,107 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def switch_tasks(action: str, *, dry_run: bool = False, now: datetime | None = None) -> dict[str, Any]:
+def switch_tasks(
+    action: str,
+    *,
+    dry_run: bool = False,
+    require_market_open: bool = False,
+    require_market_closed: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     specs = _task_specs()
     state_file = _state_file()
-    timestamp = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat()
+    clock = now or datetime.now(timezone.utc)
+    timestamp = clock.replace(microsecond=0).isoformat()
     if action == "pause":
+        if require_market_closed:
+            waiting = _scheduled_pause_wait(
+                specs=specs,
+                state_file=state_file,
+                dry_run=dry_run,
+                now=clock,
+            )
+            if waiting is not None:
+                return waiting
         return _pause(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
     if action == "restore":
+        if require_market_open:
+            waiting = _scheduled_restore_wait(
+                state_file=state_file,
+                dry_run=dry_run,
+                now=clock,
+            )
+            if waiting is not None:
+                return waiting
         return _restore(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
     raise TaskSwitchError(f"unsupported action: {action}")
+
+
+def _scheduled_pause_wait(
+    *,
+    specs: list[TaskSpec],
+    state_file: Path,
+    dry_run: bool,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Keep the last winter-market hour active without creating a snapshot."""
+
+    market_status = compute_market_status(now)
+    if not market_status.is_fx_open:
+        return None
+    current_tasks = {spec.key: _read_task(spec) for spec in specs}
+    return {
+        "status": "WAITING_FOR_MARKET_CLOSE",
+        "action": "pause",
+        "dry_run": dry_run,
+        "state_file": str(state_file),
+        "baseline_active_trader_tasks": _active_trader_keys(current_tasks),
+        "changed_count": 0,
+        "changes": [],
+        "warnings": ["weekly market is still open; tasks and snapshot left unchanged"],
+        "market_status": market_status.to_dict(),
+    }
+
+
+def _scheduled_restore_wait(
+    *,
+    state_file: Path,
+    dry_run: bool,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Leave the Saturday snapshot untouched until the real weekly open.
+
+    The automation runs at both 06:00 and 07:00 JST.  New York summer time
+    opens at the first run; winter time opens at the second.  Manual restore
+    retains its explicit operator semantics because this check is opt-in.
+    """
+
+    state = _load_state(state_file)
+    mode = state.get("mode")
+    if mode not in {"paused", "restored"}:
+        raise TaskSwitchError(f"state file is not a restorable snapshot: mode={mode!r}")
+    baseline_tasks = state.get("tasks")
+    if not isinstance(baseline_tasks, dict):
+        raise TaskSwitchError("state file is missing task snapshot")
+    active_traders = _active_trader_keys(baseline_tasks)
+    if len(active_traders) > 1:
+        joined = ", ".join(active_traders)
+        raise TaskSwitchError(f"refusing to restore multiple trader schedulers: {joined}")
+
+    market_status = compute_market_status(now)
+    if market_status.is_fx_open:
+        return None
+    return {
+        "status": "WAITING_FOR_MARKET_OPEN",
+        "action": "restore",
+        "dry_run": dry_run,
+        "state_file": str(state_file),
+        "baseline_active_trader_tasks": active_traders,
+        "changed_count": 0,
+        "changes": [],
+        "warnings": ["weekly market is still closed; paused snapshot preserved"],
+        "market_status": market_status.to_dict(),
+    }
 
 
 def _pause(
