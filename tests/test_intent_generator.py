@@ -690,6 +690,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=strategy,
                 output_path=output,
                 report_path=report,
+                max_loss_pct=0.5,
+                risk_equity_jpy=200_000.0,
             ).run()
 
             self.assertEqual(summary.generated, 0)
@@ -9800,6 +9802,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 report_path=root / "intents.md",
                 pair_charts_path=_pair_charts(root),
                 data_root=data_root,
+                max_loss_pct=0.5,
+                risk_equity_jpy=200_000.0,
             ).run(snapshot_path=_snapshot(root))
 
             payload = json.loads(output.read_text())

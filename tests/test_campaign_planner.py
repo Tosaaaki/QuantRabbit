@@ -70,6 +70,24 @@ def _write_oanda_firepower_report(root: Path, *, status: str = "VERIFIED_TARGET_
     return path
 
 
+def _write_daily_target_state(root: Path, *, start_balance_jpy: float = 200_000.0) -> Path:
+    path = root / "daily_target_state.json"
+    daily_risk_budget_jpy = start_balance_jpy * 0.10
+    target_trades_per_day = 10
+    path.write_text(
+        json.dumps(
+            {
+                "status": "PURSUE_TARGET",
+                "start_balance_jpy": start_balance_jpy,
+                "daily_risk_budget_jpy": daily_risk_budget_jpy,
+                "per_trade_risk_budget_jpy": daily_risk_budget_jpy / target_trades_per_day,
+                "target_trades_per_day": target_trades_per_day,
+            }
+        )
+    )
+    return path
+
+
 class CampaignPlannerTest(unittest.TestCase):
     def test_builds_multi_desk_plan_without_live_guarantee(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,6 +96,7 @@ class CampaignPlannerTest(unittest.TestCase):
             story = root / "story.json"
             report = root / "campaign.md"
             plan_path = root / "campaign.json"
+            target_state = _write_daily_target_state(root)
             strategy.write_text(
                 json.dumps(
                     {
@@ -133,6 +152,7 @@ class CampaignPlannerTest(unittest.TestCase):
                 market_story_profile=story,
                 report_path=report,
                 plan_path=plan_path,
+                target_state_path=target_state,
             ).run(start_balance_jpy=200_000)
 
             self.assertEqual(summary.target_jpy, 20_000)
@@ -154,6 +174,7 @@ class CampaignPlannerTest(unittest.TestCase):
             strategy = root / "strategy.json"
             story = root / "story.json"
             plan_path = root / "campaign.json"
+            target_state = _write_daily_target_state(root)
             strategy.write_text(
                 json.dumps(
                     {
@@ -196,6 +217,7 @@ class CampaignPlannerTest(unittest.TestCase):
                 market_story_profile=story,
                 report_path=root / "campaign.md",
                 plan_path=plan_path,
+                target_state_path=target_state,
             ).run(start_balance_jpy=200_000)
 
             first = json.loads(plan_path.read_text())["lanes"][0]
@@ -210,6 +232,7 @@ class CampaignPlannerTest(unittest.TestCase):
             strategy = root / "strategy.json"
             story = root / "story.json"
             plan_path = root / "campaign.json"
+            target_state = _write_daily_target_state(root)
             strategy.write_text(
                 json.dumps(
                     {
@@ -240,6 +263,7 @@ class CampaignPlannerTest(unittest.TestCase):
                 market_story_profile=story,
                 report_path=root / "campaign.md",
                 plan_path=plan_path,
+                target_state_path=target_state,
             ).run(start_balance_jpy=200_000)
 
             payload = json.loads(plan_path.read_text())
@@ -262,6 +286,7 @@ class CampaignPlannerTest(unittest.TestCase):
             story = root / "story.json"
             plan_path = root / "campaign.json"
             oanda = _write_oanda_firepower_report(root)
+            target_state = _write_daily_target_state(root)
             strategy.write_text(
                 json.dumps(
                     {
@@ -294,6 +319,7 @@ class CampaignPlannerTest(unittest.TestCase):
                 market_story_profile=story,
                 report_path=root / "campaign.md",
                 plan_path=plan_path,
+                target_state_path=target_state,
                 oanda_rotation_mining=oanda,
             ).run(start_balance_jpy=200_000)
 
@@ -327,6 +353,7 @@ class CampaignPlannerTest(unittest.TestCase):
             plan_path = root / "daily_campaign_plan.json"
             missing_latest = root / "logs" / "missing_oanda_latest.json"
             packaged = _write_oanda_firepower_report(root)
+            target_state = _write_daily_target_state(root)
             strategy.write_text(json.dumps({"profiles": []}))
             story.write_text(json.dumps({"pair_profiles": []}))
 
@@ -345,6 +372,7 @@ class CampaignPlannerTest(unittest.TestCase):
                     market_story_profile=story,
                     report_path=root / "campaign.md",
                     plan_path=plan_path,
+                    target_state_path=target_state,
                 ).run(start_balance_jpy=200_000)
 
             first = json.loads(plan_path.read_text())["lanes"][0]

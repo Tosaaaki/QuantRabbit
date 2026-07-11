@@ -3536,7 +3536,10 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             decision_response.write_text(json.dumps(decision))
 
-            with redirect_stdout(io.StringIO()):
+            with patch(
+                "quant_rabbit.cli.GPTTraderBrain",
+                new=_local_cli_brain_factory(root, files),
+            ), redirect_stdout(io.StringIO()):
                 exit_code = main(
                     [
                         "gpt-trader-decision",
@@ -3588,6 +3591,10 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(artifacts["packet"]),
                         "--market-read-overlay",
                         str(artifacts["overlay"]),
+                        "--market-read-predictions",
+                        str(root / "market_read_predictions.jsonl"),
+                        "--market-read-score-report",
+                        str(root / "market_read_score_report.md"),
                         "--output",
                         str(root / "cli_decision.json"),
                         "--report",
@@ -5261,6 +5268,38 @@ def _brain(
         ),
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
+
+
+def _local_cli_brain_factory(root: Path, files: dict[str, Path]):
+    """Bind CLI-only verifier coverage to temporary runtime artifacts."""
+
+    def factory(**kwargs: object) -> GPTTraderBrain:
+        return GPTTraderBrain(
+            pair_charts_path=files["pair_charts"],
+            context_asset_charts_path=files["context_asset_charts"],
+            broker_instruments_path=files["broker_instruments"],
+            cross_asset_path=files["cross_asset"],
+            flow_path=files["flow"],
+            currency_strength_path=files["currency_strength"],
+            levels_path=files["levels"],
+            calendar_path=files["calendar"],
+            cot_path=files["cot"],
+            option_skew_path=files["option_skew"],
+            capture_economics_path=files["capture_economics"],
+            profitability_acceptance_path=files["profitability_acceptance"],
+            execution_timing_audit_path=files["execution_timing_audit"],
+            coverage_optimization_path=files["coverage_optimization"],
+            verification_ledger_path=files["verification_ledger"],
+            operator_precedent_path=files["operator_precedent"],
+            manual_market_context_path=files["manual_market_context"],
+            predictive_limits_path=files["predictive_limits"],
+            news_items_path=files["news_items"],
+            news_health_path=files["news_health"],
+            execution_ledger_path=root / "execution_ledger.db",
+            **kwargs,
+        )
+
+    return factory
 
 
 def _market_read_artifact_sources(

@@ -43,6 +43,14 @@ from quant_rabbit.profitability_acceptance import (
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
+_EQUITY_DERIVED_RISK_ARGS = (
+    "--max-loss-pct",
+    "0.5",
+    "--risk-equity-jpy",
+    "200000",
+)
+
+
 class RuntimeLedgerSelectionTest(unittest.TestCase):
     def _write_gateway_ledger(self, path: Path, latest_ts: str | None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4659,6 +4667,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -4696,6 +4705,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -4799,6 +4809,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(data_root / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -4849,6 +4860,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -4956,6 +4968,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(campaign),
                         "--strategy-profile",
@@ -5109,6 +5122,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(campaign),
                         "--strategy-profile",
@@ -5258,6 +5272,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -5364,6 +5379,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -5515,6 +5531,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(campaign),
                         "--strategy-profile",
@@ -5623,6 +5640,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(data_root / "daily_campaign_plan.json"),
                         "--strategy-profile",
@@ -5695,6 +5713,7 @@ class CliHelpTest(unittest.TestCase):
                 code = main(
                     [
                         "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
                         "--campaign-plan",
                         str(root / "data" / "daily_campaign_plan.json"),
                         "--strategy-profile",

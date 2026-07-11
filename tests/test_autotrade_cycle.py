@@ -2124,6 +2124,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
             client = FakeCycleClient(
                 BrokerSnapshot(
                     fetched_at_utc=now,
@@ -2154,7 +2155,16 @@ class AutoTradeCycleTest(unittest.TestCase):
                 position_execution_path=root / "pe.json",
                 position_execution_report_path=root / "pe.md",
                 report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                refresh_market_story=False,
                 live_enabled=True,
+                max_loss_pct=0.5,
+                risk_equity_jpy=300_000,
             ).run(send=False)
 
             self.assertEqual(summary.status, "MONITOR_ONLY_EXPOSURE_OPEN")
@@ -6384,6 +6394,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
             client = FakeCycleClient(
                 BrokerSnapshot(
                     fetched_at_utc=now,
@@ -6435,9 +6446,19 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_order_output_path=root / "live_order.json",
                 live_order_report_path=root / "live_order.md",
                 report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(wait_decision, source_path=response_path),
+                refresh_market_story=False,
                 live_enabled=True,
+                max_loss_pct=0.5,
+                risk_equity_jpy=300_000,
             ).run(send=False)
 
             self.assertEqual(summary.status, "MONITOR_ONLY_EXPOSURE_OPEN")

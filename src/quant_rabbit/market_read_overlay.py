@@ -61,6 +61,7 @@ MUTABLE_MARKET_READ_FIELDS = frozenset(
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # Do not interpret the separator in ``1.0840-1.0860`` as a negative sign.
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
+WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
 
 
 class MarketReadOverlayError(ValueError):
@@ -994,6 +995,23 @@ def _build_evidence_packet(
                 "resolved_prediction_count": len(recent_predictions),
             }
             continue
+        if name == "qr_trader_run_watchdog":
+            # This frequent local observer rewrites observation clocks, a
+            # running age counter, and queried log excerpts even when its
+            # safety meaning is unchanged. Bind that meaning so an ordinary
+            # GPT review can finish, while material health/receipt changes
+            # still invalidate the packet.
+            watchdog_path = evidence_sources.get(name)
+            watchdog_material = _watchdog_material_payload(
+                Path(watchdog_path) if watchdog_path is not None else None
+            )
+            material_sources[name] = {
+                "path": item["path"],
+                "exists": item["exists"],
+                "material_contract": WATCHDOG_MATERIAL_CONTRACT,
+                "safety_state_sha256": canonical_json_sha256(watchdog_material),
+            }
+            continue
         material_sources[name] = {
             "path": item["path"],
             "exists": item["exists"],
@@ -1065,6 +1083,165 @@ def _source_descriptor(path: Path) -> dict[str, Any]:
         "size_bytes": len(raw),
         "generated_at_utc": generated_at,
     }
+
+
+def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists() or not path.is_file():
+        return {"parse_status": "MISSING"}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"parse_status": "INVALID"}
+    if not isinstance(raw, Mapping):
+        return {"parse_status": "INVALID"}
+
+    automation = raw.get("automation_config")
+    automation = automation if isinstance(automation, Mapping) else {}
+    automation_weekend = automation.get("weekend_pause")
+    automation_weekend = automation_weekend if isinstance(automation_weekend, Mapping) else {}
+    weekend = raw.get("weekend_pause")
+    weekend = weekend if isinstance(weekend, Mapping) else {}
+    guardian = raw.get("guardian_receipt")
+    guardian = guardian if isinstance(guardian, Mapping) else {}
+
+    current_receipts: list[dict[str, Any]] = []
+    summaries = guardian.get("receipt_summaries")
+    if isinstance(summaries, list):
+        for row in summaries:
+            if not isinstance(row, Mapping):
+                continue
+            if not any(
+                row.get(key) is True
+                for key in (
+                    "active",
+                    "canonical_present",
+                    "dependency_before_next_run",
+                    "emergency_or_margin_risk",
+                    "high_urgency_action",
+                )
+            ):
+                continue
+            current_receipts.append(
+                _mapping_fields(
+                    row,
+                    (
+                        "action",
+                        "active",
+                        "canonical_present",
+                        "consumed_by_trader",
+                        "dedupe_key",
+                        "dependency_before_next_run",
+                        "emergency_or_margin_risk",
+                        "event_id",
+                        "high_urgency_action",
+                        "identity",
+                        "normal_routing_allowed_by_acknowledgement",
+                        "receipt_lifecycle",
+                        "receipt_status",
+                        "terminal_lifecycle",
+                    ),
+                )
+            )
+    current_receipts.sort(
+        key=lambda item: (
+            str(item.get("identity") or ""),
+            str(item.get("event_id") or ""),
+            str(item.get("action") or ""),
+        )
+    )
+
+    return {
+        "parse_status": "VALID",
+        "health": _mapping_fields(
+            raw,
+            (
+                "status",
+                "runtime_status",
+                "issue_status",
+                "overall_status",
+                "severity",
+                "issues",
+                "missed_expected_window",
+                "suspected_cause",
+                "recommended_operator_action",
+                "expected_cadence_minutes",
+                "grace_minutes",
+                "threshold_minutes",
+                "broker_writes_enabled",
+                "codex_exec_enabled",
+                "no_live_side_effects",
+            ),
+        ),
+        "automation": {
+            **_mapping_fields(
+                automation,
+                (
+                    "exists",
+                    "issues",
+                    "model",
+                    "reasoning_effort",
+                    "cadence_minutes",
+                    "cwd",
+                    "cwds",
+                    "rrule",
+                    "status",
+                ),
+            ),
+            "weekend_pause": _mapping_fields(
+                automation_weekend,
+                (
+                    "active",
+                    "automation_status",
+                    "exists",
+                    "in_weekend_pause_window",
+                    "mode",
+                    "qr_trader_managed",
+                    "reason",
+                ),
+            ),
+        },
+        "weekend_pause": _mapping_fields(
+            weekend,
+            (
+                "active",
+                "automation_status",
+                "exists",
+                "in_weekend_pause_window",
+                "mode",
+                "qr_trader_managed",
+                "reason",
+            ),
+        ),
+        "guardian_receipt": {
+            **_mapping_fields(
+                guardian,
+                (
+                    "action",
+                    "active",
+                    "consumed_by_trader",
+                    "dependency_before_next_run",
+                    "emergency_or_margin_risk",
+                    "exists",
+                    "expired_before_trader_run",
+                    "high_urgency_action",
+                    "issues",
+                    "next_run_window_missed",
+                    "receipt_after_last_trader_run",
+                    "receipt_lifecycle",
+                    "receipt_status",
+                    "terminal_lifecycle",
+                    "will_expire_before_next_run",
+                ),
+            ),
+            "current_receipts": current_receipts,
+        },
+        "execution_boundary": deepcopy(raw.get("execution_boundary")),
+        "environment": deepcopy(raw.get("environment")),
+    }
+
+
+def _mapping_fields(source: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {key: deepcopy(source.get(key)) for key in keys if key in source}
 
 
 def _recent_resolved_predictions(path: Path, *, limit: int = 8) -> list[dict[str, Any]]:

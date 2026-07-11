@@ -464,10 +464,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
 # change summary, and veto reason (empty only for ACCEPT_BASELINE). The overlay
 # contains no action, lane, units, cancel/close ids, risk, or permission fields.
 #
-# Merge only through the fail-closed tool. It re-hashes every evidence source,
-# proves the final action transition and execution envelope, then atomically
-# publishes the verifier input. Any rejection means refresh/re-author; never
-# copy fields by hand around the failed merge.
+# Merge only through the fail-closed tool. It re-hashes every material evidence
+# state, proves the final action transition and execution envelope, then
+# atomically publishes the verifier input. The frequently rewritten watchdog
+# uses `QR_TRADER_WATCHDOG_SAFETY_STATE_V1`: observation clocks, age counters,
+# and log/report timestamps may advance, but health/issues, automation/weekend
+# state, material guardian receipts, and the no-write boundary remain bound.
+# Any rejection means refresh/re-author; never copy fields by hand around the
+# failed merge.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
   --baseline data/trader_decision_baseline.json \
   --packet data/market_read_evidence_packet.json \

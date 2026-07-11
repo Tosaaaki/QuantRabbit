@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
@@ -348,6 +349,16 @@ class PositionManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             decision = _decision(root, long_score=160, short_score=120)
+            target_state = root / "daily_target_state.json"
+            sizing_equity_jpy = 20_000.0
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "sizing_nav_jpy": sizing_equity_jpy,
+                        "per_trade_risk_budget_jpy": sizing_equity_jpy * 0.01,
+                    }
+                )
+            )
             snapshot = _snapshot(
                 BrokerPosition(
                     trade_id="1",
@@ -361,12 +372,16 @@ class PositionManagerTest(unittest.TestCase):
                 )
             )
 
-            result = PositionManager(
-                trader_decision_path=decision,
-                pair_charts_path=root / "missing_pair_charts.json",
-                output_path=root / "pm.json",
-                report_path=root / "pm.md",
-            ).run(snapshot)
+            with mock.patch(
+                "quant_rabbit.strategy.position_manager.DEFAULT_DAILY_TARGET_STATE",
+                target_state,
+            ):
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=root / "missing_pair_charts.json",
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
 
             self.assertEqual(result.action, ACTION_REPAIR_PROTECTION)
             self.assertIsNotNone(result.positions[0].recommended_stop_loss)

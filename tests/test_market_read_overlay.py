@@ -146,6 +146,63 @@ class MarketReadOverlayTest(unittest.TestCase):
                 with self.assertRaisesRegex(MarketReadOverlayError, expected_code):
                     _apply(paths)
 
+    def test_watchdog_observation_clock_rewrite_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            watchdog = json.loads(paths["watchdog"].read_text())
+            watchdog["generated_at_utc"] = (NOW + timedelta(minutes=1)).isoformat()
+            watchdog["minutes_since_last_run"] = 61.0
+            watchdog["last_trader_run_at"] = NOW.isoformat()
+            watchdog["last_trader_run_source"] = "decision_response.generated_at_utc"
+            watchdog["last_decision_artifact_at"] = NOW.isoformat()
+            watchdog["weekend_pause"]["now_jst"] = "2026-07-11T12:01:00+09:00"
+            watchdog["automation_config"]["weekend_pause"]["now_jst"] = (
+                "2026-07-11T12:01:00+09:00"
+            )
+            watchdog["codex_logs"]["queried_at_utc"] = (
+                NOW + timedelta(minutes=1)
+            ).isoformat()
+            watchdog["guardian_receipt"]["review_excerpt"] = (
+                "Generated at a later observation clock"
+            )
+            paths["watchdog"].write_text(json.dumps(watchdog))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_watchdog_material_safety_change_stales_ai_review(self) -> None:
+        for mutation in ("status", "receipt_identity"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                _write_overlay(paths)
+                watchdog = json.loads(paths["watchdog"].read_text())
+                if mutation == "status":
+                    watchdog["status"] = "BROKEN"
+                    watchdog["runtime_status"] = "BROKEN"
+                    watchdog["issues"] = ["MISSED_TRADER_RUN"]
+                else:
+                    watchdog["guardian_receipt"]["receipt_summaries"] = [
+                        {
+                            "action": "REDUCE",
+                            "active": True,
+                            "canonical_present": True,
+                            "event_id": "new-event",
+                            "identity": "event|new-event|REDUCE",
+                            "high_urgency_action": True,
+                            "receipt_lifecycle": "ACTIVE",
+                            "receipt_status": "ACCEPTED",
+                        }
+                    ]
+                paths["watchdog"].write_text(json.dumps(watchdog))
+
+                with self.assertRaisesRegex(
+                    MarketReadOverlayError,
+                    "MARKET_READ_EVIDENCE_PACKET_STALE",
+                ):
+                    _apply(paths)
+
     def test_stale_overlay_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
@@ -282,6 +339,7 @@ def _prepared_paths(
         "snapshot": root / "broker_snapshot.json",
         "intents": root / "order_intents.json",
         "predictions": predictions_path or root / "market_read_predictions.jsonl",
+        "watchdog": root / "qr_trader_run_watchdog.json",
     }
     paths["baseline"].write_text(json.dumps(baseline or _baseline()))
     paths["snapshot"].write_text(
@@ -301,6 +359,7 @@ def _prepared_paths(
     paths["intents"].write_text(json.dumps({"results": [{"lane_id": LANE_ID, "units": 1200}]}))
     if not paths["predictions"].exists():
         paths["predictions"].write_text("")
+    paths["watchdog"].write_text(json.dumps(_watchdog()))
     prepare_market_read_baseline(
         baseline_path=paths["baseline"],
         packet_path=paths["packet"],
@@ -315,6 +374,64 @@ def _sources(paths: dict[str, Path]) -> dict[str, Path]:
         "broker_snapshot": paths["snapshot"],
         "order_intents": paths["intents"],
         "market_read_predictions": paths["predictions"],
+        "qr_trader_run_watchdog": paths["watchdog"],
+    }
+
+
+def _watchdog() -> dict:
+    weekend = {
+        "active": True,
+        "automation_status": "PAUSED",
+        "exists": True,
+        "in_weekend_pause_window": True,
+        "mode": "paused",
+        "now_jst": "2026-07-11T12:00:00+09:00",
+        "qr_trader_managed": True,
+        "reason": "weekend guard",
+    }
+    return {
+        "generated_at_utc": NOW.isoformat(),
+        "status": "OK",
+        "runtime_status": "OK",
+        "issue_status": "OK",
+        "overall_status": "OK",
+        "severity": "OK",
+        "issues": [],
+        "missed_expected_window": False,
+        "minutes_since_last_run": 60.0,
+        "last_trader_run_at": (NOW - timedelta(hours=1)).isoformat(),
+        "last_trader_run_source": "trader_journal.ts",
+        "automation_config": {
+            "exists": True,
+            "issues": [],
+            "model": "gpt-5.5",
+            "reasoning_effort": "high",
+            "cadence_minutes": 60,
+            "cwd": "/runtime",
+            "cwds": ["/runtime"],
+            "status": "PAUSED",
+            "weekend_pause": dict(weekend),
+        },
+        "weekend_pause": dict(weekend),
+        "guardian_receipt": {
+            "action": None,
+            "active": False,
+            "exists": False,
+            "issues": [],
+            "receipt_summaries": [],
+            "review_excerpt": "Generated at the original observation clock",
+        },
+        "execution_boundary": {
+            "broker_writes_enabled": False,
+            "no_live_side_effects": True,
+            "read_only": True,
+        },
+        "environment": {"QR_TRADER_WATCHDOG_CAN_WAKE": "0"},
+        "codex_logs": {
+            "available": True,
+            "queried_at_utc": NOW.isoformat(),
+            "entries": [],
+        },
     }
 
 
