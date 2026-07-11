@@ -16,10 +16,11 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-# Broker production-lot floor documented in AGENT_CONTRACT §3.5 and mirrored
-# from quant_rabbit.risk.MIN_PRODUCTION_LOT_UNITS. It is an OANDA/broker
-# economic floor, not a market-tuned threshold.
-MIN_PRODUCTION_LOT_UNITS = 1000
+# OANDA accepts integer units below 1,000 on this account. Keep this standalone
+# tool aligned with quant_rabbit.risk.MIN_PRODUCTION_LOT_UNITS and
+# AGENT_CONTRACT §3.5: risk/NAV sizing is preserved to one unit instead of
+# rounding a small valid order up or down to a legacy 1,000u band.
+MIN_PRODUCTION_LOT_UNITS = 1
 
 # Conviction labels are a trader contract taxonomy. They are ordered only for
 # comparing "grade < A" / "grade <= B0" style gates.

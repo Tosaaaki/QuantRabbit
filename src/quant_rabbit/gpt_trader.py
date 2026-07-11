@@ -22,6 +22,9 @@ from quant_rabbit.market_read_ledger import (
     record_market_read_prediction,
     refresh_market_read_measurements,
 )
+from quant_rabbit.close_discipline import (
+    thesis_evolution_reason_has_hard_close_evidence,
+)
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -64,6 +67,10 @@ def _parse_utc(value: Any) -> datetime | None:
     text = value.strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
+    # OANDA timestamps may carry nanoseconds while Python 3.10 accepts at
+    # most microseconds. Ordering here only needs a conservative UTC anchor;
+    # truncate, never round, the fractional part before parsing.
+    text = re.sub(r"(\.\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r"\1", text)
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
@@ -854,6 +861,143 @@ def _pair_chart_story(packet: dict[str, Any], pair: str) -> str:
     return str(_pair_chart(packet, pair).get("chart_story") or "")
 
 
+def _structured_last_event(
+    packet: dict[str, Any],
+    pair: str,
+    timeframe: str,
+) -> dict[str, Any]:
+    chart = _pair_chart(packet, pair)
+    views = chart.get("views") if isinstance(chart.get("views"), dict) else {}
+    view = views.get(timeframe) if isinstance(views, dict) else None
+    structure = view.get("structure") if isinstance(view, dict) else None
+    event = structure.get("last_event") if isinstance(structure, dict) else None
+    return event if isinstance(event, dict) else {}
+
+
+def _position_structure_anchor(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+) -> tuple[datetime | None, str]:
+    """Return the latest broker-open / recorded-thesis timestamp for a trade."""
+
+    if not trade_id:
+        return None, "trade id is missing, so post-entry structure cannot be proved"
+    candidates: list[tuple[datetime, str]] = []
+    broker = packet.get("broker_snapshot") if isinstance(packet.get("broker_snapshot"), dict) else {}
+    for item in broker.get("position_summaries", []) or []:
+        if not isinstance(item, dict) or str(item.get("trade_id") or "") != str(trade_id):
+            continue
+        if str(item.get("pair") or "") != pair:
+            return None, "matching broker position has a missing or mismatched pair"
+        if str(item.get("side") or "").upper() != side.upper():
+            return None, "matching broker position has a missing or mismatched side"
+        raw_opened = item.get("open_time_utc")
+        if raw_opened is None or not str(raw_opened).strip():
+            continue
+        opened = _parse_utc(raw_opened)
+        if opened is None:
+            return None, (
+                "broker openTime is present but invalid; entry-thesis fallback is "
+                "not allowed for standing H4 close authority"
+            )
+        if opened is not None:
+            candidates.append((opened, "broker openTime"))
+
+    sidecars = packet.get("protection_sidecars") if isinstance(packet.get("protection_sidecars"), dict) else {}
+    for item in sidecars.get("entry_thesis_close_context", []) or []:
+        if not isinstance(item, dict) or str(item.get("trade_id") or "") != str(trade_id):
+            continue
+        if str(item.get("pair") or "") != pair:
+            return None, "matching entry thesis has a missing or mismatched pair"
+        if str(item.get("side") or "").upper() != side.upper():
+            return None, "matching entry thesis has a missing or mismatched side"
+        raw_thesis_at = item.get("entry_thesis_timestamp_utc")
+        if raw_thesis_at is None or not str(raw_thesis_at).strip():
+            continue
+        thesis_at = _parse_utc(raw_thesis_at)
+        if thesis_at is None:
+            return None, (
+                "entry-thesis timestamp is present but invalid; broker-open fallback "
+                "is not allowed for standing H4 close authority"
+            )
+        if thesis_at is not None:
+            candidates.append((thesis_at, "entry-thesis timestamp"))
+
+    if not candidates:
+        return None, (
+            "broker openTime and entry-thesis timestamp are missing or invalid; "
+            "H4 event remains soft Gate A"
+        )
+    anchor, label = max(candidates, key=lambda value: value[0])
+    return anchor, f"latest {label} anchor={anchor.isoformat()}"
+
+
+def _h4_structure_postdates_position(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+    event_type: str,
+    direction: str,
+    price: float,
+) -> tuple[bool, str]:
+    """Prove that the structured H4 break occurred after this position opened."""
+
+    event = _structured_last_event(packet, pair, "H4")
+    expected_kind = f"{event_type}_{direction}".upper()
+    if str(event.get("kind") or "").upper() != expected_kind:
+        return False, "structured H4 last_event does not match the chart-story event"
+    if event.get("close_confirmed") is not True:
+        return False, "structured H4 last_event is not close-confirmed"
+    structured_price = _optional_float(event.get("broken_pivot_price"))
+    if structured_price is None:
+        return False, "structured H4 last_event has no broken_pivot_price"
+    try:
+        # Chart-story prices are decimal text while structured pivots are
+        # floats. Half a pip admits only serialization round-off, not a nearby
+        # pivot; replace it with a shared structure-event id when one exists.
+        price_tolerance = 0.5 / instrument_pip_factor(pair)
+    except (KeyError, TypeError, ValueError):
+        price_tolerance = 1e-9
+    if abs(structured_price - price) > price_tolerance:
+        return False, "structured H4 last_event price does not match chart story"
+    event_at = _parse_utc(event.get("timestamp"))
+    if event_at is None:
+        return False, "structured H4 last_event timestamp is missing or invalid"
+    snapshot = packet.get("broker_snapshot") if isinstance(packet.get("broker_snapshot"), dict) else {}
+    snapshot_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    chart_at = _parse_utc(_pair_chart(packet, pair).get("source_generated_at_utc"))
+    if snapshot_at is None or chart_at is None:
+        return False, (
+            "broker snapshot or pair-chart generated timestamp is missing; "
+            "H4 event chronology cannot be proved"
+        )
+    if event_at > snapshot_at or event_at > chart_at:
+        return False, (
+            f"H4 event timestamp={event_at.isoformat()} is later than its "
+            "broker/chart observation boundary"
+        )
+    anchor, anchor_reason = _position_structure_anchor(
+        packet,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+    )
+    if anchor is None:
+        return False, anchor_reason
+    if event_at <= anchor:
+        return False, (
+            f"H4 event timestamp={event_at.isoformat()} does not postdate {anchor_reason}"
+        )
+    return True, (
+        f"H4 event timestamp={event_at.isoformat()} postdates {anchor_reason}"
+    )
+
+
 def _close_same_direction_matrix_support(
     packet: dict[str, Any],
     pair: str,
@@ -1128,18 +1272,20 @@ def _close_thesis_invalidation(
 
     Returns `(invalidated, reason, standing_authorized)`.
 
-    The first two Gate A paths are hard machine evidence and satisfy the
-    operator's standing instruction that justified loss-cuts are allowed. The
-    sidecar path may be hard (`thesis_evolution`) or soft
-    (`position_thesis` / `forecast_persistence`); soft reviews still require
-    explicit operator Gate B.
+    Receipt-level invalidation is hard machine evidence. H4 structure is hard
+    only when its timestamped structured event postdates this position's
+    broker-open / entry-thesis anchor; legacy, missing-time, or pre-entry H4
+    evidence remains soft Gate A. The sidecar path may be hard or soft; soft
+    reviews still require explicit operator Gate B.
 
     Acceptance paths (§6-compliant — no JPY/pip/multiplier literals):
 
       (a) Structural BOS or CHOCH on M15 or H4 printing AGAINST the
           position side. This is the chart_reader.structure_events lens
           that already drives trader_brain price-action scoring; using
-          the same signal keeps prefilter and CLOSE-gate aligned.
+          the same signal keeps prefilter and CLOSE-gate aligned. M15 is
+          soft Gate A; H4 carries standing authorization only from an exact
+          timestamped structured event that occurred after this trade opened.
 
       (b) The decision receipt's `invalidation_price` + `invalidation_tf`
           fields are populated AND broker-truth quote has cleared the
@@ -1153,10 +1299,12 @@ def _close_thesis_invalidation(
           from the prediction stack, thesis evolution, or N-cycle
           forecast persistence. This is the machine-checkable
           "no longer likely to recover to plus" path. `thesis_evolution`
-          BROKEN / RECOMMEND_CLOSE and `position_thesis` no-ledger/adverse
-          technical-loss evidence with multi-TF confirmation are treated as
-          hard standing loss-cut authorization; softer sidecars still require
-          env/token Gate B.
+          BROKEN / RECOMMEND_CLOSE is hard only when its rationale contains
+          price invalidation plus technical confirmation. Structural standing
+          authority is verified from the timestamped H4 / position-management
+          paths, never from thesis-evolution prose. `position_thesis` no-ledger/adverse technical-loss
+          evidence with multi-TF confirmation may also be hard; softer
+          sidecars still require env/token Gate B.
     """
     side_upper = str(side or "").upper()
     if side_upper not in {"LONG", "SHORT"}:
@@ -1167,6 +1315,7 @@ def _close_thesis_invalidation(
     counter_direction = "DOWN" if side_upper == "LONG" else "UP"
     m15_supported_pullback_reason: str | None = None
     m15_soft_structural_reason: str | None = None
+    h4_soft_structural_reason: str | None = None
     for tf in CLOSE_DISCIPLINE_TIMEFRAMES:
         event = structs.get(tf)
         if event and event[1] == counter_direction:
@@ -1217,10 +1366,26 @@ def _close_thesis_invalidation(
                     "unless H4 structure, recorded invalidation, or a hard sidecar also confirms"
                 )
                 continue
-            return True, (
+            post_entry, timing_reason = _h4_structure_postdates_position(
+                packet,
+                trade_id=trade_id,
+                pair=pair,
+                side=side_upper,
+                event_type=event_type,
+                direction=direction,
+                price=price,
+            )
+            structural_reason = (
                 f"{tf} {event_type}_{direction}@{price:g} prints against "
                 f"{side_upper} thesis (close-confirmed)"
-            ), True
+            )
+            if post_entry:
+                return True, f"{structural_reason}; {timing_reason}", True
+            h4_soft_structural_reason = (
+                f"{structural_reason}; {timing_reason}; old/unanchored H4 structure "
+                "is Gate A evidence but requires explicit Gate B"
+            )
+            continue
 
     if m15_supported_pullback_reason:
         return False, m15_supported_pullback_reason, False
@@ -1280,6 +1445,9 @@ def _close_thesis_invalidation(
 
     if m15_soft_structural_reason:
         return True, m15_soft_structural_reason, False
+
+    if h4_soft_structural_reason:
+        return True, h4_soft_structural_reason, False
 
     return False, "", False
 
@@ -1388,7 +1556,10 @@ def _sidecar_hold_support_conflict(
             if "THESIS_EXPIRED" in upper_reason
             else "thesis_evolution close evidence"
         )
-        allow_single_strong = not _thesis_evolution_reason_has_hard_close_evidence(reason)
+        allow_single_strong = not thesis_evolution_reason_has_hard_close_evidence(
+            reason,
+            expected_side=str(rec.get("side") or ""),
+        )
     elif source == "position_thesis" and (
         "invalidation hit:" in lower_reason
         or "technical invalidation confirmed against" in lower_reason
@@ -1484,28 +1655,14 @@ def _sidecar_reason_has_h4_structural_break(reason: str) -> bool:
     )
 
 
-def _thesis_evolution_reason_has_hard_close_evidence(reason: str) -> bool:
-    lowered = str(reason or "").lower()
-    return any(
-        token in lowered
-        for token in (
-            "invalidation hit",
-            "buffered invalidation",
-            "technical invalidation confirmed against",
-            "close-confirmed",
-            "structural break",
-            "bos_",
-            "choch_",
-        )
-    )
-
-
 def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
     """Whether a fresh sidecar is strong enough for standing loss-cut auth.
 
-    `thesis_evolution` compares the entry thesis to current broker truth and
-    emits BROKEN / RECOMMEND_CLOSE only after invalidation plus technical
-    confirmation. `position_management` can carry the deterministic
+    `thesis_evolution` can emit BROKEN / RECOMMEND_CLOSE for either a proved
+    price/technical invalidation or softer forecast-flip, adverse-drift, and
+    horizon-expiry evidence. Only the canonical same-side buffered
+    price/technical rationale carries standing authorization; the softer cases
+    still need explicit Gate B. `position_management` can carry the deterministic
     PositionManager REVIEW_EXIT into this GPT CLOSE route; it is hard only when
     its own reasons are structural loss-cut reasons. `position_thesis` may also
     hard-authorize a legacy/no-ledger trade, but only when it records a
@@ -1514,11 +1671,14 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
     position-management, and persistence reviews remain softer and need
     explicit operator Gate B.
     """
-    if rec.get("gate_b_standing_authorized") is True:
-        return True
     source = str(rec.get("source") or "").strip()
     verdict = str(rec.get("verdict") or "").strip().upper()
     if source == "thesis_evolution" and verdict in {"BROKEN", "RECOMMEND_CLOSE"}:
+        return thesis_evolution_reason_has_hard_close_evidence(
+            str(rec.get("reason") or ""),
+            expected_side=str(rec.get("side") or ""),
+        )
+    if rec.get("gate_b_standing_authorized") is True:
         return True
     if source == "position_thesis" and verdict == "REVIEW_CLOSE":
         reason = str(rec.get("reason") or "").lower()
@@ -2698,7 +2858,7 @@ class GPTTraderBrain:
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
                 "- The 2025 operator precedent is advisory only and pair-agnostic. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the generalized trade-shape aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management / position_guardian_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless a current hard close sidecar separately blocks non-close actions. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but operator Gate B does not override fresh same-direction HOLD/EXTEND support. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (an exact timestamped H4 close-confirmed BOS/CHOCH against side that postdates this trade's broker-open / entry-thesis anchor, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE whose rationale contains that invalidation/technical proof, structural position_management / position_guardian_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. Thesis-evolution structural prose is not market proof. A pre-entry, missing-time, mismatched, or future-dated H4 event and forecast flip, adverse drift, confidence/regime decay, or THESIS_EXPIRED are soft Gate A by themselves. M15 structure is Gate A evidence but not unattended hard Gate B unless post-entry H4 structure, recorded invalidation, or a hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless a current hard close sidecar separately blocks non-close actions. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but operator Gate B does not override fresh same-direction HOLD/EXTEND support. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -4241,7 +4401,8 @@ class DecisionVerifier:
                     "requires standing hard Gate A evidence; soft sidecar evidence plus an operator "
                     "token/citation is not enough because it can repeat the recent gateway "
                     "MARKET_ORDER_TRADE_CLOSE leak. Use HOLD/reprice/TP rebalance, or provide "
-                    "H4 structure, recorded invalidation, thesis_evolution BROKEN, structural "
+                    "post-entry H4 structure, recorded invalidation, thesis_evolution with "
+                    "explicit invalidation/technical proof, structural "
                     "position-management REVIEW_EXIT, or equivalent hard sidecar evidence for: "
                     + ", ".join(needs_profitability_acceptance_hard_gate),
                 )
@@ -7082,6 +7243,11 @@ def _snapshot_packet(
                 "take_profit": item.get("take_profit"),
                 "stop_loss": item.get("stop_loss"),
                 "owner": item.get("owner"),
+                "open_time_utc": (
+                    (item.get("raw") or {}).get("openTime")
+                    if isinstance(item.get("raw"), dict)
+                    else None
+                ),
             }
             for item in (snapshot.get("positions", []) or [])
         ],
@@ -7366,6 +7532,11 @@ def _entry_thesis_close_context(snapshot: dict[str, Any], *, data_root: Path) ->
                 "recorded": thesis is not None,
                 "has_recorded_invalidation_price": invalidation is not None,
                 "recorded_invalidation_price": invalidation,
+                "entry_thesis_timestamp_utc": (
+                    getattr(thesis, "timestamp_utc", None)
+                    if thesis is not None
+                    else None
+                ),
             }
         )
     return rows
@@ -10427,10 +10598,14 @@ def _chart_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
             "last_jump_bars_ago": stat.get("last_jump_bars_ago"),
             "lag1_autocorr": stat.get("lag1_autocorr"),
             "structure": {
-                "last_event": _small_dict(last_event, ("kind", "close_confirmed", "broken_pivot_price")),
+                "last_event": _small_dict(
+                    last_event,
+                    ("kind", "close_confirmed", "broken_pivot_price", "timestamp"),
+                ),
             },
         }
     return {
+        "source_generated_at_utc": payload.get("generated_at_utc"),
         "dominant_regime": chart.get("dominant_regime"),
         "long_score": chart.get("long_score"),
         "short_score": chart.get("short_score"),

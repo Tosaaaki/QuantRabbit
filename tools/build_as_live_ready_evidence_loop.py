@@ -780,8 +780,14 @@ def _candidate_firepower_row(
     actual_units = _int(metadata.get("sizing_actual_units")) or _int(intent.get("units"))
     realistic_margin = _float(metadata.get("estimated_margin_jpy")) or _float(risk.get("estimated_margin_jpy"))
     margin_min_lot = None
+    margin_min_order = None
     if realistic_margin is not None and actual_units and actual_units > 0:
-        margin_min_lot = realistic_margin / actual_units * 1000.0
+        margin_per_unit = realistic_margin / actual_units
+        # Preserve the historical/reporting meaning of ``min_lot`` (1,000u)
+        # so existing proof artifacts remain comparable.  The broker's actual
+        # one-integer-unit minimum is published separately.
+        margin_min_lot = margin_per_unit * 1_000
+        margin_min_order = margin_per_unit
     blockers = [str(x) for x in result.get("live_blocker_codes") or []]
     hard_reasons = _hard_exclusion_reasons(pair, side, method, lane_id, blocked)
     proof_gaps = _proof_gaps(
@@ -833,6 +839,8 @@ def _candidate_firepower_row(
         "estimated_trades_per_day_available": trades_per_day,
         "required_trades_per_day_to_contribute_to_30d_4x": required_trades_per_day,
         "margin_requirement_min_lot_jpy": _round(margin_min_lot),
+        "minimum_executable_units": 1,
+        "margin_requirement_min_order_jpy": _round(margin_min_order),
         "margin_requirement_realistic_size_jpy": realistic_margin,
         "realistic_units": actual_units,
         "expected_daily_return_pct_on_funding_adjusted_equity": _round(expected_daily_return_pct),

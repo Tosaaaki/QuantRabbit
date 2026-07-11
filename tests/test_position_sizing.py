@@ -59,6 +59,33 @@ class PositionSizingToolTest(unittest.TestCase):
         self.assertEqual(result.target_yen, 1000.0)
         self.assertEqual(result.valid_as_target_path, "YES")
 
+    def test_sub1000_asset_risk_budget_is_preserved_to_integer_units(self) -> None:
+        result = position_sizing.size_position(
+            position_sizing.PositionSizingInput(
+                pair="USD_JPY",
+                side="LONG",
+                entry=150.0,
+                tp=151.0,
+                sl=149.0,
+                conviction_grade="A",
+                day_start_nav=100_000.0,
+                current_nav=101_000.0,
+                remaining_to_5pct=4_000.0,
+                mode="ATTACK",
+                remaining_risk_budget_yen=250.0,
+                target_path_role="HERO",
+                path_board_available=True,
+                attack_stack_available=True,
+                maps_to_attack_stack=True,
+            )
+        )
+
+        self.assertEqual(position_sizing.MIN_PRODUCTION_LOT_UNITS, 1)
+        self.assertEqual(result.suggested_units, 250)
+        self.assertEqual(result.risk_yen, 250.0)
+        self.assertEqual(result.target_yen, 250.0)
+        self.assertNotIn("MIN_PRODUCTION_LOT", result.cap_reason)
+
     def test_b0_main_path_is_blocked_under_five_pct(self) -> None:
         result = position_sizing.size_position(
             position_sizing.PositionSizingInput(
@@ -176,7 +203,7 @@ class PositionSizingToolTest(unittest.TestCase):
                 "--mode",
                 "ATTACK",
                 "--remaining-risk-budget-yen",
-                "1000",
+                "250",
                 "--target-path-role",
                 "HERO",
                 "--send",
@@ -214,7 +241,7 @@ class PositionSizingToolTest(unittest.TestCase):
                 "--mode",
                 "ATTACK",
                 "--remaining-risk-budget-yen",
-                "1000",
+                "250",
                 "--target-path-role",
                 "HERO",
                 "--path-board-available",
@@ -255,6 +282,7 @@ class PositionSizingToolTest(unittest.TestCase):
         emitted = result.gateway_intent["results"][0]
         self.assertEqual(emitted["status"], "LIVE_READY")
         self.assertTrue(emitted["risk_allowed"])
+        self.assertEqual(emitted["intent"]["units"], 250)
         metadata = emitted["intent"]["metadata"]
         self.assertEqual(metadata["valid_as_target_path"], "YES")
         self.assertEqual(metadata["attack_stack_slot"], "NOW")

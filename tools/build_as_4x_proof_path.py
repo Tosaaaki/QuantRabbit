@@ -196,6 +196,8 @@ def build_audjpy_repair(generated_at: str, ctx: dict[str, Any]) -> dict[str, Any
                     "realistic_units": candidate.get("realistic_units"),
                     "margin_requirement_realistic_size_jpy": candidate.get("margin_requirement_realistic_size_jpy"),
                     "margin_requirement_min_lot_jpy": candidate.get("margin_requirement_min_lot_jpy"),
+                    "minimum_executable_units": candidate.get("minimum_executable_units"),
+                    "margin_requirement_min_order_jpy": candidate.get("margin_requirement_min_order_jpy"),
                     "broker_margin_context": candidate.get("broker_margin_context"),
                     "risk_allowed": candidate.get("risk_allowed"),
                 },
@@ -394,6 +396,8 @@ def build_audjpy_limit_proof_pack(generated_at: str, ctx: dict[str, Any]) -> dic
             "risk_jpy": risk.get("risk_jpy"),
             "estimated_margin_jpy": candidate.get("margin_requirement_realistic_size_jpy"),
             "margin_requirement_min_lot_jpy": candidate.get("margin_requirement_min_lot_jpy"),
+            "minimum_executable_units": candidate.get("minimum_executable_units"),
+            "margin_requirement_min_order_jpy": candidate.get("margin_requirement_min_order_jpy"),
             "broker_margin_context": candidate.get("broker_margin_context"),
         },
         "verifier_gateway_guardian": {

@@ -518,7 +518,11 @@ def _write_protected_position_with_hard_close_recommendation(root: Path, broker_
                         "side": "SHORT",
                         "status": "BROKEN",
                         "verdict": "RECOMMEND_CLOSE",
-                        "rationale": "invalidation hit and technical invalidation confirmed",
+                        "rationale": (
+                            "invalidation hit: current ask 1.16310 >= buffered "
+                            "invalidation 1.16290 (raw 1.16270, buffer 2.0p); "
+                            "technical invalidation confirmed against SHORT: H1 BOS_UP"
+                        ),
                     }
                 ],
             }

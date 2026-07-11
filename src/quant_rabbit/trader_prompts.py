@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from quant_rabbit.close_discipline import (
+    thesis_evolution_reason_has_hard_close_evidence,
+)
+
 
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
@@ -1656,6 +1660,7 @@ def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[
         if verdict != "RECOMMEND_CLOSE" and status != "BROKEN":
             continue
         trade_id = str(item.get("trade_id") or "")
+        reason = str(item.get("rationale") or f"status={status}")
         out.append(
             {
                 "source": "thesis_evolution",
@@ -1664,8 +1669,13 @@ def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": verdict or status,
-                "gate_b_standing_authorized": True,
-                "reason": item.get("rationale") or f"status={status}",
+                "gate_b_standing_authorized": (
+                    thesis_evolution_reason_has_hard_close_evidence(
+                        reason,
+                        expected_side=str(item.get("side") or ""),
+                    )
+                ),
+                "reason": reason,
             }
         )
     return out

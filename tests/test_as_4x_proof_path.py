@@ -12,6 +12,40 @@ from tools import build_as_live_ready_evidence_loop as evidence_loop
 
 
 class As4xProofPathTests(unittest.TestCase):
+    def test_firepower_reports_broker_minimum_without_redefining_legacy_min_lot(self) -> None:
+        row = evidence_loop._candidate_firepower_row(
+            {
+                "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION",
+                "status": "DRY_RUN_BLOCKED",
+                "risk_allowed": False,
+                "live_blocker_codes": [],
+                "intent": {
+                    "pair": "USD_JPY",
+                    "side": "LONG",
+                    "order_type": "LIMIT",
+                    "units": 250,
+                    "market_context": {"method": "RANGE_ROTATION"},
+                    "metadata": {"estimated_margin_jpy": 1_625.0},
+                },
+                "risk_metrics": {"estimated_margin_jpy": 1_625.0},
+            },
+            daily={},
+            broker={},
+            blocked={
+                "market_close_trade_ids": set(),
+                "residual_trade_ids": set(),
+                "residual_keys": set(),
+                "market_close_family_key": None,
+            },
+            required_daily_jpy=None,
+        )
+
+        self.assertEqual(row["realistic_units"], 250)
+        self.assertEqual(row["margin_requirement_realistic_size_jpy"], 1_625.0)
+        self.assertEqual(row["margin_requirement_min_lot_jpy"], 6_500.0)
+        self.assertEqual(row["minimum_executable_units"], 1)
+        self.assertEqual(row["margin_requirement_min_order_jpy"], 6.5)
+
     def test_as_board_overwrites_stale_order_intent_timestamp_and_total_lanes(self) -> None:
         firepower = evidence_loop._build_firepower_board(
             generated_at="2026-07-06T15:04:28Z",

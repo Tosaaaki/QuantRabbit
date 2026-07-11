@@ -2015,7 +2015,7 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
 
-    def test_thesis_expired_without_hold_support_routes_to_position_close(self) -> None:
+    def test_thesis_expired_without_structural_invalidation_routes_as_soft_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -2064,8 +2064,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                 else:
                     os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
-        self.assertEqual(route.branch, BRANCH_POSITION)
-        self.assertTrue(any("loss-cut review required" in reason for reason in route.reasons))
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
         self.assertTrue(any("thesis_evolution RECOMMEND_CLOSE" in reason for reason in route.reasons))
 
     def test_thesis_expired_with_hold_support_routes_to_entry_as_soft_review(self) -> None:
@@ -2731,6 +2731,54 @@ class TraderPromptRouteTest(unittest.TestCase):
             recs = _fresh_close_recommendations(snapshot, data_root=root)
 
         self.assertEqual(len(recs), 1)
+        self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_thesis_evolution_wrong_side_confirmation_is_not_standing_authorized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471414",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.16056,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "evolutions": [
+                            {
+                                "trade_id": "471414",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "status": "BROKEN",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "rationale": (
+                                    "invalidation hit: current ask 1.16310 >= buffered "
+                                    "invalidation 1.16290 (raw 1.16270, buffer 2.0p); "
+                                    "technical invalidation confirmed against LONG: H1 BOS_DOWN"
+                                ),
+                            }
+                        ],
+                    }
+                )
+            )
+
+            recs = _fresh_close_recommendations(snapshot, data_root=root)
+
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["source"], "thesis_evolution")
         self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
     def test_position_management_review_exit_carryforward_routes_to_position_management(self) -> None:

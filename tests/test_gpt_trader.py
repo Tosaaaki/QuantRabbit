@@ -1408,7 +1408,12 @@ class GPTTraderBrainTest(unittest.TestCase):
                                     "side": "SHORT",
                                     "status": "BROKEN",
                                     "verdict": "RECOMMEND_CLOSE",
-                                    "rationale": "hard invalidation confirmed",
+                                    "rationale": (
+                                        "invalidation hit: current ask 1.16310 >= buffered "
+                                        "invalidation 1.16290 (raw 1.16270, buffer 2.0p); "
+                                        "technical invalidation confirmed against SHORT: "
+                                        "H1 BOS_UP; H4 BOS_UP"
+                                    ),
                                 }
                                 for trade_id in ("555", "556")
                             ],
@@ -7366,6 +7371,12 @@ def _close_fixtures(
     files = _fixtures(root, positions=[pos])
     # Override snapshot quotes to control invalidation_price hit testing.
     snap = json.loads(files["snapshot"].read_text())
+    snapshot_at = datetime.fromisoformat(snap["fetched_at_utc"])
+    raw = snap["positions"][0].get("raw")
+    snap["positions"][0]["raw"] = {
+        **(raw if isinstance(raw, dict) else {}),
+        "openTime": (snapshot_at - timedelta(hours=8)).isoformat(),
+    }
     snap["quotes"] = {
         "EUR_USD": {"bid": quote_bid, "ask": quote_ask, "timestamp_utc": snap["fetched_at_utc"]},
     }
@@ -7374,7 +7385,23 @@ def _close_fixtures(
     # M15/H4 structural events we want.
     pc = json.loads(files["pair_charts"].read_text())
     pc["charts"][0]["chart_story"] = _chart_story_with_struct("EUR_USD", m15_dir=m15_dir, h4_dir=h4_dir)
-    pc["charts"][0]["views"] = _close_tech_views("UP" if position_side == "SHORT" else "DOWN")
+    views = _close_tech_views("UP" if position_side == "SHORT" else "DOWN")
+    views.append(
+        {
+            "granularity": "H4",
+            "regime": "TREND_UP" if h4_dir == "UP" else "TREND_DOWN",
+            "indicators": {},
+            "structure": {
+                "last_event": {
+                    "kind": f"CHOCH_{h4_dir}",
+                    "close_confirmed": True,
+                    "broken_pivot_price": 1.2,
+                    "timestamp": (snapshot_at - timedelta(hours=4)).isoformat(),
+                }
+            },
+        }
+    )
+    pc["charts"][0]["views"] = views
     files["pair_charts"].write_text(json.dumps(pc))
     return files
 
@@ -7563,11 +7590,12 @@ def _write_entry_thesis(
     pair: str = "EUR_USD",
     side: str = "SHORT",
     invalidation_price: float | None = None,
+    timestamp_utc: str | None = None,
 ) -> None:
     (root / "entry_thesis_ledger.jsonl").write_text(
         json.dumps(
             {
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "timestamp_utc": timestamp_utc or datetime.now(timezone.utc).isoformat(),
                 "trade_id": trade_id,
                 "pair": pair,
                 "side": side,
@@ -7627,8 +7655,21 @@ def _write_fresh_thesis_evolution_close_recommendation(
     trade_id: str = "555",
     pair: str = "EUR_USD",
     side: str = "SHORT",
-    rationale: str = "invalidation hit and technical invalidation confirmed against the entry thesis",
+    rationale: str | None = None,
 ) -> None:
+    if rationale is None:
+        if side.upper() == "LONG":
+            rationale = (
+                "invalidation hit: current bid 1.16900 <= buffered invalidation "
+                "1.16930 (raw 1.16950, buffer 2.0p); technical invalidation "
+                "confirmed against LONG: H1 BOS_DOWN; M15 MACD-"
+            )
+        else:
+            rationale = (
+                "invalidation hit: current ask 1.16310 >= buffered invalidation "
+                "1.16290 (raw 1.16270, buffer 2.0p); technical invalidation "
+                "confirmed against SHORT: H1 BOS_UP; M15 MACD+"
+            )
     snapshot = json.loads(files["snapshot"].read_text())
     generated_at = (
         datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
@@ -8028,6 +8069,182 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertTrue(evidence["gate_b_standing_authorized"])
             self.assertFalse(evidence["explicit_gate_b_required"])
             self.assertFalse(evidence["gate_b_explicit_operator_authorized"])
+            h4_event = payload["input_packet"]["market_context"]["pairs"]["EUR_USD"]["chart"]["views"]["H4"]["structure"]["last_event"]
+            self.assertIsNotNone(h4_event["timestamp"])
+            position = payload["input_packet"]["broker_snapshot"]["position_summaries"][0]
+            self.assertIsNotNone(position["open_time_utc"])
+
+    def test_pre_entry_h4_structure_is_soft_gate_a_without_operator_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            opened_at = datetime.fromisoformat(snapshot["positions"][0]["raw"]["openTime"])
+            charts = json.loads(files["pair_charts"].read_text())
+            h4 = next(view for view in charts["charts"][0]["views"] if view["granularity"] == "H4")
+            h4["structure"]["last_event"]["timestamp"] = (
+                opened_at - timedelta(hours=4)
+            ).isoformat()
+            files["pair_charts"].write_text(json.dumps(charts))
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertTrue(evidence["gate_a_invalidated"])
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertTrue(evidence["explicit_gate_b_required"])
+            self.assertIn("does not postdate", evidence["gate_a_reason"])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_h4_structure_without_timestamp_is_soft_gate_a(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            charts = json.loads(files["pair_charts"].read_text())
+            h4 = next(view for view in charts["charts"][0]["views"] if view["granularity"] == "H4")
+            h4["structure"]["last_event"].pop("timestamp")
+            files["pair_charts"].write_text(json.dumps(charts))
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertTrue(evidence["gate_a_invalidated"])
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertIn("timestamp is missing or invalid", evidence["gate_a_reason"])
+
+    def test_pre_entry_h4_structure_can_close_only_with_explicit_gate_b(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=True):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+                snapshot = json.loads(files["snapshot"].read_text())
+                opened_at = datetime.fromisoformat(snapshot["positions"][0]["raw"]["openTime"])
+                charts = json.loads(files["pair_charts"].read_text())
+                h4 = next(view for view in charts["charts"][0]["views"] if view["granularity"] == "H4")
+                h4["structure"]["last_event"]["timestamp"] = (
+                    opened_at - timedelta(hours=4)
+                ).isoformat()
+                files["pair_charts"].write_text(json.dumps(charts))
+                brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                evidence = payload["close_gate_evidence"][0]
+                self.assertFalse(evidence["gate_b_standing_authorized"])
+                self.assertTrue(evidence["gate_b_explicit_operator_authorized"])
+
+    def test_h4_structure_uses_entry_thesis_timestamp_when_broker_open_time_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            snapshot["positions"][0].pop("raw", None)
+            files["snapshot"].write_text(json.dumps(snapshot))
+            thesis_at = snapshot_at - timedelta(hours=6)
+            _write_entry_thesis(root, timestamp_utc=thesis_at.isoformat())
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            context = payload["input_packet"]["protection_sidecars"]["entry_thesis_close_context"][0]
+            self.assertEqual(context["entry_thesis_timestamp_utc"], thesis_at.isoformat())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertTrue(evidence["gate_b_standing_authorized"])
+            self.assertIn("entry-thesis timestamp", evidence["gate_a_reason"])
+
+    def test_h4_structure_rejects_malformed_present_broker_open_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            snapshot["positions"][0]["raw"]["openTime"] = "not-a-timestamp"
+            files["snapshot"].write_text(json.dumps(snapshot))
+            _write_entry_thesis(
+                root,
+                timestamp_utc=(snapshot_at - timedelta(hours=6)).isoformat(),
+            )
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertIn("broker openTime is present but invalid", evidence["gate_a_reason"])
+
+    def test_h4_structure_rejects_malformed_present_thesis_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            _write_entry_thesis(root, timestamp_utc="not-a-timestamp")
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertIn(
+                "entry-thesis timestamp is present but invalid",
+                evidence["gate_a_reason"],
+            )
+
+    def test_h4_structure_at_exact_open_time_is_soft_gate_a(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            opened_at = datetime.fromisoformat(snapshot["positions"][0]["raw"]["openTime"])
+            charts = json.loads(files["pair_charts"].read_text())
+            h4 = next(view for view in charts["charts"][0]["views"] if view["granularity"] == "H4")
+            h4["structure"]["last_event"]["timestamp"] = opened_at.isoformat()
+            files["pair_charts"].write_text(json.dumps(charts))
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertIn("does not postdate", evidence["gate_a_reason"])
+
+    def test_h4_structure_parses_oanda_nanosecond_open_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            opened_at = snapshot_at - timedelta(hours=8)
+            snapshot["positions"][0]["raw"]["openTime"] = (
+                opened_at.strftime("%Y-%m-%dT%H:%M:%S.")
+                + f"{opened_at.microsecond:06d}789Z"
+            )
+            files["snapshot"].write_text(json.dumps(snapshot))
+            brain = _brain(root, files, _close_decision(trade_ids=["555"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            evidence = payload["close_gate_evidence"][0]
+            self.assertTrue(evidence["gate_b_standing_authorized"])
+            self.assertIn("broker openTime", evidence["gate_a_reason"])
 
     def test_loss_close_requires_timing_audit_after_premature_close_regrets(self) -> None:
         # Regression for 2026-06-18: recent GPT_CLOSE losses later touched TP
@@ -8427,8 +8644,10 @@ class CloseDisciplineTest(unittest.TestCase):
                 files,
                 side="LONG",
                 rationale=(
-                    "invalidation hit and technical invalidation confirmed against LONG "
-                    "on M5/M15/M30/H1; H4 still supports the open side"
+                    "invalidation hit: current bid 1.16900 <= buffered invalidation "
+                    "1.16930 (raw 1.16950, buffer 2.0p); technical invalidation "
+                    "confirmed against LONG: M5/M15/M30/H1; H4 still supports "
+                    "the open side"
                 ),
             )
             decision = _close_decision(trade_ids=["555"])
@@ -9387,12 +9606,13 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(sidecar["source"], "thesis_evolution")
             self.assertTrue(sidecar["gate_b_standing_authorized"])
 
-    def test_thesis_expired_without_hold_support_remains_standing_close_authorized(self) -> None:
-        # Expiry is still a hard unattended close when no fresh position stack
-        # says the open side remains alive.
+    def test_thesis_expired_without_structural_invalidation_is_not_standing_close_authorized(self) -> None:
+        # Expiry ends the original prediction horizon, but the clock alone is
+        # not price/structure invalidation and must not authorize an unattended
+        # loss-side market close.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="DOWN")
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
             _write_fresh_thesis_evolution_close_recommendation(
                 root,
                 files,
@@ -9408,8 +9628,116 @@ class CloseDisciplineTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            self.assertFalse(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertFalse(sidecar["gate_b_standing_authorized"])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertTrue(
+                {"CLOSE_OPERATOR_AUTH_REQUIRED", "CLOSE_SAME_DIRECTION_MARKET_SUPPORT"} & codes
+            )
+
+    def test_thesis_evolution_forecast_flip_is_not_standing_close_authorized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale=(
+                    "FORECAST FLIPPED: entry UP → current DOWN (position LONG)"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertFalse(sidecar["gate_b_standing_authorized"])
+
+    def test_thesis_evolution_wrong_side_confirmation_requires_explicit_gate_b(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="SHORT",
+                rationale=(
+                    "invalidation hit: current ask 1.16310 >= buffered invalidation "
+                    "1.16290 (raw 1.16270, buffer 2.0p); technical invalidation "
+                    "confirmed against LONG: H1 BOS_DOWN; M15 MACD-"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertFalse(sidecar["gate_b_standing_authorized"])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_thesis_evolution_wrong_price_geometry_requires_explicit_gate_b(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="SHORT",
+                rationale=(
+                    "invalidation hit: current bid 1.16280 <= buffered invalidation "
+                    "1.16290 (raw 1.16270, buffer 2.0p); technical invalidation "
+                    "confirmed against SHORT: H1 BOS_UP; M15 MACD+"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertFalse(sidecar["gate_b_standing_authorized"])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_thesis_evolution_invalidation_and_technical_confirmation_remains_hard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                rationale=(
+                    "invalidation hit: current ask 1.16310 >= buffered invalidation "
+                    "1.16290 (raw 1.16270, buffer 2.0p); technical invalidation "
+                    "confirmed against SHORT: H1 BOS_UP; H4 BOS_UP"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
             self.assertEqual(summary.status, "ACCEPTED", msg=summary)
-            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertTrue(sidecar["gate_b_standing_authorized"])
 
     def test_thesis_evolution_forecast_decay_with_position_thesis_hold_is_soft_advisory(self) -> None:
         # Regression for 2026-06-16 NZD_CAD 472380 shape: thesis_evolution can

@@ -110,9 +110,13 @@ positions.
   UP) AND the event is **close-confirmed** (chart_story does NOT carry the
   `:wick` suffix). This is the path implemented in
   `gpt_trader._close_thesis_invalidated`. H4 close-confirmed structure carries
-  standing loss-cut authorization. M15 close-confirmed structure is Gate A
-  evidence, but it is not unattended hard Gate B unless H4 structure, recorded
-  invalidation, or a hard sidecar also confirms; otherwise a loss-side CLOSE
+  standing loss-cut authorization only when its exact structured event
+  timestamp postdates the matching broker-open / entry-thesis anchor and is
+  not later than the chart/snapshot observation boundary. Chart-story-only,
+  pre-entry, missing-time, mismatched, future-dated, or unanchored H4 remains
+  soft Gate A. M15 close-confirmed structure is Gate A evidence, but it is not
+  unattended hard Gate B unless post-entry H4 structure, recorded invalidation,
+  or a hard sidecar also confirms; otherwise a loss-side CLOSE
   still needs explicit env/token Gate B. Cite the TF + event + price in the
   receipt (e.g. "H4 BOS_UP@113.587 prints against SHORT thesis,
   close-confirmed"). Do **not** wait for H4/H1/M30 regime labels to all print
@@ -145,7 +149,11 @@ positions.
   `position:thesis:<trade_id>`,
   `position:evolution:<trade_id>`, or `position:persistence:<trade_id>` and
   the sidecar reason. Stale sidecars are ignored. `thesis_evolution`
-  BROKEN / RECOMMEND_CLOSE is hard Gate A and carries standing authorization.
+  BROKEN / RECOMMEND_CLOSE is hard Gate A only when its rationale records a
+  buffered invalidation hit plus technical confirmation. Structural authority
+  must come from the timestamped H4 / position-management paths, not a phrase
+  in thesis-evolution prose. Forecast flip, adverse drift,
+  confidence/regime decay, and `THESIS_EXPIRED` alone are soft Gate A.
   `position_thesis` REVIEW_CLOSE is also hard only when the sidecar records
   invalidation-hit or structural-break evidence plus M5/M15/M30/H1 technical
   confirmation. Adverse-entry-buffer-only or score-only `position_thesis`
@@ -201,10 +209,11 @@ cycle, not presumed from the entry.
 - `WEAKENED` is a working state, not a resting state: on the first WEAKENED cycle,
   re-derive TP from current structure and cite the structure path to target
   (`position:evolution:<trade_id>`). Do not extend TP while WEAKENED.
-- A `WEAKENED` thesis past its forecast-derived horizon is escalated by
-  `thesis_evolution` to `BROKEN` with a `THESIS_EXPIRED` rationale — hard Gate A,
-  standing loss-cut authorization (AGENT_CONTRACT §10). The entry thesis no longer
-  exists, so continuing to hold is an unpriced new position, not patience.
+- A `WEAKENED` thesis past its forecast-derived horizon may be escalated by
+  `thesis_evolution` to `BROKEN` with a `THESIS_EXPIRED` rationale. This forces
+  a fresh review/reprice, but the clock alone is soft Gate A and cannot become
+  an unattended loss-side market close without separate hard invalidation /
+  structural proof or explicit Gate B (AGENT_CONTRACT §10).
 - Ledger truth (2026-06-11): every market close held past 12h was a loss (22/22,
   avg -2,310 JPY); every market-close winner exited inside 12h, while TP exits were
   profitable in every hold bucket. Late capitulation is pure salvage — the decision

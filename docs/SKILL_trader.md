@@ -419,9 +419,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # before deciding: `blocks_non_close_actions=true` means close-first work;
 # `blocks_non_close_actions=false` means soft advisory only and must not
 # produce a CLOSE receipt from the entry branch. Fresh thesis_evolution
-# BROKEN / RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
-# position_thesis invalidation-hit or structural-break evidence with multi-TF
-# confirmation are hard standing loss-cut authorization only when they do not
+# BROKEN / RECOMMEND_CLOSE is hard only when its rationale contains price
+# invalidation plus technical confirmation; structural authority comes from
+# the timestamped H4 / position-management paths, not sidecar prose.
+# structural position_management REVIEW_EXIT and position_thesis
+# invalidation-hit or structural-break evidence with multi-TF confirmation are
+# also hard standing loss-cut authorization only when they do not
 # conflict with fresh same-direction HOLD/EXTEND sidecars. If thesis_evolution
 # / position_thesis / forecast_persistence still support the open side, treat
 # the issue as HOLD/reprice/TP rebalance unless explicit Gate B is present.
@@ -523,16 +526,20 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
 #     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE, OR a bounded carry-forward
 #     `position_management.json` REVIEW_EXIT for the same still-open trade.
 #   - Gate B: hard loss-cut standing authorization OR explicit operator
-#     authorization. Hard standing authorization is H4 close-confirmed
-#     BOS/CHOCH against side, buffered invalidation_price hit with technical
-#     confirmation, fresh thesis_evolution BROKEN / RECOMMEND_CLOSE,
+#     authorization. Hard standing authorization is an exact structured H4
+#     close-confirmed BOS/CHOCH against side whose timestamp postdates the
+#     matching broker-open / entry-thesis anchor, buffered invalidation_price hit with technical
+#     confirmation, fresh thesis_evolution BROKEN / RECOMMEND_CLOSE with that
+#     invalidation/technical proof in its rationale,
 #     structural position_management REVIEW_EXIT, or position_thesis
 #     invalidation-hit / structural-break evidence with multi-TF confirmation.
 #     M15 close-confirmed BOS/CHOCH is Gate A evidence, but it is not unattended
-#     hard Gate B unless H4 structure, recorded invalidation, or a hard sidecar
-#     also confirms. Softer sidecars (adverse-entry-buffer-only or score-only
+#     hard Gate B unless post-entry timestamped H4 structure, recorded
+#     invalidation, or a hard sidecar also confirms. Pre-entry, missing-time,
+#     mismatched, future-dated, or unanchored H4 is also soft. Softer sidecars (adverse-entry-buffer-only or score-only
 #     position_thesis REVIEW_CLOSE, non-structural position_management
-#     REVIEW_EXIT, forecast_persistence RECOMMEND_CLOSE, or M15-only structure)
+#     REVIEW_EXIT, forecast/expiry-only thesis_evolution RECOMMEND_CLOSE,
+#     forecast_persistence RECOMMEND_CLOSE, or M15-only structure)
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
@@ -697,8 +704,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   directive 「どの視点でエントリーしたのか…市況が変わってないか」) /
 #   forecast-persistence-check emit the per-position EXTEND / HOLD /
 #   REVIEW_CLOSE, STILL_VALID / WEAKENED / BROKEN, and N-cycle persistence
-#   verdicts. A fresh BROKEN / RECOMMEND_CLOSE from thesis evolution is hard
-#   Gate A standing loss-cut authorization; score-only or
+#   verdicts. A fresh BROKEN / RECOMMEND_CLOSE from thesis evolution carries
+#   hard Gate A standing loss-cut authorization only when its rationale records
+#   the canonical buffered price-invalidation hit plus technical confirmation
+#   against the same recorded position side. Structural prose in this report
+#   is soft; use the timestamped H4 / position-management path instead.
+#   Forecast flip, adverse drift,
+#   confidence/regime decay, THESIS_EXPIRED, score-only, and
 #   adverse-entry-buffer-only reviews still need explicit env/token Gate B.
 #   thesis-evolution-check must first backfill active trader-owned entry
 #   theses from execution-ledger broker truth when possible, then evaluate.

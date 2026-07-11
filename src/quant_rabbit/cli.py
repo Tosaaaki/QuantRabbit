@@ -4628,7 +4628,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tevol = sub.add_parser(
         "thesis-evolution-check",
         aliases=["thesis-evolution"],
-        help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. Fresh BROKEN/RECOMMEND_CLOSE is hard Gate A and carries standing structural loss-cut authorization.",
+        help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. BROKEN/RECOMMEND_CLOSE carries standing authorization only when its rationale records price invalidation plus technical confirmation; forecast/expiry/structural-prose-only evidence remains soft Gate A.",
     )
     p_tevol.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_tevol.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
