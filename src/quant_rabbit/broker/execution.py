@@ -44,6 +44,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.capture_economics import read_attributed_net_outcomes
 from quant_rabbit.target import DailyTargetLedger
 from quant_rabbit.predictive_scout import (
     PREDICTIVE_SCOUT_CLOCK_SKEW_SECONDS,
@@ -61,6 +62,10 @@ from quant_rabbit.predictive_scout import (
     predictive_scout_vehicle_id,
 )
 from quant_rabbit.guardian_events import guardian_action_gateway_issues
+from quant_rabbit.guardian_tuning_overrides import (
+    clear_guardian_tuning_validation_cache,
+    guardian_tuning_validation_cycle,
+)
 from quant_rabbit.guardian_receipt_consumption import (
     BLOCK_NEW_ENTRY_CODE as GUARDIAN_RECEIPT_BLOCK_NEW_ENTRY_CODE,
     WATCHDOG_BLOCK_NEW_ENTRY_CODE as GUARDIAN_WATCHDOG_BLOCK_NEW_ENTRY_CODE,
@@ -84,12 +89,20 @@ from quant_rabbit.self_improvement_guards import (
     profitability_p0_worst_segment,
 )
 from quant_rabbit.strategy.intent_generator import (
+    LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES,
     MACRO_EVENT_MAX_RISK_PCT_NAV,
     _daily_risk_budget_from_state,
+    _exact_vehicle_take_profit_metrics,
     _expired_pending_projection_count,
     _per_trade_risk_from_state,
 )
 from quant_rabbit.strategy.profile import StrategyProfile
+
+
+# Every fresh entry is bounded by the same current-equity policy used by the
+# macro confidence path.  The macro signal may choose a smaller fraction but
+# cannot own or bypass this absolute pre-POST boundary.
+FRESH_ENTRY_MAX_RISK_PCT_NAV = MACRO_EVENT_MAX_RISK_PCT_NAV
 
 
 class ExecutionClient(Protocol):
@@ -245,6 +258,7 @@ class LiveOrderGateway:
             else output_path.parent / DEFAULT_BROKER_SNAPSHOT.name
         )
 
+    @guardian_tuning_validation_cycle()
     def run(
         self,
         *,
@@ -367,6 +381,9 @@ class LiveOrderGateway:
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
+        risk_issues.extend(
+            issue.__dict__ for issue in _selected_lane_metadata_issues(intent)
+        )
         intent_status_issues = _intent_status_issues(selected)
         projection_expiry_issues = _projection_expiry_status_issues(
             selected=selected,
@@ -478,6 +495,10 @@ class LiveOrderGateway:
                 intents_path=intents_path,
                 ignore_pending_order_ids=(),
             )
+            # The final deep attestation is useful only while building this
+            # reconciliation result.  Do not carry it across reservations or
+            # the broker POST boundary inside the outer gateway phase.
+            clear_guardian_tuning_validation_cache()
             intent = reconciliation.intent
             snapshot = reconciliation.snapshot
             risk = reconciliation.risk
@@ -688,6 +709,7 @@ class LiveOrderGateway:
             lane_ids=(selected_lane_id,) if selected_lane_id else (),
         )
 
+    @guardian_tuning_validation_cycle()
     def run_batch(
         self,
         *,
@@ -1074,6 +1096,9 @@ class LiveOrderGateway:
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
+        risk_issues.extend(
+            issue.__dict__ for issue in _selected_lane_metadata_issues(intent)
+        )
         if allow_basket_pending:
             risk_issues.extend(
                 issue.__dict__
@@ -1199,6 +1224,7 @@ class LiveOrderGateway:
                 intents_path=intents_path,
                 ignore_pending_order_ids=ignore_pending_order_ids,
             )
+            clear_guardian_tuning_validation_cache()
             intent = reconciliation.intent
             snapshot = reconciliation.snapshot
             risk = reconciliation.risk
@@ -1441,6 +1467,7 @@ class LiveOrderGateway:
         from the exact snapshot whose lastTransactionID matched the ledger.
         """
 
+        clear_guardian_tuning_validation_cache()
         evidence: dict[str, Any] = {
             "status": "SKIPPED",
             "execution_ledger_db_path": (
@@ -1537,36 +1564,66 @@ class LiveOrderGateway:
                 f"{broker_transaction_id or 'missing'}; retry after both views converge",
             )
 
+        (
+            intent,
+            tp_proven_fallback_cap_jpy,
+            tp_proven_fresh_recheck,
+            tp_proven_recheck_issue,
+        ) = _tp_proven_pre_post_recheck(
+            intent,
+            ledger_path=self.execution_ledger_db_path,
+        )
+        evidence["tp_proven_fresh_recheck"] = tp_proven_fresh_recheck
+        if tp_proven_recheck_issue is not None:
+            return blocked(
+                tp_proven_recheck_issue.code,
+                tp_proven_recheck_issue.message,
+            )
+
         macro_event_confidence_sizing = _metadata_truthy(
             (intent.metadata or {}).get("macro_event_confidence_sizing")
         )
-        macro_event_fresh_nav_value: float | None = None
+        account = fresh_snapshot.account
+        fresh_nav = account.nav_jpy if account is not None else None
+        try:
+            parsed_fresh_nav = float(fresh_nav)
+        except (TypeError, ValueError):
+            parsed_fresh_nav = math.nan
+        if not math.isfinite(parsed_fresh_nav) or parsed_fresh_nav <= 0.0:
+            issue_code = (
+                "PRE_POST_MACRO_EVENT_FRESH_NAV_MISSING"
+                if macro_event_confidence_sizing
+                else "PRE_POST_FRESH_NAV_MISSING"
+            )
+            fresh_nav_recheck = {
+                "status": "BLOCKED",
+                "fresh_nav_jpy": fresh_nav,
+                "max_risk_pct_nav": FRESH_ENTRY_MAX_RISK_PCT_NAV,
+                "issue_code": issue_code,
+            }
+            evidence["fresh_nav_recheck"] = fresh_nav_recheck
+            if macro_event_confidence_sizing:
+                evidence["macro_event_fresh_nav_recheck"] = fresh_nav_recheck
+            return blocked(
+                issue_code,
+                "fresh entry sizing requires finite positive NAV from the same "
+                "broker snapshot used immediately before POST",
+            )
+        fresh_nav_cap_jpy = parsed_fresh_nav * (
+            FRESH_ENTRY_MAX_RISK_PCT_NAV / 100.0
+        )
+        evidence["fresh_nav_recheck"] = {
+            "status": "APPLIED",
+            "fresh_nav_jpy": parsed_fresh_nav,
+            "max_risk_pct_nav": FRESH_ENTRY_MAX_RISK_PCT_NAV,
+            "fresh_nav_cap_jpy": fresh_nav_cap_jpy,
+        }
+        macro_event_fresh_nav_value: float | None = (
+            parsed_fresh_nav if macro_event_confidence_sizing else None
+        )
         macro_event_fresh_nav_recheck: dict[str, Any] = {
             "status": "NOT_APPLICABLE"
         }
-        if macro_event_confidence_sizing:
-            account = fresh_snapshot.account
-            fresh_nav = account.nav_jpy if account is not None else None
-            try:
-                parsed_fresh_nav = float(fresh_nav)
-            except (TypeError, ValueError):
-                parsed_fresh_nav = math.nan
-            if not math.isfinite(parsed_fresh_nav) or parsed_fresh_nav <= 0.0:
-                macro_event_fresh_nav_recheck = {
-                    "status": "BLOCKED",
-                    "fresh_nav_jpy": fresh_nav,
-                    "max_risk_pct_nav": MACRO_EVENT_MAX_RISK_PCT_NAV,
-                    "issue_code": "PRE_POST_MACRO_EVENT_FRESH_NAV_MISSING",
-                }
-                evidence["macro_event_fresh_nav_recheck"] = (
-                    macro_event_fresh_nav_recheck
-                )
-                return blocked(
-                    "PRE_POST_MACRO_EVENT_FRESH_NAV_MISSING",
-                    "macro-event confidence sizing requires finite positive NAV from the "
-                    "same fresh broker snapshot used immediately before POST",
-                )
-            macro_event_fresh_nav_value = parsed_fresh_nav
 
         try:
             target_summary = DailyTargetLedger(
@@ -1663,7 +1720,13 @@ class LiveOrderGateway:
                 "fresh_absolute_cap_jpy": macro_event_fresh_absolute_cap,
             }
 
-        final_max_loss = min(float(max_loss_jpy), final_per_trade)
+        final_max_loss = min(
+            float(max_loss_jpy),
+            final_per_trade,
+            fresh_nav_cap_jpy,
+        )
+        if tp_proven_fallback_cap_jpy is not None:
+            final_max_loss = min(final_max_loss, tp_proven_fallback_cap_jpy)
         if macro_event_fresh_absolute_cap is not None:
             final_max_loss = min(
                 final_max_loss,
@@ -1701,6 +1764,16 @@ class LiveOrderGateway:
             size_multiple=size_multiple,
         )
         final_issues: list[RiskIssue] = list(sizing_issues)
+        if tp_proven_fresh_recheck.get("status") == "CLIPPED_TO_AVG_WIN":
+            final_issues.append(
+                RiskIssue(
+                    "PRE_POST_TP_PROOF_REVOKED_CLIPPED_TO_AVG_WIN",
+                    "fresh execution-ledger evidence no longer satisfies the exact "
+                    "pair/side/method/vehicle TP relaxation contract; final risk was "
+                    "clipped to the observed average-winner cap before POST",
+                    "WARN",
+                )
+            )
         if final_risk.metrics is not None:
             capacity_scale, capacity_issue = _basket_size_multiple(
                 intent=final_intent,
@@ -1911,6 +1984,7 @@ class LiveOrderGateway:
                 "final_portfolio_loss_cap_jpy": final_portfolio_cap,
                 "final_units": final_intent.units,
                 "macro_event_fresh_nav_recheck": macro_event_fresh_nav_recheck,
+                "tp_proven_fresh_recheck": tp_proven_fresh_recheck,
                 "fresh_pending_reconciliation": fresh_pending_evidence,
                 "target_path_final_recheck": target_path_final_recheck,
             }
@@ -4107,6 +4181,245 @@ def _portfolio_loss_remaining_jpy(
     return max(0.0, portfolio_loss_cap - open_risk - pending_risk - max(0.0, cumulative_risk_jpy))
 
 
+def _tp_proven_pre_post_recheck(
+    intent: OrderIntent,
+    *,
+    ledger_path: Path,
+) -> tuple[OrderIntent, float | None, dict[str, Any], RiskIssue | None]:
+    """Reprove an embedded TP relaxation from the just-synced live ledger.
+
+    Intent generation can legitimately mark a lane ``TP_PROVEN_RELAXED`` and
+    then wait while the trader verifies/stages it. A newly synced close in that
+    interval can invalidate the zero-loss exact-vehicle proof. The gateway must
+    therefore treat the embedded metrics as a claim, not as final POST
+    authority. A readable mismatch falls back to the fresh average-winner cap;
+    an unreadable ledger cannot safely determine either proof or fallback cap.
+    """
+
+    metadata = dict(intent.metadata or {})
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
+        return intent, None, {"status": "NOT_APPLICABLE"}, None
+
+    read_at_utc = datetime.now(timezone.utc).isoformat()
+    exact_metrics = _exact_vehicle_take_profit_metrics(ledger_path)
+    capture_metrics = _fresh_capture_payoff_metrics(ledger_path)
+    if exact_metrics is None or capture_metrics is None:
+        evidence = {
+            "status": "BLOCKED",
+            "issue_code": "PRE_POST_TP_PROOF_LEDGER_READ_FAILED",
+            "ledger_path": str(ledger_path),
+            "read_at_utc": read_at_utc,
+            "freshness": "POST_SYNC_LEDGER_READ_REQUIRED",
+        }
+        return (
+            intent,
+            None,
+            evidence,
+            RiskIssue(
+                "PRE_POST_TP_PROOF_LEDGER_READ_FAILED",
+                "TP_PROVEN_RELAXED requires a readable post-sync execution ledger "
+                "for exact TP proof and the average-winner fallback cap immediately "
+                "before POST",
+            ),
+        )
+
+    vehicle = _tp_proven_vehicle(intent.order_type)
+    method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else "UNKNOWN"
+    )
+    proof_key = (
+        intent.pair.upper(),
+        intent.side.value.upper(),
+        method.upper(),
+        vehicle,
+    )
+    proof = dict(exact_metrics.get(proof_key) or {})
+    tp_trades = _nonnegative_int(proof.get("trades"))
+    tp_losses = _nonnegative_int(proof.get("losses"))
+    tp_expectancy = _finite_float(proof.get("expectancy_jpy_per_trade"))
+    tp_avg_win = _finite_float(proof.get("avg_win_jpy"))
+
+    failed_checks: list[str] = []
+    if intent.order_type == OrderType.MARKET:
+        failed_checks.append("MARKET_VEHICLE")
+    if metadata.get("attach_take_profit_on_fill") is not True or not _attach_take_profit_on_fill(intent):
+        failed_checks.append("ATTACHED_TP_NOT_EXECUTABLE")
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        failed_checks.append("TP_EXECUTION_MODE_MISMATCH")
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        failed_checks.append("TP_TARGET_NOT_HARVEST")
+    if method == "UNKNOWN":
+        failed_checks.append("METHOD_MISSING")
+    if vehicle not in {"LIMIT", "STOP"}:
+        failed_checks.append("VEHICLE_UNSUPPORTED")
+    if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        failed_checks.append("TP_SAMPLE_BELOW_FLOOR")
+    if tp_losses != 0:
+        failed_checks.append("TP_LOSS_PRESENT")
+    if tp_expectancy is None or tp_expectancy <= 0.0:
+        failed_checks.append("TP_EXPECTANCY_NOT_POSITIVE")
+    if tp_avg_win is None or tp_avg_win <= 0.0:
+        failed_checks.append("TP_AVG_WIN_NOT_POSITIVE")
+
+    scope_key = (
+        f"{proof_key[0]}|{proof_key[1]}|{proof_key[2]}|{proof_key[3]}|"
+        "TAKE_PROFIT_ORDER"
+    )
+    metadata.update(
+        {
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_take_profit_scope_key": scope_key,
+            "capture_take_profit_exact_vehicle_required": True,
+            "capture_take_profit_vehicle": vehicle,
+            "capture_take_profit_metrics_source": (
+                "data/execution_ledger.db:pre_post_exact_vehicle_take_profit"
+            ),
+            "capture_take_profit_trades": tp_trades,
+            "capture_take_profit_wins": _nonnegative_int(proof.get("wins")),
+            "capture_take_profit_losses": tp_losses,
+            "capture_take_profit_expectancy_jpy": tp_expectancy,
+            "capture_take_profit_avg_win_jpy": tp_avg_win,
+            "capture_take_profit_avg_loss_jpy": _finite_float(proof.get("avg_loss_jpy")),
+            "capture_economics_pre_post_read_at_utc": read_at_utc,
+            "capture_economics_latest_realized_ts_utc": capture_metrics.get(
+                "latest_realized_ts_utc"
+            ),
+        }
+    )
+    evidence: dict[str, Any] = {
+        "status": "PASSED" if not failed_checks else "CLIPPED_TO_AVG_WIN",
+        "ledger_path": str(ledger_path),
+        "read_at_utc": read_at_utc,
+        "freshness": "SYNCED_LEDGER_MATCHED_BROKER_TRANSACTION_ID",
+        "proof_key": list(proof_key),
+        "scope_key": scope_key,
+        "required_tp_trades": LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES,
+        "tp_trades": tp_trades,
+        "tp_losses": tp_losses,
+        "tp_expectancy_jpy": tp_expectancy,
+        "failed_checks": failed_checks,
+        "fresh_capture": capture_metrics,
+    }
+    if not failed_checks:
+        metadata.update(
+            {
+                "loss_asymmetry_guard_relaxed": True,
+                "loss_asymmetry_guard_relaxation_reason": (
+                    "fresh pre-POST exact pair/side/method/vehicle attached-TP "
+                    "proof still has the required sample, zero TP losses, and "
+                    "positive expectancy"
+                ),
+                "pre_post_tp_proven_recheck_status": "PASSED",
+            }
+        )
+        return replace(intent, metadata=metadata), None, evidence, None
+
+    fresh_avg_win = _positive_float(capture_metrics.get("avg_win_jpy"))
+    embedded_cap = _positive_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    if fresh_avg_win is None:
+        evidence.update(
+            {
+                "status": "BLOCKED",
+                "issue_code": "PRE_POST_TP_PROOF_AVG_WIN_CAP_MISSING",
+            }
+        )
+        return (
+            intent,
+            None,
+            evidence,
+            RiskIssue(
+                "PRE_POST_TP_PROOF_AVG_WIN_CAP_MISSING",
+                "fresh exact TP proof no longer passes and the synced ledger has "
+                "no positive average winner with which to cap the order safely",
+            ),
+        )
+
+    # The embedded cap may only tighten the freshly recomputed average winner;
+    # it cannot substitute for missing current payoff evidence or widen it.
+    fallback_cap = min(
+        cap for cap in (fresh_avg_win, embedded_cap) if cap is not None
+    )
+    metadata.update(
+        {
+            "loss_asymmetry_guard_mode": "CAP_AVG_WIN",
+            "loss_asymmetry_guard_relaxed": False,
+            "loss_asymmetry_guard_relaxation_reason": (
+                "fresh pre-POST exact TP proof failed: " + ",".join(failed_checks)
+            ),
+            "loss_asymmetry_guard_loss_cap_jpy": round(fallback_cap, 4),
+            "loss_asymmetry_guard_effective_max_loss_jpy": round(fallback_cap, 4),
+            "capture_economics_trades": capture_metrics.get("trades"),
+            "capture_avg_win_jpy": fresh_avg_win,
+            "capture_avg_loss_jpy": capture_metrics.get("avg_loss_jpy"),
+            "capture_economics_stale": False,
+            "pre_post_tp_proven_recheck_status": "CLIPPED_TO_AVG_WIN",
+        }
+    )
+    evidence["fallback_avg_win_cap_jpy"] = fallback_cap
+    evidence["embedded_avg_win_cap_jpy"] = embedded_cap
+    return replace(intent, metadata=metadata), fallback_cap, evidence, None
+
+
+def _fresh_capture_payoff_metrics(ledger_path: Path) -> dict[str, Any] | None:
+    """Read the current gateway-attributed payoff basis without writing artifacts."""
+
+    rows = read_attributed_net_outcomes(ledger_path)
+    if rows is None:
+        return None
+
+    realized: list[float] = []
+    timestamps: list[str] = []
+    try:
+        for row in rows:
+            timestamps.append(str(row.ts_utc or ""))
+            realized.append(float(row.realized_pl_jpy))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    wins = [value for value in realized if value > 0.0]
+    losses = [value for value in realized if value < 0.0]
+    trades = len(wins) + len(losses)
+    avg_win = sum(wins) / len(wins) if wins else None
+    avg_loss = abs(sum(losses) / len(losses)) if losses else None
+    expectancy = (sum(wins) + sum(losses)) / trades if trades else None
+    return {
+        "trades": trades,
+        "wins": len(wins),
+        "losses": len(losses),
+        "avg_win_jpy": round(avg_win, 4) if avg_win is not None else None,
+        "avg_loss_jpy": round(avg_loss, 4) if avg_loss is not None else None,
+        "expectancy_jpy_per_trade": (
+            round(expectancy, 4) if expectancy is not None else None
+        ),
+        "latest_realized_ts_utc": max(timestamps) if timestamps else None,
+    }
+
+
+def _tp_proven_vehicle(order_type: OrderType) -> str:
+    if order_type == OrderType.LIMIT:
+        return "LIMIT"
+    if order_type == OrderType.STOP_ENTRY:
+        return "STOP"
+    if order_type == OrderType.MARKET:
+        return "MARKET"
+    return "UNKNOWN"
+
+
+def _finite_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _nonnegative_int(value: object) -> int:
+    parsed = _finite_float(value)
+    return max(0, int(parsed)) if parsed is not None else 0
+
+
 def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
     mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
     if mode == "TP_PROVEN_RELAXED":
@@ -5722,8 +6035,49 @@ def _intent_with_gateway_metadata(intent: OrderIntent, lane_id: str) -> OrderInt
     if not lane_id:
         return intent
     metadata = dict(intent.metadata or {})
-    metadata.setdefault("lane_id", lane_id)
+    submitted_lane_id = str(metadata.get("lane_id") or "").strip()
+    if submitted_lane_id and submitted_lane_id != lane_id:
+        metadata["submitted_lane_id"] = submitted_lane_id
+        metadata["selected_lane_metadata_mismatch"] = {
+            "submitted_lane_id": submitted_lane_id,
+            "selected_lane_id": lane_id,
+        }
+    else:
+        # These fields are gateway-owned audit evidence.  Exact/missing source
+        # metadata must not inherit a stale mismatch marker from an older
+        # serialized intent.
+        metadata.pop("submitted_lane_id", None)
+        metadata.pop("selected_lane_metadata_mismatch", None)
+    # The result selected from order_intents is the execution identity.  Risk
+    # and broker extensions must never inherit a sibling/parent lane embedded
+    # in the intent payload, because that can bypass an exact-lane tightening.
+    metadata["lane_id"] = lane_id
     return replace(intent, metadata=metadata)
+
+
+def _selected_lane_metadata_issues(intent: OrderIntent) -> tuple[RiskIssue, ...]:
+    metadata = intent.metadata or {}
+    mismatch = metadata.get("selected_lane_metadata_mismatch")
+    if not isinstance(mismatch, dict):
+        return ()
+    selected_lane_id = str(mismatch.get("selected_lane_id") or "").strip()
+    submitted_lane_id = str(mismatch.get("submitted_lane_id") or "").strip()
+    if (
+        not selected_lane_id
+        or not submitted_lane_id
+        or selected_lane_id == submitted_lane_id
+    ):
+        return ()
+    return (
+        RiskIssue(
+            "SELECTED_LANE_METADATA_MISMATCH",
+            "gateway selected lane "
+            f"{selected_lane_id} conflicts with intent metadata lane "
+            f"{submitted_lane_id}; the selected lane remains authoritative, but "
+            "live send is blocked until the intent is regenerated with one "
+            "exact identity",
+        ),
+    )
 
 
 def _client_extensions(intent: OrderIntent) -> dict[str, str]:

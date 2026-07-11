@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.capture_economics import read_exact_vehicle_take_profit_metrics
 from quant_rabbit.paths import (
     DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
     DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT,
@@ -1270,13 +1271,29 @@ def _attach_capture_economics_local_tp(
         )
         enriched = dict(proof)
         vehicle = _normalize_vehicle(lane.get("vehicle"))
-        exact_scope_available = exact_vehicle_tp_metrics is not None and vehicle not in {"", "UNKNOWN"}
+        exact_scope_required = vehicle not in {"", "UNKNOWN"}
         exact_scope_key = f"{pair}|{direction}|{method}|{vehicle}|TAKE_PROFIT_ORDER"
-        if exact_scope_available:
-            metrics = exact_vehicle_tp_metrics.get((pair.upper(), direction.upper(), method.upper(), vehicle.upper()), {})
+        if exact_scope_required:
+            metrics = (
+                exact_vehicle_tp_metrics.get(
+                    (pair.upper(), direction.upper(), method.upper(), vehicle.upper()),
+                    {},
+                )
+                if exact_vehicle_tp_metrics is not None
+                else {}
+            )
             scope_name = "PAIR_SIDE_METHOD_VEHICLE"
             scope_key = exact_scope_key
-            enriched["capture_take_profit_metrics_source"] = "data/execution_ledger.db:exact_vehicle_take_profit"
+            if exact_vehicle_tp_metrics is None:
+                enriched["capture_take_profit_metrics_source"] = (
+                    "data/execution_ledger.db:exact_vehicle_take_profit:EVIDENCE_UNREADABLE"
+                )
+                enriched["capture_take_profit_evidence_status"] = "EVIDENCE_UNREADABLE"
+            else:
+                enriched["capture_take_profit_metrics_source"] = (
+                    "data/execution_ledger.db:exact_vehicle_take_profit"
+                )
+                enriched["capture_take_profit_evidence_status"] = "READABLE"
         else:
             metrics = broad_metrics
             scope_name = broad_scope_name
@@ -1342,128 +1359,7 @@ def _capture_scoped_exit_metrics(
 
 
 def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
-    if not path.exists():
-        return None
-    try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        try:
-            columns = {
-                str(row["name"])
-                for row in con.execute("pragma table_info(execution_events)").fetchall()
-                if "name" in row.keys()
-            }
-            required = {"ts_utc", "event_type", "trade_id", "lane_id", "pair", "side", "realized_pl_jpy", "exit_reason"}
-            if not required.issubset(columns):
-                return None
-            rows = con.execute(
-                """
-                WITH fills AS (
-                    SELECT
-                        trade_id,
-                        MAX(NULLIF(lane_id, '')) AS lane_id,
-                        MAX(NULLIF(pair, '')) AS pair,
-                        MAX(NULLIF(side, '')) AS side,
-                        MAX(NULLIF(exit_reason, '')) AS entry_reason
-                    FROM execution_events
-                    WHERE event_type = 'ORDER_FILLED'
-                      AND COALESCE(trade_id, '') != ''
-                    GROUP BY trade_id
-                ),
-                closes AS (
-                    SELECT
-                        e.trade_id AS trade_id,
-                        MAX(NULLIF(e.lane_id, '')) AS close_lane_id,
-                        MAX(NULLIF(e.pair, '')) AS pair,
-                        MAX(NULLIF(e.side, '')) AS side,
-                        SUM(e.realized_pl_jpy) AS realized_pl_jpy,
-                        (
-                            SELECT e2.exit_reason
-                            FROM execution_events e2
-                            WHERE e2.trade_id = e.trade_id
-                              AND e2.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
-                              AND e2.realized_pl_jpy IS NOT NULL
-                            ORDER BY e2.ts_utc DESC
-                            LIMIT 1
-                        ) AS final_exit_reason
-                    FROM execution_events e
-                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
-                      AND e.realized_pl_jpy IS NOT NULL
-                      AND COALESCE(e.trade_id, '') != ''
-                    GROUP BY e.trade_id
-                )
-                SELECT
-                    COALESCE(f.lane_id, c.close_lane_id, '') AS entry_lane_id,
-                    COALESCE(f.entry_reason, '') AS entry_reason,
-                    COALESCE(f.pair, c.pair, '') AS pair,
-                    COALESCE(f.side, c.side, '') AS side,
-                    COUNT(*) AS trades,
-                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN 1 ELSE 0 END) AS wins,
-                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN 1 ELSE 0 END) AS losses,
-                    SUM(c.realized_pl_jpy) AS net_jpy,
-                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN c.realized_pl_jpy ELSE 0 END) AS win_jpy,
-                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN c.realized_pl_jpy ELSE 0 END) AS loss_jpy
-                FROM closes c
-                LEFT JOIN fills f ON f.trade_id = c.trade_id
-                WHERE c.final_exit_reason = 'TAKE_PROFIT_ORDER'
-                  AND COALESCE(f.lane_id, c.close_lane_id, '') != ''
-                GROUP BY 1, 2, 3, 4
-                """
-            ).fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        return None
-
-    accum: dict[tuple[str, str, str, str], dict[str, float]] = {}
-    for row in rows:
-        lane_id = str(row["entry_lane_id"] or "")
-        parsed = _parse_lane_id(lane_id)
-        pair = str(parsed.get("pair") or row["pair"] or "UNKNOWN").upper()
-        direction = str(parsed.get("direction") or row["side"] or "UNKNOWN").upper()
-        method = str(parsed.get("strategy_family") or "UNKNOWN").upper()
-        parsed_vehicle = _normalize_vehicle(parsed.get("vehicle"))
-        entry_vehicle = _normalize_vehicle(row["entry_reason"])
-        vehicle = parsed_vehicle if parsed_vehicle != "UNKNOWN" else entry_vehicle
-        if "UNKNOWN" in {pair, direction, method, vehicle}:
-            continue
-        trades = int(row["trades"] or 0)
-        wins = int(row["wins"] or 0)
-        losses = int(row["losses"] or 0)
-        net_jpy = float(row["net_jpy"] or 0.0)
-        win_jpy = float(row["win_jpy"] or 0.0)
-        loss_jpy = float(row["loss_jpy"] or 0.0)
-        key = (pair, direction, method, vehicle)
-        slot = accum.setdefault(
-            key,
-            {"trades": 0.0, "wins": 0.0, "losses": 0.0, "net_jpy": 0.0, "win_jpy": 0.0, "loss_jpy": 0.0},
-        )
-        slot["trades"] += trades
-        slot["wins"] += wins
-        slot["losses"] += losses
-        slot["net_jpy"] += net_jpy
-        slot["win_jpy"] += win_jpy
-        slot["loss_jpy"] += loss_jpy
-
-    metrics: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    for key, slot in accum.items():
-        trades = int(slot["trades"])
-        wins = int(slot["wins"])
-        losses = int(slot["losses"])
-        net_jpy = float(slot["net_jpy"])
-        win_jpy = float(slot["win_jpy"])
-        loss_jpy = float(slot["loss_jpy"])
-        metrics[key] = {
-            "trades": trades,
-            "wins": wins,
-            "losses": losses,
-            "expectancy_jpy_per_trade": round(net_jpy / trades, 4) if trades else 0.0,
-            "avg_win_jpy": round(win_jpy / wins, 4) if wins else 0.0,
-            "avg_loss_jpy": round(abs(loss_jpy) / losses, 4) if losses else 0.0,
-            "net_jpy": round(net_jpy, 4),
-            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
-        }
-    return metrics
+    return read_exact_vehicle_take_profit_metrics(path)
 
 
 def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:

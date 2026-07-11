@@ -40,6 +40,7 @@ from quant_rabbit.strategy.intent_generator import (
     _annotate_oanda_campaign_current_risk_firepower,
     _append_current_range_phase_lanes,
     _append_forecast_seed_lanes,
+    _exact_vehicle_take_profit_metrics,
     _forecast_context_payload,
     _forecast_seed_lane,
     _geometry,
@@ -10237,6 +10238,281 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
 
+    def test_exact_vehicle_tp_metrics_use_net_pl_including_financing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="financing-loss",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=100.0,
+                standalone_financing_jpy=-200.0,
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            row = metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT")]
+            self.assertEqual(row["trades"], 1)
+            self.assertEqual(row["wins"], 0)
+            self.assertEqual(row["losses"], 1)
+            self.assertEqual(row["net_jpy"], -100.0)
+            self.assertEqual(row["expectancy_jpy_per_trade"], -100.0)
+            self.assertEqual(row["avg_loss_jpy"], 100.0)
+
+    def test_exact_vehicle_tp_metrics_never_use_close_lane_for_manual_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="manual-entry",
+                fill_lane_id="",
+                close_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=300.0,
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertEqual(metrics, {})
+
+    def test_exact_vehicle_tp_metrics_allow_matching_entry_gateway_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="gateway-attributed-entry",
+                fill_lane_id="",
+                gateway_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=250.0,
+                standalone_financing_jpy=-10.0,
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            row = metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT")]
+            self.assertEqual(row["trades"], 1)
+            self.assertEqual(row["wins"], 1)
+            self.assertEqual(row["net_jpy"], 240.0)
+
+    def test_exact_vehicle_tp_metrics_reject_entry_truth_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="pair-mismatch",
+                fill_lane_id=lane_id,
+                fill_pair="GBP_USD",
+            )
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="side-mismatch",
+                fill_lane_id=lane_id,
+                fill_side="SHORT",
+            )
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="vehicle-mismatch",
+                fill_lane_id=lane_id,
+                fill_reason="STOP_ORDER",
+            )
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="gateway-pair-mismatch",
+                fill_lane_id=lane_id,
+                gateway_lane_id=lane_id,
+                gateway_pair="GBP_USD",
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNone(metrics)
+
+    def test_exact_vehicle_tp_metrics_exclude_partial_only_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="partial-only",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                outcome_event_type="TRADE_REDUCED",
+                realized_pl_jpy=150.0,
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertEqual(metrics, {})
+
+    def test_exact_vehicle_tp_metrics_fail_closed_on_invalid_financing_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="valid-close",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+            )
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events (
+                      ts_utc, event_type, financing_jpy, raw_json
+                    ) VALUES (?, 'OANDA_TRANSACTION', ?, ?)
+                    """,
+                    ("2026-07-01T00:03:00+00:00", -5.0, "{not-json"),
+                )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNone(metrics)
+
+    def test_exact_vehicle_tp_metrics_require_financing_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                      ts_utc TEXT,
+                      event_type TEXT,
+                      lane_id TEXT,
+                      pair TEXT,
+                      side TEXT,
+                      order_id TEXT,
+                      trade_id TEXT,
+                      exit_reason TEXT,
+                      realized_pl_jpy REAL,
+                      raw_json TEXT
+                    )
+                    """
+                )
+
+            metrics = _exact_vehicle_take_profit_metrics(db)
+
+            self.assertIsNone(metrics)
+
+    def test_exact_vehicle_tp_metrics_allow_fill_vehicle_without_lane_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="legacy-lane-limit",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                fill_reason="LIMIT_ORDER",
+                realized_pl_jpy=200.0,
+            )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            self.assertEqual(
+                metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT")]["trades"],
+                1,
+            )
+
+    def test_exact_vehicle_tp_metrics_exclude_operator_manual_and_late_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="explicit-manual",
+                fill_lane_id="operator_manual:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=300.0,
+            )
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="late-gateway",
+                fill_lane_id="",
+                realized_pl_jpy=300.0,
+            )
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events (
+                      ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                      exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                    ) VALUES (?, 'ORDER_ACCEPTED', ?, ?, ?, ?, ?, ?, ?, NULL, 0.0, ?)
+                    """,
+                    (
+                        "2026-07-01T02:00:00+00:00",
+                        "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        "entry-late-gateway",
+                        "late-gateway",
+                        "LIMIT_ORDER",
+                        json.dumps({"type": "LIMIT_ORDER"}),
+                    ),
+                )
+
+            self.assertEqual(
+                _exact_vehicle_take_profit_metrics(root / "execution_ledger.db"),
+                {},
+            )
+
+    def test_exact_vehicle_tp_metrics_require_pure_tp_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="market-reduction-then-tp",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=200.0,
+                partial_realized_pl_jpy=50.0,
+                partial_exit_reason="MARKET_ORDER_TRADE_CLOSE",
+            )
+
+            self.assertEqual(
+                _exact_vehicle_take_profit_metrics(root / "execution_ledger.db"),
+                {},
+            )
+
+    def test_exact_vehicle_tp_metrics_allocate_offsetting_zero_total_financing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="system-financed",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=100.0,
+                standalone_financing_jpy=-200.0,
+            )
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                financing = {
+                    "type": "DAILY_FINANCING",
+                    "financing": "0.0",
+                    "positionFinancings": [
+                        {
+                            "openTradeFinancings": [
+                                {"tradeID": "system-financed", "financing": "-200.0"},
+                                {"tradeID": "manual-financed", "financing": "200.0"},
+                            ]
+                        }
+                    ],
+                }
+                conn.execute(
+                    """
+                    UPDATE execution_events
+                    SET financing_jpy=0.0, raw_json=?
+                    WHERE event_type='OANDA_TRANSACTION'
+                    """,
+                    (json.dumps(financing),),
+                )
+
+            metrics = _exact_vehicle_take_profit_metrics(root / "execution_ledger.db")
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            row = metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT")]
+            self.assertEqual(row["trades"], 1)
+            self.assertEqual(row["wins"], 0)
+            self.assertEqual(row["losses"], 1)
+            self.assertEqual(row["net_jpy"], -100.0)
+
     def test_month_scale_residual_group_blocks_matching_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -13159,42 +13435,63 @@ def _write_exact_vehicle_take_profit_closes(
               trade_id TEXT,
               exit_reason TEXT,
               realized_pl_jpy REAL,
+              financing_jpy REAL,
               raw_json TEXT
             )
             """
         )
+        _ensure_execution_coverage(conn)
         for index in range(count):
             trade_id = f"exact-vehicle-{index}"
+            order_id = f"entry-{index}"
+            entry_ts = f"{start_day}T00:{index % 60:02d}:00+00:00"
+            close_ts = f"{start_day}T01:{index % 60:02d}:00+00:00"
+            signed_units = 1000 if side == "LONG" else -1000
             conn.execute(
                 """
                 INSERT INTO execution_events (
                   ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
-                  exit_reason, realized_pl_jpy, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    f"{start_day}T00:{index % 60:02d}:00+00:00",
+                    entry_ts,
                     "ORDER_FILLED",
                     lane_id,
                     pair,
                     side,
                     1000,
-                    f"entry-{index}",
+                    order_id,
                     trade_id,
                     entry_reason,
                     None,
-                    json.dumps({"client_order_id": f"qrv1-exact-{index}"}),
+                    0.0,
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": entry_ts,
+                            "instrument": pair,
+                            "orderID": order_id,
+                            "units": str(signed_units),
+                            "reason": entry_reason,
+                            "client_order_id": f"qrv1-exact-{index}",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": str(signed_units),
+                            },
+                        }
+                    ),
                 ),
             )
             conn.execute(
                 """
                 INSERT INTO execution_events (
                   ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
-                  exit_reason, realized_pl_jpy, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    f"{start_day}T01:{index % 60:02d}:00+00:00",
+                    close_ts,
                     "TRADE_CLOSED",
                     "",
                     pair,
@@ -13204,10 +13501,273 @@ def _write_exact_vehicle_take_profit_closes(
                     trade_id,
                     "TAKE_PROFIT_ORDER",
                     realized_pl_jpy,
-                    json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
+                    0.0,
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": close_ts,
+                            "reason": "TAKE_PROFIT_ORDER",
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": str(realized_pl_jpy),
+                                    "financing": "0.0",
+                                }
+                            ],
+                        }
+                    ),
                 ),
             )
         conn.commit()
+
+
+def _write_exact_vehicle_metric_trade(
+    data_root: Path,
+    *,
+    trade_id: str,
+    fill_lane_id: str,
+    gateway_lane_id: str | None = None,
+    close_lane_id: str = "",
+    fill_pair: str = "EUR_USD",
+    fill_side: str = "LONG",
+    fill_reason: str = "LIMIT_ORDER",
+    gateway_pair: str | None = None,
+    gateway_side: str | None = None,
+    outcome_event_type: str = "TRADE_CLOSED",
+    realized_pl_jpy: float = 100.0,
+    close_financing_jpy: float = 0.0,
+    standalone_financing_jpy: float | None = None,
+    partial_realized_pl_jpy: float | None = None,
+    partial_exit_reason: str = "MARKET_ORDER_TRADE_CLOSE",
+) -> None:
+    db = data_root / "execution_ledger.db"
+    order_id = f"entry-{trade_id}"
+    fill_ts = "2026-07-01T00:01:00+00:00"
+    close_ts = "2026-07-01T01:00:00+00:00"
+    signed_units = 1000 if fill_side == "LONG" else -1000
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_events (
+              ts_utc TEXT,
+              event_type TEXT,
+              lane_id TEXT,
+              pair TEXT,
+              side TEXT,
+              units INTEGER,
+              order_id TEXT,
+              trade_id TEXT,
+              exit_reason TEXT,
+              realized_pl_jpy REAL,
+              financing_jpy REAL,
+              raw_json TEXT
+            )
+            """
+        )
+        _ensure_execution_coverage(conn)
+        if gateway_lane_id is not None:
+            conn.execute(
+                """
+                INSERT INTO execution_events (
+                  ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                  exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-07-01T00:00:00+00:00",
+                    "ORDER_ACCEPTED",
+                    gateway_lane_id,
+                    gateway_pair or fill_pair,
+                    gateway_side or fill_side,
+                    1000,
+                    order_id,
+                    trade_id,
+                    "CLIENT_ORDER",
+                    None,
+                    None,
+                    json.dumps({"type": "LIMIT"}),
+                ),
+            )
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+              ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+              exit_reason, realized_pl_jpy, financing_jpy, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fill_ts,
+                "ORDER_FILLED",
+                fill_lane_id,
+                fill_pair,
+                fill_side,
+                1000,
+                order_id,
+                trade_id,
+                    fill_reason,
+                    0.0,
+                    0.0,
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": fill_ts,
+                            "instrument": fill_pair,
+                            "orderID": order_id,
+                            "units": str(signed_units),
+                            "reason": fill_reason,
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": str(signed_units),
+                            },
+                        }
+                    ),
+            ),
+        )
+        if standalone_financing_jpy is not None:
+            financing_raw = {
+                "type": "DAILY_FINANCING",
+                "financing": str(standalone_financing_jpy),
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {
+                                "tradeID": trade_id,
+                                "financing": str(standalone_financing_jpy),
+                                "homeConversionCost": "-1.25",
+                            }
+                        ]
+                    }
+                ],
+            }
+            conn.execute(
+                """
+                INSERT INTO execution_events (
+                  ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                  exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-07-01T00:02:00+00:00",
+                    "OANDA_TRANSACTION",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    standalone_financing_jpy,
+                    json.dumps(financing_raw),
+                ),
+            )
+        if partial_realized_pl_jpy is not None:
+            conn.execute(
+                """
+                INSERT INTO execution_events (
+                  ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+                  exit_reason, realized_pl_jpy, financing_jpy, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-07-01T00:30:00+00:00",
+                    "TRADE_REDUCED",
+                    "",
+                    fill_pair,
+                    fill_side,
+                    500,
+                    f"reduce-{trade_id}",
+                    trade_id,
+                    partial_exit_reason,
+                    partial_realized_pl_jpy,
+                    0.0,
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": "2026-07-01T00:30:00+00:00",
+                            "reason": partial_exit_reason,
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradeReduced": {
+                                "tradeID": trade_id,
+                                "realizedPL": str(partial_realized_pl_jpy),
+                                "financing": "0.0",
+                            },
+                        }
+                    ),
+                ),
+            )
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+              ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+              exit_reason, realized_pl_jpy, financing_jpy, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                close_ts,
+                outcome_event_type,
+                close_lane_id,
+                fill_pair,
+                fill_side,
+                1000,
+                f"close-{trade_id}",
+                trade_id,
+                "TAKE_PROFIT_ORDER",
+                realized_pl_jpy,
+                close_financing_jpy,
+                json.dumps(
+                    {
+                        "type": "ORDER_FILL",
+                        "time": close_ts,
+                        "reason": "TAKE_PROFIT_ORDER",
+                        "commission": "0.0",
+                        "guaranteedExecutionFee": "0.0",
+                        (
+                            "tradesClosed"
+                            if outcome_event_type == "TRADE_CLOSED"
+                            else "tradeReduced"
+                        ): (
+                            [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": str(realized_pl_jpy),
+                                    "financing": str(close_financing_jpy),
+                                }
+                            ]
+                            if outcome_event_type == "TRADE_CLOSED"
+                            else {
+                                "tradeID": trade_id,
+                                "realizedPL": str(realized_pl_jpy),
+                                "financing": str(close_financing_jpy),
+                            }
+                        ),
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+
+
+def _ensure_execution_coverage(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sync_state (
+          key TEXT PRIMARY KEY,
+          value TEXT,
+          updated_at_utc TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO sync_state(key, value, updated_at_utc)
+        VALUES ('oanda_transaction_coverage_start_utc', ?, ?)
+        """,
+        ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+    )
 
 
 def _write_same_day_lane_outcomes(

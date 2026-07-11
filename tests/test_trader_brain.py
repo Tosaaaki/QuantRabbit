@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -24,6 +25,7 @@ from quant_rabbit.strategy.trader_brain import (
     SHORT_TERM_MOMENTUM_LOW_ADX,
     LaneScore,
     TraderBrain,
+    TraderSettings,
     _contaminated_pending_order_ids,
     _capture_segment_priority_index,
     _capture_segment_priority_score,
@@ -37,8 +39,12 @@ from quant_rabbit.strategy.trader_brain import (
     _forecast_lane_gate,
     _selection_reward_risk_floor,
     _short_term_momentum_class,
+    _strategy_index,
+    _strategy_profile_for_lane,
+    _size_multiple,
     _tf_lens_support,
     _tf_strength_multiplier,
+    load_trader_settings,
 )
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
@@ -71,6 +77,112 @@ class _NonmatchingBidaskRulesMixin:
 
 
 class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
+
+    def test_missing_or_expansive_score_settings_remain_trim_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            missing = load_trader_settings(path)
+            path.write_text(
+                json.dumps(
+                    {
+                        "size_by_score": {
+                            "size_multiple_min": 1.2,
+                            "size_multiple_max": 1.8,
+                        }
+                    }
+                )
+            )
+            expansive = load_trader_settings(path)
+
+        self.assertEqual(missing.size_multiple_max, 1.0)
+        self.assertEqual(expansive.size_multiple_min, 1.0)
+        self.assertEqual(expansive.size_multiple_max, 1.0)
+
+    def test_nonfinite_or_direct_expansive_score_sizing_stays_trim_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(
+                '{"size_by_score":{"size_multiple_min":NaN,"size_multiple_max":Infinity}}'
+            )
+            loaded = load_trader_settings(path)
+
+        self.assertTrue(math.isfinite(loaded.size_multiple_min))
+        self.assertTrue(math.isfinite(loaded.size_multiple_max))
+        self.assertLessEqual(loaded.size_multiple_max, 1.0)
+        direct = TraderSettings(
+            score_size_enabled=True,
+            size_multiple_min=1.2,
+            size_multiple_max=1.8,
+        )
+        self.assertEqual(_size_multiple(999.0, direct), 1.0)
+
+    def test_strategy_profile_exact_method_wins_over_pair_side_fallback(self) -> None:
+        exact = {
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "method": "BREAKOUT_FAILURE",
+            "status": "CANDIDATE",
+        }
+        fallback = {
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "status": "RISK_REPAIR_CANDIDATE",
+        }
+
+        strategy = _strategy_profile_for_lane(
+            _strategy_index({"profiles": [exact, fallback]}),
+            pair="EUR_USD",
+            direction="SHORT",
+            method="BREAKOUT_FAILURE",
+        )
+
+        self.assertIs(strategy, exact)
+
+    def test_strategy_profile_does_not_reuse_another_method_or_pair_side_fallback(self) -> None:
+        fallback = {
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "status": "CANDIDATE",
+        }
+        trend = {
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "method": "TREND_CONTINUATION",
+            "status": "CANDIDATE",
+        }
+
+        strategy = _strategy_profile_for_lane(
+            _strategy_index({"profiles": [fallback, trend]}),
+            pair="EUR_USD",
+            direction="SHORT",
+            method="RANGE_ROTATION",
+        )
+
+        self.assertEqual(strategy, {})
+
+        unknown = _strategy_profile_for_lane(
+            _strategy_index({"profiles": [fallback, trend]}),
+            pair="EUR_USD",
+            direction="SHORT",
+            method=None,
+        )
+        self.assertEqual(unknown, {})
+
+    def test_strategy_profile_pair_side_only_remains_compatible_fallback(self) -> None:
+        fallback = {
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "status": "CANDIDATE",
+        }
+
+        strategy = _strategy_profile_for_lane(
+            _strategy_index({"profiles": [fallback]}),
+            pair="EUR_USD",
+            direction="SHORT",
+            method="RANGE_ROTATION",
+        )
+
+        self.assertIs(strategy, fallback)
 
     def test_predictive_scout_score_cannot_resize_preverified_nav_risk_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

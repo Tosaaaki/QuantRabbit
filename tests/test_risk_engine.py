@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
@@ -23,6 +24,7 @@ from quant_rabbit.risk import (
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     RiskEngine,
     RiskPolicy,
+    _guardian_tuning_override_issues,
 )
 from tests.support_bidask_rules import (
     bidask_rules_env,
@@ -221,6 +223,150 @@ class RiskEngineTest(unittest.TestCase):
 
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
         self.assertIsNone(RiskPolicy().max_loss_jpy)
+
+    def test_evidence_activated_forecast_floor_is_enforced_only_on_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1750,
+            sl=1.1710,
+            thesis="forward-proven confidence tightening",
+            market_context=MarketContext(
+                regime="TREND",
+                narrative="trend continuation",
+                chart_story="higher highs",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="close below support",
+            ),
+            metadata={"forecast_confidence": 0.68},
+        )
+        with patch(
+            "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+            return_value={"status": "ACTIVE_OVERRIDE", "resolved_value": 0.70},
+        ):
+            dry_run = _guardian_tuning_override_issues(intent, for_live_send=False)
+            live = _guardian_tuning_override_issues(intent, for_live_send=True)
+
+        self.assertEqual(dry_run, [])
+        self.assertEqual(
+            [issue.code for issue in live],
+            ["GUARDIAN_TUNING_FORECAST_CONFIDENCE_FLOOR"],
+        )
+
+    def test_evidence_activated_forecast_floor_fails_closed_when_confidence_is_missing(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1750,
+            sl=1.1710,
+            thesis="forward-proven confidence tightening",
+            market_context=MarketContext(
+                regime="TREND",
+                narrative="trend continuation",
+                chart_story="higher highs",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="close below support",
+            ),
+            metadata={},
+        )
+        with patch(
+            "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+            return_value={"status": "ACTIVE_OVERRIDE", "resolved_value": 0.70},
+        ):
+            live = _guardian_tuning_override_issues(intent, for_live_send=True)
+
+        self.assertEqual(
+            [issue.code for issue in live],
+            ["GUARDIAN_TUNING_FORECAST_CONFIDENCE_FLOOR"],
+        )
+        self.assertIn("confidence missing", live[0].message)
+
+    def test_invalid_or_missing_committed_guardian_tuning_state_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1750,
+            sl=1.1710,
+            thesis="do not fail open on corrupted accepted tuning state",
+            market_context=MarketContext(
+                regime="TREND",
+                narrative="trend continuation",
+                chart_story="higher highs",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="close below support",
+            ),
+            metadata={"forecast_confidence": 0.90},
+        )
+        for status, expected_code in (
+            (
+                "OVERRIDE_STATE_INVALID",
+                "GUARDIAN_TUNING_OVERRIDE_STATE_INVALID",
+            ),
+            (
+                "OVERRIDE_STATE_MISSING_WITH_COMMITMENT",
+                "GUARDIAN_TUNING_OVERRIDE_STATE_INVALID",
+            ),
+            (
+                "OVERRIDE_LANE_QUARANTINED",
+                "GUARDIAN_TUNING_LANE_QUARANTINED",
+            ),
+            (
+                "OVERRIDE_POST_ACTIVATION_MONITOR_PENDING",
+                "GUARDIAN_TUNING_POST_ACTIVATION_MONITOR_PENDING",
+            ),
+        ):
+            with self.subTest(status=status), patch(
+                "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+                return_value={"status": status, "resolved_value": 0.65},
+            ):
+                live = _guardian_tuning_override_issues(intent, for_live_send=True)
+
+            self.assertEqual(
+                [issue.code for issue in live],
+                [expected_code],
+            )
+
+    def test_pending_guardian_tuning_confirmation_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1750,
+            sl=1.1710,
+            thesis="wait for terminal confirmation",
+            market_context=MarketContext(
+                regime="TREND",
+                narrative="trend continuation",
+                chart_story="higher highs",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="close below support",
+            ),
+            metadata={"forecast_confidence": 0.90},
+        )
+        with patch(
+            "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+            return_value={
+                "status": "OVERRIDE_CONFIRMATION_PENDING",
+                "resolved_value": 0.65,
+            },
+        ):
+            live = _guardian_tuning_override_issues(intent, for_live_send=True)
+
+        self.assertEqual(
+            [issue.code for issue in live],
+            ["GUARDIAN_TUNING_OVERRIDE_CONFIRMATION_PENDING"],
+        )
 
     def test_missing_loss_cap_blocks_validation_instead_of_using_literal_fallback(self) -> None:
         intent = OrderIntent(

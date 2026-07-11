@@ -147,6 +147,150 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_selected_lane_metadata_mismatch_blocks_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            selected_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            submitted_sibling_lane = (
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            )
+
+            with patch(
+                "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+                return_value={
+                    "status": "ACTIVE_OVERRIDE",
+                    "resolved_value": 0.70,
+                    "override": {"lane_id": selected_lane},
+                },
+            ) as resolve_floor:
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        order_type="LIMIT",
+                        lane_id=selected_lane,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "lane_id": submitted_sibling_lane,
+                            "forecast_confidence": 0.66,
+                        },
+                    ),
+                    lane_id=selected_lane,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in result["risk_issues"]}
+            self.assertIn("GUARDIAN_TUNING_FORECAST_CONFIDENCE_FLOOR", codes)
+            self.assertTrue(
+                any(
+                    invocation.kwargs.get("lane_id") == selected_lane
+                    for invocation in resolve_floor.call_args_list
+                )
+            )
+            mismatch = next(
+                issue
+                for issue in result["risk_issues"]
+                if issue["code"] == "SELECTED_LANE_METADATA_MISMATCH"
+            )
+            self.assertIn(selected_lane, mismatch["message"])
+            self.assertIn(submitted_sibling_lane, mismatch["message"])
+
+    def test_selected_lane_metadata_exact_match_remains_stageable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            selected_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+
+            with patch(
+                "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+                side_effect=lambda **kwargs: {
+                    "status": "NO_OVERRIDE",
+                    "resolved_value": kwargs["fallback"],
+                },
+            ):
+                summary = LiveOrderGateway(
+                    client=FakeExecutionClient(),
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        order_type="LIMIT",
+                        lane_id=selected_lane,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "lane_id": selected_lane,
+                        },
+                    ),
+                    lane_id=selected_lane,
+                )
+
+            self.assertEqual(summary.status, "STAGED")
+            result = json.loads((root / "request.json").read_text())
+            self.assertNotIn(
+                "SELECTED_LANE_METADATA_MISMATCH",
+                {issue["code"] for issue in result["risk_issues"]},
+            )
+
+    def test_batch_selected_lane_metadata_mismatch_blocks_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            selected_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+
+            with patch(
+                "quant_rabbit.risk.resolve_forecast_confidence_floor_state",
+                side_effect=lambda **kwargs: {
+                    "status": "NO_OVERRIDE",
+                    "resolved_value": kwargs["fallback"],
+                },
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=_intents(
+                        root,
+                        order_type="LIMIT",
+                        lane_id=selected_lane,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "lane_id": (
+                                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+                            ),
+                        },
+                    ),
+                    lane_ids=(selected_lane,),
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "SELECTED_LANE_METADATA_MISMATCH",
+                {issue["code"] for issue in result["orders"][0]["risk_issues"]},
+            )
+
     def test_unresolved_guardian_receipt_issue_blocks_send_before_broker_post(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2921,22 +3065,28 @@ class LiveOrderGatewayTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             client = FakeExecutionClient()
-            summary = LiveOrderGateway(
-                client=client,
-                strategy_profile=_profile(root),
-                output_path=root / "request.json",
-                report_path=root / "report.md",
-                live_enabled=True,
-            ).run(
-                intents_path=_intents(root),
-                lane_id="lane:EUR_USD:LONG",
-                send=True,
-                confirm_live=True,
-            )
+            with patch.object(
+                execution_module,
+                "clear_guardian_tuning_validation_cache",
+                wraps=execution_module.clear_guardian_tuning_validation_cache,
+            ) as clear_validation_cache:
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
 
             self.assertEqual(summary.status, "SENT")
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
+            self.assertEqual(clear_validation_cache.call_count, 1)
 
     def test_target_path_live_send_defaults_to_disabled_even_when_gateway_live_is_enabled(self) -> None:
         prior = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
@@ -3083,23 +3233,29 @@ class LiveOrderGatewayTest(unittest.TestCase):
             payload["results"].append(second)
             intents.write_text(json.dumps(payload))
 
-            summary = LiveOrderGateway(
-                client=client,
-                strategy_profile=_profile(root),
-                output_path=root / "request.json",
-                report_path=root / "report.md",
-                live_enabled=True,
-            ).run_batch(
-                intents_path=intents,
-                lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:reload"),
-                send=True,
-                confirm_live=True,
-            )
+            with patch.object(
+                execution_module,
+                "clear_guardian_tuning_validation_cache",
+                wraps=execution_module.clear_guardian_tuning_validation_cache,
+            ) as clear_validation_cache:
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=intents,
+                    lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:reload"),
+                    send=True,
+                    confirm_live=True,
+                )
 
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(summary.sent_count, 2)
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 2)
+            self.assertEqual(clear_validation_cache.call_count, 2)
             result = json.loads((root / "request.json").read_text())
             self.assertEqual(len(result["orders"]), 2)
 
@@ -4231,6 +4387,104 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertLess(result["scaled_units"], 15_000)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1_000.0)
 
+    def test_pre_post_reconciliation_caps_every_fresh_entry_to_one_pct_nav_direct(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=200_000.0,
+                fresh_nav_jpy=100_000.0,
+            )
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ), patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                HighRiskReconciliationTargetLedger,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        units=50_000,
+                        metadata=_ordinary_claim_metadata(),
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertTrue(summary.sent)
+            result = json.loads((root / "request.json").read_text())
+            reconciliation = result["pre_post_reconciliation"]
+            self.assertEqual(reconciliation["fresh_nav_recheck"]["fresh_nav_cap_jpy"], 1_000.0)
+            self.assertEqual(reconciliation["final_max_loss_jpy"], 1_000.0)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1_000.0)
+
+    def test_pre_post_reconciliation_caps_every_fresh_entry_to_one_pct_nav_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=200_000.0,
+                fresh_nav_jpy=100_000.0,
+                initial_snapshot_calls=2,
+            )
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ), patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                HighRiskReconciliationTargetLedger,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run_batch(
+                    intents_path=_intents(
+                        root,
+                        units=50_000,
+                        metadata=_ordinary_claim_metadata(),
+                    ),
+                    lane_ids=("lane:EUR_USD:LONG",),
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertTrue(summary.sent)
+            result = json.loads((root / "request.json").read_text())
+            order = result["orders"][0]
+            reconciliation = order["pre_post_reconciliation"]
+            self.assertEqual(reconciliation["fresh_nav_recheck"]["fresh_nav_cap_jpy"], 1_000.0)
+            self.assertEqual(reconciliation["final_max_loss_jpy"], 1_000.0)
+            self.assertLessEqual(order["risk_metrics"]["risk_jpy"], 1_000.0)
+
     def test_pre_post_reconciliation_tightens_macro_event_to_fresh_nav_cap_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4284,6 +4538,225 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(macro["fresh_absolute_cap_jpy"], 1_000.0)
             self.assertLess(order["scaled_units"], 15_000)
             self.assertLessEqual(order["risk_metrics"]["risk_jpy"], 1_000.0)
+
+    def test_pre_post_reconciliation_reproves_exact_tp_relaxation_from_fresh_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            _insert_exact_tp_outcomes(ledger_path, losses=0)
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=100_000.0,
+                fresh_nav_jpy=100_000.0,
+            )
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            intents = _tp_relaxed_limit_intents(root, lane_id=lane_id, units=10_000)
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ), patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                FixedReconciliationTargetLedger,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertTrue(summary.sent)
+            result = json.loads((root / "request.json").read_text())
+            recheck = result["pre_post_reconciliation"]["tp_proven_fresh_recheck"]
+            self.assertEqual(recheck["status"], "PASSED")
+            self.assertEqual(
+                recheck["proof_key"],
+                ["EUR_USD", "LONG", "TREND_CONTINUATION", "LIMIT"],
+            )
+            self.assertEqual(recheck["tp_trades"], 20)
+            self.assertEqual(recheck["tp_losses"], 0)
+            self.assertEqual(
+                result["sizing_evidence"]["loss_asymmetry_guard_mode"],
+                "TP_PROVEN_RELAXED",
+            )
+
+    def test_pre_post_reconciliation_clips_revoked_tp_proof_to_fresh_avg_win(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            _insert_exact_tp_outcomes(ledger_path, losses=1)
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=100_000.0,
+                fresh_nav_jpy=100_000.0,
+            )
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            intents = _tp_relaxed_limit_intents(root, lane_id=lane_id, units=50_000)
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ), patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                FixedReconciliationTargetLedger,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertTrue(summary.sent)
+            result = json.loads((root / "request.json").read_text())
+            reconciliation = result["pre_post_reconciliation"]
+            recheck = reconciliation["tp_proven_fresh_recheck"]
+            self.assertEqual(recheck["status"], "CLIPPED_TO_AVG_WIN")
+            self.assertIn("TP_LOSS_PRESENT", recheck["failed_checks"])
+            self.assertEqual(recheck["fallback_avg_win_cap_jpy"], 100.0)
+            self.assertEqual(reconciliation["final_max_loss_jpy"], 100.0)
+            self.assertLess(result["scaled_units"], 50_000)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 100.0)
+            self.assertEqual(
+                result["sizing_evidence"]["loss_asymmetry_guard_mode"],
+                "CAP_AVG_WIN",
+            )
+            self.assertIn(
+                "PRE_POST_TP_PROOF_REVOKED_CLIPPED_TO_AVG_WIN",
+                {issue["code"] for issue in result["risk_issues"]},
+            )
+
+    def test_pre_post_reconciliation_counts_daily_financing_in_proof_and_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            _insert_exact_tp_outcomes(
+                ledger_path,
+                losses=0,
+                first_trade_daily_financing_jpy=-200.0,
+            )
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=100_000.0,
+                fresh_nav_jpy=100_000.0,
+            )
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            intents = _tp_relaxed_limit_intents(root, lane_id=lane_id, units=50_000)
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ), patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                FixedReconciliationTargetLedger,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertTrue(summary.sent)
+            result = json.loads((root / "request.json").read_text())
+            recheck = result["pre_post_reconciliation"]["tp_proven_fresh_recheck"]
+            self.assertEqual(recheck["status"], "CLIPPED_TO_AVG_WIN")
+            self.assertEqual(recheck["tp_losses"], 1)
+            self.assertEqual(recheck["fresh_capture"]["losses"], 1)
+            self.assertEqual(recheck["fallback_avg_win_cap_jpy"], 100.0)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 100.0)
+
+    def test_pre_post_reconciliation_blocks_batch_when_tp_proof_cannot_be_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
+            _write_macro_reconciliation_target_state(target_state)
+            client = FreshNavReconciliationExecutionClient(
+                initial_nav_jpy=100_000.0,
+                fresh_nav_jpy=100_000.0,
+                initial_snapshot_calls=2,
+            )
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            intents = _tp_relaxed_limit_intents(root, lane_id=lane_id, units=10_000)
+
+            with (
+                patch.object(
+                    LiveOrderGateway,
+                    "_pre_post_reconcile",
+                    self._original_pre_post_reconcile,
+                ),
+                patch.object(execution_module, "_exact_vehicle_take_profit_metrics", return_value=None),
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                    max_loss_jpy=3_000.0,
+                ).run_batch(
+                    intents_path=intents,
+                    lane_ids=(lane_id,),
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            order = result["orders"][0]
+            self.assertIn(
+                "PRE_POST_TP_PROOF_LEDGER_READ_FAILED",
+                {issue["code"] for issue in order["risk_issues"]},
+            )
+            self.assertEqual(
+                order["pre_post_reconciliation"]["tp_proven_fresh_recheck"]["status"],
+                "BLOCKED",
+            )
 
     def test_pre_post_reconciliation_blocks_direct_send_when_fresh_capacity_is_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5619,6 +6092,62 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in payload["risk_issues"]})
 
 
+class FixedReconciliationTargetLedger:
+    """Keep target capacity open while gateway-proof tests isolate TP evidence."""
+
+    def __init__(
+        self,
+        *,
+        state_path: Path,
+        report_path: Path,
+        execution_ledger_path: Path,
+    ) -> None:
+        self.state_path = state_path
+
+    def run(self, *, snapshot: BrokerSnapshot, now_utc: datetime):
+        self.state_path.write_text(
+            json.dumps(
+                {
+                    "realized_loss_spent_jpy": 0.0,
+                    "daily_loss_capacity_before_open_jpy": 3_000.0,
+                    "base_per_trade_risk_budget_jpy": 1_000.0,
+                    "per_trade_risk_budget_jpy": 1_000.0,
+                    "remaining_minimum_jpy": 5_000.0,
+                    "minimum_progress_pct": 0.0,
+                }
+            )
+        )
+        return SimpleNamespace(status="PURSUE_TARGET")
+
+
+class HighRiskReconciliationTargetLedger:
+    """Expose a 3% target cap so the independent fresh-NAV cap is tested."""
+
+    def __init__(
+        self,
+        *,
+        state_path: Path,
+        report_path: Path,
+        execution_ledger_path: Path,
+    ) -> None:
+        self.state_path = state_path
+
+    def run(self, *, snapshot: BrokerSnapshot, now_utc: datetime):
+        self.state_path.write_text(
+            json.dumps(
+                {
+                    "realized_loss_spent_jpy": 0.0,
+                    "daily_loss_capacity_before_open_jpy": 3_000.0,
+                    "base_per_trade_risk_budget_jpy": 3_000.0,
+                    "per_trade_risk_budget_jpy": 3_000.0,
+                    "remaining_minimum_jpy": 5_000.0,
+                    "minimum_progress_pct": 0.0,
+                }
+            )
+        )
+        return SimpleNamespace(status="PURSUE_TARGET")
+
+
 class FakeExecutionClient:
     def __init__(self) -> None:
         now = datetime.now(timezone.utc)
@@ -6149,6 +6678,190 @@ def _write_macro_reconciliation_target_state(target_state: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _tp_relaxed_limit_intents(
+    root: Path,
+    *,
+    lane_id: str,
+    units: int,
+) -> Path:
+    metadata = _ordinary_claim_metadata(parent_lane_id=lane_id.rsplit(":", 1)[0])
+    metadata.update(
+        {
+            "attach_take_profit_on_fill": True,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "loss_asymmetry_guard_active": True,
+            "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+            "loss_asymmetry_guard_relaxed": True,
+            "loss_asymmetry_guard_loss_cap_jpy": 100.0,
+            "loss_asymmetry_guard_base_max_loss_jpy": 3_000.0,
+            "loss_asymmetry_guard_effective_max_loss_jpy": 3_000.0,
+            "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            "capture_avg_win_jpy": 100.0,
+            "capture_avg_loss_jpy": 500.0,
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_take_profit_scope_key": (
+                "EUR_USD|LONG|TREND_CONTINUATION|LIMIT|TAKE_PROFIT_ORDER"
+            ),
+            "capture_take_profit_exact_vehicle_required": True,
+            "capture_take_profit_vehicle": "LIMIT",
+            "capture_take_profit_trades": 20,
+            "capture_take_profit_wins": 20,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_expectancy_jpy": 100.0,
+            "capture_take_profit_avg_win_jpy": 100.0,
+            "capture_take_profit_avg_loss_jpy": 0.0,
+        }
+    )
+    path = _intents(
+        root,
+        order_type="LIMIT",
+        units=units,
+        lane_id=lane_id,
+        metadata=metadata,
+    )
+    payload = json.loads(path.read_text())
+    intent = payload["results"][0]["intent"]
+    intent["entry"] = 1.17290
+    intent["sl"] = 1.17210
+    intent["market_context"]["method"] = "TREND_CONTINUATION"
+    intent["market_context"]["regime"] = "TREND_CONTINUATION"
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _insert_exact_tp_outcomes(
+    ledger_path: Path,
+    *,
+    losses: int,
+    first_trade_daily_financing_jpy: float | None = None,
+) -> None:
+    lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+    now = datetime.now(timezone.utc)
+    rows: list[tuple[Any, ...]] = []
+    for index in range(20):
+        trade_id = f"tp-proof-trade-{index}"
+        order_id = f"tp-proof-order-{index}"
+        ts_utc = (now - timedelta(minutes=20 - index)).isoformat()
+        realized = -50.0 if index < losses else 100.0
+        rows.extend(
+            (
+                (
+                    f"tp-proof:gateway:{index}",
+                    ts_utc,
+                    "GATEWAY_ORDER_SENT",
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    None,
+                    "LIMIT_ORDER",
+                    json.dumps({"type": "LIMIT_ORDER"}),
+                ),
+                (
+                    f"tp-proof:fill:{index}",
+                    ts_utc,
+                    "ORDER_FILLED",
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    None,
+                    "LIMIT_ORDER",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": ts_utc,
+                            "instrument": "EUR_USD",
+                            "orderID": order_id,
+                            "units": "1000",
+                            "reason": "LIMIT_ORDER",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": "1000",
+                            },
+                        }
+                    ),
+                ),
+                (
+                    f"tp-proof:close:{index}",
+                    ts_utc,
+                    "TRADE_CLOSED",
+                    lane_id,
+                    f"tp-proof-close-{index}",
+                    trade_id,
+                    realized,
+                    "TAKE_PROFIT_ORDER",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": ts_utc,
+                            "reason": "TAKE_PROFIT_ORDER",
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": str(realized),
+                                    "financing": "0.0",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+        )
+    inserted_at = now.isoformat()
+    with sqlite3.connect(ledger_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                client_order_id, pair, side, units, price, tp, sl,
+                realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                related_transaction_ids_json, raw_json, inserted_at_utc
+            )
+            VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
+                    1.1729, 1.1745, 1.1721, ?, 0.0, ?, NULL, '[]', ?, ?)
+            """,
+            [(*row, inserted_at) for row in rows],
+        )
+        if first_trade_daily_financing_jpy is not None:
+            financing_raw = {
+                "type": "DAILY_FINANCING",
+                "financing": str(first_trade_daily_financing_jpy),
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {
+                                "tradeID": "tp-proof-trade-0",
+                                "financing": str(first_trade_daily_financing_jpy),
+                            }
+                        ]
+                    }
+                ],
+            }
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                    client_order_id, pair, side, units, price, tp, sl,
+                    realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                    related_transaction_ids_json, raw_json, inserted_at_utc
+                )
+                VALUES (?, ?, 'test', 'OANDA_TRANSACTION', NULL, NULL, NULL,
+                        NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                        NULL, ?, NULL, NULL, '[]', ?, ?)
+                """,
+                (
+                    "tp-proof:financing:0",
+                    (now - timedelta(minutes=1)).isoformat(),
+                    first_trade_daily_financing_jpy,
+                    json.dumps(financing_raw),
+                    inserted_at,
+                ),
+            )
 
 
 def _trader_pending_order(

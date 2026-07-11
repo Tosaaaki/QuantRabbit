@@ -869,6 +869,72 @@ def _guardian_tuning_work_order_entries(
     return result
 
 
+def _guardian_tuning_terminal_experiment_view(entry: dict[str, Any]) -> dict[str, Any]:
+    review = entry.get("bot_tuning_review")
+    return {
+        "work_order_id": entry.get("work_order_id"),
+        "semantic_state_id": entry.get("semantic_state_id"),
+        "status": entry.get("status"),
+        "experiment_id": entry.get("experiment_id"),
+        "experiment_result": entry.get("experiment_result"),
+        "consumed_at_utc": entry.get("consumed_at_utc"),
+        "consumed_by": entry.get("consumed_by"),
+        "experiment_evidence_ref": entry.get("experiment_evidence_ref"),
+        "experiment_contract_digest": entry.get("experiment_contract_digest"),
+        "review": dict(review) if isinstance(review, dict) else {},
+    }
+
+
+def _guardian_tuning_pending_work_order_views(
+    payload: dict[str, Any],
+    pending_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    terminal_history = payload.get("terminal_history")
+    terminal_by_semantic: dict[str, list[dict[str, Any]]] = {}
+    for terminal in terminal_history if isinstance(terminal_history, list) else []:
+        if not isinstance(terminal, dict):
+            continue
+        semantic_state_id = str(terminal.get("semantic_state_id") or "").strip()
+        if not semantic_state_id:
+            continue
+        terminal_by_semantic.setdefault(semantic_state_id, []).append(
+            _guardian_tuning_terminal_experiment_view(terminal)
+        )
+
+    views: list[dict[str, Any]] = []
+    for entry in pending_entries:
+        semantic_state_id = str(entry.get("semantic_state_id") or "").strip()
+        latest_observation_id = str(
+            entry.get("latest_observation_id")
+            or entry.get("observation_id")
+            or entry.get("event_fingerprint")
+            or ""
+        ).strip()
+        review = entry.get("bot_tuning_review")
+        observations = [
+            dict(item)
+            for item in entry.get("observations", []) or []
+            if isinstance(item, dict)
+        ]
+        selected_event = entry.get("selected_event")
+        views.append(
+            {
+                "work_order_id": entry.get("work_order_id"),
+                "semantic_state_id": semantic_state_id or None,
+                "latest_observation_id": latest_observation_id or None,
+                "review": dict(review) if isinstance(review, dict) else {},
+                "observations": observations,
+                "selected_event": (
+                    dict(selected_event) if isinstance(selected_event, dict) else {}
+                ),
+                "matching_terminal_experiments": list(
+                    terminal_by_semantic.get(semantic_state_id, [])
+                ),
+            }
+        )
+    return views
+
+
 def _string_list(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
     seen: set[str] = set()
@@ -5899,18 +5965,15 @@ def _build_repair_requests(
 
     if _guardian_tuning_work_order_pending(guardian_tuning_work_order):
         tuning_entries = _guardian_tuning_work_order_entries(guardian_tuning_work_order)
+        pending_work_orders = _guardian_tuning_pending_work_order_views(
+            guardian_tuning_work_order,
+            tuning_entries,
+        )
         selected_events = [
             entry.get("selected_event")
             for entry in tuning_entries
             if isinstance(entry.get("selected_event"), dict)
         ]
-        selected_event = selected_events[0] if selected_events else {}
-        reviews = [
-            entry.get("bot_tuning_review")
-            for entry in tuning_entries
-            if isinstance(entry.get("bot_tuning_review"), dict)
-        ]
-        review = reviews[0] if reviews else {}
         pair_values: list[Any] = []
         family_values: list[Any] = []
         reason_values: list[Any] = []
@@ -5986,16 +6049,11 @@ def _build_repair_requests(
                     "of a read-only alert that the next hourly cycle ignores."
                 ),
                 evidence_summary={
-                    "work_order_id": guardian_tuning_work_order.get("work_order_id"),
-                    "work_order_ids": [entry.get("work_order_id") for entry in tuning_entries],
-                    "event_fingerprint": guardian_tuning_work_order.get("event_fingerprint"),
                     "pending_work_order_count": len(tuning_entries),
+                    "pending_work_orders": pending_work_orders,
                     "affected_pairs": affected_pairs,
                     "affected_bot_families": affected_families,
                     "material_reason_codes": material_reason_codes,
-                    "selected_event": selected_event,
-                    "selected_events": selected_events,
-                    "bot_tuning_review": review,
                     "live_permission_allowed": False,
                     "no_direct_oanda": True,
                     "preserve_blockers": True,

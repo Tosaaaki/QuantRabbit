@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from quant_rabbit.active_opportunity_board import ActiveOpportunityBoard
+from quant_rabbit.active_opportunity_board import (
+    ActiveOpportunityBoard,
+    _attach_capture_economics_local_tp,
+    _exact_vehicle_take_profit_metrics,
+)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -29,32 +33,46 @@ def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
                 ts_utc text,
                 event_type text,
                 lane_id text,
+                order_id text,
                 trade_id text,
                 pair text,
                 side text,
+                units real,
                 realized_pl_jpy real,
+                financing_jpy real,
                 exit_reason text,
                 raw_json text
             )
             """
         )
         con.execute("create table verification_observations (ts_utc text)")
+        con.execute(
+            "create table sync_state (key text primary key, value text, updated_at_utc text)"
+        )
+        con.execute(
+            "insert into sync_state values ('oanda_transaction_coverage_start_utc', ?, ?)",
+            ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+        )
         for row in rows:
             raw_json = row.get("raw_json")
             con.execute(
                 """
                 insert into execution_events
-                    (ts_utc,event_type,lane_id,trade_id,pair,side,realized_pl_jpy,exit_reason,raw_json)
-                values (?,?,?,?,?,?,?,?,?)
+                    (ts_utc,event_type,lane_id,order_id,trade_id,pair,side,units,
+                     realized_pl_jpy,financing_jpy,exit_reason,raw_json)
+                values (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     row.get("ts_utc"),
                     row.get("event_type"),
                     row.get("lane_id", ""),
+                    row.get("order_id"),
                     row.get("trade_id"),
                     row.get("pair"),
                     row.get("side"),
+                    row.get("units"),
                     row.get("realized_pl_jpy"),
+                    row.get("financing_jpy", 0.0),
                     row.get("exit_reason"),
                     json.dumps(raw_json) if isinstance(raw_json, dict) else raw_json,
                 ),
@@ -78,34 +96,213 @@ def _exact_tp_rows(
     day = start_ts[:10]
     for idx in range(count):
         trade_id = f"{lane_id}:{idx}"
+        entry_ts = f"{day}T00:{idx % 60:02d}:00+00:00" if "T" in start_ts else start_ts
+        close_ts = f"{day}T01:{idx % 60:02d}:00+00:00" if "T" in start_ts else start_ts
+        signed_units = 1000 if side == "LONG" else -1000
         rows.append(
             {
-                "ts_utc": f"{day}T00:{idx % 60:02d}:00+00:00" if "T" in start_ts else start_ts,
+                "ts_utc": entry_ts,
                 "event_type": "ORDER_FILLED",
                 "lane_id": lane_id,
+                "order_id": f"entry-{idx}",
                 "trade_id": trade_id,
                 "pair": pair,
                 "side": side,
+                "units": signed_units,
                 "realized_pl_jpy": 0.0,
                 "exit_reason": entry_reason,
+                "raw_json": {
+                    "type": "ORDER_FILL",
+                    "reason": entry_reason,
+                    "time": entry_ts,
+                    "instrument": pair,
+                    "orderID": f"entry-{idx}",
+                    "units": str(signed_units),
+                    "tradeOpened": {
+                        "tradeID": trade_id,
+                        "units": str(signed_units),
+                    },
+                },
             }
         )
         rows.append(
             {
-                "ts_utc": f"{day}T01:{idx % 60:02d}:00+00:00" if "T" in start_ts else start_ts,
+                "ts_utc": close_ts,
                 "event_type": "TRADE_CLOSED",
                 "lane_id": "",
+                "order_id": f"close-{idx}",
                 "trade_id": trade_id,
                 "pair": pair,
                 "side": side,
                 "realized_pl_jpy": pl_jpy,
                 "exit_reason": "TAKE_PROFIT_ORDER",
+                "raw_json": {
+                    "type": "ORDER_FILL",
+                    "reason": "TAKE_PROFIT_ORDER",
+                    "time": close_ts,
+                    "commission": "0.0",
+                    "guaranteedExecutionFee": "0.0",
+                    "tradesClosed": [
+                        {
+                            "tradeID": trade_id,
+                            "realizedPL": str(pl_jpy),
+                            "financing": "0.0",
+                        }
+                    ],
+                },
             }
         )
     return rows
 
 
 class ActiveOpportunityBoardTest(unittest.TestCase):
+    def test_board_unreadable_exact_audit_never_falls_back_to_broad_tp_as_vehicle_proof(self) -> None:
+        lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+        lanes = {
+            lane_id: {
+                "lane_id": lane_id,
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "strategy_family": "BREAKOUT_FAILURE",
+                "vehicle": "LIMIT",
+                "blockers": ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                "local_tp_proof": {"attach_take_profit_on_fill": True},
+            }
+        }
+        capture = _capture_payload(
+            "EUR_USD",
+            "LONG",
+            "BREAKOUT_FAILURE",
+            trades=20,
+            wins=20,
+            losses=0,
+            expectancy=500.0,
+            avg_win=500.0,
+            avg_loss=0.0,
+        )
+        capture["_artifact_status"] = "present"
+
+        _attach_capture_economics_local_tp(
+            lanes,
+            capture,
+            exact_vehicle_tp_metrics=None,
+        )
+
+        proof = lanes[lane_id]["local_tp_proof"]
+        self.assertEqual(proof["capture_take_profit_evidence_status"], "EVIDENCE_UNREADABLE")
+        self.assertEqual(proof["capture_take_profit_trades"], 0)
+        self.assertEqual(proof["broad_capture_take_profit_trades"], 20)
+        self.assertIn("EVIDENCE_UNREADABLE", proof["capture_take_profit_metrics_source"])
+
+    def test_board_exact_tp_reader_never_uses_close_lane_for_manual_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "execution.db"
+            trade_id = "manual-entry"
+            _write_execution_db(
+                db,
+                [
+                    {
+                        "ts_utc": "2026-07-01T00:00:00+00:00",
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": "",
+                        "order_id": "manual-order",
+                        "trade_id": trade_id,
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "realized_pl_jpy": 0.0,
+                        "exit_reason": "LIMIT_ORDER",
+                        "raw_json": {
+                            "type": "ORDER_FILL",
+                            "reason": "LIMIT_ORDER",
+                            "time": "2026-07-01T00:00:00+00:00",
+                            "instrument": "EUR_USD",
+                            "orderID": "manual-order",
+                            "units": "1000",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": "1000",
+                            },
+                        },
+                    },
+                    {
+                        "ts_utc": "2026-07-01T01:00:00+00:00",
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        "order_id": "tp-order",
+                        "trade_id": trade_id,
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "realized_pl_jpy": 500.0,
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                        "raw_json": {
+                            "type": "ORDER_FILL",
+                            "reason": "TAKE_PROFIT_ORDER",
+                            "time": "2026-07-01T01:00:00+00:00",
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": "500.0",
+                                    "financing": "0.0",
+                                }
+                            ],
+                        },
+                    },
+                ],
+            )
+
+            self.assertEqual(_exact_vehicle_take_profit_metrics(db), {})
+
+    def test_board_exact_tp_reader_excludes_market_reduction_before_final_tp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "execution.db"
+            trade_id = "mixed-lifecycle"
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            rows = _exact_tp_rows(
+                lane_id=lane_id,
+                pair="EUR_USD",
+                side="LONG",
+                entry_reason="LIMIT_ORDER",
+                count=1,
+                pl_jpy=500.0,
+                start_ts="2026-07-01T00:00:00+00:00",
+            )
+            rows[0]["trade_id"] = trade_id
+            rows[0]["raw_json"]["tradeOpened"]["tradeID"] = trade_id
+            rows[1]["trade_id"] = trade_id
+            rows[1]["raw_json"]["tradesClosed"][0]["tradeID"] = trade_id
+            rows.insert(
+                1,
+                {
+                    "ts_utc": "2026-07-01T00:30:00+00:00",
+                    "event_type": "TRADE_REDUCED",
+                    "lane_id": "",
+                    "order_id": "reduce-order",
+                    "trade_id": trade_id,
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "realized_pl_jpy": 50.0,
+                    "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "raw_json": {
+                        "type": "ORDER_FILL",
+                        "reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "time": "2026-07-01T00:30:00+00:00",
+                        "commission": "0.0",
+                        "guaranteedExecutionFee": "0.0",
+                        "tradeReduced": {
+                            "tradeID": trade_id,
+                            "realizedPL": "50.0",
+                            "financing": "0.0",
+                        },
+                    },
+                },
+            )
+            _write_execution_db(db, rows)
+
+            self.assertEqual(_exact_vehicle_take_profit_metrics(db), {})
+
     def test_board_scans_multi_pair_multi_vehicle_and_selects_evidence_path(self) -> None:
         now = datetime(2026, 7, 8, 7, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -825,6 +1022,18 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                     avg_loss=0.0,
                 ),
             )
+            _write_execution_db(
+                paths["execution_db"],
+                _exact_tp_rows(
+                    lane_id="range_trader:USD_CAD:LONG:RANGE_ROTATION",
+                    pair="USD_CAD",
+                    side="LONG",
+                    entry_reason="LIMIT_ORDER",
+                    count=5,
+                    pl_jpy=556.2,
+                    start_ts="2026-07-08T00:00:00+00:00",
+                ),
+            )
 
             ActiveOpportunityBoard(
                 active_trader_contract_path=paths["active_contract"],
@@ -854,11 +1063,14 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
         self.assertEqual(payload["top_lane"]["blockers"], ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"])
         self.assertIn(
-            "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
+            "USD_CAD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER",
             payload["top_lane"]["next_action"],
         )
         self.assertIn("positive Wilson-stressed expectancy", payload["top_lane"]["next_action"])
-        self.assertEqual(payload["top_lane"]["local_tp_proof"]["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
+        self.assertEqual(
+            payload["top_lane"]["local_tp_proof"]["capture_take_profit_scope"],
+            "PAIR_SIDE_METHOD_VEHICLE",
+        )
         self.assertEqual(payload["top_lane"]["local_tp_proof"]["capture_take_profit_trades"], 5)
         self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 1)
         self.assertEqual(payload["status"], "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY")
@@ -914,6 +1126,18 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                     expectancy=658.9,
                     avg_win=658.9,
                     avg_loss=0.0,
+                ),
+            )
+            _write_execution_db(
+                paths["execution_db"],
+                _exact_tp_rows(
+                    lane_id="failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+                    pair="USD_CAD",
+                    side="LONG",
+                    entry_reason="LIMIT_ORDER",
+                    count=1,
+                    pl_jpy=658.9,
+                    start_ts="2026-07-08T00:00:00+00:00",
                 ),
             )
 
@@ -1438,6 +1662,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
             _write_json(paths["harvest"], {"ranked_harvest_candidates": [], "live_side_effects": [], "live_permission_allowed": False})
             _write_json(paths["capture"], _capture_payload("USD_CAD", "LONG", "TREND_CONTINUATION"))
+            _write_execution_db(paths["execution_db"], [])
 
             ActiveOpportunityBoard(
                 active_trader_contract_path=paths["active_contract"],
@@ -1467,7 +1692,10 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(top["lane_id"], "range_trader:USD_CAD:LONG:RANGE_ROTATION")
         self.assertEqual(top["status"], "NO_TRADE_WITH_CAUSE")
         self.assertIn("LOCAL_TP_PROOF_ZERO_TRADES", top["blockers"])
-        self.assertEqual(top["local_tp_proof"]["capture_take_profit_scope"], "MISSING_METHOD_SCOPE")
+        self.assertEqual(
+            top["local_tp_proof"]["capture_take_profit_scope"],
+            "PAIR_SIDE_METHOD_VEHICLE",
+        )
         self.assertEqual(top["local_tp_proof"]["capture_take_profit_trades"], 0)
         self.assertIn("0/20", top["next_action"])
         self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 0)

@@ -1728,7 +1728,7 @@ def _attributed_realized_from_execution_ledger(
                 """
                 WITH gateway_entries AS (
                     SELECT
-                        NULLIF(trade_id, '') AS trade_id,
+                        rowid AS gateway_rowid,
                         NULLIF(order_id, '') AS order_id,
                         NULLIF(lane_id, '') AS lane_id
                     FROM execution_events
@@ -1755,8 +1755,9 @@ def _attributed_realized_from_execution_ledger(
                         ) AS manual_owner_marker
                     FROM execution_events AS e
                     LEFT JOIN gateway_entries AS g
-                      ON (g.trade_id IS NOT NULL AND g.trade_id = e.trade_id)
-                      OR (g.order_id IS NOT NULL AND g.order_id = e.order_id)
+                      ON g.order_id IS NOT NULL
+                     AND g.order_id = e.order_id
+                     AND g.gateway_rowid <= e.rowid
                     WHERE e.event_type = 'ORDER_FILLED'
                       AND NULLIF(e.trade_id, '') IS NOT NULL
                     GROUP BY e.trade_id
@@ -1875,7 +1876,10 @@ def _attributed_realized_from_execution_ledger(
                     FROM execution_events AS e
                     WHERE e.event_type = 'OANDA_TRANSACTION'
                       AND substr(e.ts_utc, 1, 10) = ?
-                      AND COALESCE(e.financing_jpy, 0.0) != 0.0
+                      AND (
+                          COALESCE(e.financing_jpy, 0.0) != 0.0
+                          OR json_extract(e.raw_json, '$.type') = 'DAILY_FINANCING'
+                      )
                 ),
                 transfer_transactions AS (
                     SELECT

@@ -1681,6 +1681,32 @@ def _technical_state_event(
     spread_pips = _live_spread_pips(snapshot, pair)
     family_consensus = _technical_family_consensus(views)
     closed_structure = _latest_closed_structure(views)
+    closed_candle_watermarks = _latest_complete_candle_watermarks(views)
+    if not closed_candle_watermarks:
+        open_exposure = _pair_has_open_exposure(snapshot, pair)
+        return _event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair=pair,
+            direction=None,
+            thesis="bounded guardian chart input completeness",
+            price_zone="guardian technical input has no provably complete fast candle",
+            severity="P1" if open_exposure else "P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="HOLD" if open_exposure else "NO_ACTION",
+            now=now,
+            details={
+                "fresh": False,
+                "status": "COMPLETE_FAST_CANDLE_MISSING",
+                "required_any_of": ["M1", "M5", "M15"],
+                "available_views": sorted(views),
+                "closed_candle_watermarks": {},
+                "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                "open_exposure": open_exposure,
+                "live_permission_allowed": False,
+                "no_direct_oanda": True,
+                "preserve_blockers": True,
+            },
+        )
     dominant_regime = str(chart.get("dominant_regime") or "UNKNOWN").upper()
     volatility_bucket = str(indicators.get("regime_quantile") or "UNKNOWN").upper()
     fingerprint = {
@@ -1723,6 +1749,11 @@ def _technical_state_event(
                 1.0,
             ),
             "material_fingerprint": fingerprint,
+            # Separate the semantic detector output above from the market-data
+            # observation that produced it.  A regenerated weekend chart can
+            # otherwise oscillate between equivalent regime labels without a
+            # new closed candle and repeatedly wake GPT/tuning work.
+            "closed_candle_watermarks": closed_candle_watermarks,
             "chart_generated_at_utc": pair_charts.get("generated_at_utc"),
             "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
             "open_exposure": open_exposure,
@@ -1831,6 +1862,43 @@ def _technical_consensus_timeframes(views: dict[str, dict[str, Any]]) -> tuple[s
     if len(higher) >= 2:
         return higher
     return tuple(timeframe for timeframe in ("M1", "M5", "M15") if timeframe in views)
+
+
+def _latest_complete_candle_watermarks(
+    views: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """Return the latest complete source-candle timestamp per fast view.
+
+    ``chart_generated_at_utc`` is an observation timestamp, not new market
+    information.  These watermarks let the router distinguish a genuinely new
+    closed-candle observation from a recomputation of the same frozen input.
+    """
+
+    watermarks: dict[str, str] = {}
+    # The wake contract is intentionally tied to the fast monitoring surface,
+    # not to whichever higher-timeframe set happens to be used for consensus.
+    # Quick (M1/M5/M15) and full (M5/M15/M30/H1) chart packets share this
+    # comparable clock, so switching packet shape cannot manufacture market
+    # progress while a genuinely new fast close still can.
+    for timeframe in (item for item in ("M1", "M5", "M15") if item in views):
+        view = views.get(timeframe)
+        if not isinstance(view, dict):
+            continue
+        latest: datetime | None = None
+        for candle in view.get("recent_candles", []) or []:
+            if not isinstance(candle, dict) or candle.get("complete") is not True:
+                continue
+            timestamp = _parse_utc(
+                candle.get("t")
+                or candle.get("timestamp")
+                or candle.get("timestamp_utc")
+                or candle.get("time")
+            )
+            if timestamp is not None and (latest is None or timestamp > latest):
+                latest = timestamp
+        if latest is not None:
+            watermarks[timeframe] = latest.isoformat()
+    return watermarks
 
 
 def _live_spread_pips(snapshot: dict[str, Any], pair: str) -> float | None:
@@ -2096,6 +2164,21 @@ def _quote_major_figure_events(quotes: dict[str, Any], *, now: datetime) -> list
         ask = _float(quote.get("ask"))
         if bid is None or ask is None:
             continue
+        normal_spread = NORMAL_SPREAD_PIPS.get(pair)
+        max_spread_multiple = RiskPolicy().max_spread_multiple
+        spread_pips = max(0.0, (ask - bid) * instrument_pip_factor(pair))
+        # A rollover/closed-market ask expansion can move the midpoint across
+        # a major figure while the bid and every closed candle remain frozen.
+        # SPREAD_ANOMALY already owns that observation.  Do not manufacture a
+        # failed-acceptance tuning event from a non-executable midpoint.
+        if (
+            normal_spread is not None
+            and normal_spread > 0.0
+            and max_spread_multiple is not None
+            and max_spread_multiple > 0.0
+            and spread_pips > normal_spread * max_spread_multiple
+        ):
+            continue
         mid = (bid + ask) / 2.0
         zone = _major_figure_zone(pair, mid)
         if zone is None:
@@ -2111,7 +2194,7 @@ def _quote_major_figure_events(quotes: dict[str, Any], *, now: datetime) -> list
                 recommended_review_type="ENTRY_REVIEW",
                 action_hint="HOLD",
                 now=now,
-                details={"bid": bid, "ask": ask},
+                details={"bid": bid, "ask": ask, "spread_pips": spread_pips},
             )
         )
     return events
@@ -3403,7 +3486,19 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
         prior_details = prior.get("details") if isinstance(prior.get("details"), dict) else {}
         current_fingerprint = _technical_fingerprint(event.details)
         prior_fingerprint = _technical_fingerprint(prior_details)
-        if current_fingerprint and current_fingerprint != prior_fingerprint:
+        source_advanced = _technical_closed_candle_source_advanced(
+            event.details,
+            prior_details,
+        )
+        # ``False`` means both observations expose comparable closed-candle
+        # watermarks and none advanced.  Any regime/family/structure drift is
+        # recomputation noise, not future market information.  ``None`` keeps
+        # backward compatibility with old state rows that predate watermarks.
+        if (
+            source_advanced is not False
+            and current_fingerprint
+            and current_fingerprint != prior_fingerprint
+        ):
             reasons.append("TECHNICAL_STATE_CHANGE")
             if current_fingerprint.get("dominant_regime") != prior_fingerprint.get("dominant_regime"):
                 reasons.append("REGIME_STATE_CHANGE")
@@ -3414,6 +3509,50 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
             if current_fingerprint.get("closed_structure") != prior_fingerprint.get("closed_structure"):
                 reasons.append("CLOSED_CANDLE_STRUCTURE_CHANGE")
     return list(dict.fromkeys(reasons))
+
+
+def _technical_closed_candle_source_advanced(
+    current_details: dict[str, Any],
+    prior_details: dict[str, Any],
+) -> bool | None:
+    current = _technical_closed_candle_watermarks(current_details)
+    prior = _technical_closed_candle_watermarks(prior_details)
+    if not current or not prior:
+        current_contract_present = "closed_candle_watermarks" in current_details
+        prior_contract_present = "closed_candle_watermarks" in prior_details
+        if current_contract_present and not current:
+            # The producer emitted the watermark contract but could not prove
+            # even one complete fast candle.  Treat that as missing current
+            # market input, never as legacy permission to review derived drift.
+            return False
+        if current_contract_present and prior_contract_present:
+            return False
+        return None
+    comparable = set(current).intersection(prior)
+    if not comparable:
+        # Both packets carry the new watermark contract but expose no common
+        # fast candle.  That is an input-surface change, not proof that the
+        # market advanced.  ``None`` is reserved for legacy state that has no
+        # watermarks at all.
+        return False
+    for timeframe in comparable:
+        current_ts = _parse_utc(current.get(timeframe))
+        prior_ts = _parse_utc(prior.get(timeframe))
+        if current_ts is not None and prior_ts is not None and current_ts > prior_ts:
+            return True
+    return False
+
+
+def _technical_closed_candle_watermarks(details: dict[str, Any]) -> dict[str, str]:
+    raw = details.get("closed_candle_watermarks") if isinstance(details, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, str] = {}
+    for timeframe, value in raw.items():
+        timestamp = _parse_utc(value)
+        if timestamp is not None:
+            result[str(timeframe).upper()] = timestamp.isoformat()
+    return result
 
 
 def _event_throttle_seconds(event: GuardianEvent) -> int:

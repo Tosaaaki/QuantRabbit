@@ -114,6 +114,7 @@ class ExecutionLedger:
         now = _now()
         baseline = None
         with self._connect() as conn:
+            _migrate_legacy_transaction_coverage_marker(conn, now=now)
             start_id = since_transaction_id or _get_state(conn, "last_oanda_transaction_id")
             if not start_id:
                 account = client.account_summary(now_utc=datetime.now(timezone.utc))
@@ -1897,6 +1898,199 @@ def _backfill_gateway_position_order_ids(conn: sqlite3.Connection) -> int:
 def _get_state(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
     return str(row["value"]) if row else None
+
+
+def _migrate_legacy_transaction_coverage_marker(
+    conn: sqlite3.Connection,
+    *,
+    now: str,
+) -> bool:
+    """Prove and persist coverage for ledgers created before the marker.
+
+    This migration never guesses from ``last_oanda_transaction_id`` alone.
+    It requires a complete integer transaction-id interval through that state,
+    non-decreasing broker timestamps, and at least one system-attributed entry
+    no earlier than the first stored transaction. Any ambiguity leaves the
+    marker absent so audited outcome readers remain fail-closed.
+    """
+
+    existing = conn.execute(
+        "SELECT value FROM sync_state WHERE key = ?",
+        (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+    ).fetchone()
+    if existing is not None:
+        return False
+    last_id_text = str(_get_state(conn, "last_oanda_transaction_id") or "").strip()
+    last_id = _canonical_transaction_id(last_id_text)
+    if last_id is None:
+        return False
+    transaction_rows = conn.execute(
+        "SELECT transaction_id, time_utc FROM oanda_transactions"
+    ).fetchall()
+    if not transaction_rows:
+        return False
+
+    parsed_transactions: list[tuple[int, datetime]] = []
+    seen_ids: set[int] = set()
+    for row in transaction_rows:
+        transaction_id = _canonical_transaction_id(str(row["transaction_id"] or ""))
+        transaction_time = _strict_aware_utc(row["time_utc"])
+        if transaction_id is None or transaction_time is None or transaction_id in seen_ids:
+            return False
+        seen_ids.add(transaction_id)
+        parsed_transactions.append((transaction_id, transaction_time))
+    parsed_transactions.sort(key=lambda item: item[0])
+    first_id = parsed_transactions[0][0]
+    max_id = parsed_transactions[-1][0]
+    if max_id != last_id or len(parsed_transactions) != max_id - first_id + 1:
+        return False
+    prior_time: datetime | None = None
+    for _, transaction_time in parsed_transactions:
+        if prior_time is not None and transaction_time < prior_time:
+            return False
+        prior_time = transaction_time
+
+    first_entry_time = _legacy_first_system_entry_time(conn)
+    first_transaction_time = parsed_transactions[0][1]
+    if first_entry_time is None or first_transaction_time > first_entry_time:
+        return False
+    _set_state(
+        conn,
+        OANDA_TRANSACTION_COVERAGE_START_KEY,
+        first_transaction_time.isoformat(),
+        now,
+    )
+    return True
+
+
+def _canonical_transaction_id(value: str) -> int | None:
+    text = str(value or "").strip()
+    if not text or not text.isascii() or not text.isdecimal():
+        return None
+    number = int(text)
+    if number < 0 or str(number) != text:
+        return None
+    return number
+
+
+def _strict_aware_utc(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    if "." in normalized:
+        prefix, suffix = normalized.split(".", 1)
+        tz_index = next(
+            (index for index, char in enumerate(suffix) if char in "+-"),
+            None,
+        )
+        if tz_index is not None and tz_index > 6:
+            normalized = f"{prefix}.{suffix[:6]}{suffix[tz_index:]}"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _legacy_first_system_entry_time(conn: sqlite3.Connection) -> datetime | None:
+    gateway_rows = conn.execute(
+        """
+        SELECT rowid AS ledger_rowid, order_id, lane_id, raw_json
+        FROM execution_events
+        WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+          AND NULLIF(order_id, '') IS NOT NULL
+        ORDER BY rowid
+        """
+    ).fetchall()
+    gateways_by_order: dict[str, list[sqlite3.Row]] = {}
+    for row in gateway_rows:
+        gateways_by_order.setdefault(str(row["order_id"]), []).append(row)
+
+    entry_times: list[datetime] = []
+    fill_rows = conn.execute(
+        """
+        SELECT rowid AS ledger_rowid, ts_utc, order_id, trade_id, lane_id, raw_json
+        FROM execution_events
+        WHERE event_type = 'ORDER_FILLED'
+          AND NULLIF(trade_id, '') IS NOT NULL
+        ORDER BY rowid
+        """
+    ).fetchall()
+    for fill in fill_rows:
+        fill_rowid = int(fill["ledger_rowid"])
+        order_id = str(fill["order_id"] or "")
+        prior_gateways = [
+            row
+            for row in gateways_by_order.get(order_id, [])
+            if int(row["ledger_rowid"]) < fill_rowid
+        ]
+        own_lane = str(fill["lane_id"] or "").strip()
+        gateway_lanes = {
+            str(row["lane_id"] or "").strip()
+            for row in prior_gateways
+            if str(row["lane_id"] or "").strip()
+        }
+        if own_lane:
+            lane_id = own_lane
+        elif len(gateway_lanes) == 1:
+            lane_id = next(iter(gateway_lanes))
+        else:
+            continue
+        if _legacy_manual_lane(lane_id):
+            continue
+        fill_raw = _legacy_json_object(fill["raw_json"])
+        if fill_raw is None and str(fill["raw_json"] or "").strip():
+            return None
+        if _legacy_manual_owner_marked(fill_raw):
+            continue
+        for gateway in prior_gateways:
+            gateway_raw = _legacy_json_object(gateway["raw_json"])
+            if gateway_raw is None and str(gateway["raw_json"] or "").strip():
+                return None
+            if _legacy_manual_lane(str(gateway["lane_id"] or "")) or _legacy_manual_owner_marked(
+                gateway_raw
+            ):
+                lane_id = ""
+                break
+        if not lane_id:
+            continue
+        fill_time = _strict_aware_utc(fill["ts_utc"])
+        if fill_time is None:
+            return None
+        entry_times.append(fill_time)
+    return min(entry_times) if entry_times else None
+
+
+def _legacy_json_object(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _legacy_manual_lane(lane_id: str) -> bool:
+    prefix = str(lane_id or "").strip().lower().split(":", 1)[0]
+    return prefix in {"manual", "operator_manual", "unknown", "external"}
+
+
+def _legacy_manual_owner_marked(raw: object) -> bool:
+    manual = {"manual", "operator_manual", "unknown", "external"}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if str(key).lower() in {"tag", "owner", "owner_tag"}:
+                if str(value or "").strip().lower() in manual:
+                    return True
+            if _legacy_manual_owner_marked(value):
+                return True
+    elif isinstance(raw, list):
+        return any(_legacy_manual_owner_marked(value) for value in raw)
+    return False
 
 
 def _set_state(conn: sqlite3.Connection, key: str, value: str, now: str) -> None:

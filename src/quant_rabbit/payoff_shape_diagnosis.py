@@ -10,7 +10,6 @@ not tradable.
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,9 +19,9 @@ from typing import Any, Iterable
 from quant_rabbit.capture_economics import (
     MIN_SAMPLE_FOR_VERDICT,
     RealizedOutcome,
-    _ATTRIBUTED_REALIZED_SQL,
     _bucket_metrics,
     _lane_method,
+    read_attributed_net_outcomes,
 )
 from quant_rabbit.paths import (
     DEFAULT_CAPTURE_ECONOMICS,
@@ -77,7 +76,8 @@ def build_payoff_shape_diagnosis(
     """Build and persist the payoff-shape diagnosis payload."""
 
     generated_at = datetime.now(timezone.utc).isoformat()
-    realized = _load_realized_outcomes(ledger_path)
+    realized_read = _load_realized_outcomes(ledger_path)
+    realized = realized_read or []
     capture = _load_json(capture_economics_path)
     timing = _load_json(execution_timing_audit_path)
     intents = _load_json(order_intents_path)
@@ -153,13 +153,18 @@ def build_payoff_shape_diagnosis(
         )
         if not payload
     ]
-    if not realized or missing_sources:
+    if realized_read is None:
+        status = "EVIDENCE_UNREADABLE"
+    elif not realized or missing_sources:
         status = "PARTIAL_DATA"
 
     payload = {
         "schema_version": 1,
         "generated_at_utc": generated_at,
         "status": status,
+        "execution_ledger_evidence_status": (
+            "FAILED" if realized_read is None else "READABLE"
+        ),
         "source_artifacts": {
             "execution_ledger_db": str(ledger_path),
             "capture_economics": str(capture_economics_path),
@@ -222,31 +227,10 @@ def _load_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _load_realized_outcomes(path: Path) -> list[RealizedOutcome]:
+def _load_realized_outcomes(path: Path) -> list[RealizedOutcome] | None:
     if not path.exists():
         return []
-    try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            rows = conn.execute(_ATTRIBUTED_REALIZED_SQL).fetchall()
-    except sqlite3.Error:
-        return []
-    outcomes: list[RealizedOutcome] = []
-    for ts, trade_id, pair, side, lane_id, reason, pl in rows:
-        if pl is None:
-            continue
-        outcomes.append(
-            RealizedOutcome(
-                ts_utc=str(ts or ""),
-                trade_id=str(trade_id or ""),
-                pair=str(pair or "UNKNOWN"),
-                side=str(side or "UNKNOWN"),
-                lane_id=str(lane_id or ""),
-                method=_lane_method(str(lane_id or "")),
-                exit_reason=str(reason or "UNKNOWN"),
-                realized_pl_jpy=float(pl),
-            )
-        )
-    return outcomes
+    return read_attributed_net_outcomes(path)
 
 
 def _shape_key(pair: str, side: str, method: str) -> str:

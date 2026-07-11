@@ -114,6 +114,46 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(technical[0].severity, "P1")
         self.assertEqual(technical[0].details["status"], "REQUIRED_FAST_VIEWS_MISSING")
 
+    def test_first_observation_without_complete_fast_candle_is_stale_not_new_state(self) -> None:
+        charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+        for view in charts["charts"][0]["views"]:
+            view["recent_candles"] = []
+
+        events = detect_guardian_events(
+            inputs={"snapshot": _snapshot(), "pair_charts": charts},
+            now=NOW,
+        )
+        escalation, _ = evaluate_guardian_escalation(
+            events=events,
+            previous_state={},
+            now=NOW,
+        )
+
+        technical = [event for event in events if event.event_type.startswith("TECHNICAL_")]
+        self.assertEqual([event.event_type for event in technical], ["TECHNICAL_INPUT_STALE"])
+        self.assertEqual(technical[0].details["status"], "COMPLETE_FAST_CANDLE_MISSING")
+        self.assertFalse(
+            any(
+                item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+                for item in escalation["events_to_review"]
+            )
+        )
+
+    def test_missing_complete_flag_cannot_be_used_as_closed_candle_watermark(self) -> None:
+        charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+        for view in charts["charts"][0]["views"]:
+            for candle in view["recent_candles"]:
+                candle.pop("complete", None)
+
+        events = detect_guardian_events(
+            inputs={"snapshot": _snapshot(), "pair_charts": charts},
+            now=NOW,
+        )
+
+        technical = [event for event in events if event.event_type.startswith("TECHNICAL_")]
+        self.assertEqual([event.event_type for event in technical], ["TECHNICAL_INPUT_STALE"])
+        self.assertEqual(technical[0].details["status"], "COMPLETE_FAST_CANDLE_MISSING")
+
     def test_tuning_only_technical_event_rejects_live_action_for_manual_position(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -256,6 +296,280 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("VOLATILITY_BUCKET_CHANGE", reasons)
         self.assertIn("TECHNICAL_FAMILY_STATE_CHANGE", reasons)
         self.assertIn("CLOSED_CANDLE_STRUCTURE_CHANGE", reasons)
+
+    def test_same_closed_candle_recompute_drift_does_not_wake_tuning(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        first = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW,
+                    regime="TREND_DOWN",
+                    family_sign=-1,
+                    structure_kind="BOS_DOWN",
+                    structure_time=source_time,
+                ),
+            },
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=first, previous_state={}, now=NOW)
+
+        # Recompute the same frozen closed-candle packet with contradictory
+        # derived labels.  This is diagnostic drift, not new market evidence.
+        recomputed = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW + timedelta(minutes=4),
+                    regime="RANGE",
+                    family_sign=1,
+                    structure_kind="BOS_UP",
+                    structure_time=source_time,
+                ),
+            },
+            now=NOW + timedelta(minutes=4),
+        )
+        escalation, _ = evaluate_guardian_escalation(
+            events=recomputed,
+            previous_state=state,
+            now=NOW + timedelta(minutes=4),
+        )
+
+        self.assertFalse(escalation["wake_gpt"])
+        self.assertNotIn("TECHNICAL_STATE_CHANGE", escalation["wake_reason_codes"])
+
+    def test_quick_full_surface_switch_without_fast_close_does_not_wake_tuning(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        full = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW,
+                    regime="TREND_DOWN",
+                    family_sign=-1,
+                    structure_time=source_time,
+                ),
+            },
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=full, previous_state={}, now=NOW)
+        quick = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW + timedelta(minutes=4),
+                    regime="RANGE",
+                    family_sign=1,
+                    structure_kind="BOS_UP",
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW + timedelta(minutes=4),
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=quick,
+            previous_state=state,
+            now=NOW + timedelta(minutes=4),
+        )
+
+        self.assertFalse(escalation["wake_gpt"])
+        self.assertNotIn("REGIME_STATE_CHANGE", escalation["wake_reason_codes"])
+
+    def test_each_fast_timeframe_close_can_prove_new_technical_source(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        for timeframe in ("M1", "M5", "M15"):
+            with self.subTest(timeframe=timeframe):
+                first = detect_guardian_events(
+                    inputs={
+                        "snapshot": snapshot,
+                        "pair_charts": _technical_chart_payload(
+                            mid=1.17305,
+                            generated_at=NOW,
+                            regime="TREND_DOWN",
+                            family_sign=-1,
+                            structure_time=source_time,
+                            timeframes=("M1", "M5", "M15"),
+                        ),
+                    },
+                    now=NOW,
+                )
+                _, state = evaluate_guardian_escalation(events=first, previous_state={}, now=NOW)
+                advanced_times = {
+                    "M1": source_time,
+                    "M5": source_time,
+                    "M15": source_time,
+                }
+                advanced_times[timeframe] = source_time + timedelta(minutes=1)
+                changed = detect_guardian_events(
+                    inputs={
+                        "snapshot": snapshot,
+                        "pair_charts": _technical_chart_payload(
+                            mid=1.17305,
+                            generated_at=NOW + timedelta(minutes=31),
+                            regime="TREND_UP",
+                            family_sign=1,
+                            structure_kind="BOS_UP",
+                            structure_time=source_time,
+                            timeframes=("M1", "M5", "M15"),
+                            candle_times=advanced_times,
+                        ),
+                    },
+                    now=NOW + timedelta(minutes=31),
+                )
+
+                escalation, _ = evaluate_guardian_escalation(
+                    events=changed,
+                    previous_state=state,
+                    now=NOW + timedelta(minutes=31),
+                )
+
+                self.assertTrue(escalation["wake_gpt"])
+                self.assertIn("REGIME_STATE_CHANGE", escalation["wake_reason_codes"])
+
+    def test_legacy_technical_state_without_watermarks_allows_one_compatible_review(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        first = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW,
+                    regime="TREND_DOWN",
+                    family_sign=-1,
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=first, previous_state={}, now=NOW)
+        technical_state = next(
+            item
+            for item in state["events"].values()
+            if item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+        )
+        technical_state["details"].pop("closed_candle_watermarks", None)
+        changed = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW + timedelta(minutes=31),
+                    regime="TREND_UP",
+                    family_sign=1,
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW + timedelta(minutes=31),
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=changed,
+            previous_state=state,
+            now=NOW + timedelta(minutes=31),
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertIn("TECHNICAL_STATE_CHANGE", escalation["wake_reason_codes"])
+
+    def test_present_but_empty_watermark_contract_cannot_authorize_derived_drift(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        first = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW,
+                    regime="TREND_DOWN",
+                    family_sign=-1,
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW,
+        )
+        _, state = evaluate_guardian_escalation(events=first, previous_state={}, now=NOW)
+        missing_candles = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW + timedelta(minutes=31),
+            regime="RANGE",
+            family_sign=1,
+            structure_kind="BOS_UP",
+            structure_time=source_time,
+            timeframes=("M1", "M5", "M15"),
+        )
+        for view in missing_candles["charts"][0]["views"]:
+            view["recent_candles"] = []
+        snapshot["fetched_at_utc"] = (NOW + timedelta(minutes=31)).isoformat()
+        recomputed = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": missing_candles},
+            now=NOW + timedelta(minutes=31),
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=recomputed,
+            previous_state=state,
+            now=NOW + timedelta(minutes=31),
+        )
+        legacy_state = json.loads(json.dumps(state))
+        legacy_technical = next(
+            item
+            for item in legacy_state["events"].values()
+            if item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+        )
+        legacy_technical["details"].pop("closed_candle_watermarks", None)
+        legacy_escalation, _ = evaluate_guardian_escalation(
+            events=recomputed,
+            previous_state=legacy_state,
+            now=NOW + timedelta(minutes=31),
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertTrue(
+            any(
+                item.get("event_type") == "TECHNICAL_INPUT_STALE"
+                for item in escalation["events_to_review"]
+            )
+        )
+        self.assertNotIn("REGIME_STATE_CHANGE", escalation["wake_reason_codes"])
+        self.assertFalse(
+            any(
+                item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+                for item in escalation["events_to_review"]
+            )
+        )
+        self.assertFalse(
+            any(
+                item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+                for item in legacy_escalation["events_to_review"]
+            )
+        )
+
+    def test_rollover_spread_does_not_create_major_figure_failed_acceptance(self) -> None:
+        snapshot = _snapshot()
+        snapshot["quotes"] = {
+            "EUR_NZD": {"bid": 1.97986, "ask": 1.98139},
+        }
+
+        events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": {}},
+            now=NOW,
+        )
+
+        self.assertFalse(any(event.event_type == "FAILED_ACCEPTANCE" for event in events))
+        self.assertTrue(any(event.event_type == "SPREAD_ANOMALY" for event in events))
 
     def test_stale_bounded_chart_emits_one_stale_input_event_not_fake_technical_state(self) -> None:
         snapshot = _snapshot(
@@ -2103,9 +2417,12 @@ def _technical_chart_payload(
     family_sign: int = -1,
     structure_kind: str = "BOS_DOWN",
     structure_time: datetime = NOW - timedelta(minutes=1),
+    timeframes: tuple[str, ...] = ("M5", "M15", "M30", "H1"),
+    candle_times: dict[str, datetime] | None = None,
 ) -> dict:
     views = []
-    for timeframe in ("M5", "M15", "M30", "H1"):
+    for timeframe in timeframes:
+        candle_time = (candle_times or {}).get(timeframe, structure_time)
         structure_events = []
         if timeframe in {"M15", "M30", "H1"}:
             structure_events = [
@@ -2118,6 +2435,16 @@ def _technical_chart_payload(
         views.append(
             {
                 "granularity": timeframe,
+                "recent_candles": [
+                    {
+                        "t": candle_time.isoformat(),
+                        "o": mid,
+                        "h": mid,
+                        "l": mid,
+                        "c": mid,
+                        "complete": True,
+                    }
+                ],
                 "indicators": {
                     "close": mid,
                     "atr_pips": 2.0 if timeframe == "M5" else 4.0,

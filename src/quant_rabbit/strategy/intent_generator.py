@@ -52,6 +52,7 @@ from quant_rabbit.paths import (
     effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
+from quant_rabbit.capture_economics import read_exact_vehicle_take_profit_metrics
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
     MARGIN_AWARE_BASKET_BUFFER,
@@ -1134,6 +1135,22 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
     if not isinstance(payload, dict):
         return {}
     status = str(payload.get("status") or "").upper()
+    if status == "EVIDENCE_UNREADABLE":
+        return {
+            "active": True,
+            "stale": True,
+            "status": status,
+            "trades": 0,
+            "avg_win_jpy": None,
+            "avg_loss_jpy": None,
+            "payoff_ratio": None,
+            "breakeven_payoff_at_win_rate": None,
+            "source": str(path),
+            "stale_reason": (
+                "capture-economics could not reconcile resolved trade outcomes with "
+                "DAILY_FINANCING components; fresh entry economics are unknown"
+            ),
+        }
     staleness = _capture_economics_staleness(payload, data_root=data_root, path=path)
     if staleness is not None:
         overall = payload.get("overall") if isinstance(payload.get("overall"), dict) else {}
@@ -7134,158 +7151,7 @@ def _capture_scoped_exit_metrics(
 
 
 def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
-    if not path.exists():
-        return None
-    try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        try:
-            columns = {
-                str(row["name"])
-                for row in con.execute("PRAGMA table_info(execution_events)").fetchall()
-                if "name" in row.keys()
-            }
-            required = {
-                "ts_utc",
-                "event_type",
-                "trade_id",
-                "lane_id",
-                "pair",
-                "side",
-                "realized_pl_jpy",
-                "exit_reason",
-            }
-            if not required.issubset(columns):
-                return None
-            rows = con.execute(
-                """
-                WITH fills AS (
-                    SELECT
-                        trade_id,
-                        MAX(NULLIF(lane_id, '')) AS lane_id,
-                        MAX(NULLIF(pair, '')) AS pair,
-                        MAX(NULLIF(side, '')) AS side,
-                        MAX(NULLIF(exit_reason, '')) AS entry_reason
-                    FROM execution_events
-                    WHERE event_type = 'ORDER_FILLED'
-                      AND COALESCE(trade_id, '') != ''
-                    GROUP BY trade_id
-                ),
-                closes AS (
-                    SELECT
-                        e.trade_id AS trade_id,
-                        MAX(NULLIF(e.lane_id, '')) AS close_lane_id,
-                        MAX(NULLIF(e.pair, '')) AS pair,
-                        MAX(NULLIF(e.side, '')) AS side,
-                        SUM(e.realized_pl_jpy) AS realized_pl_jpy,
-                        (
-                            SELECT e2.exit_reason
-                            FROM execution_events e2
-                            WHERE e2.trade_id = e.trade_id
-                              AND e2.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
-                              AND e2.realized_pl_jpy IS NOT NULL
-                            ORDER BY e2.ts_utc DESC
-                            LIMIT 1
-                        ) AS final_exit_reason
-                    FROM execution_events e
-                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
-                      AND e.realized_pl_jpy IS NOT NULL
-                      AND COALESCE(e.trade_id, '') != ''
-                    GROUP BY e.trade_id
-                )
-                SELECT
-                    COALESCE(f.lane_id, c.close_lane_id, '') AS entry_lane_id,
-                    COALESCE(f.entry_reason, '') AS entry_reason,
-                    COALESCE(f.pair, c.pair, '') AS pair,
-                    COALESCE(f.side, c.side, '') AS side,
-                    COUNT(*) AS trades,
-                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN 1 ELSE 0 END) AS wins,
-                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN 1 ELSE 0 END) AS losses,
-                    SUM(c.realized_pl_jpy) AS net_jpy,
-                    SUM(CASE WHEN c.realized_pl_jpy > 0 THEN c.realized_pl_jpy ELSE 0 END) AS win_jpy,
-                    SUM(CASE WHEN c.realized_pl_jpy < 0 THEN c.realized_pl_jpy ELSE 0 END) AS loss_jpy
-                FROM closes c
-                LEFT JOIN fills f ON f.trade_id = c.trade_id
-                WHERE c.final_exit_reason = 'TAKE_PROFIT_ORDER'
-                  AND COALESCE(f.lane_id, c.close_lane_id, '') != ''
-                GROUP BY 1, 2, 3, 4
-                """
-            ).fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        return None
-
-    accum: dict[tuple[str, str, str, str], dict[str, float]] = {}
-    for row in rows:
-        parsed = _parse_lane_id_parts(str(row["entry_lane_id"] or ""))
-        pair = str(parsed.get("pair") or row["pair"] or "UNKNOWN").upper()
-        direction = str(parsed.get("direction") or row["side"] or "UNKNOWN").upper()
-        method = str(parsed.get("strategy_family") or "UNKNOWN").upper()
-        vehicle = _normalize_vehicle(parsed.get("vehicle") or row["entry_reason"] or "UNKNOWN")
-        if "UNKNOWN" in {pair, direction, method, vehicle}:
-            continue
-        trades = int(row["trades"] or 0)
-        wins = int(row["wins"] or 0)
-        losses = int(row["losses"] or 0)
-        net_jpy = float(row["net_jpy"] or 0.0)
-        win_jpy = float(row["win_jpy"] or 0.0)
-        loss_jpy = float(row["loss_jpy"] or 0.0)
-        key = (pair, direction, method, vehicle)
-        slot = accum.setdefault(
-            key,
-            {
-                "trades": 0.0,
-                "wins": 0.0,
-                "losses": 0.0,
-                "net_jpy": 0.0,
-                "win_jpy": 0.0,
-                "loss_jpy": 0.0,
-            },
-        )
-        slot["trades"] += trades
-        slot["wins"] += wins
-        slot["losses"] += losses
-        slot["net_jpy"] += net_jpy
-        slot["win_jpy"] += win_jpy
-        slot["loss_jpy"] += loss_jpy
-
-    metrics: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    for key, slot in accum.items():
-        trades = int(slot["trades"])
-        wins = int(slot["wins"])
-        losses = int(slot["losses"])
-        net_jpy = float(slot["net_jpy"])
-        win_jpy = float(slot["win_jpy"])
-        loss_jpy = float(slot["loss_jpy"])
-        metrics[key] = {
-            "trades": trades,
-            "wins": wins,
-            "losses": losses,
-            "expectancy_jpy_per_trade": round(net_jpy / trades, 4) if trades else 0.0,
-            "avg_win_jpy": round(win_jpy / wins, 4) if wins else 0.0,
-            "avg_loss_jpy": round(abs(loss_jpy) / losses, 4) if losses else 0.0,
-            "net_jpy": round(net_jpy, 4),
-            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
-        }
-    return metrics
-
-
-def _parse_lane_id_parts(lane_id: str) -> dict[str, str]:
-    parts = [part for part in str(lane_id or "").split(":") if part]
-    out: dict[str, str] = {}
-    if len(parts) >= 4:
-        out.update(
-            {
-                "desk": parts[0],
-                "pair": parts[1],
-                "direction": parts[2],
-                "strategy_family": parts[3],
-            }
-        )
-    if len(parts) >= 5:
-        out["vehicle"] = parts[4]
-    return out
+    return read_exact_vehicle_take_profit_metrics(path)
 
 
 def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:

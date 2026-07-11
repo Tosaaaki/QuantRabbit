@@ -2370,6 +2370,60 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.realized_loss_spent_jpy, 125.0)
             self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 875.0)
 
+    def test_zero_account_financing_still_charges_system_component_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                _create_execution_ledger_schema(
+                    conn,
+                    synced_at_utc="2026-07-11T22:00:00+00:00",
+                )
+                _insert_system_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:05:00+00:00",
+                    trade_id="system-trade",
+                )
+                _insert_manual_entry(
+                    conn,
+                    ts_utc="2026-07-11T00:06:00+00:00",
+                    trade_id="manual-trade",
+                    lane_id="operator_manual:EUR_USD:LONG",
+                )
+                _insert_financing_transaction(
+                    conn,
+                    ts_utc="2026-07-11T21:00:00+00:00",
+                    financing_jpy=0.0,
+                    trade_financings=(
+                        ("system-trade", -200.0),
+                        ("manual-trade", 200.0),
+                    ),
+                )
+
+            now = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=10_000.0,
+                    balance_jpy=10_000.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(
+                snapshot=snapshot,
+                daily_risk_pct=10.0,
+                target_trades_per_day=10,
+                now_utc=now,
+            )
+
+            self.assertEqual(summary.realized_loss_spent_jpy, 200.0)
+            self.assertEqual(summary.daily_loss_capacity_before_open_jpy, 800.0)
+
     def test_new_day_provisional_opening_blocks_until_account_delta_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

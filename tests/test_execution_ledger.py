@@ -18,6 +18,7 @@ from quant_rabbit.execution_ledger import (
     OANDA_TRANSACTION_COVERAGE_START_KEY,
     ExecutionLedger,
     _events_from_transaction,
+    _migrate_legacy_transaction_coverage_marker,
 )
 import quant_rabbit.execution_ledger as execution_ledger_module
 from quant_rabbit.models import AccountSummary
@@ -26,6 +27,62 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
     load_entry_thesis,
     record_pending_entry_thesis,
 )
+
+
+def _seed_legacy_coverage_proof(
+    conn: sqlite3.Connection,
+    *,
+    transactions: tuple[tuple[str, str], ...],
+    last_transaction_id: str,
+    system_fill_at: str | None,
+) -> None:
+    now = "2026-07-11T01:00:00+00:00"
+    conn.execute(
+        "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', ?, ?)",
+        (last_transaction_id, now),
+    )
+    for transaction_id, time_utc in transactions:
+        conn.execute(
+            """
+            INSERT INTO oanda_transactions(
+                transaction_id, type, time_utc, batch_id, request_id, raw_json,
+                inserted_at_utc
+            ) VALUES (?, 'ORDER_FILL', ?, NULL, NULL, ?, ?)
+            """,
+            (
+                transaction_id,
+                time_utc,
+                json.dumps(
+                    {
+                        "id": transaction_id,
+                        "type": "ORDER_FILL",
+                        "time": time_utc,
+                    }
+                ),
+                now,
+            ),
+        )
+    if system_fill_at is None:
+        return
+    conn.execute(
+        """
+        INSERT INTO execution_events(
+            event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+            pair, side, realized_pl_jpy, financing_jpy, exit_reason,
+            related_transaction_ids_json, raw_json, inserted_at_utc
+        ) VALUES (
+            'legacy-coverage:fill', ?, 'oanda', 'ORDER_FILLED',
+            'failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT',
+            'legacy-entry-order', 'legacy-trade', 'EUR_USD', 'LONG', NULL, 0.0,
+            'LIMIT_ORDER', '[]', ?, ?
+        )
+        """,
+        (
+            system_fill_at,
+            json.dumps({"type": "ORDER_FILL", "reason": "LIMIT_ORDER"}),
+            now,
+        ),
+    )
 
 
 class ExecutionLedgerTest(unittest.TestCase):
@@ -681,6 +738,152 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(summary.status, "BASELINED")
             self.assertEqual(summary.baseline_transaction_id, "100")
             self.assertEqual(coverage, (baseline_at, baseline_at))
+
+    def test_legacy_coverage_migration_requires_complete_contiguous_broker_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger._init_db()
+            with ledger._connect() as conn:
+                _seed_legacy_coverage_proof(
+                    conn,
+                    transactions=(
+                        ("100", "2026-05-06T16:52:01Z"),
+                        ("101", "2026-05-06T16:53:01Z"),
+                        ("102", "2026-05-06T16:54:01Z"),
+                    ),
+                    last_transaction_id="102",
+                    system_fill_at="2026-05-06T17:25:00Z",
+                )
+                migrated = _migrate_legacy_transaction_coverage_marker(
+                    conn,
+                    now="2026-07-11T02:00:00+00:00",
+                )
+                second = _migrate_legacy_transaction_coverage_marker(
+                    conn,
+                    now="2026-07-11T03:00:00+00:00",
+                )
+                marker = conn.execute(
+                    "SELECT value, updated_at_utc FROM sync_state WHERE key=?",
+                    (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+                ).fetchone()
+
+            self.assertTrue(migrated)
+            self.assertFalse(second)
+            self.assertEqual(
+                tuple(marker),
+                ("2026-05-06T16:52:01+00:00", "2026-07-11T02:00:00+00:00"),
+            )
+
+    def test_legacy_coverage_migration_leaves_ambiguous_ledgers_unmarked(self) -> None:
+        cases = {
+            "empty": {
+                "transactions": (),
+                "last": "102",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "gap": {
+                "transactions": (
+                    ("100", "2026-05-06T16:52:01Z"),
+                    ("102", "2026-05-06T16:54:01Z"),
+                ),
+                "last": "102",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "last_id_ahead": {
+                "transactions": (
+                    ("100", "2026-05-06T16:52:01Z"),
+                    ("101", "2026-05-06T16:53:01Z"),
+                ),
+                "last": "102",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "time_reversal": {
+                "transactions": (
+                    ("100", "2026-05-06T16:54:01Z"),
+                    ("101", "2026-05-06T16:53:01Z"),
+                ),
+                "last": "101",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "invalid_time": {
+                "transactions": (
+                    ("100", "not-a-time"),
+                    ("101", "2026-05-06T16:53:01Z"),
+                ),
+                "last": "101",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "first_transaction_after_entry": {
+                "transactions": (
+                    ("100", "2026-05-06T17:26:00Z"),
+                    ("101", "2026-05-06T17:27:00Z"),
+                ),
+                "last": "101",
+                "fill": "2026-05-06T17:25:00Z",
+            },
+            "no_system_entry": {
+                "transactions": (
+                    ("100", "2026-05-06T16:52:01Z"),
+                    ("101", "2026-05-06T16:53:01Z"),
+                ),
+                "last": "101",
+                "fill": None,
+            },
+        }
+        for name, case in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                ledger = ExecutionLedger(
+                    db_path=root / "ledger.db",
+                    report_path=root / "ledger.md",
+                )
+                ledger._init_db()
+                with ledger._connect() as conn:
+                    _seed_legacy_coverage_proof(
+                        conn,
+                        transactions=case["transactions"],
+                        last_transaction_id=str(case["last"]),
+                        system_fill_at=case["fill"],
+                    )
+                    migrated = _migrate_legacy_transaction_coverage_marker(
+                        conn,
+                        now="2026-07-11T02:00:00+00:00",
+                    )
+                    marker = conn.execute(
+                        "SELECT value FROM sync_state WHERE key=?",
+                        (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+                    ).fetchone()
+                self.assertFalse(migrated)
+                self.assertIsNone(marker)
+
+    def test_legacy_coverage_migration_never_changes_existing_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger._init_db()
+            with ledger._connect() as conn:
+                conn.execute(
+                    "INSERT INTO sync_state VALUES (?, ?, ?)",
+                    (
+                        OANDA_TRANSACTION_COVERAGE_START_KEY,
+                        "2026-01-01T00:00:00+00:00",
+                        "2026-01-01T00:00:00+00:00",
+                    ),
+                )
+                migrated = _migrate_legacy_transaction_coverage_marker(
+                    conn,
+                    now="2026-07-11T02:00:00+00:00",
+                )
+                marker = conn.execute(
+                    "SELECT value, updated_at_utc FROM sync_state WHERE key=?",
+                    (OANDA_TRANSACTION_COVERAGE_START_KEY,),
+                ).fetchone()
+            self.assertFalse(migrated)
+            self.assertEqual(
+                tuple(marker),
+                ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
 
     def test_sync_recovers_legacy_qrvnext_comment_lane_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

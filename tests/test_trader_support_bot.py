@@ -80,6 +80,8 @@ class TraderSupportBotTest(unittest.TestCase):
             "status": "PENDING_HOURLY_AI_REVIEW",
             "work_order_id": "guardian-tuning-eurusd-1",
             "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|DOWN",
+            "semantic_state_id": "semantic-eurusd-down",
+            "latest_observation_id": "obs-2",
             "live_permission_allowed": False,
             "no_direct_oanda": True,
             "preserve_blockers": True,
@@ -89,10 +91,31 @@ class TraderSupportBotTest(unittest.TestCase):
                 "pair": "EUR_USD",
                 "details": {"m5_atr_pips": 2.57},
             },
+            "observations": [
+                {
+                    "observation_id": "obs-1",
+                    "price_zone": "mid=1.1700",
+                    "selected_event": {"pair": "EUR_USD", "price_zone": "mid=1.1700"},
+                },
+                {
+                    "observation_id": "obs-2",
+                    "price_zone": "mid=1.1725",
+                    "selected_event": {"pair": "EUR_USD", "price_zone": "mid=1.1725"},
+                },
+            ],
             "bot_tuning_review": {
                 "affected_pairs": ["EUR_USD"],
-                "affected_bot_families": ["trend", "breakout"],
+                "affected_bot_families": ["trend"],
             },
+            "terminal_history": [
+                {
+                    "status": "CONSUMED",
+                    "work_order_id": "guardian-tuning-eurusd-old",
+                    "semantic_state_id": "semantic-eurusd-down",
+                    "experiment_id": "exp-old",
+                    "experiment_result": "REJECTED_HYPOTHESIS",
+                }
+            ],
         }
 
         requests = trader_support_bot_module._build_repair_requests(
@@ -108,10 +131,145 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["status"], "PENDING_HOURLY_AI_REVIEW")
         evidence = request["evidence_summary"]
         self.assertEqual(evidence["affected_pairs"], ["EUR_USD"])
+        pending = evidence["pending_work_orders"][0]
+        self.assertEqual(pending["work_order_id"], "guardian-tuning-eurusd-1")
+        self.assertEqual(pending["semantic_state_id"], "semantic-eurusd-down")
+        self.assertEqual(pending["latest_observation_id"], "obs-2")
+        self.assertEqual(pending["review"]["affected_pairs"], ["EUR_USD"])
+        self.assertEqual(pending["observations"][-1]["observation_id"], "obs-2")
+        self.assertEqual(
+            pending["matching_terminal_experiments"][0]["experiment_id"],
+            "exp-old",
+        )
         self.assertFalse(evidence["live_permission_allowed"])
         self.assertTrue(evidence["no_direct_oanda"])
         self.assertTrue(evidence["preserve_blockers"])
         self.assertTrue(all("LiveOrderGateway" not in command for command in request["verification_commands"]))
+
+    def test_tuning_queue_keeps_observations_reviews_and_terminal_history_scoped(self) -> None:
+        def pending(
+            *,
+            work_order_id: str,
+            semantic_state_id: str,
+            pair: str,
+            observation_ids: list[str],
+        ) -> dict:
+            return {
+                "status": "PENDING_HOURLY_AI_REVIEW",
+                "work_order_id": work_order_id,
+                "event_fingerprint": observation_ids[0],
+                "semantic_state_id": semantic_state_id,
+                "latest_observation_id": observation_ids[-1],
+                "live_permission_allowed": False,
+                "no_direct_oanda": True,
+                "preserve_blockers": True,
+                "material_reason_codes": ["REGIME_STATE_CHANGE"],
+                "selected_event": {
+                    "event_type": "TECHNICAL_STATE_CHANGE",
+                    "pair": pair,
+                },
+                "observations": [
+                    {
+                        "observation_id": observation_id,
+                        "selected_event": {"pair": pair},
+                    }
+                    for observation_id in observation_ids
+                ],
+                "bot_tuning_review": {
+                    "affected_pairs": [pair],
+                    "affected_bot_families": ["trend"],
+                    "hypothesis": f"{pair} hypothesis",
+                },
+            }
+
+        eur = pending(
+            work_order_id="work-eur",
+            semantic_state_id="semantic-eur",
+            pair="EUR_USD",
+            observation_ids=["eur-obs-1", "eur-obs-2"],
+        )
+        gbp = pending(
+            work_order_id="work-gbp",
+            semantic_state_id="semantic-gbp",
+            pair="GBP_USD",
+            observation_ids=["gbp-obs-1"],
+        )
+        payload = {
+            "schema_version": 2,
+            "work_orders": [eur, gbp],
+            "pending_count": 2,
+            "terminal_history": [
+                {
+                    "status": "CONSUMED",
+                    "work_order_id": "old-eur",
+                    "semantic_state_id": "semantic-eur",
+                    "experiment_id": "exp-eur",
+                    "experiment_result": "REJECTED_NO_IMPROVEMENT",
+                    "bot_tuning_review": {"affected_pairs": ["EUR_USD"]},
+                },
+                {
+                    "status": "SUPERSEDED",
+                    "work_order_id": "old-gbp",
+                    "semantic_state_id": "semantic-gbp",
+                    "experiment_id": "exp-gbp",
+                    "experiment_result": "ACCEPTED_IMPROVEMENT",
+                    "bot_tuning_review": {"affected_pairs": ["GBP_USD"]},
+                },
+                {
+                    "status": "CONSUMED",
+                    "work_order_id": "old-aud",
+                    "semantic_state_id": "semantic-aud",
+                    "experiment_id": "exp-aud",
+                    "experiment_result": "REJECTED_NO_IMPROVEMENT",
+                },
+            ],
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=payload,
+        )
+
+        evidence = requests[0]["evidence_summary"]
+        pending_by_id = {
+            item["work_order_id"]: item for item in evidence["pending_work_orders"]
+        }
+        self.assertEqual(set(pending_by_id), {"work-eur", "work-gbp"})
+        self.assertEqual(
+            [item["observation_id"] for item in pending_by_id["work-eur"]["observations"]],
+            ["eur-obs-1", "eur-obs-2"],
+        )
+        self.assertEqual(
+            pending_by_id["work-eur"]["review"]["affected_pairs"],
+            ["EUR_USD"],
+        )
+        self.assertEqual(
+            [
+                item["experiment_id"]
+                for item in pending_by_id["work-eur"]["matching_terminal_experiments"]
+            ],
+            ["exp-eur"],
+        )
+        self.assertEqual(
+            [item["observation_id"] for item in pending_by_id["work-gbp"]["observations"]],
+            ["gbp-obs-1"],
+        )
+        self.assertEqual(
+            pending_by_id["work-gbp"]["review"]["affected_pairs"],
+            ["GBP_USD"],
+        )
+        self.assertEqual(
+            [
+                item["experiment_id"]
+                for item in pending_by_id["work-gbp"]["matching_terminal_experiments"]
+            ],
+            ["exp-gbp"],
+        )
+        self.assertNotIn("observations", evidence)
+        self.assertNotIn("prior_terminal_experiments", evidence)
 
     def test_guardian_tuning_work_order_cannot_promote_when_safety_boundary_is_missing(self) -> None:
         malformed = {

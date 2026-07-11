@@ -43,6 +43,13 @@ def _make_ledger(path: Path) -> None:
             )
             """
         )
+        conn.execute(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO sync_state VALUES ('oanda_transaction_coverage_start_utc', ?, ?)",
+            ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+        )
         rows: list[tuple[Any, ...]] = []
         closes = [
             ("h1", "EUR_USD", "LONG", "BREAKOUT_FAILURE", "TAKE_PROFIT_ORDER", 100.0),
@@ -52,10 +59,13 @@ def _make_ledger(path: Path) -> None:
         ]
         for idx, (trade_id, pair, side, method, exit_reason, pl) in enumerate(closes):
             lane_id = f"failure_trader:{pair}:{side}:{method}"
+            entry_ts = f"2026-06-0{idx + 1}T00:00:00Z"
+            close_ts = f"2026-06-0{idx + 1}T01:00:00Z"
+            signed_units = 1000 if side == "LONG" else -1000
             rows.append(
                 (
                     f"fill-{trade_id}",
-                    f"2026-06-0{idx + 1}T00:00:00Z",
+                    entry_ts,
                     "test",
                     "ORDER_FILLED",
                     lane_id,
@@ -70,17 +80,30 @@ def _make_ledger(path: Path) -> None:
                     0.9,
                     None,
                     None,
-                    None,
+                    "LIMIT_ORDER",
                     None,
                     "[]",
-                    "{}",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "reason": "LIMIT_ORDER",
+                            "time": entry_ts,
+                            "instrument": pair,
+                            "orderID": f"o-{trade_id}",
+                            "units": str(signed_units),
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": str(signed_units),
+                            },
+                        }
+                    ),
                     "2026-06-01T00:00:00Z",
                 )
             )
             rows.append(
                 (
                     f"close-{trade_id}",
-                    f"2026-06-0{idx + 1}T01:00:00Z",
+                    close_ts,
                     "test",
                     "TRADE_CLOSED",
                     None,
@@ -98,7 +121,22 @@ def _make_ledger(path: Path) -> None:
                     exit_reason,
                     None,
                     "[]",
-                    "{}",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "reason": exit_reason,
+                            "time": close_ts,
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": str(pl),
+                                    "financing": "0.0",
+                                }
+                            ],
+                        }
+                    ),
                     "2026-06-01T00:00:00Z",
                 )
             )
@@ -144,13 +182,22 @@ def _make_target_ledger(path: Path, *, tp_count: int = 17) -> None:
             )
             """
         )
+        conn.execute(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO sync_state VALUES ('oanda_transaction_coverage_start_utc', ?, ?)",
+            ("2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00"),
+        )
         rows: list[tuple[Any, ...]] = []
         for idx in range(tp_count):
             trade_id = f"target-{idx}"
+            entry_ts = f"2026-06-{idx % 9 + 1:02d}T00:00:00Z"
+            close_ts = f"2026-06-{idx % 9 + 1:02d}T01:00:00Z"
             rows.append(
                 (
                     f"fill-{trade_id}",
-                    f"2026-06-{idx % 9 + 1:02d}T00:00:00Z",
+                    entry_ts,
                     "test",
                     "ORDER_FILLED",
                     "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
@@ -165,17 +212,30 @@ def _make_target_ledger(path: Path, *, tp_count: int = 17) -> None:
                     None,
                     None,
                     None,
-                    None,
+                    "LIMIT_ORDER",
                     None,
                     "[]",
-                    "{}",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "reason": "LIMIT_ORDER",
+                            "time": entry_ts,
+                            "instrument": "EUR_USD",
+                            "orderID": f"o-{trade_id}",
+                            "units": "-1000",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": "-1000",
+                            },
+                        }
+                    ),
                     "2026-06-01T00:00:00Z",
                 )
             )
             rows.append(
                 (
                     f"close-{trade_id}",
-                    f"2026-06-{idx % 9 + 1:02d}T01:00:00Z",
+                    close_ts,
                     "test",
                     "TRADE_CLOSED",
                     None,
@@ -193,7 +253,22 @@ def _make_target_ledger(path: Path, *, tp_count: int = 17) -> None:
                     "TAKE_PROFIT_ORDER",
                     None,
                     "[]",
-                    "{}",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "reason": "TAKE_PROFIT_ORDER",
+                            "time": close_ts,
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": "100.0",
+                                    "financing": "0.0",
+                                }
+                            ],
+                        }
+                    ),
                     "2026-06-01T00:00:00Z",
                 )
             )
@@ -441,6 +516,42 @@ class PayoffShapeDiagnosisTest(unittest.TestCase):
             self.assertEqual(target["take_profit_net_jpy"], 1760.0)
             self.assertEqual(target["canonical_proof_reconciliation"]["scope"], "broad_take_profit_order_proof_only_not_exact_limit_sample_floor")
             self.assertFalse(payload["overall_payoff_shape_verdict"]["live_promotion_allowed"])
+
+    def test_unreadable_trade_audit_is_not_misreported_as_empty_partial_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "ledger.db"
+            _make_target_ledger(ledger, tp_count=1)
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    "UPDATE execution_events SET raw_json='{}' WHERE event_type='TRADE_CLOSED'"
+                )
+            sources = {
+                "capture": root / "capture.json",
+                "timing": root / "timing.json",
+                "intents": root / "intents.json",
+                "replay": root / "replay.json",
+                "month": root / "month.json",
+            }
+            for path in sources.values():
+                _write_json(path, {"status": "OK"})
+            output = root / "out.json"
+
+            summary = build_payoff_shape_diagnosis(
+                ledger_path=ledger,
+                capture_economics_path=sources["capture"],
+                execution_timing_audit_path=sources["timing"],
+                order_intents_path=sources["intents"],
+                replay_backtest_path=sources["replay"],
+                month_scale_residuals_path=sources["month"],
+                output_path=output,
+                report_path=root / "report.md",
+            )
+
+            payload = json.loads(output.read_text())
+            self.assertEqual(summary.status, "EVIDENCE_UNREADABLE")
+            self.assertEqual(payload["execution_ledger_evidence_status"], "FAILED")
+            self.assertEqual(payload["harvest_candidates"], [])
 
 
 if __name__ == "__main__":

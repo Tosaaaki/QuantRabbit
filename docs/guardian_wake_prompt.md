@@ -30,8 +30,26 @@ Required JSON object shape:
   "margin_state": "...",
   "ownership": "SYSTEM|OPERATOR_MANUAL|UNKNOWN",
   "gateway_required": true,
-  "no_direct_oanda": true
+  "no_direct_oanda": true,
+  "bot_tuning_review": {
+    "review_status": "TEST_REQUIRED|NO_CHANGE_INSUFFICIENT_EVIDENCE",
+    "affected_pairs": ["selected event pair only"],
+    "affected_bot_families": ["exactly one of trend|mean_reversion|breakout|forecast|execution"],
+    "hypothesis": "one falsifiable explanation for the selected state change",
+    "falsifiable_experiment": "one bounded replay or before/after test",
+    "proposed_adjustments": ["TEST_REQUIRED: exactly one typed adjustment including exact lane_id; NO_CHANGE: empty"],
+    "live_permission_allowed": false,
+    "no_direct_oanda": true,
+    "preserve_blockers": true
+  }
 }
+
+`bot_tuning_review` is required only when the selected event carries a tuning
+reason such as `TECHNICAL_STATE_CHANGE`, `REGIME_STATE_CHANGE`,
+`VOLATILITY_BUCKET_CHANGE`, `TECHNICAL_FAMILY_STATE_CHANGE`,
+`CLOSED_CANDLE_STRUCTURE_CHANGE`, `LARGE_PRICE_DISPLACEMENT_STATE_CHANGE`, or
+`FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE`.
+For all other events, omit `bot_tuning_review`.
 
 Hard boundaries:
 
@@ -58,7 +76,40 @@ Rules:
 - If evidence is insufficient or stale, choose `HOLD` or `NO_ACTION`.
 - If the selected event has no direction, set `"side": "NONE"`; never use
   `UNKNOWN`, `N/A`, an empty string, or any value outside `LONG|SHORT|NONE`.
-- Do not add fields outside the required JSON object shape.
+- A tuning review is a hypothesis handoff only. It must name only the selected
+  pair, must keep every existing blocker, and must not claim that a proposed
+  adjustment is already proved or live-ready.
+- Version 1 can evaluate only the `forecast` family's recorded
+  `forecast_confidence_floor`. If that is not the affected surface, use
+  `NO_CHANGE_INSUFFICIENT_EVIDENCE` and name the missing pre-entry signal log;
+  do not substitute a merely allowlisted but unevaluable parameter.
+- `TEST_REQUIRED` must carry exactly one proposed adjustment for that one
+  family. `NO_CHANGE_INSUFFICIENT_EVIDENCE` must carry an empty list and stays
+  pending until a later reviewed experiment is specified. Each adjustment contains exactly
+  `pair`, `lane_id`, `bot_family`, `parameter`, `current_value`,
+  `candidate_value`, and `rationale`; `pair` must be the selected pair,
+  `lane_id` must precommit one canonical exact five-part lane in
+  `desk:pair:side:method:vehicle` form (and must equal the selected event lane
+  when the event provides one), `bot_family` must be one of the affected
+  allowlisted family. Both values must be finite in `0..1`,
+  `current_value` must be the active runtime floor for the selected lane, and
+  `candidate_value` must be strictly greater. This is a pre-entry tightening,
+  not permission to optimize against already-known outcomes.
+- Any later proof must use current canonical ledger/log source tips and freeze
+  the first 20 canonical attributed entries for that exact lane opened strictly
+  after this review. It must wait until all first 20 resolve; later entries
+  cannot replace an unresolved earlier entry. The baseline is every actually
+  executed trade in that frozen cohort, while only the candidate applies the
+  proposed hard floor. Do not propose an outcome-selected subset or lane.
+- The only proposed parameter currently valid for `TEST_REQUIRED` is exactly
+  `forecast_confidence_floor`. Confirmation bars, lookbacks, weights,
+  execution scoring, sizing, and other technical floors require a separately
+  versioned evaluator and append-only entry-time evidence first.
+  Never put an order instruction, another pair, OANDA/gateway/live-permission
+  fields, or a change to risk, ownership, margin, exposure, or blocker gates
+  inside an adjustment. No second adjustment or second family is allowed.
+- Do not add fields outside the required JSON object shape and the conditional
+  `bot_tuning_review` object above.
 
 Minimal valid fallback receipt:
 
@@ -79,3 +130,9 @@ If uncertain, return exactly this shape with the current event values filled in:
   "gateway_required": true,
   "no_direct_oanda": true
 }
+
+If that uncertain event carries one of the tuning reasons listed above, add
+the conditional `bot_tuning_review` object with
+`review_status="NO_CHANGE_INSUFFICIENT_EVIDENCE"`, the selected pair only,
+an empty `proposed_adjustments` list, and a concrete next falsifiable evidence
+test. Do not omit the tuning handoff merely because the action is `NO_ACTION`.

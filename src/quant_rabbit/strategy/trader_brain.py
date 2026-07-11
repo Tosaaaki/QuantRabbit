@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import asdict, dataclass, replace
@@ -1048,7 +1049,10 @@ class TraderSettings:
     score_bias: float = 0.0
     score_size_enabled: bool = True
     size_multiple_min: float = 0.7
-    size_multiple_max: float = 1.8
+    # Score is a current-context trim, not proof that the pre-unit risk cap may
+    # expand.  Missing settings therefore fail closed at 1.0; evidence-backed
+    # TP/scout/macro contracts own every upside sizing path.
+    size_multiple_max: float = 1.0
     size_multiple_anchor_score: float = 110.0
     size_multiple_per_score_point: float = 0.005
     default_max_loss_jpy: float | None = None
@@ -1285,7 +1289,7 @@ class TraderBrain:
     def _score_lane(
         self,
         result: dict[str, Any],
-        strategies: dict[tuple[str, str], dict[str, Any]],
+        strategies: dict[tuple[str, str, str | None], dict[str, Any]],
         stories: dict[str, dict[str, Any]],
         campaign: dict[str, dict[str, Any]],
         exposure_blockers: tuple[str, ...],
@@ -1318,7 +1322,12 @@ class TraderBrain:
         status = str(result.get("status") or "")
         risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
         spread_pips = _optional_float(risk_metrics.get("spread_pips"))
-        strategy = strategies.get((pair, direction), {})
+        strategy = _strategy_profile_for_lane(
+            strategies,
+            pair=pair,
+            direction=direction,
+            method=method,
+        )
         story = stories.get(pair, {})
         metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
         parent_lane_id = str(metadata.get("parent_lane_id") or "")
@@ -2559,11 +2568,11 @@ def _load_trader_settings(path: Path) -> TraderSettings:
     if not isinstance(score_size_enabled, bool):
         score_size_enabled = True
     size_multiple_min = _coalesce_float(settings_payload.get("size_multiple_min"), 0.7)
-    size_multiple_max = _coalesce_float(settings_payload.get("size_multiple_max"), 1.8)
-    if size_multiple_max < size_multiple_min:
-        size_multiple_min, size_multiple_max = size_multiple_max, size_multiple_min
+    size_multiple_max = _coalesce_float(settings_payload.get("size_multiple_max"), 1.0)
+    size_multiple_max = min(1.0, max(0.05, size_multiple_max))
     if size_multiple_min <= 0:
         size_multiple_min = 0.05
+    size_multiple_min = min(size_multiple_min, size_multiple_max)
     size_multiple_anchor_score = _coalesce_float(settings_payload.get("size_multiple_anchor_score"), 110.0)
     size_multiple_per_score_point = _coalesce_float(
         settings_payload.get("size_multiple_per_score_point"), 0.005
@@ -2587,8 +2596,32 @@ def _load_trader_settings(path: Path) -> TraderSettings:
 def _size_multiple(score: float, settings: TraderSettings) -> float:
     if not settings.score_size_enabled:
         return 1.0
-    multiple = 1.0 + ((score - settings.size_multiple_anchor_score) * settings.size_multiple_per_score_point)
-    return round(_clamp(multiple, settings.size_multiple_min, settings.size_multiple_max), 2)
+    finite_score = score if math.isfinite(float(score)) else settings.size_multiple_anchor_score
+    anchor = (
+        settings.size_multiple_anchor_score
+        if math.isfinite(float(settings.size_multiple_anchor_score))
+        else 110.0
+    )
+    per_point = (
+        settings.size_multiple_per_score_point
+        if math.isfinite(float(settings.size_multiple_per_score_point))
+        and settings.size_multiple_per_score_point >= 0.0
+        else 0.0
+    )
+    high = (
+        settings.size_multiple_max
+        if math.isfinite(float(settings.size_multiple_max))
+        else 1.0
+    )
+    high = min(1.0, max(0.0, high))
+    low = (
+        settings.size_multiple_min
+        if math.isfinite(float(settings.size_multiple_min))
+        else high
+    )
+    low = min(high, max(0.0, low))
+    multiple = 1.0 + ((finite_score - anchor) * per_point)
+    return round(_clamp(multiple, low, high), 2)
 
 
 def _coalesce_float(value: object, default: float) -> float:
@@ -2641,15 +2674,46 @@ def _positive_float(value: object) -> float | None:
     return round(parsed, 4)
 
 
-def _strategy_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    index: dict[tuple[str, str], dict[str, Any]] = {}
+def _strategy_index(payload: dict[str, Any]) -> dict[tuple[str, str, str | None], dict[str, Any]]:
+    index: dict[tuple[str, str, str | None], dict[str, Any]] = {}
     for item in payload.get("profiles", []) or []:
         if isinstance(item, dict):
             pair = str(item.get("pair") or "")
             direction = str(item.get("direction") or "")
             if pair and direction:
-                index[(pair, direction)] = item
+                method = str(item.get("method") or "").strip().upper() or None
+                index[(pair, direction, method)] = item
     return index
+
+
+def _strategy_profile_for_lane(
+    strategies: dict[tuple[str, str, str | None], dict[str, Any]],
+    *,
+    pair: str,
+    direction: str,
+    method: object,
+) -> dict[str, Any]:
+    """Resolve mined evidence without leaking it across strategy methods.
+
+    This mirrors ``StrategyProfile.validate``: an exact method profile wins;
+    once any method-specific evidence exists for a pair/side, an unknown method
+    cannot borrow the broad pair/side row. Pair/side-only legacy profiles remain
+    compatible when no method-specific evidence exists for that pair/side.
+    """
+
+    requested_method = str(method or "").strip().upper() or None
+    has_method_specific = any(
+        profile_pair == pair and profile_direction == direction and profile_method is not None
+        for profile_pair, profile_direction, profile_method in strategies
+    )
+    if requested_method is None and has_method_specific:
+        return {}
+    exact = strategies.get((pair, direction, requested_method))
+    if exact is not None:
+        return exact
+    if requested_method is not None and has_method_specific:
+        return {}
+    return strategies.get((pair, direction, None), {})
 
 
 def _story_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -3715,7 +3779,8 @@ def _optional_float(value: object) -> float | None:
     try:
         if value is None or value == "":
             return None
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     except (TypeError, ValueError):
         return None
 

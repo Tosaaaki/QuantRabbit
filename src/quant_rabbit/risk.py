@@ -64,6 +64,7 @@ from .forecast_precision import (
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
+from .guardian_tuning_overrides import resolve_forecast_confidence_floor_state
 from .market_close_leak_gate import market_close_leak_family_block_issue
 from .month_scale_residual_gate import month_scale_residual_metadata_issue
 from .operator_manual import (
@@ -1873,6 +1874,95 @@ def _forecast_range_confidence_issues(
     ]
 
 
+def _guardian_tuning_override_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    """Enforce evidence-activated pair/method confidence tightening at send."""
+
+    if not for_live_send:
+        return []
+    metadata = intent.metadata or {}
+    confidence = _to_float(metadata.get("forecast_confidence"))
+    method = intent.market_context.method if intent.market_context is not None else None
+    method_name = method.value if isinstance(method, TradeMethod) else str(method or "").upper()
+    if not method_name:
+        return []
+    fallback = (
+        FORECAST_RANGE_ROTATION_MIN_CONFIDENCE
+        if method == TradeMethod.RANGE_ROTATION
+        else FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
+    )
+    lane_id = str(
+        metadata.get("lane_id") or metadata.get("parent_lane_id") or ""
+    ).strip()
+    resolution = resolve_forecast_confidence_floor_state(
+        pair=intent.pair,
+        method=method_name,
+        lane_id=lane_id or None,
+        fallback=fallback,
+    )
+    if resolution["status"] in {
+        "OVERRIDE_STATE_INVALID",
+        "OVERRIDE_STATE_MISSING_WITH_COMMITMENT",
+        "OVERRIDE_CONFIRMATION_PENDING",
+        "OVERRIDE_POST_ACTIVATION_MONITOR_PENDING",
+        "OVERRIDE_LANE_QUARANTINED",
+        "OVERRIDE_LANE_ID_REQUIRED",
+        "OVERRIDE_LANE_ID_INVALID",
+    }:
+        issue_code = (
+            "GUARDIAN_TUNING_LANE_QUARANTINED"
+            if resolution["status"] == "OVERRIDE_LANE_QUARANTINED"
+            else (
+                "GUARDIAN_TUNING_POST_ACTIVATION_MONITOR_PENDING"
+                if resolution["status"]
+                == "OVERRIDE_POST_ACTIVATION_MONITOR_PENDING"
+                else (
+                    "GUARDIAN_TUNING_OVERRIDE_CONFIRMATION_PENDING"
+                    if resolution["status"] == "OVERRIDE_CONFIRMATION_PENDING"
+                    else (
+                        "GUARDIAN_TUNING_OVERRIDE_LANE_ID_INVALID"
+                        if resolution["status"] in {
+                            "OVERRIDE_LANE_ID_REQUIRED",
+                            "OVERRIDE_LANE_ID_INVALID",
+                        }
+                        else "GUARDIAN_TUNING_OVERRIDE_STATE_INVALID"
+                    )
+                )
+            )
+        )
+        return [
+            RiskIssue(
+                issue_code,
+                (
+                    f"{intent.pair} {method_name} guardian tuning state is not "
+                    f"ready ({resolution['status']}); "
+                    "block live send until the accepted setting provenance is repaired."
+                ),
+                severity="BLOCK",
+            )
+        ]
+    active_floor = float(resolution["resolved_value"])
+    if active_floor <= fallback or (
+        confidence is not None and confidence >= active_floor
+    ):
+        return []
+    confidence_text = "missing" if confidence is None else f"{confidence:.4f}"
+    return [
+        RiskIssue(
+            "GUARDIAN_TUNING_FORECAST_CONFIDENCE_FLOOR",
+            (
+                f"{intent.pair} {method_name} forecast confidence {confidence_text} "
+                f"is below evidence-activated floor {active_floor:.4f}; preserve the "
+                "previous gates and wait for a qualifying entry-time forecast."
+            ),
+            severity="BLOCK",
+        )
+    ]
+
+
 def _forecast_watch_only_live_send_issues(
     intent: OrderIntent,
     *,
@@ -2390,6 +2480,7 @@ class RiskEngine:
         issues.extend(_forecast_executable_live_readiness_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
+        issues.extend(_guardian_tuning_override_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_watch_only_live_send_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
         operator_manual_block = operator_manual_jpy_add_block_issue(intent, snapshot)
