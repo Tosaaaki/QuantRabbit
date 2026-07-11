@@ -1552,10 +1552,123 @@ def _guardian_tuning_signal_state(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return state
 
 
-def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: Dict[str, Any]) -> Dict[str, Any]:
-    """Snapshot advisory context that motivated entry for later P/L attribution."""
+def _entry_vehicle_token(value: Any) -> str | None:
+    raw = getattr(value, "value", value)
+    text = str(raw or "").strip().upper().replace("_", "-")
+    if text in {"MARKET", "MARKET-ORDER"}:
+        return "MARKET"
+    if text in {"LIMIT", "LIMIT-ORDER"}:
+        return "LIMIT"
+    if text in {
+        "STOP",
+        "STOP-ENTRY",
+        "STOP-ORDER",
+        "MARKET-IF-TOUCHED",
+        "MARKET-IF-TOUCHED-ORDER",
+    }:
+        return "STOP"
+    return None
+
+
+def _response_entry_vehicle(response: Optional[Dict[str, Any]], intent: Any) -> str | None:
+    if isinstance(response, dict):
+        for key in ("orderFillTransaction", "orderCreateTransaction"):
+            transaction = response.get(key)
+            if not isinstance(transaction, dict):
+                continue
+            for candidate in (transaction.get("reason"), transaction.get("type")):
+                vehicle = _entry_vehicle_token(candidate)
+                if vehicle:
+                    return vehicle
+    return _entry_vehicle_token(getattr(intent, "order_type", None))
+
+
+def _canonical_entry_lane_id(
+    *,
+    lane_id: Any,
+    pair: str,
+    side: str,
+    vehicle: str | None,
+) -> str | None:
+    """Return the exact lane identity used by canonical execution economics."""
+
+    parts = [part.strip() for part in str(lane_id or "").split(":")]
+    if len(parts) not in {4, 5} or any(not part for part in parts):
+        return None
+    if parts[1].upper() != pair.upper() or parts[2].upper() != side.upper():
+        return None
+    if len(parts) == 4:
+        return ":".join((*parts, vehicle)) if vehicle else None
+    normalized_lane_vehicle = _entry_vehicle_token(parts[4])
+    if normalized_lane_vehicle is None:
+        return None
+    if vehicle is not None and normalized_lane_vehicle != vehicle:
+        return None
+    parts[4] = normalized_lane_vehicle
+    return ":".join(parts)
+
+
+def _response_order_id(response: Optional[Dict[str, Any]]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    fill = response.get("orderFillTransaction")
+    if isinstance(fill, dict):
+        value = fill.get("orderID") or fill.get("orderId")
+        if value not in (None, ""):
+            return str(value)
+    create = response.get("orderCreateTransaction")
+    if isinstance(create, dict):
+        value = create.get("id") or create.get("orderID") or create.get("orderId")
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _response_fill_timestamp(response: Optional[Dict[str, Any]]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    fill = response.get("orderFillTransaction")
+    if not isinstance(fill, dict):
+        return None
+    value = str(fill.get("time") or "").strip()
+    return value if value and _parse_utc_timestamp(value) is not None else None
+
+
+def _build_context_evidence(
+    *,
+    intent: Any,
+    metadata: Dict[str, Any],
+    forecast: Dict[str, Any],
+    response: Optional[Dict[str, Any]] = None,
+    order_id: str | None = None,
+) -> Dict[str, Any]:
+    """Snapshot immutable entry context and canonical forward-cohort links."""
 
     evidence: Dict[str, Any] = {}
+    pair = str(getattr(intent, "pair", "") or "").upper()
+    side = _intent_side(intent)
+    resolved_order_id = str(order_id or _response_order_id(response) or "").strip()
+    if resolved_order_id:
+        evidence["order_id"] = resolved_order_id
+    lane_id = _canonical_entry_lane_id(
+        lane_id=metadata.get("parent_lane_id") or metadata.get("lane_id"),
+        pair=pair,
+        side=side,
+        vehicle=_response_entry_vehicle(response, intent),
+    )
+    if lane_id:
+        evidence["lane_id"] = lane_id
+    forecast_timestamp = str(
+        forecast.get("timestamp_utc")
+        or forecast.get("time_utc")
+        or forecast.get("time")
+        or ""
+    ).strip()
+    if forecast_timestamp:
+        evidence["forecast_timestamp_utc"] = forecast_timestamp
+    forecast_cycle_id = str(forecast.get("cycle_id") or "").strip()
+    if forecast_cycle_id:
+        evidence["forecast_cycle_id"] = forecast_cycle_id
     guardian_tuning_state = _guardian_tuning_signal_state(metadata)
     if guardian_tuning_state:
         evidence["guardian_tuning_signal_state"] = guardian_tuning_state
@@ -1795,6 +1908,8 @@ def record_entry_thesis_from_response_result(
                 intent=intent,
                 metadata=metadata,
                 forecast=forecast,
+                response=response,
+                order_id=pending_order_id,
             )
             now = now or datetime.now(timezone.utc)
             pending = PendingEntryThesis(
@@ -1867,16 +1982,18 @@ def record_entry_thesis_from_response_result(
             intent=intent,
             metadata=metadata,
             forecast=forecast,
+            response=response,
         )
 
         regime = forecast.get("regime") or metadata.get("regime_state") or None
 
         now = now or datetime.now(timezone.utc)
+        fill_timestamp = _response_fill_timestamp(response)
         existing = load_entry_thesis(trade_id, data_root)
         if existing is not None:
             return EntryThesisRecordResult(status="RECORDED", trade_id=trade_id, thesis=existing)
         entry_thesis = EntryThesis(
-            timestamp_utc=now.isoformat().replace("+00:00", "Z"),
+            timestamp_utc=fill_timestamp or now.isoformat().replace("+00:00", "Z"),
             trade_id=trade_id,
             pair=pair,
             side=side_up,

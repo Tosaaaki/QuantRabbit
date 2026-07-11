@@ -10,6 +10,9 @@ from unittest.mock import patch
 
 from quant_rabbit.capture_economics import RealizedOutcome
 from quant_rabbit import guardian_tuning_cohort as cohort
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    record_entry_thesis_from_response_result,
+)
 
 
 LANE = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
@@ -51,9 +54,12 @@ class GuardianTuningCohortBuilderTest(unittest.TestCase):
         unresolved_first_with_later_resolved: bool = False,
         null_lane_first_with_gateway: bool = False,
         late_append_first_entry: bool = False,
+        record_theses_from_gateway_response: bool = False,
     ) -> tuple[Path, Path, Path, list[RealizedOutcome], dict]:
         ledger = root / "data" / "execution_ledger.db"
         ledger.parent.mkdir(parents=True)
+        thesis_path = root / "data" / "entry_thesis_ledger.jsonl"
+        forecast_path = root / "data" / "forecast_history.jsonl"
         theses: list[str] = []
         forecasts: list[str] = []
         outcomes: list[RealizedOutcome] = []
@@ -171,7 +177,48 @@ class GuardianTuningCohortBuilderTest(unittest.TestCase):
                         sort_keys=True,
                     )
                 )
-                if trade_id != missing_thesis_trade:
+                if record_theses_from_gateway_response:
+                    with forecast_path.open("a", encoding="utf-8") as handle:
+                        handle.write(forecasts[-1] + "\n")
+
+                    class GatewayIntent:
+                        pair = "EUR_USD"
+                        side = "LONG"
+                        order_type = "LIMIT"
+                        thesis = "EUR_USD LONG canonical forward tuning sample"
+                        entry = 1.1000
+                        metadata = {
+                            "desk": "trend_trader",
+                            "parent_lane_id": (
+                                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+                            ),
+                            "regime_state": "TREND_UP",
+                            "m5_trend_score": 0.8,
+                        }
+
+                    response = {
+                        "orderFillTransaction": {
+                            "id": f"fill-transaction-{index}",
+                            "time": entry_at.isoformat(),
+                            "type": "ORDER_FILL",
+                            "orderID": order_id,
+                            "instrument": "EUR_USD",
+                            "units": str(units),
+                            "reason": "LIMIT_ORDER",
+                            "price": "1.1000",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": str(units),
+                            },
+                        }
+                    }
+                    result = record_entry_thesis_from_response_result(
+                        response=response,
+                        intent=GatewayIntent(),
+                        data_root=ledger.parent,
+                    )
+                    self.assertEqual(result.status, "RECORDED")
+                elif trade_id != missing_thesis_trade:
                     theses.append(
                         json.dumps(
                             {
@@ -209,10 +256,9 @@ class GuardianTuningCohortBuilderTest(unittest.TestCase):
                             broker_time_consistent=True,
                         )
                     )
-        thesis_path = root / "data" / "entry_thesis_ledger.jsonl"
-        forecast_path = root / "data" / "forecast_history.jsonl"
-        thesis_path.write_text("\n".join(theses) + "\n")
-        forecast_path.write_text("\n".join(forecasts) + "\n")
+        if not record_theses_from_gateway_response:
+            thesis_path.write_text("\n".join(theses) + "\n")
+            forecast_path.write_text("\n".join(forecasts) + "\n")
         return ledger, thesis_path, forecast_path, outcomes, activation_anchor
 
     def test_builds_complete_post_review_post_cost_normalized_cohort(self) -> None:
@@ -239,6 +285,58 @@ class GuardianTuningCohortBuilderTest(unittest.TestCase):
             self.assertEqual(payload["samples"][0]["net_jpy_per_1000_units"], -100.0)
             self.assertEqual(payload["samples"][1]["net_jpy_per_1000_units"], -50.0)
             self.assertNotIn("signal_evidence_ref", payload["source_watermark"])
+
+    def test_gateway_response_writer_builds_complete_forward_cohort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger, theses, forecasts, outcomes, _ = self._fixture(
+                root,
+                record_theses_from_gateway_response=True,
+            )
+            written_theses = [
+                json.loads(line)
+                for line in theses.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+            self.assertEqual(len(written_theses), 20)
+            first_context = written_theses[0]["context_evidence"]
+            self.assertEqual(written_theses[0]["timestamp_utc"], "2026-07-09T01:00:00+00:00")
+            self.assertEqual(first_context["order_id"], "order-0")
+            self.assertEqual(first_context["lane_id"], LANE)
+            self.assertEqual(
+                first_context["forecast_timestamp_utc"],
+                "2026-07-09T00:55:00+00:00",
+            )
+            self.assertEqual(first_context["forecast_cycle_id"], "cycle-0")
+            self.assertEqual(
+                first_context["guardian_tuning_signal_state"]["regime_state"],
+                "TREND_UP",
+            )
+
+            with patch.object(
+                cohort,
+                "read_attributed_net_outcomes",
+                return_value=outcomes,
+            ):
+                payload = cohort.build_canonical_forward_cohort(
+                    ledger_path=ledger,
+                    entry_thesis_path=theses,
+                    forecast_history_path=forecasts,
+                    review=_review(),
+                    review_completed_at_utc=REVIEWED_AT.isoformat(),
+                    lane_id=LANE,
+                )
+
+            self.assertEqual(len(payload["samples"]), 20)
+            self.assertEqual(
+                [sample["trade_id"] for sample in payload["samples"]],
+                [f"trade-{index}" for index in range(20)],
+            )
+            self.assertEqual(
+                [sample["order_id"] for sample in payload["samples"]],
+                [f"order-{index}" for index in range(20)],
+            )
 
     def test_post_activation_monitor_uses_exact_first_twenty_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

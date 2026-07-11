@@ -20,6 +20,9 @@ from quant_rabbit.execution_timing_contracts import (
 )
 from quant_rabbit.guardian_receipt_consumption import consumption_status_summary
 from quant_rabbit.guardian_receipt_operator_review import operator_review_status_summary
+from quant_rabbit.guardian_tuning_acquisition import (
+    build_guardian_tuning_acquisition_progress,
+)
 from quant_rabbit.paths import (
     DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
     DEFAULT_ACTIVE_TRADER_CONTRACT,
@@ -27,6 +30,8 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_ENTRY_THESIS_LEDGER,
+    DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -280,6 +285,8 @@ class TraderSupportBot:
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         guardian_tuning_work_order_path: Path = DEFAULT_GUARDIAN_TUNING_WORK_ORDER,
+        entry_thesis_ledger_path: Path = DEFAULT_ENTRY_THESIS_LEDGER,
+        execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
         active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
         non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
@@ -322,6 +329,16 @@ class TraderSupportBot:
         self.guardian_tuning_work_order_path = _default_receipt_artifact_path(
             requested_path=guardian_tuning_work_order_path,
             default_path=DEFAULT_GUARDIAN_TUNING_WORK_ORDER,
+            output_path=output_path,
+        )
+        self.entry_thesis_ledger_path = _default_receipt_artifact_path(
+            requested_path=entry_thesis_ledger_path,
+            default_path=DEFAULT_ENTRY_THESIS_LEDGER,
+            output_path=output_path,
+        )
+        self.execution_ledger_path = _default_receipt_artifact_path(
+            requested_path=execution_ledger_path,
+            default_path=DEFAULT_EXECUTION_LEDGER_DB,
             output_path=output_path,
         )
         self.active_trader_contract_path = _default_receipt_artifact_path(
@@ -495,6 +512,27 @@ class TraderSupportBot:
         guardian_tuning_queue_validation = _guardian_tuning_queue_validation(
             guardian_tuning_work_order
         )
+        if guardian_tuning_queue_validation["status"] == "INVALID":
+            guardian_tuning_acquisition = {
+                "schema_version": 1,
+                "status": "QUEUE_INTEGRITY_INVALID",
+                "counts": {
+                    "supported": None,
+                    "ready": None,
+                    "waiting": None,
+                    "defect": None,
+                    "unsupported": None,
+                },
+                "work_orders": [],
+                "unsupported_work_orders": [],
+                "evidence_mode": "FORWARD_FIRST_N_CANONICAL_ENTRIES",
+            }
+        else:
+            guardian_tuning_acquisition = build_guardian_tuning_acquisition_progress(
+                _guardian_tuning_work_order_entries(guardian_tuning_work_order),
+                entry_thesis_path=self.entry_thesis_ledger_path,
+                ledger_path=self.execution_ledger_path,
+            )
 
         blockers = _build_blockers(
             guardian=guardian,
@@ -545,6 +583,7 @@ class TraderSupportBot:
             oanda_history_coverage=oanda_history_coverage,
             runtime_disk=runtime_disk,
             guardian_tuning_work_order=guardian_tuning_work_order,
+            guardian_tuning_acquisition=guardian_tuning_acquisition,
         )
         guardian_tuning_request = next(
             (
@@ -744,6 +783,26 @@ class TraderSupportBot:
             "guardian_tuning_current_unreviewed_count": guardian_tuning_evidence.get(
                 "current_unreviewed_count", 0
             ),
+            "guardian_tuning_acquisition_status": guardian_tuning_evidence.get(
+                "acquisition_status",
+                guardian_tuning_acquisition.get("status"),
+            ),
+            "guardian_tuning_acquisition_ready_count": guardian_tuning_evidence.get(
+                "acquisition_ready_count",
+                guardian_tuning_acquisition.get("counts", {}).get("ready"),
+            ),
+            "guardian_tuning_acquisition_waiting_count": guardian_tuning_evidence.get(
+                "acquisition_waiting_count",
+                guardian_tuning_acquisition.get("counts", {}).get("waiting"),
+            ),
+            "guardian_tuning_acquisition_defect_count": guardian_tuning_evidence.get(
+                "acquisition_defect_count",
+                guardian_tuning_acquisition.get("counts", {}).get("defect"),
+            ),
+            "guardian_tuning_acquisition_unsupported_count": guardian_tuning_evidence.get(
+                "acquisition_unsupported_count",
+                guardian_tuning_acquisition.get("counts", {}).get("unsupported"),
+            ),
             "qr_trader_run_watchdog_status": qr_trader_run_watchdog.get("status"),
             "qr_trader_run_watchdog_severity": qr_trader_run_watchdog.get("severity"),
             "qr_trader_run_watchdog_minutes_since_last_run": qr_trader_run_watchdog.get(
@@ -834,6 +893,8 @@ class TraderSupportBot:
                 "guardian_receipt_consumption": str(self.guardian_receipt_consumption_path),
                 "guardian_receipt_operator_review": str(self.guardian_receipt_operator_review_path),
                 "guardian_tuning_work_order": str(self.guardian_tuning_work_order_path),
+                "entry_thesis_ledger": str(self.entry_thesis_ledger_path),
+                "execution_ledger": str(self.execution_ledger_path),
                 "active_trader_contract": str(self.active_trader_contract_path),
                 "active_opportunity_board": str(self.active_opportunity_board_path),
                 "non_eurusd_live_grade_frontier": str(self.non_eurusd_live_grade_frontier_path),
@@ -859,6 +920,7 @@ class TraderSupportBot:
             "guardian_receipt_consumption": guardian_receipt_consumption,
             "guardian_receipt_operator_review": guardian_receipt_operator_review,
             "guardian_tuning_work_order": guardian_tuning_work_order,
+            "guardian_tuning_acquisition": guardian_tuning_acquisition,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
@@ -1021,7 +1083,19 @@ def _guardian_tuning_terminal_experiment_view(entry: dict[str, Any]) -> dict[str
 def _guardian_tuning_pending_work_order_views(
     payload: dict[str, Any],
     pending_entries: list[dict[str, Any]],
+    acquisition_progress: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    acquisition_rows = (
+        acquisition_progress.get("work_orders")
+        if isinstance(acquisition_progress, dict)
+        and isinstance(acquisition_progress.get("work_orders"), list)
+        else []
+    )
+    acquisition_by_work_order_id = {
+        str(item.get("work_order_id")): dict(item)
+        for item in acquisition_rows
+        if isinstance(item, dict) and str(item.get("work_order_id") or "").strip()
+    }
     terminal_history = payload.get("terminal_history")
     terminal_by_semantic: dict[str, list[dict[str, Any]]] = {}
     for terminal in terminal_history if isinstance(terminal_history, list) else []:
@@ -1082,6 +1156,10 @@ def _guardian_tuning_pending_work_order_views(
                 "observations": observations,
                 "selected_event": (
                     dict(selected_event) if isinstance(selected_event, dict) else {}
+                ),
+                "acquisition_progress": acquisition_by_work_order_id.get(
+                    str(entry.get("work_order_id") or ""),
+                    {},
                 ),
                 "matching_terminal_experiments": list(
                     terminal_by_semantic.get(semantic_state_id, [])
@@ -6099,6 +6177,7 @@ def _build_repair_requests(
     oanda_history_coverage: dict[str, Any] | None = None,
     runtime_disk: dict[str, Any] | None = None,
     guardian_tuning_work_order: dict[str, Any] | None = None,
+    guardian_tuning_acquisition: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
@@ -6106,6 +6185,11 @@ def _build_repair_requests(
     runtime_disk = runtime_disk if isinstance(runtime_disk, dict) else {}
     guardian_tuning_work_order = (
         guardian_tuning_work_order if isinstance(guardian_tuning_work_order, dict) else {}
+    )
+    guardian_tuning_acquisition = (
+        guardian_tuning_acquisition
+        if isinstance(guardian_tuning_acquisition, dict)
+        else {}
     )
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
@@ -6170,6 +6254,7 @@ def _build_repair_requests(
         pending_work_orders = _guardian_tuning_pending_work_order_views(
             guardian_tuning_work_order,
             tuning_entries,
+            guardian_tuning_acquisition,
         )
         selected_events = [
             entry.get("selected_event")
@@ -6233,11 +6318,27 @@ def _build_repair_requests(
             1 for item in pending_work_orders if item.get("review_current") is True
         )
         current_unreviewed_count = len(pending_work_orders) - current_reviewed_count
+        acquisition_counts = (
+            guardian_tuning_acquisition.get("counts")
+            if isinstance(guardian_tuning_acquisition.get("counts"), dict)
+            else {}
+        )
+        acquisition_ready_count = acquisition_counts.get("ready", 0)
+        acquisition_waiting_count = acquisition_counts.get("waiting", 0)
+        acquisition_defect_count = acquisition_counts.get("defect", 0)
+        acquisition_unsupported_count = acquisition_counts.get("unsupported", 0)
+        tuning_request_status = (
+            "ACQUISITION_COMPLETE_REVIEW_REQUIRED"
+            if isinstance(acquisition_ready_count, int) and acquisition_ready_count > 0
+            else "FORWARD_ACQUISITION_SOURCE_DEFECT"
+            if isinstance(acquisition_defect_count, int) and acquisition_defect_count > 0
+            else "PENDING_HOURLY_AI_REVIEW"
+        )
         requests.append(
             _repair_request(
                 code=GUARDIAN_MARKET_TUNING_REPAIR_REQUEST,
                 priority="P1",
-                status="PENDING_HOURLY_AI_REVIEW",
+                status=tuning_request_status,
                 source_findings=[
                     *[
                         str(event.get("event_type") or "GUARDIAN_MARKET_STATE_CHANGE")
@@ -6258,6 +6359,14 @@ def _build_repair_requests(
                     "pending_work_order_count": len(tuning_entries),
                     "current_reviewed_count": current_reviewed_count,
                     "current_unreviewed_count": current_unreviewed_count,
+                    "acquisition_status": guardian_tuning_acquisition.get("status"),
+                    "acquisition_ready_count": acquisition_ready_count,
+                    "acquisition_waiting_count": acquisition_waiting_count,
+                    "acquisition_defect_count": acquisition_defect_count,
+                    "acquisition_unsupported_count": acquisition_unsupported_count,
+                    "acquisition_evidence_mode": guardian_tuning_acquisition.get(
+                        "evidence_mode"
+                    ),
                     "pending_work_orders": pending_work_orders,
                     "affected_pairs": affected_pairs,
                     "affected_bot_families": affected_families,
@@ -6268,8 +6377,9 @@ def _build_repair_requests(
                 },
                 clearance_conditions=[
                     "Refresh broker truth and bounded closed-candle charts for every affected pair.",
-                    "Run one falsifiable replay/backtest and the targeted regression tests before changing bot parameters.",
-                    "Record the experiment identity and result, then mark the work order consumed or superseded so the same failed hypothesis is not repeated.",
+                    "For each current NO_CHANGE review, collect the first required canonical entries strictly after its review boundary with exact immutable entry-thesis signal links, then wait for those same entries to resolve; replay/backtest may suggest a hypothesis but is not proof.",
+                    "When acquisition reports READY_FOR_GPT_REVIEW_UPGRADE, GPT must re-evaluate the current observation and may upgrade only through guardian_tuning_review_enrich.py with one exact five-part lane, one allowlisted non-risk parameter, its active and candidate values, and a falsifiable forward experiment.",
+                    "After TEST_REQUIRED, build the fixed first-20 canonical cohort and trusted evidence chain, record the experiment identity and result, then use the lifecycle writer to consume or supersede the work order so the same failed hypothesis is not repeated.",
                     "Do not loosen expectancy, spread, exposure, margin, ownership, or broker-truth gates and do not treat this work order as live permission.",
                 ],
                 verification_commands=[
@@ -6280,6 +6390,8 @@ def _build_repair_requests(
                 ],
                 suggested_files=[
                     "data/guardian_tuning_work_order.json",
+                    "data/entry_thesis_ledger.jsonl",
+                    "src/quant_rabbit/guardian_tuning_acquisition.py",
                     "src/quant_rabbit/guardian_events.py",
                     "src/quant_rabbit/trader_support_bot.py",
                     "tests/test_guardian_events.py",
@@ -6289,6 +6401,8 @@ def _build_repair_requests(
                     "Material market-state change creates exactly one idempotent tuning work order.",
                     "Failed or queued GPT wake does not create or consume a tuning work order.",
                     "Tuning review never grants live permission or bypasses deterministic trading gates.",
+                    "Acquisition progress advances from 0 to the required first-N entries and never substitutes a later resolved entry for an earlier unresolved entry.",
+                    "Missing exact order/lane/time/signal links stay visible as an acquisition-source defect.",
                 ],
             )
         )
@@ -7547,6 +7661,11 @@ def _render_report(payload: dict[str, Any]) -> str:
         if isinstance(acceptance.get("artifact_freshness"), dict)
         else {}
     )
+    tuning_acquisition = (
+        payload.get("guardian_tuning_acquisition")
+        if isinstance(payload.get("guardian_tuning_acquisition"), dict)
+        else {}
+    )
     lines = [
         "# Trader Support Bot Report",
         "",
@@ -7783,6 +7902,48 @@ def _render_report(payload: dict[str, Any]) -> str:
         )
     else:
         lines.append("- none")
+    lines.extend(["", "## Guardian Tuning Forward Acquisition", ""])
+    tuning_acquisition_counts = (
+        tuning_acquisition.get("counts")
+        if isinstance(tuning_acquisition.get("counts"), dict)
+        else {}
+    )
+    lines.extend(
+        [
+            f"- Status: `{tuning_acquisition.get('status')}` mode=`{tuning_acquisition.get('evidence_mode')}`",
+            "- Counts: "
+            f"supported=`{tuning_acquisition_counts.get('supported')}` "
+            f"ready=`{tuning_acquisition_counts.get('ready')}` "
+            f"waiting=`{tuning_acquisition_counts.get('waiting')}` "
+            f"defect=`{tuning_acquisition_counts.get('defect')}` "
+            f"unsupported=`{tuning_acquisition_counts.get('unsupported')}`",
+        ]
+    )
+    tuning_acquisition_rows = (
+        tuning_acquisition.get("work_orders")
+        if isinstance(tuning_acquisition.get("work_orders"), list)
+        else []
+    )
+    if tuning_acquisition_rows:
+        lines.extend(
+            [
+                "",
+                "| Work order | Status | Entries | Pre-entry | Resolved | Complete | Remaining |",
+                "|---|---|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in tuning_acquisition_rows[:20]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"| `{item.get('work_order_id')}` | `{item.get('status')}` | "
+                f"`{item.get('entry_count')}/{item.get('required_count')}` | "
+                f"`{item.get('preentry_complete_count')}` | "
+                f"`{item.get('resolved_count')}` | `{item.get('complete_count')}` | "
+                f"`{item.get('remaining_complete_count')}` |"
+            )
+    else:
+        lines.append("- Work orders: none")
     lines.extend(["", "## Bid/Ask Replay Coverage", ""])
     bidask_request = _repair_request_by_code(repair_requests, "COLLECT_BIDASK_REPLAY_EVIDENCE")
     if bidask_request:

@@ -663,6 +663,107 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertAlmostEqual(state["oanda_m5_upper_wick"], 0.625)
         self.assertAlmostEqual(state["oanda_m5_lower_wick"], 0.25)
 
+    def test_side_matched_failed_break_is_persisted_as_entry_thesis_signal(self) -> None:
+        from quant_rabbit.strategy.entry_thesis_ledger import (
+            record_entry_thesis_from_response_result,
+        )
+        from quant_rabbit.strategy.intent_generator import _intent_from_lane
+
+        prior_candles = [
+            {"o": 1.1720, "h": 1.1750, "l": 1.1700, "c": 1.1720, "complete": True}
+            for _ in range(21)
+        ]
+        current = {
+            "o": 1.1698,
+            "h": 1.1720,
+            "l": 1.1690,
+            "c": 1.1710,
+            "complete": True,
+        }
+        chart_context = _oanda_m5_rotation_state_for(
+            "EUR_USD",
+            {
+                "M5": {"atr_pips": 8.0},
+                "M5__recent_candles": [*prior_candles, current],
+            },
+        )
+        now = datetime(2026, 7, 13, 1, 0, tzinfo=timezone.utc)
+        quote = Quote("EUR_USD", bid=1.1709, ask=1.1711, timestamp_utc=now)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            quotes={"EUR_USD": quote},
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=now,
+            ),
+            home_conversions={"USD": 156.0},
+        )
+        intent = _intent_from_lane(
+            {
+                "desk": "failure_trader",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "method": "BREAKOUT_FAILURE",
+                "adoption": "ORDER_INTENT_REQUIRED",
+                "campaign_role": "NOW",
+                "reason": "failed downside break reclaimed support",
+                "required_receipt": "wait for failed-break retest",
+                "target_reward_risk": 2.0,
+                "blockers": [],
+                "story_examples": [],
+            },
+            quote,
+            snapshot,
+            max_loss_jpy=500.0,
+            atr_pips=8.0,
+            parent_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+            chart_context=chart_context,
+        )
+
+        self.assertIs(intent.metadata["failed_acceptance"], True)
+        self.assertEqual(intent.metadata["failed_acceptance_side"], "LONG")
+        self.assertEqual(intent.metadata["acceptance_zone"], 1.17)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.72,
+                        "timestamp_utc": "2026-07-13T00:55:00Z",
+                        "cycle_id": "cycle-failed-acceptance",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderFillTransaction": {
+                        "id": "81002",
+                        "orderID": "81001",
+                        "time": "2026-07-13T01:00:03Z",
+                        "type": "ORDER_FILL",
+                        "reason": "MARKET_ORDER",
+                        "tradeOpened": {"tradeID": "81003"},
+                        "price": "1.17100",
+                    }
+                },
+                intent=intent,
+                data_root=root,
+                now=now,
+            )
+
+        self.assertEqual(result.status, "RECORDED")
+        assert result.thesis is not None
+        signal = result.thesis.context_evidence["guardian_tuning_signal_state"]
+        self.assertIs(signal["failed_acceptance"], True)
+        self.assertEqual(signal["acceptance_zone"], 1.17)
+
     def test_oanda_pullback_continuation_shape_matches_trend_campaign_method(self) -> None:
         self.assertTrue(
             _oanda_campaign_firepower_shape_matches_method(

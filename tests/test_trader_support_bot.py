@@ -156,6 +156,97 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertTrue(evidence["preserve_blockers"])
         self.assertTrue(all("LiveOrderGateway" not in command for command in request["verification_commands"]))
 
+    def test_forward_acquisition_ready_wakes_gpt_review_without_replay_proof(self) -> None:
+        work_order = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-eurusd-forward",
+            "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|DOWN",
+            "latest_observation_id": "obs-forward",
+            "latest_reviewed_observation_id": "obs-forward",
+            "bot_tuning_review_validation": {"status": "VALID", "issues": []},
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+            },
+            "bot_tuning_review": {
+                "affected_pairs": ["EUR_USD"],
+                "affected_bot_families": ["trend"],
+            },
+        }
+        acquisition = {
+            "status": "READY_FOR_GPT_REVIEW_UPGRADE",
+            "counts": {
+                "supported": 1,
+                "ready": 1,
+                "waiting": 0,
+                "defect": 0,
+                "unsupported": 0,
+            },
+            "evidence_mode": "FORWARD_FIRST_N_CANONICAL_ENTRIES",
+            "work_orders": [
+                {
+                    "work_order_id": "guardian-tuning-eurusd-forward",
+                    "status": "READY_FOR_GPT_REVIEW_UPGRADE",
+                    "required_count": 20,
+                    "entry_count": 20,
+                    "preentry_complete_count": 20,
+                    "resolved_count": 20,
+                    "complete_count": 20,
+                    "remaining_complete_count": 0,
+                }
+            ],
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=work_order,
+            guardian_tuning_acquisition=acquisition,
+        )
+
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertEqual(request["status"], "ACQUISITION_COMPLETE_REVIEW_REQUIRED")
+        evidence = request["evidence_summary"]
+        self.assertEqual(evidence["acquisition_ready_count"], 1)
+        progress = evidence["pending_work_orders"][0]["acquisition_progress"]
+        self.assertEqual(progress["complete_count"], 20)
+        clearance = " ".join(request["clearance_conditions"])
+        self.assertIn("READY_FOR_GPT_REVIEW_UPGRADE", clearance)
+        self.assertIn("replay/backtest may suggest a hypothesis but is not proof", clearance)
+        self.assertNotIn(
+            "Run one falsifiable replay/backtest and the targeted regression tests",
+            clearance,
+        )
+        self.assertFalse(evidence["live_permission_allowed"])
+
+    def test_tuning_evidence_defaults_follow_temp_support_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "data"
+            docs = root / "docs"
+            data.mkdir()
+            docs.mkdir()
+
+            bot = TraderSupportBot(
+                output_path=data / "trader_support_bot.json",
+                report_path=docs / "trader_support_bot_report.md",
+            )
+
+            self.assertEqual(
+                bot.entry_thesis_ledger_path,
+                data / "entry_thesis_ledger.jsonl",
+            )
+            self.assertEqual(
+                bot.execution_ledger_path,
+                data / "execution_ledger.db",
+            )
+
     def test_tuning_queue_keeps_observations_reviews_and_terminal_history_scoped(self) -> None:
         def pending(
             *,

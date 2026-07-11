@@ -299,6 +299,9 @@ class GuardianEventRouterTest(unittest.TestCase):
                                 "market_context": {"method": "BREAKOUT_FAILURE"},
                                 "metadata": {
                                     "opportunity_mode": "HARVEST",
+                                    "failed_acceptance": True,
+                                    "oanda_m5_failed_break_long": False,
+                                    "oanda_m5_failed_break_short": True,
                                     "acceptance_zone": "1.1700",
                                 },
                             },
@@ -357,6 +360,89 @@ class GuardianEventRouterTest(unittest.TestCase):
             open_escalation["events_to_review"][0]["event_type"],
             "HARVEST_ZONE",
         )
+
+    def test_breakout_failure_method_alone_does_not_emit_failed_acceptance(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "status": "LIVE_READY",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "entry": 1.17,
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {},
+                            },
+                        }
+                    ]
+                }
+            },
+            now=NOW,
+        )
+
+        self.assertFalse(any(event.event_type == "FAILED_ACCEPTANCE" for event in events))
+
+    def test_matching_side_failed_break_emits_failed_acceptance(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "status": "LIVE_READY",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "entry": 1.17,
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "oanda_m5_failed_break_long": False,
+                                    "oanda_m5_failed_break_short": True,
+                                    "acceptance_zone": 1.17,
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            now=NOW,
+        )
+
+        failed = [event for event in events if event.event_type == "FAILED_ACCEPTANCE"]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].direction, "SHORT")
+        self.assertEqual(failed[0].price_zone, "1.17")
+
+    def test_opposite_side_failed_break_does_not_emit_failed_acceptance(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "status": "LIVE_READY",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "entry": 1.17,
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "oanda_m5_failed_break_long": True,
+                                    "oanda_m5_failed_break_short": False,
+                                    "acceptance_zone": 1.17,
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            now=NOW,
+        )
+
+        self.assertFalse(any(event.event_type == "FAILED_ACCEPTANCE" for event in events))
 
     def test_market_closed_suppression_does_not_stop_safety_or_manual_monitoring(self) -> None:
         snapshot = _snapshot(

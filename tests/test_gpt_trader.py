@@ -523,7 +523,10 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(rows[0]["schema_version"], 2)
             self.assertEqual(rows[0]["pair"], "EUR_USD")
             self.assertEqual(rows[0]["direction"], "LONG")
-            self.assertEqual(rows[0]["verdict"], "UNRESOLVED")
+            self.assertIn(
+                rows[0]["verdict"],
+                {"UNRESOLVED", "NOT_APPLICABLE_CLOSED_MARKET_WINDOW"},
+            )
             self.assertEqual(rows[0]["truth_source"], "MID_CANDLE_DIAGNOSTIC")
             self.assertFalse(rows[0]["live_permission"])
             payload = json.loads((root / "gpt_decision.json").read_text())

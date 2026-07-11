@@ -2031,6 +2031,14 @@ def _live_spread_pips(snapshot: dict[str, Any], pair: str) -> float | None:
     return (ask - bid) * instrument_pip_factor(pair)
 
 
+def _side_matched_failed_acceptance(metadata: dict[str, Any], side: str | None) -> bool:
+    """Accept only the explicit M5 failed-break predicate for the intent side."""
+
+    if side not in {"LONG", "SHORT"}:
+        return False
+    return metadata.get(f"oanda_m5_failed_break_{side.lower()}") is True
+
+
 def _order_intent_events(order_intents: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
     for result in order_intents.get("results", []) or []:
@@ -2060,7 +2068,7 @@ def _order_intent_events(order_intents: dict[str, Any], *, now: datetime) -> lis
                     details={"lane_id": result.get("lane_id"), "status": result.get("status")},
                 )
             )
-        if _truthy(metadata.get("failed_acceptance")) or str(intent.get("market_context", {}).get("method") or "") == "BREAKOUT_FAILURE":
+        if _side_matched_failed_acceptance(metadata, side):
             events.append(
                 _event(
                     event_type="FAILED_ACCEPTANCE",

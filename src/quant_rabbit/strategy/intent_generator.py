@@ -1593,13 +1593,17 @@ def _oanda_range_pos_bucket(value: float) -> str:
     return "mid"
 
 
-def _oanda_m5_failed_break(candles: list[dict[str, Any]], *, side: str) -> bool:
-    """Mirror the universal-rotation miner's current-candle failed-break test."""
+def _oanda_m5_failed_break_evidence(
+    candles: list[dict[str, Any]],
+    *,
+    side: str,
+) -> tuple[bool, float | None]:
+    """Return the side-specific failed-break predicate and reclaimed boundary."""
 
     range_lookback = 20
     idx = len(candles) - 1
     if idx < range_lookback + 1:
-        return False
+        return False, None
     prev_window = candles[idx - range_lookback:idx]
     try:
         prior_high = max(float(item["h"]) for item in prev_window)
@@ -1608,15 +1612,24 @@ def _oanda_m5_failed_break(candles: list[dict[str, Any]], *, side: str) -> bool:
         current_low = float(candles[idx]["l"])
         current_close = float(candles[idx]["c"])
     except (KeyError, TypeError, ValueError):
-        return False
+        return False, None
     width = max(prior_high - prior_low, 1e-12)
     inside_buffer = width * 0.05
     normalized_side = str(side or "").upper()
     if normalized_side == Side.LONG.value:
-        return current_low < prior_low and current_close > prior_low + inside_buffer
+        matched = current_low < prior_low and current_close > prior_low + inside_buffer
+        return matched, prior_low if matched else None
     if normalized_side == Side.SHORT.value:
-        return current_high > prior_high and current_close < prior_high - inside_buffer
-    return False
+        matched = current_high > prior_high and current_close < prior_high - inside_buffer
+        return matched, prior_high if matched else None
+    return False, None
+
+
+def _oanda_m5_failed_break(candles: list[dict[str, Any]], *, side: str) -> bool:
+    """Mirror the universal-rotation miner's current-candle failed-break test."""
+
+    matched, _acceptance_zone = _oanda_m5_failed_break_evidence(candles, side=side)
+    return matched
 
 
 def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str, Any]:
@@ -1662,6 +1675,14 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
     lower_wick_atr = max(0.0, ((min(open_, close) - low) * factor) / atr_pips)
     upper_wick = upper_wick_atr / full_range_atr
     lower_wick = lower_wick_atr / full_range_atr
+    failed_break_long, failed_break_long_zone = _oanda_m5_failed_break_evidence(
+        candles,
+        side=Side.LONG.value,
+    )
+    failed_break_short, failed_break_short_zone = _oanda_m5_failed_break_evidence(
+        candles,
+        side=Side.SHORT.value,
+    )
     out: dict[str, Any] = {
         "m5_atr_pips": atr_pips,
         "oanda_m5_atr_pips": atr_pips,
@@ -1675,9 +1696,19 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
         "oanda_m5_lower_wick": round(lower_wick, 6),
         "oanda_m5_wick_reject_long": lower_wick >= 0.45,
         "oanda_m5_wick_reject_short": upper_wick >= 0.45,
-        "oanda_m5_failed_break_long": _oanda_m5_failed_break(candles, side=Side.LONG.value),
-        "oanda_m5_failed_break_short": _oanda_m5_failed_break(candles, side=Side.SHORT.value),
+        "oanda_m5_failed_break_long": failed_break_long,
+        "oanda_m5_failed_break_short": failed_break_short,
     }
+    if failed_break_long_zone is not None:
+        out["oanda_m5_failed_break_long_acceptance_zone"] = _round_price(
+            pair,
+            failed_break_long_zone,
+        )
+    if failed_break_short_zone is not None:
+        out["oanda_m5_failed_break_short_acceptance_zone"] = _round_price(
+            pair,
+            failed_break_short_zone,
+        )
     if isinstance(prev_fast, dict):
         prev_fast_close = _optional_float(prev_fast.get("c"))
         if prev_fast_close is not None:
@@ -1691,6 +1722,30 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
             out["oanda_m5_slow_mom_atr"] = round(slow_mom, 6)
             out["oanda_m5_slow_mom_abs"] = _oanda_rotation_bucket(slow_mom)
     return out
+
+
+def _side_matched_failed_acceptance_metadata(
+    side: Side,
+    chart_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize the immutable M5 predicate for this intent's actual side."""
+
+    context = chart_context or {}
+    side_token = side.value.lower()
+    predicate_key = f"oanda_m5_failed_break_{side_token}"
+    zone_key = f"{predicate_key}_acceptance_zone"
+    matched = context.get(predicate_key) is True
+    metadata: dict[str, Any] = {
+        "failed_acceptance": matched,
+        "failed_acceptance_side": side.value,
+    }
+    if not matched:
+        return metadata
+    metadata["failed_acceptance_source"] = "OANDA_M5_FAILED_BREAK_SIDE_MATCHED"
+    acceptance_zone = _optional_float(context.get(zone_key))
+    if acceptance_zone is not None:
+        metadata["acceptance_zone"] = acceptance_zone
+    return metadata
 
 
 def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
@@ -9533,6 +9588,10 @@ def _intent_from_lane(
         event_risk="; ".join(str(item) for item in event_blockers[:2]),
         session=session_bucket or "generated dry-run",
     )
+    failed_acceptance_metadata = _side_matched_failed_acceptance_metadata(
+        side,
+        chart_context,
+    )
     intent = OrderIntent(
         pair=pair,
         side=side,
@@ -9613,6 +9672,7 @@ def _intent_from_lane(
             "regime_stop_widen_mult": stop_widen_mult,
             "session_bucket": session_bucket,
             **(chart_context or {}),
+            **failed_acceptance_metadata,
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": (

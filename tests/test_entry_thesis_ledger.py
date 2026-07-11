@@ -365,6 +365,169 @@ class EntryThesisLedgerTest(unittest.TestCase):
             loaded = load_entry_thesis("999999", root)
             self.assertIsNotNone(loaded)
 
+    def test_immediate_fill_records_exact_forward_tuning_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            forecast_timestamp = "2026-07-13T00:55:00Z"
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.71,
+                        "timestamp_utc": forecast_timestamp,
+                        "cycle_id": "cycle-forward-1",
+                    }
+                )
+                + "\n"
+            )
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("SHORT")
+                order_type = _SideEnum("MARKET")
+                thesis = "EUR_USD SHORT forward tuning sample"
+                entry = 1.101
+                metadata = {
+                    "desk": "failure_trader",
+                    "parent_lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                    "failed_acceptance": True,
+                    "m5_atr_pips": 4.2,
+                }
+
+            fill_time = "2026-07-13T01:00:03.123456789Z"
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderFillTransaction": {
+                        "id": "500002",
+                        "orderID": "500001",
+                        "time": fill_time,
+                        "type": "ORDER_FILL",
+                        "reason": "MARKET_ORDER",
+                        "tradeOpened": {"tradeID": "500003"},
+                        "price": "1.10100",
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+                now=datetime(2026, 7, 13, 1, 1, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(result.status, "RECORDED")
+            assert result.thesis is not None
+            self.assertEqual(result.thesis.timestamp_utc, fill_time)
+            self.assertEqual(result.thesis.context_evidence["order_id"], "500001")
+            self.assertEqual(
+                result.thesis.context_evidence["lane_id"],
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET",
+            )
+            self.assertEqual(
+                result.thesis.context_evidence["forecast_timestamp_utc"],
+                forecast_timestamp,
+            )
+            self.assertEqual(
+                result.thesis.context_evidence["forecast_cycle_id"],
+                "cycle-forward-1",
+            )
+            self.assertTrue(
+                result.thesis.context_evidence["guardian_tuning_signal_state"][
+                    "failed_acceptance"
+                ]
+            )
+
+    def test_pending_fill_preserves_exact_forward_tuning_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            forecast_timestamp = "2026-07-13T02:00:00Z"
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "pair": "USD_CAD",
+                        "direction": "UP",
+                        "confidence": 0.69,
+                        "timestamp_utc": forecast_timestamp,
+                        "cycle_id": "cycle-forward-limit-1",
+                    }
+                )
+                + "\n"
+            )
+
+            class FakeIntent:
+                pair = "USD_CAD"
+                side = _SideEnum("LONG")
+                order_type = _SideEnum("LIMIT")
+                thesis = "USD_CAD LONG failed acceptance retest"
+                entry = 1.365
+                tp = 1.369
+                sl = 1.361
+                metadata = {
+                    "desk": "failure_trader",
+                    "parent_lane_id": "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE",
+                    "failed_acceptance": True,
+                    "m5_atr_pips": 5.1,
+                }
+
+            pending_result = record_entry_thesis_from_response_result(
+                response={
+                    "orderCreateTransaction": {
+                        "id": "510001",
+                        "type": "LIMIT_ORDER",
+                        "instrument": "USD_CAD",
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+                now=datetime(2026, 7, 13, 2, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(pending_result.status, "PENDING_RECORDED")
+            assert pending_result.pending is not None
+            self.assertEqual(pending_result.pending.context_evidence["order_id"], "510001")
+            self.assertEqual(
+                pending_result.pending.context_evidence["lane_id"],
+                "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+            )
+            self.assertEqual(
+                pending_result.pending.context_evidence["forecast_timestamp_utc"],
+                forecast_timestamp,
+            )
+            self.assertEqual(
+                pending_result.pending.context_evidence["forecast_cycle_id"],
+                "cycle-forward-limit-1",
+            )
+
+            fill_time = "2026-07-13T02:15:09.987654321Z"
+            promoted = record_entry_thesis_from_order_fill(
+                transaction={
+                    "id": "510002",
+                    "type": "ORDER_FILL",
+                    "time": fill_time,
+                    "orderID": "510001",
+                    "instrument": "USD_CAD",
+                    "units": "1000",
+                    "price": "1.36500",
+                    "reason": "LIMIT_ORDER",
+                    "tradeOpened": {
+                        "tradeID": "510003",
+                        "units": "1000",
+                        "price": "1.36500",
+                    },
+                },
+                data_root=root,
+            )
+
+            self.assertIsNotNone(promoted)
+            assert promoted is not None
+            self.assertEqual(promoted.timestamp_utc, fill_time)
+            self.assertEqual(promoted.context_evidence["order_id"], "510001")
+            self.assertEqual(
+                promoted.context_evidence["lane_id"],
+                "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT",
+            )
+            self.assertEqual(
+                promoted.context_evidence["forecast_cycle_id"],
+                "cycle-forward-limit-1",
+            )
+
     def test_immediate_fill_records_intent_protections_when_forecast_has_no_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

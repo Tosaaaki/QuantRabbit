@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from quant_rabbit.analysis.market_status import compute_market_status
 from quant_rabbit.decision_execution_lineage import (
     DEFAULT_MARKET_READ_EXECUTION_LINKS,
     DecisionExecutionLineageError,
@@ -48,6 +49,7 @@ MARKET_READ_SCHEMA_VERSION = 2
 MARKET_READ_CONTRACT = "MARKET_READ_LEDGER_V2"
 MARKET_READ_TRUTH_SOURCE = "MID_CANDLE_DIAGNOSTIC"
 MARKET_READ_REACTION_CONTRACT = "MARKET_READ_REACTION_CHAIN_V1"
+NOT_APPLICABLE_CLOSED_MARKET_WINDOW = "NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
 
 # SI time-unit definition, not a strategy threshold.  Replace only if the
 # source timestamps stop using standard seconds/minutes.
@@ -400,6 +402,27 @@ def _empty_horizon_result(reason: str = "HORIZON_NOT_DUE") -> dict[str, Any]:
         "mfe_pips": None,
         "mae_pips": None,
     }
+
+
+def _closed_market_window_result(*, now: datetime) -> dict[str, Any]:
+    """Return a terminal, calibration-excluded closed-window result."""
+
+    result = _empty_horizon_result("")
+    result.update(
+        {
+            "resolution_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "unresolved_reason": None,
+            "not_applicable_reason": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "direction_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "target_completion_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "invalidation_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "first_touch_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "full_read_status": NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+            "resolved_at_utc": _iso(now),
+            "resolution_lag_seconds": None,
+        }
+    )
+    return result
 
 
 def _empty_reaction_chain(prediction_id: str) -> dict[str, Any]:
@@ -806,6 +829,37 @@ def _floor_m5(value: datetime) -> datetime:
     return datetime.fromtimestamp(timestamp - (timestamp % M5_SECONDS), tz=timezone.utc)
 
 
+def _has_closed_market_segment(
+    *,
+    predicted_at: datetime,
+    due_at: datetime,
+) -> bool:
+    """Return whether the wall-clock horizon lacks a continuous FX window.
+
+    ``compute_market_status`` owns the DST-aware Sunday/Friday boundary.  We
+    sample both ends of each diagnostic M5-sized segment so a horizon ending
+    exactly at the weekly close remains valid, while any horizon extending
+    through the close (or beginning before the Sunday open) is terminally not
+    applicable.  Calendar lookup failure stays permissive: measurement then
+    follows the existing candle-path rules instead of discarding evidence.
+    """
+
+    cursor = predicted_at
+    step = timedelta(seconds=M5_SECONDS)
+    try:
+        while cursor < due_at:
+            segment_end = min(cursor + step, due_at)
+            if not compute_market_status(cursor).is_fx_open:
+                return True
+            end_probe = segment_end - timedelta(microseconds=1)
+            if end_probe > cursor and not compute_market_status(end_probe).is_fx_open:
+                return True
+            cursor = segment_end
+    except Exception:
+        return False
+    return False
+
+
 def _complete_window(
     candles: Sequence[_Candle],
     *,
@@ -890,6 +944,13 @@ def _score_horizon(
     candle_issue: str | None,
     now: datetime,
 ) -> dict[str, Any]:
+    predicted_at = _parse_utc(row.get("generated_at_utc"))
+    if predicted_at is None:
+        return _empty_horizon_result("PREDICTED_AT_INVALID")
+    due_at = predicted_at + timedelta(minutes=minutes)
+    if _has_closed_market_segment(predicted_at=predicted_at, due_at=due_at):
+        return _closed_market_window_result(now=now)
+
     ineligible_reasons = set(_normalized_score_ineligible_reasons(row))
     if any("GEOMETRY" in reason for reason in ineligible_reasons):
         result = _empty_horizon_result("PREDICTION_GEOMETRY_INVALID")
@@ -903,10 +964,6 @@ def _score_horizon(
             }
         )
         return result
-    predicted_at = _parse_utc(row.get("generated_at_utc"))
-    if predicted_at is None:
-        return _empty_horizon_result("PREDICTED_AT_INVALID")
-    due_at = predicted_at + timedelta(minutes=minutes)
     if now < due_at:
         return _empty_horizon_result("HORIZON_NOT_DUE")
     if candle_issue:
@@ -1084,7 +1141,10 @@ def _apply_v2_scores(
     horizon_results = row.get("horizon_results") if isinstance(row.get("horizon_results"), dict) else {}
     for horizon, minutes in HORIZONS_MINUTES:
         current = horizon_results.get(horizon) if isinstance(horizon_results.get(horizon), dict) else {}
-        if current.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC":
+        if current.get("resolution_status") in {
+            "RESOLVED_MID_CANDLE_DIAGNOSTIC",
+            NOT_APPLICABLE_CLOSED_MARKET_WINDOW,
+        }:
             continue
         horizon_results[horizon] = _score_horizon(
             row,
@@ -1104,8 +1164,19 @@ def _apply_v2_scores(
     row["thirty_minute_verdict"] = result_30m.get("full_read_status", "UNRESOLVED")
     row["two_hour_verdict"] = result_2h.get("full_read_status", "UNRESOLVED")
     statuses = [row["thirty_minute_verdict"], row["two_hour_verdict"]]
-    if "UNRESOLVED" in statuses:
+    resolution_statuses = [
+        result_30m.get("resolution_status", "UNRESOLVED"),
+        result_2h.get("resolution_status", "UNRESOLVED"),
+    ]
+    if all(
+        status == NOT_APPLICABLE_CLOSED_MARKET_WINDOW
+        for status in resolution_statuses
+    ):
+        row["verdict"] = NOT_APPLICABLE_CLOSED_MARKET_WINDOW
+    elif "UNRESOLVED" in statuses:
         row["verdict"] = "UNRESOLVED"
+    elif NOT_APPLICABLE_CLOSED_MARKET_WINDOW in resolution_statuses:
+        row["verdict"] = "PARTIALLY_NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
     elif all(status in _FULL_READ_SUCCESS for status in statuses):
         row["verdict"] = "FULL_READ_COMPLETE"
     else:
@@ -1134,11 +1205,14 @@ def _sync_reaction_resolution(row: dict[str, Any]) -> None:
     horizon_results = row.get("horizon_results") if isinstance(row.get("horizon_results"), Mapping) else {}
     horizons: dict[str, Any] = {}
     resolved_count = 0
+    not_applicable_count = 0
     for horizon, _minutes in HORIZONS_MINUTES:
         result = horizon_results.get(horizon) if isinstance(horizon_results.get(horizon), Mapping) else {}
         status = str(result.get("resolution_status") or "UNRESOLVED")
         if status == "RESOLVED_MID_CANDLE_DIAGNOSTIC":
             resolved_count += 1
+        elif status == NOT_APPLICABLE_CLOSED_MARKET_WINDOW:
+            not_applicable_count += 1
         horizons[horizon] = {
             "status": status,
             "observed_at_utc": result.get("endpoint_observed_at_utc"),
@@ -1151,10 +1225,17 @@ def _sync_reaction_resolution(row: dict[str, Any]) -> None:
             "full_read_status": result.get("full_read_status", "UNRESOLVED"),
             "truth_source": result.get("truth_source", MARKET_READ_TRUTH_SOURCE),
         }
+    terminal_count = resolved_count + not_applicable_count
     if resolved_count == len(HORIZONS_MINUTES):
         status = "RESOLVED"
+    elif not_applicable_count == len(HORIZONS_MINUTES):
+        status = NOT_APPLICABLE_CLOSED_MARKET_WINDOW
+    elif terminal_count == len(HORIZONS_MINUTES):
+        status = "TERMINAL_WITH_NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
     elif resolved_count:
         status = "PARTIALLY_RESOLVED"
+    elif not_applicable_count:
+        status = "PARTIALLY_NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
     else:
         status = "UNRESOLVED"
     chain["prediction_resolution"] = {
@@ -2014,6 +2095,20 @@ def _v2_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         resolved = resolved_results(all_results)
         eligible_resolved = resolved_results(eligible_results)
         ineligible_resolved = resolved_results(ineligible_results)
+
+        def not_applicable_results(
+            results: Sequence[Mapping[str, Any]],
+        ) -> list[Mapping[str, Any]]:
+            return [
+                result
+                for result in results
+                if result.get("resolution_status")
+                == NOT_APPLICABLE_CLOSED_MARKET_WINDOW
+            ]
+
+        not_applicable = not_applicable_results(all_results)
+        eligible_not_applicable = not_applicable_results(eligible_results)
+        ineligible_not_applicable = not_applicable_results(ineligible_results)
         direction = [
             result
             for result in eligible_resolved
@@ -2031,11 +2126,22 @@ def _v2_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         ]
         horizons[horizon] = {
             "resolved": len(resolved),
-            "unresolved": len(all_results) - len(resolved),
+            "not_applicable": len(not_applicable),
+            "unresolved": len(all_results) - len(resolved) - len(not_applicable),
             "eligible_resolved": len(eligible_resolved),
-            "eligible_unresolved": len(eligible_results) - len(eligible_resolved),
+            "eligible_not_applicable": len(eligible_not_applicable),
+            "eligible_unresolved": (
+                len(eligible_results)
+                - len(eligible_resolved)
+                - len(eligible_not_applicable)
+            ),
             "ineligible_resolved": len(ineligible_resolved),
-            "ineligible_unresolved": len(ineligible_results) - len(ineligible_resolved),
+            "ineligible_not_applicable": len(ineligible_not_applicable),
+            "ineligible_unresolved": (
+                len(ineligible_results)
+                - len(ineligible_resolved)
+                - len(ineligible_not_applicable)
+            ),
             "direction_scoreable": len(direction),
             "direction_correct": sum(result.get("direction_status") == "CORRECT" for result in direction),
             "direction_accuracy_pct": _pct(
@@ -2187,8 +2293,11 @@ def _write_score_report(report_path: Path, entries: Sequence[_DocumentEntry], *,
                 f"### {horizon}",
                 "",
                 f"- Lifecycle resolved/unresolved (all v2): `{item['resolved']}` / `{item['unresolved']}`",
+                f"- Lifecycle not applicable (closed-market window): `{item['not_applicable']}`",
                 f"- Score-eligible resolved/unresolved: `{item['eligible_resolved']}` / `{item['eligible_unresolved']}`",
+                f"- Score-eligible not applicable: `{item['eligible_not_applicable']}`",
                 f"- Score-ineligible resolved/unresolved: `{item['ineligible_resolved']}` / `{item['ineligible_unresolved']}`",
+                f"- Score-ineligible not applicable: `{item['ineligible_not_applicable']}`",
                 f"- Direction accuracy: `{item['direction_accuracy_pct']}` ({item['direction_correct']}/{item['direction_scoreable']})",
                 f"- Target completion: `{item['target_completion_pct']}` ({item['target_touched']}/{item['target_scoreable']})",
                 f"- Full-read completion: `{item['full_read_completion_pct']}` ({item['full_read_complete']}/{item['full_read_scoreable']})",
@@ -2202,7 +2311,8 @@ def _write_score_report(report_path: Path, entries: Sequence[_DocumentEntry], *,
             "- Direction accuracy is endpoint direction only; it is not target completion.",
             "- Target/invalidation first-touch is emitted only from a complete M5 path.",
             "- MID_CANDLE_DIAGNOSTIC is not bid/ask execution proof and cannot grant live permission.",
-            "- Incomplete or aged-out M5 windows remain UNRESOLVED.",
+            "- Closed-market horizons are terminally not applicable and never enter accuracy denominators.",
+            "- Incomplete or aged-out applicable M5 windows remain UNRESOLVED.",
             "",
             "## Recent v2 Predictions",
             "",
@@ -2645,5 +2755,20 @@ def market_read_feedback_summary(path: Path) -> dict[str, Any]:
         if len(resolved_examples) >= FEEDBACK_RESOLVED_EXAMPLES_LIMIT:
             break
     base["latest_resolved"] = resolved_examples
-    base["status"] = "OK" if resolved_examples else "V2_EVIDENCE_UNRESOLVED"
+    not_applicable_horizons = sum(
+        int(base["metrics"]["horizons"][horizon].get("not_applicable") or 0)
+        for horizon, _minutes in HORIZONS_MINUTES
+    )
+    all_horizons_not_applicable = bool(rows) and not_applicable_horizons == (
+        len(rows) * len(HORIZONS_MINUTES)
+    )
+    base["status"] = (
+        "OK"
+        if resolved_examples
+        else (
+            "V2_EVIDENCE_NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
+            if all_horizons_not_applicable
+            else "V2_EVIDENCE_UNRESOLVED"
+        )
+    )
     return base

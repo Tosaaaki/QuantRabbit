@@ -353,6 +353,117 @@ class MarketReadLedgerTest(unittest.TestCase):
                 report,
             )
 
+    def test_current_saturday_horizons_are_terminally_not_applicable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            predicted_at = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+            stale_snapshot_at = predicted_at - timedelta(minutes=10)
+
+            self._record(
+                root,
+                decision=_decision(predicted_at),
+                packet=_packet(stale_snapshot_at),
+                now=predicted_at,
+            )
+
+            row = _rows(root / "market_read_predictions.jsonl")[0]
+            self.assertFalse(row["score_eligible"])
+            self.assertEqual(
+                row["verdict"],
+                "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+            )
+            self.assertEqual(
+                row["reaction_chain"]["prediction_resolution"]["status"],
+                "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+            )
+            for horizon in ("30m", "2h"):
+                result = row["horizon_results"][horizon]
+                self.assertEqual(
+                    result["resolution_status"],
+                    "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                )
+                self.assertIsNone(result["unresolved_reason"])
+                self.assertIsNone(result["actual_price"])
+                self.assertFalse(result["live_permission"])
+
+            feedback = market_read_feedback_summary(
+                root / "market_read_predictions.jsonl"
+            )
+            self.assertEqual(
+                feedback["status"],
+                "V2_EVIDENCE_NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+            )
+            for horizon in ("30m", "2h"):
+                metrics = feedback["metrics"]["horizons"][horizon]
+                self.assertEqual(metrics["resolved"], 0)
+                self.assertEqual(metrics["not_applicable"], 1)
+                self.assertEqual(metrics["unresolved"], 0)
+                self.assertEqual(metrics["direction_scoreable"], 0)
+
+    def test_empty_ledger_is_not_misclassified_as_closed_market_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            feedback = market_read_feedback_summary(
+                Path(tmp) / "market_read_predictions.jsonl"
+            )
+
+            self.assertEqual(feedback["metrics"]["rows"], 0)
+            self.assertEqual(feedback["status"], "NO_V2_EVIDENCE")
+
+    def test_friday_close_crossing_only_terminalizes_crossing_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # 16:30 Friday in New York during daylight-saving time. The 30m
+            # horizon ends exactly at the 17:00 close; the 2h horizon crosses it.
+            predicted_at = datetime(2026, 7, 10, 20, 30, tzinfo=UTC)
+
+            self._record(
+                root,
+                decision=_decision(predicted_at),
+                packet=_packet(predicted_at),
+                now=predicted_at + timedelta(minutes=1),
+            )
+
+            row = _rows(root / "market_read_predictions.jsonl")[0]
+            thirty = row["horizon_results"]["30m"]
+            two_hour = row["horizon_results"]["2h"]
+            self.assertEqual(thirty["resolution_status"], "UNRESOLVED")
+            self.assertEqual(thirty["unresolved_reason"], "HORIZON_NOT_DUE")
+            self.assertEqual(
+                two_hour["resolution_status"],
+                "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+            )
+            self.assertEqual(row["verdict"], "UNRESOLVED")
+
+            metrics = market_read_feedback_summary(
+                root / "market_read_predictions.jsonl"
+            )["metrics"]["horizons"]
+            self.assertEqual(metrics["30m"]["unresolved"], 1)
+            self.assertEqual(metrics["30m"]["not_applicable"], 0)
+            self.assertEqual(metrics["2h"]["unresolved"], 0)
+            self.assertEqual(metrics["2h"]["not_applicable"], 1)
+
+    def test_current_open_market_horizons_remain_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            self._record(
+                root,
+                now=self.predicted_at + timedelta(minutes=1),
+            )
+
+            row = _rows(root / "market_read_predictions.jsonl")[0]
+            self.assertTrue(row["score_eligible"])
+            for horizon in ("30m", "2h"):
+                result = row["horizon_results"][horizon]
+                self.assertEqual(result["resolution_status"], "UNRESOLVED")
+                self.assertEqual(result["unresolved_reason"], "HORIZON_NOT_DUE")
+
+                metrics = market_read_feedback_summary(
+                    root / "market_read_predictions.jsonl"
+                )["metrics"]["horizons"][horizon]
+                self.assertEqual(metrics["not_applicable"], 0)
+                self.assertEqual(metrics["unresolved"], 1)
+
     def test_malformed_ineligible_reasons_are_fail_contained(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
