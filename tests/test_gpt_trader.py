@@ -562,6 +562,8 @@ class GPTTraderBrainTest(unittest.TestCase):
             packet = brain._input_packet(files["snapshot"])
 
             contract = packet["market_read_artifact_contract"]
+            self.assertEqual(contract["required_for_action"], "TRADE_OR_CLOSE")
+            self.assertEqual(contract["required_for_actions"], ["TRADE", "CLOSE"])
             self.assertEqual(
                 contract["baseline_path"],
                 str(root / "trader_decision_baseline.json"),
@@ -1088,6 +1090,340 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.action, "TRADE")
             report = (root / "trader_decision_draft.md").read_text()
             self.assertNotIn("non-layerable position EUR_USD SHORT id=472987", report)
+
+    def test_draft_emits_exact_single_close_for_hard_thesis_evolution_sidecar(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_thesis_evolution_close_recommendation(root, files)
+
+                summary = _draft(root, files)
+
+                self.assertEqual(summary.status, "DRAFT_ACCEPTED", msg=summary)
+                self.assertEqual(summary.action, "CLOSE")
+                self.assertTrue(summary.verification_allowed)
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], ["555"])
+                self.assertEqual(decision["selected_lane_ids"], [])
+                self.assertEqual(decision["cancel_order_ids"], [])
+                self.assertIn("position:evolution:555", decision["evidence_refs"])
+                self.assertEqual(
+                    decision["market_read_first"]["next_30m_prediction"]["pair"],
+                    "EUR_USD",
+                )
+                self.assertFalse(decision["operator_close_authorized"])
+                authored_market_read = _market_read_first(
+                    pair="EUR_USD",
+                    direction="LONG",
+                )
+                authored_market_read["next_30m_prediction"].update(
+                    {"target_zone": "1.1780", "invalidation": "1.1740"}
+                )
+                authored_market_read["next_2h_prediction"].update(
+                    {"target_zone": "1.1800", "invalidation": "1.1730"}
+                )
+                authored_market_read["best_trade_if_forced"].update(
+                    {
+                        "entry": "1.1761",
+                        "tp": "1.1780",
+                        "sl": "1.1740",
+                    }
+                )
+                applied, artifacts = _apply_real_market_read_artifacts(
+                    root,
+                    files,
+                    decision,
+                    market_read=authored_market_read,
+                )
+                self.assertEqual(applied["action"], "CLOSE")
+                self.assertEqual(applied["close_trade_ids"], ["555"])
+                verified = _brain(
+                    root,
+                    files,
+                    applied,
+                    market_read_artifact_validation_required=True,
+                    market_read_artifact_paths=artifacts,
+                ).run(snapshot_path=files["snapshot"])
+                verification_payload = json.loads(
+                    (root / "gpt_decision.json").read_text()
+                )
+                self.assertEqual(
+                    verified.status,
+                    "ACCEPTED",
+                    msg=verification_payload["verification_issues"],
+                )
+
+    def test_close_requires_real_market_read_artifacts_at_final_boundary(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_thesis_evolution_close_recommendation(root, files)
+                draft_summary = _draft(root, files)
+                self.assertEqual(draft_summary.action, "CLOSE")
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+
+                verified = _brain(
+                    root,
+                    files,
+                    decision,
+                    market_read_artifact_validation_required=True,
+                ).run(snapshot_path=files["snapshot"])
+
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertEqual(verified.status, "REJECTED")
+                self.assertIn(
+                    "AI_MARKET_READ_ARTIFACT_PROVENANCE_MISSING",
+                    codes,
+                )
+
+    def test_close_rejects_artifact_bound_target_mutation(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_thesis_evolution_close_recommendation(root, files)
+                _draft(root, files)
+                baseline = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                authored_market_read = _market_read_first(
+                    pair="EUR_USD",
+                    direction="LONG",
+                )
+                authored_market_read["next_30m_prediction"].update(
+                    {"target_zone": "1.1780", "invalidation": "1.1740"}
+                )
+                authored_market_read["next_2h_prediction"].update(
+                    {"target_zone": "1.1800", "invalidation": "1.1730"}
+                )
+                authored_market_read["best_trade_if_forced"].update(
+                    {
+                        "entry": "1.1761",
+                        "tp": "1.1780",
+                        "sl": "1.1740",
+                    }
+                )
+                applied, artifacts = _apply_real_market_read_artifacts(
+                    root,
+                    files,
+                    baseline,
+                    market_read=authored_market_read,
+                )
+                applied["close_trade_ids"] = ["555", "555"]
+
+                verified = _brain(
+                    root,
+                    files,
+                    applied,
+                    market_read_artifact_validation_required=True,
+                    market_read_artifact_paths=artifacts,
+                ).run(snapshot_path=files["snapshot"])
+
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertEqual(verified.status, "REJECTED")
+                self.assertIn("AI_MARKET_READ_ARTIFACT_FINAL_MISMATCH", codes)
+                self.assertIn("CLOSE_SINGLE_TRADE_REQUIRED", codes)
+
+    def test_close_rejects_multi_target_entry_and_cancel_scope_without_artifacts(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_thesis_evolution_close_recommendation(root, files)
+                _draft(root, files)
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                decision["close_trade_ids"] = ["555", "555"]
+                decision["selected_lane_id"] = LANE_ID
+                decision["selected_lane_ids"] = [LANE_ID]
+                decision["cancel_order_ids"] = ["123"]
+
+                verified = _brain(root, files, decision).run(
+                    snapshot_path=files["snapshot"]
+                )
+
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertEqual(verified.status, "REJECTED")
+                self.assertIn("CLOSE_SINGLE_TRADE_REQUIRED", codes)
+                self.assertIn("CLOSE_SELECTED_LANE_FORBIDDEN", codes)
+                self.assertIn("CLOSE_CANCEL_ORDER_IDS_FORBIDDEN", codes)
+
+    def test_draft_emits_exact_single_close_for_soft_sidecar_with_explicit_gate_b(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=True):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_forecast_close_recommendation(root, files)
+
+                summary = _draft(root, files)
+
+                self.assertEqual(summary.status, "DRAFT_ACCEPTED", msg=summary)
+                self.assertEqual(summary.action, "CLOSE")
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], ["555"])
+                self.assertIn("position:persistence:555", decision["evidence_refs"])
+                self.assertTrue(decision["operator_close_authorized"])
+
+    def test_draft_does_not_close_soft_sidecar_without_explicit_gate_b(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_forecast_close_recommendation(root, files)
+
+                summary = _draft(root, files)
+
+                self.assertNotEqual(summary.action, "CLOSE")
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], [])
+
+    def test_draft_does_not_close_hard_sidecar_downgraded_by_hold_conflict(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                _write_fresh_position_hold_support(root, files)
+                _write_fresh_thesis_evolution_close_recommendation(root, files)
+
+                summary = _draft(root, files)
+
+                self.assertNotEqual(summary.action, "CLOSE")
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], [])
+
+    def test_draft_never_targets_operator_manual_position_from_hard_sidecar(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _fixtures(
+                    root,
+                    positions=[
+                        {
+                            "trade_id": "472987",
+                            "pair": "EUR_USD",
+                            "side": "SHORT",
+                            "units": 30000,
+                            "entry_price": 1.14048,
+                            "take_profit": 1.1361,
+                            "stop_loss": None,
+                            "owner": "operator_manual",
+                        }
+                    ],
+                )
+                _write_fresh_thesis_evolution_close_recommendation(
+                    root,
+                    files,
+                    trade_id="472987",
+                )
+
+                summary = _draft(root, files)
+
+                self.assertNotEqual(summary.action, "CLOSE")
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], [])
+
+    def test_draft_refuses_deterministic_mass_close_when_two_trades_are_authorized(self) -> None:
+        with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(
+                    root,
+                    position_side="SHORT",
+                    m15_dir="DOWN",
+                    h4_dir="DOWN",
+                )
+                snapshot = json.loads(files["snapshot"].read_text())
+                second = dict(snapshot["positions"][0])
+                second["trade_id"] = "556"
+                snapshot["positions"].append(second)
+                files["snapshot"].write_text(json.dumps(snapshot))
+                generated_at = (
+                    datetime.fromisoformat(snapshot["fetched_at_utc"])
+                    + timedelta(seconds=1)
+                ).isoformat()
+                (root / "thesis_evolution_report.json").write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": generated_at,
+                            "evolutions": [
+                                {
+                                    "trade_id": trade_id,
+                                    "pair": "EUR_USD",
+                                    "side": "SHORT",
+                                    "status": "BROKEN",
+                                    "verdict": "RECOMMEND_CLOSE",
+                                    "rationale": "hard invalidation confirmed",
+                                }
+                                for trade_id in ("555", "556")
+                            ],
+                        }
+                    )
+                )
+
+                summary = _draft(root, files)
+
+                self.assertNotEqual(summary.action, "CLOSE")
+                self.assertIn(
+                    "CLOSE_BASELINE_SINGLE_TRADE_REQUIRED",
+                    " ".join(summary.blockers),
+                )
+                decision = json.loads(
+                    (root / "codex_trader_decision_response.json").read_text()
+                )
+                self.assertEqual(decision["close_trade_ids"], [])
 
     def test_draft_classifies_expired_guardian_receipt_before_trade_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -115,6 +115,249 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn(technical.dedupe_key, state["events"])
         self.assertFalse(state["market_status"]["is_fx_open"])
 
+    def test_market_closed_failed_acceptance_entry_watches_do_not_wake(self) -> None:
+        trade_watch = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "breakout failure entry watch",
+                "price_zone": "GBP_JPY 198.00 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            },
+            pair="GBP_JPY",
+        )[0]
+        hold_watch = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "major figure observation",
+                "price_zone": "AUD_JPY 105.00 rejection",
+                "severity": "P2",
+                "action_hint": "HOLD",
+            },
+            pair="AUD_JPY",
+        )[0]
+
+        escalation, state = evaluate_guardian_escalation(
+            events=[trade_watch, hold_watch],
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        self.assertFalse(escalation["wake_gpt"])
+        self.assertEqual(escalation["events_to_review"], [])
+        self.assertEqual(
+            {
+                event["suppressed_reason"]
+                for event in escalation["suppressed_events"]
+            },
+            {"MARKET_CLOSED_FAILED_ACCEPTANCE_WATCH"},
+        )
+        self.assertEqual(
+            {
+                event["action_hint"]
+                for event in escalation["suppressed_events"]
+            },
+            {"TRADE", "HOLD"},
+        )
+        self.assertIn(trade_watch.dedupe_key, state["events"])
+        self.assertIn(hold_watch.dedupe_key, state["events"])
+
+    def test_market_closed_failed_acceptance_watch_wakes_once_after_reopen(self) -> None:
+        trade_watch = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "breakout failure entry watch",
+                "price_zone": "GBP_JPY 198.00 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            },
+            pair="GBP_JPY",
+        )[0]
+        closed_escalation, closed_state = evaluate_guardian_escalation(
+            events=[trade_watch],
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        reopened_at = datetime(2026, 7, 13, 0, 0, tzinfo=timezone.utc)
+        reopened_escalation, reopened_state = evaluate_guardian_escalation(
+            events=[trade_watch],
+            previous_state=closed_state,
+            now=reopened_at,
+        )
+        repeated_escalation, _ = evaluate_guardian_escalation(
+            events=[trade_watch],
+            previous_state=reopened_state,
+            now=reopened_at + timedelta(minutes=1),
+        )
+
+        self.assertFalse(closed_escalation["wake_gpt"])
+        self.assertTrue(reopened_escalation["market_status"]["is_fx_open"])
+        self.assertTrue(reopened_escalation["wake_gpt"])
+        self.assertIn(
+            "MARKET_REOPEN_FAILED_ACCEPTANCE_WATCH",
+            reopened_escalation["wake_reason_codes"],
+        )
+        self.assertFalse(repeated_escalation["wake_gpt"])
+
+    def test_market_closed_fresh_entry_observations_wake_once_after_reopen(self) -> None:
+        cases = (
+            ("THEME_CONFIRMATION", "TRADE"),
+            ("RANGE_RAIL_TOUCH", "TRADE"),
+            ("SESSION_EXPANSION", "TRADE"),
+            ("SQUEEZE_RELEASE", "ADD"),
+        )
+        reopened_at = datetime(2026, 7, 13, 0, 0, tzinfo=timezone.utc)
+
+        for event_type, action_hint in cases:
+            with self.subTest(event_type=event_type, action_hint=action_hint):
+                event = next(
+                    event
+                    for event in _events_from_chart(
+                        {
+                            "event_type": event_type,
+                            "thesis": f"{event_type.lower()} fresh entry watch",
+                            "price_zone": f"{event_type.lower()} trigger zone",
+                            "severity": "P1",
+                            "recommended_review_type": "ENTRY_REVIEW",
+                            "action_hint": action_hint,
+                        }
+                    )
+                    if event.event_type == event_type
+                )
+                closed_escalation, closed_state = evaluate_guardian_escalation(
+                    events=[event],
+                    previous_state={},
+                    now=SUMMER_WEEKEND,
+                )
+                reopened_escalation, reopened_state = evaluate_guardian_escalation(
+                    events=[event],
+                    previous_state=closed_state,
+                    now=reopened_at,
+                )
+                repeated_escalation, _ = evaluate_guardian_escalation(
+                    events=[event],
+                    previous_state=reopened_state,
+                    now=reopened_at + timedelta(minutes=1),
+                )
+
+                self.assertFalse(closed_escalation["wake_gpt"])
+                self.assertEqual(closed_escalation["events_to_review"], [])
+                self.assertEqual(
+                    closed_escalation["suppressed_events"][0]["suppressed_reason"],
+                    "MARKET_CLOSED_ENTRY_OBSERVATION",
+                )
+                self.assertTrue(reopened_escalation["wake_gpt"])
+                self.assertIn(
+                    "MARKET_REOPEN_ENTRY_OBSERVATION",
+                    reopened_escalation["wake_reason_codes"],
+                )
+                self.assertFalse(repeated_escalation["wake_gpt"])
+
+    def test_market_closed_entry_review_with_open_trade_identity_is_not_suppressed(self) -> None:
+        event = next(
+            event
+            for event in _events_from_chart(
+                {
+                    "event_type": "SQUEEZE_RELEASE",
+                    "thesis": "open-position add review",
+                    "price_zone": "M5 squeeze release",
+                    "severity": "P1",
+                    "recommended_review_type": "ENTRY_REVIEW",
+                    "action_hint": "ADD",
+                    "trade_id": "open-trade-1",
+                }
+            )
+            if event.event_type == "SQUEEZE_RELEASE"
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=[event],
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertEqual(
+            escalation["events_to_review"][0]["details"]["trade_id"],
+            "open-trade-1",
+        )
+
+    def test_market_closed_candidate_harvest_is_suppressed_but_open_position_harvest_is_not(self) -> None:
+        candidate_events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "status": "LIVE_READY",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "thesis": "failed acceptance harvest",
+                                "entry": 1.17,
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "opportunity_mode": "HARVEST",
+                                    "acceptance_zone": "1.1700",
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            now=SUMMER_WEEKEND,
+        )
+        candidate_escalation, _ = evaluate_guardian_escalation(
+            events=candidate_events,
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        self.assertEqual(
+            {event.event_type for event in candidate_events},
+            {"FAILED_ACCEPTANCE", "HARVEST_ZONE"},
+        )
+        self.assertFalse(candidate_escalation["wake_gpt"])
+        self.assertEqual(candidate_escalation["events_to_review"], [])
+        candidate_harvest = next(
+            event
+            for event in candidate_escalation["suppressed_events"]
+            if event["event_type"] == "HARVEST_ZONE"
+        )
+        self.assertEqual(
+            candidate_harvest["suppressed_reason"],
+            "MARKET_CLOSED_CANDIDATE_HARVEST_WATCH",
+        )
+
+        open_position_events = detect_guardian_events(
+            inputs={
+                "position_management": {
+                    "positions": [
+                        {
+                            "trade_id": "t1",
+                            "pair": "EUR_USD",
+                            "side": "SHORT",
+                            "action": "TAKE_PROFIT_MARKET",
+                            "thesis": "open winner",
+                        }
+                    ]
+                }
+            },
+            now=SUMMER_WEEKEND,
+        )
+        open_escalation, _ = evaluate_guardian_escalation(
+            events=open_position_events,
+            previous_state={},
+            now=SUMMER_WEEKEND,
+        )
+
+        self.assertTrue(open_escalation["wake_gpt"])
+        self.assertEqual(
+            open_escalation["events_to_review"][0]["event_type"],
+            "HARVEST_ZONE",
+        )
+
     def test_market_closed_suppression_does_not_stop_safety_or_manual_monitoring(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -132,9 +375,19 @@ class GuardianEventRouterTest(unittest.TestCase):
             inputs={"snapshot": snapshot, "pair_charts": {}},
             now=SUMMER_WEEKEND,
         )
+        failed_acceptance_watch = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "fresh entry watch must wait for an open market",
+                "price_zone": "GBP_JPY 198.00 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            },
+            pair="GBP_JPY",
+        )[0]
 
         escalation, _ = evaluate_guardian_escalation(
-            events=events,
+            events=[*events, failed_acceptance_watch],
             previous_state={},
             now=SUMMER_WEEKEND,
         )
@@ -147,6 +400,16 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("TECHNICAL_INPUT_STALE", event_types)
         self.assertIn("UNKNOWN_ORDER", review_types)
         self.assertNotIn("TECHNICAL_INPUT_STALE", review_types)
+        self.assertNotIn("FAILED_ACCEPTANCE", review_types)
+        failed_acceptance_suppressed = next(
+            event
+            for event in escalation["suppressed_events"]
+            if event["event_type"] == "FAILED_ACCEPTANCE"
+        )
+        self.assertEqual(
+            failed_acceptance_suppressed["suppressed_reason"],
+            "MARKET_CLOSED_FAILED_ACCEPTANCE_WATCH",
+        )
         self.assertTrue(escalation["wake_gpt"])
 
     def test_technical_input_still_stale_becomes_reviewable_after_reopen(self) -> None:

@@ -54,6 +54,7 @@ Kill switch: `QR_DISABLE_ENTRY_THESIS_LEDGER=1`.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -174,6 +175,55 @@ _NEWS_CONTEXT_TOKENS = ("news", "headline", "calendar", "macro", "event", "catal
 _CONTEXT_LIST_LIMIT = 8
 _CONTEXT_TEXT_LIMIT = 240
 _FX_CONTEXT_CURRENCIES = {"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"}
+_GUARDIAN_TUNING_SIGNAL_MAX_BYTES = 8192
+_GUARDIAN_TUNING_SIGNAL_NUMBER_ABS_MAX = 1_000_000_000.0
+_GUARDIAN_TUNING_SIGNAL_TEXT_FIELDS = (
+    "desk",
+    "parent_lane_id",
+    "dominant_regime_state",
+    "regime_state",
+    "chart_story_structural",
+    "chart_direction_bias",
+    "m1_regime_quantile",
+    "m5_regime",
+    "m5_regime_quantile",
+    "m15_regime",
+    "h1_regime",
+    "range_phase",
+    "range_breakout_direction",
+    "session_bucket",
+    "session_current_tag",
+)
+_GUARDIAN_TUNING_SIGNAL_NUMBER_FIELDS = (
+    "current_price_mid",
+    "chart_long_score",
+    "chart_short_score",
+    "m5_long_bias",
+    "m5_short_bias",
+    "m5_mean_rev_score",
+    "m5_trend_score",
+    "m5_breakout_score",
+    "m5_family_disagreement",
+    "m1_atr_pips",
+    "m1_atr_percentile_100",
+    "m5_atr_pips",
+    "oanda_m5_atr_pips",
+    "m5_atr_percentile_100",
+    "m15_atr_percentile_100",
+    "h4_atr_pips",
+    "m1_choppiness_14",
+    "m5_adx_14",
+    "m5_macd_hist",
+    "m5_choppiness_14",
+    "atr_percentile_24h",
+    "tf_agreement_score",
+)
+_GUARDIAN_TUNING_SIGNAL_LIST_FIELDS = (
+    "range_timeframes",
+    "trend_timeframes",
+)
+_GUARDIAN_TUNING_SIGNAL_TFS = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+_GUARDIAN_TUNING_SIGNAL_TF_TEXT_FIELDS = ("regime", "state", "classification")
 
 
 def thesis_invalidation_buffer_pips(buffer_pips: Optional[float] = None) -> float:
@@ -1377,10 +1427,138 @@ def _news_context_from_metadata(metadata: Dict[str, Any]) -> list[str]:
     return news_context
 
 
+def _guardian_tuning_signal_text(value: Any, *, limit: int = _CONTEXT_TEXT_LIMIT) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    return text[:limit] if text else None
+
+
+def _guardian_tuning_signal_number(value: Any) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or abs(parsed) > _GUARDIAN_TUNING_SIGNAL_NUMBER_ABS_MAX:
+        return None
+    return value
+
+
+def _guardian_tuning_signal_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    values: list[str] = []
+    for item in value:
+        normalized = _guardian_tuning_signal_text(item)
+        if normalized is None or normalized in values:
+            continue
+        values.append(normalized)
+        if len(values) >= _CONTEXT_LIST_LIMIT:
+            break
+    return values
+
+
+def _guardian_tuning_tf_regime_items(value: Any) -> list[str]:
+    """Flatten the allowlisted pre-entry TF map to bounded scalar list items."""
+
+    if not isinstance(value, dict):
+        return []
+    items: list[str] = []
+    for timeframe in _GUARDIAN_TUNING_SIGNAL_TFS:
+        raw = value.get(timeframe)
+        if not isinstance(raw, dict):
+            continue
+        parts = [timeframe]
+        for key in _GUARDIAN_TUNING_SIGNAL_TF_TEXT_FIELDS:
+            text = _guardian_tuning_signal_text(raw.get(key), limit=48)
+            if text:
+                parts.append(f"{key}={text}")
+        atr_pips = _guardian_tuning_signal_number(raw.get("atr_pips"))
+        if atr_pips is not None:
+            parts.append(f"atr_pips={atr_pips}")
+        if len(parts) > 1:
+            items.append("|".join(parts)[:_CONTEXT_TEXT_LIMIT])
+        if len(items) >= _CONTEXT_LIST_LIMIT:
+            break
+    return items
+
+
+def _add_guardian_tuning_signal_value(
+    state: Dict[str, Any],
+    key: str,
+    value: Any,
+) -> None:
+    candidate = {**state, key: value}
+    encoded = json.dumps(
+        candidate,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) <= _GUARDIAN_TUNING_SIGNAL_MAX_BYTES:
+        state[key] = value
+
+
+def _guardian_tuning_signal_state(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep a bounded allowlist of intent-time signals for forward tuning.
+
+    Only the immutable pre-entry intent metadata is accepted here. Broker
+    responses, fills, realized P/L, exit reasons, and later thesis evolution
+    are deliberately outside this function so they cannot leak hindsight into
+    the forward evidence cohort.
+    """
+
+    state: Dict[str, Any] = {}
+    failed_acceptance = metadata.get("failed_acceptance")
+    if isinstance(failed_acceptance, bool):
+        _add_guardian_tuning_signal_value(
+            state,
+            "failed_acceptance",
+            failed_acceptance,
+        )
+
+    raw_acceptance_zone = metadata.get("acceptance_zone")
+    acceptance_zone = _guardian_tuning_signal_number(raw_acceptance_zone)
+    if acceptance_zone is None:
+        acceptance_zone = _guardian_tuning_signal_text(raw_acceptance_zone)
+    if acceptance_zone is not None:
+        _add_guardian_tuning_signal_value(state, "acceptance_zone", acceptance_zone)
+
+    for key in _GUARDIAN_TUNING_SIGNAL_TEXT_FIELDS:
+        value = _guardian_tuning_signal_text(metadata.get(key))
+        if value is not None:
+            _add_guardian_tuning_signal_value(state, key, value)
+
+    for key in _GUARDIAN_TUNING_SIGNAL_NUMBER_FIELDS:
+        value = _guardian_tuning_signal_number(metadata.get(key))
+        if value is not None:
+            _add_guardian_tuning_signal_value(state, key, value)
+
+    tf_regime_map = _guardian_tuning_tf_regime_items(metadata.get("tf_regime_map"))
+    if tf_regime_map:
+        _add_guardian_tuning_signal_value(state, "tf_regime_map", tf_regime_map)
+
+    for key in _GUARDIAN_TUNING_SIGNAL_LIST_FIELDS:
+        value = _guardian_tuning_signal_list(metadata.get(key))
+        if value:
+            _add_guardian_tuning_signal_value(state, key, value)
+
+    return state
+
+
 def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: Dict[str, Any]) -> Dict[str, Any]:
     """Snapshot advisory context that motivated entry for later P/L attribution."""
 
     evidence: Dict[str, Any] = {}
+    guardian_tuning_state = _guardian_tuning_signal_state(metadata)
+    if guardian_tuning_state:
+        evidence["guardian_tuning_signal_state"] = guardian_tuning_state
     matrix_ref = _context_text(metadata.get("market_context_matrix_ref"))
     if matrix_ref:
         evidence["market_context_matrix_ref"] = matrix_ref

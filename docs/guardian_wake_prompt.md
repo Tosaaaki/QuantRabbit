@@ -37,6 +37,12 @@ Required JSON object shape:
     "affected_bot_families": ["exactly one of trend|mean_reversion|breakout|forecast|execution"],
     "hypothesis": "one falsifiable explanation for the selected state change",
     "falsifiable_experiment": "one bounded replay or before/after test",
+    "evidence_acquisition": {
+      "action_kind": "ADD_PREENTRY_SIGNAL_LOG|BUILD_BID_ASK_REPLAY|COLLECT_FORWARD_ENTRIES|REFRESH_CLOSED_CANDLES|RESOLVE_ATTRIBUTED_OUTCOMES",
+      "source_ref": "one project-relative data/ or logs/ source",
+      "required_new_samples": 20,
+      "success_condition": "one exact bounded non-executing success condition"
+    },
     "proposed_adjustments": ["TEST_REQUIRED: exactly one typed adjustment including exact lane_id; NO_CHANGE: empty"],
     "live_permission_allowed": false,
     "no_direct_oanda": true,
@@ -85,7 +91,15 @@ Rules:
   do not substitute a merely allowlisted but unevaluable parameter.
 - `TEST_REQUIRED` must carry exactly one proposed adjustment for that one
   family. `NO_CHANGE_INSUFFICIENT_EVIDENCE` must carry an empty list and stays
-  pending until a later reviewed experiment is specified. Each adjustment contains exactly
+  pending until a later reviewed experiment is specified. It must also carry
+  exactly one `evidence_acquisition` object. `action_kind` must be exactly one
+  of `ADD_PREENTRY_SIGNAL_LOG`, `BUILD_BID_ASK_REPLAY`,
+  `COLLECT_FORWARD_ENTRIES`, `REFRESH_CLOSED_CANDLES`, or
+  `RESOLVE_ATTRIBUTED_OUTCOMES`; `source_ref` must be a bounded
+  project-relative `data/` or `logs/` reference; `required_new_samples` must be
+  an integer from 1 through 1000; and `success_condition` must be exact,
+  bounded, and non-executing rather than vague wait/monitor prose.
+  Each adjustment contains exactly
   `pair`, `lane_id`, `bot_family`, `parameter`, `current_value`,
   `candidate_value`, and `rationale`; `pair` must be the selected pair,
   `lane_id` must precommit one canonical exact five-part lane in
@@ -132,7 +146,26 @@ If uncertain, return exactly this shape with the current event values filled in:
 }
 
 If that uncertain event carries one of the tuning reasons listed above, add
-the conditional `bot_tuning_review` object with
-`review_status="NO_CHANGE_INSUFFICIENT_EVIDENCE"`, the selected pair only,
-an empty `proposed_adjustments` list, and a concrete next falsifiable evidence
-test. Do not omit the tuning handoff merely because the action is `NO_ACTION`.
+this conditional object with the current event values filled in:
+
+{
+  "bot_tuning_review": {
+    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+    "affected_pairs": ["selected event pair only"],
+    "affected_bot_families": ["exactly one of trend|mean_reversion|breakout|forecast|execution"],
+    "hypothesis": "one falsifiable explanation for the selected state change",
+    "falsifiable_experiment": "one bounded forward evidence test",
+    "evidence_acquisition": {
+      "action_kind": "COLLECT_FORWARD_ENTRIES",
+      "source_ref": "data/forecast_history.jsonl",
+      "required_new_samples": 20,
+      "success_condition": "resolve the first 20 canonical attributed post-review entries"
+    },
+    "proposed_adjustments": [],
+    "live_permission_allowed": false,
+    "no_direct_oanda": true,
+    "preserve_blockers": true
+  }
+}
+
+Do not omit the tuning handoff merely because the action is `NO_ACTION`.

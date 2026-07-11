@@ -10,6 +10,8 @@ from pathlib import Path
 import sqlite3
 
 from quant_rabbit.strategy.entry_thesis_ledger import (
+    _GUARDIAN_TUNING_SIGNAL_MAX_BYTES,
+    _guardian_tuning_signal_state,
     THESIS_EVOLUTION_HISTORY_FILENAME,
     THESIS_HORIZON_FORECAST_MULT,
     EntryThesis,
@@ -621,6 +623,178 @@ class EntryThesisLedgerTest(unittest.TestCase):
             loaded = load_entry_thesis("ctx-1", root)
             assert loaded is not None
             self.assertEqual(loaded.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
+
+    def test_record_from_send_response_persists_guardian_tuning_signal_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("SHORT")
+                thesis = "EUR_USD SHORT failed acceptance"
+                entry = 1.0998
+                metadata = {
+                    "desk": "failure_trader",
+                    "parent_lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                    "failed_acceptance": True,
+                    "acceptance_zone": "1.0998-1.1002",
+                    "current_price_mid": 1.0999,
+                    "dominant_regime_state": "TREND_DOWN",
+                    "regime_state": "FAILURE_RISK",
+                    "tf_regime_map": {
+                        "M1": {
+                            "regime": "RANGE",
+                            "state": "RANGE",
+                            "classification": "RANGE",
+                            "atr_pips": 1.2,
+                            "nearest_support": 1.0995,
+                        },
+                        "M5": {
+                            "regime": "TREND_DOWN",
+                            "state": "TREND_DOWN",
+                            "classification": "TREND_DOWN",
+                            "atr_pips": 4.8,
+                        },
+                    },
+                    "chart_story_structural": "M1 failed acceptance; M5 CHOCH_DOWN close-confirmed",
+                    "m5_mean_rev_score": 0.2,
+                    "m5_trend_score": 0.8,
+                    "m5_breakout_score": 0.7,
+                    "m5_family_disagreement": 0.6,
+                    "m1_atr_pips": 1.2,
+                    "m5_atr_pips": 4.8,
+                    "realized_pl_jpy": 9999,
+                    "exit_reason": "future close information",
+                }
+
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderFillTransaction": {
+                        "tradeOpened": {"tradeID": "guardian-signal-1"},
+                        "price": 1.0998,
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+            )
+
+            self.assertEqual(result.status, "RECORDED")
+            assert result.thesis is not None
+            state = result.thesis.context_evidence["guardian_tuning_signal_state"]
+            self.assertEqual(state["desk"], "failure_trader")
+            self.assertEqual(
+                state["parent_lane_id"],
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+            )
+            self.assertTrue(state["failed_acceptance"])
+            self.assertEqual(state["acceptance_zone"], "1.0998-1.1002")
+            self.assertAlmostEqual(state["current_price_mid"], 1.0999)
+            self.assertEqual(state["dominant_regime_state"], "TREND_DOWN")
+            self.assertEqual(state["regime_state"], "FAILURE_RISK")
+            self.assertIn("M1|regime=RANGE|state=RANGE|classification=RANGE|atr_pips=1.2", state["tf_regime_map"])
+            self.assertIn(
+                "M5|regime=TREND_DOWN|state=TREND_DOWN|classification=TREND_DOWN|atr_pips=4.8",
+                state["tf_regime_map"],
+            )
+            self.assertEqual(state["m5_trend_score"], 0.8)
+            self.assertEqual(state["m5_family_disagreement"], 0.6)
+            self.assertEqual(state["m1_atr_pips"], 1.2)
+            self.assertEqual(state["m5_atr_pips"], 4.8)
+            self.assertNotIn("realized_pl_jpy", state)
+            self.assertNotIn("exit_reason", state)
+
+            loaded = load_entry_thesis("guardian-signal-1", root)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(
+                loaded.context_evidence["guardian_tuning_signal_state"],
+                state,
+            )
+
+    def test_guardian_tuning_signal_state_drops_unknown_huge_and_wrong_typed_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("LONG")
+                thesis = "bounded pre-entry evidence"
+                entry = 1.1
+                metadata = {
+                    "desk": "x" * 10000,
+                    "parent_lane_id": ["not", "a", "scalar"],
+                    "failed_acceptance": "true",
+                    "acceptance_zone": {"not": "a scalar"},
+                    "current_price_mid": float("inf"),
+                    "chart_story_structural": "y" * 10000,
+                    "m5_mean_rev_score": "0.9",
+                    "range_timeframes": [f"TF-{index}-" + ("z" * 1000) for index in range(30)],
+                    "tf_regime_map": {
+                        **{
+                            timeframe: {
+                                "regime": "r" * 1000,
+                                "state": "s" * 1000,
+                                "classification": "c" * 1000,
+                                "atr_pips": 1.0,
+                                "unknown_nested": "n" * 10000,
+                            }
+                            for timeframe in ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+                        },
+                        "H8": {"regime": "must-not-be-recorded"},
+                    },
+                    "unknown_huge_blob": "u" * 1_000_000,
+                    "realized_pl_jpy": -100000,
+                    "trade_close_transaction": {"future": "hindsight"},
+                }
+
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderFillTransaction": {
+                        "tradeOpened": {"tradeID": "guardian-signal-bounded"},
+                        "price": 1.1,
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+            )
+
+            self.assertEqual(result.status, "RECORDED")
+            assert result.thesis is not None
+            state = result.thesis.context_evidence["guardian_tuning_signal_state"]
+            encoded = json.dumps(
+                state,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            self.assertLessEqual(len(encoded), _GUARDIAN_TUNING_SIGNAL_MAX_BYTES)
+            self.assertEqual(len(state["desk"]), 240)
+            self.assertEqual(len(state["chart_story_structural"]), 240)
+            self.assertLessEqual(len(state["range_timeframes"]), 8)
+            self.assertLessEqual(len(state["tf_regime_map"]), 7)
+            self.assertFalse(any(item.startswith("H8|") for item in state["tf_regime_map"]))
+            for forbidden in (
+                "parent_lane_id",
+                "failed_acceptance",
+                "acceptance_zone",
+                "current_price_mid",
+                "m5_mean_rev_score",
+                "unknown_huge_blob",
+                "realized_pl_jpy",
+                "trade_close_transaction",
+            ):
+                self.assertNotIn(forbidden, state)
+
+    def test_guardian_tuning_signal_state_drops_non_utf8_text(self) -> None:
+        state = _guardian_tuning_signal_state(
+            {
+                "desk": "failure_trader",
+                "regime_state": "bad\ud800text",
+            }
+        )
+
+        self.assertEqual(state["desk"], "failure_trader")
+        self.assertNotIn("regime_state", state)
 
     def test_record_from_response_no_trade_id_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as td:

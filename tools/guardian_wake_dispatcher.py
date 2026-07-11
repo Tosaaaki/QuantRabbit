@@ -104,6 +104,9 @@ DEFAULT_PENDING_DISPATCH_TTL_SECONDS = 2 * 60 * 60
 MAX_PENDING_DISPATCHES = 24
 MAX_PENDING_SUCCESSORS_PER_DEDUPE = 8
 MAX_PENDING_TUNING_WORK_ORDERS = 20
+TUNING_REVIEW_BATCH_ITEM_FIELDS = frozenset(
+    {"work_order_id", "expected_observation_id", "review"}
+)
 MAX_TUNING_OBSERVATIONS_PER_WORK_ORDER = 24
 MAX_TUNING_TERMINAL_HISTORY = 32
 # These are audit-retention caps for superseded experiment contracts.  They
@@ -177,6 +180,10 @@ _TUNING_VAGUE_ACQUISITION_TEXT = {
     "tbd",
     "wait",
 }
+_TUNING_VAGUE_ACQUISITION_PATTERNS = (
+    re.compile(r"\b(?:wait|monitor|later|eventually)\b", re.IGNORECASE),
+    re.compile(r"\bwhen\s+enough\b", re.IGNORECASE),
+)
 _TUNING_FORBIDDEN_PARAMETER_TOKENS = {
     "oanda",
     "gateway",
@@ -1740,9 +1747,21 @@ def _binary_identity_key(identity: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _event_has_open_exposure(event: dict[str, Any]) -> bool:
-    if str(event.get("event_type") or "").upper() in _ACTIVE_EXPOSURE_EVENT_TYPES:
-        return True
+    event_type = str(event.get("event_type") or "").upper()
     details = event.get("details") if isinstance(event.get("details"), dict) else {}
+    candidate_harvest = bool(
+        event_type == "HARVEST_ZONE"
+        and str(details.get("lane_id") or "").strip()
+        and str(details.get("status") or "").strip()
+        and not any(
+            str(details.get(key) or "").strip()
+            for key in ("trade_id", "position_id", "open_trade_id")
+        )
+    )
+    if candidate_harvest:
+        return False
+    if event_type in _ACTIVE_EXPOSURE_EVENT_TYPES:
+        return True
     stack: list[Any] = [details]
     while stack:
         item = stack.pop()
@@ -3330,6 +3349,186 @@ def transition_tuning_work_order(
         )
 
 
+def _apply_tuning_work_order_review(
+    *,
+    path: Path,
+    pending_entries: list[dict[str, Any]],
+    work_order_id: str,
+    expected_observation_id: str,
+    review: dict[str, Any],
+    reviewed_by: str,
+    now: datetime,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    """Validate and apply one monotonic review to an in-memory queue."""
+
+    normalized_work_order_id = str(work_order_id or "").strip()
+    normalized_observation_id = str(expected_observation_id or "").strip()
+    matches = [
+        (index, item)
+        for index, item in enumerate(pending_entries)
+        if str(item.get("work_order_id") or "").strip()
+        == normalized_work_order_id
+    ]
+    if len(matches) != 1:
+        return (
+            {
+                "status": "WORK_ORDER_NOT_FOUND",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "match_count": len(matches),
+            },
+            pending_entries,
+            None,
+        )
+    match_index, matched = matches[0]
+    current = dict(matched)
+    latest_observation_id = str(
+        current.get("latest_observation_id")
+        or current.get("observation_id")
+        or current.get("event_fingerprint")
+        or ""
+    ).strip()
+    if latest_observation_id != normalized_observation_id:
+        return (
+            {
+                "status": "WORK_ORDER_OBSERVATION_STALE",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "latest_observation_id": latest_observation_id or None,
+                "expected_observation_id": normalized_observation_id,
+                "retry_required": True,
+            },
+            pending_entries,
+            current,
+        )
+    selected_event = (
+        current.get("selected_event")
+        if isinstance(current.get("selected_event"), dict)
+        else {}
+    )
+    validation = _validate_bot_tuning_review(review, selected_event=selected_event)
+    normalized_review = (
+        validation.get("review")
+        if isinstance(validation.get("review"), dict)
+        else {}
+    )
+    incoming_status = str(normalized_review.get("review_status") or "").upper()
+    if (
+        validation.get("status") != "VALID"
+        or incoming_status
+        not in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
+    ):
+        return (
+            {
+                "status": "STRUCTURED_REVIEW_REQUIRED",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "bot_tuning_review_status": validation.get("status") or "MISSING",
+                "issues": validation.get("issues") or [],
+                "retry_required": True,
+            },
+            pending_entries,
+            current,
+        )
+    current_review = (
+        current.get("bot_tuning_review")
+        if isinstance(current.get("bot_tuning_review"), dict)
+        else {}
+    )
+    current_status = str(current_review.get("review_status") or "").upper()
+    current_review_bound_to_latest = (
+        str(current.get("latest_reviewed_observation_id") or "")
+        == latest_observation_id
+    )
+    same_review = bool(
+        current_status == incoming_status
+        and current_status
+        in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
+        and _tuning_review_digest(current_review)
+        == _tuning_review_digest(normalized_review)
+        and current_review_bound_to_latest
+    )
+    if same_review:
+        return (
+            {
+                "status": "WORK_ORDER_REVIEW_ALREADY_BOUND",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "observation_id": latest_observation_id,
+            },
+            pending_entries,
+            current,
+        )
+    current_validation = (
+        current.get("bot_tuning_review_validation")
+        if isinstance(current.get("bot_tuning_review_validation"), dict)
+        else {}
+    )
+    if (
+        current_status == "TEST_REQUIRED"
+        and incoming_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+        and current_review_bound_to_latest
+    ):
+        return (
+            {
+                "status": "WORK_ORDER_REVIEW_CONFLICT",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "current_review_status": current_status,
+                "incoming_review_status": incoming_status,
+                "retry_required": True,
+            },
+            pending_entries,
+            current,
+        )
+    if (
+        str(current_validation.get("status") or "").upper() == "VALID"
+        and current_review_bound_to_latest
+        and current.get("review_reacquisition_required_after_abort") is not True
+        and not (
+            current_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+            and incoming_status == "TEST_REQUIRED"
+        )
+    ):
+        return (
+            {
+                "status": "WORK_ORDER_REVIEW_CONFLICT",
+                "path": str(path),
+                "work_order_id": normalized_work_order_id,
+                "current_review_status": current_status,
+                "incoming_review_status": incoming_status,
+                "retry_required": True,
+            },
+            pending_entries,
+            current,
+        )
+    updated = {
+        **current,
+        "bot_tuning_review": normalized_review,
+        "bot_tuning_review_validation": {
+            key: value for key, value in validation.items() if key != "review"
+        },
+        "structured_review_completed_at_utc": now.astimezone(
+            timezone.utc
+        ).isoformat(),
+        "structured_review_completed_by": str(reviewed_by or "").strip(),
+        "latest_reviewed_observation_id": latest_observation_id,
+    }
+    updated_pending = list(pending_entries)
+    updated_pending[match_index] = updated
+    return (
+        {
+            "status": "WORK_ORDER_REVIEW_ENRICHED",
+            "path": str(path),
+            "work_order_id": normalized_work_order_id,
+            "observation_id": latest_observation_id,
+            "review_digest_sha256": _tuning_review_digest(normalized_review),
+        },
+        updated_pending,
+        updated,
+    )
+
+
 def enrich_tuning_work_order_review(
     *,
     path: Path,
@@ -3371,134 +3570,18 @@ def enrich_tuning_work_order_review(
             }
         expected_source_sha256 = existing.get("_queue_source_sha256")
         pending, terminal_history = _normalized_tuning_work_order_queue(existing)
-        matches = [
-            item
-            for item in pending
-            if str(item.get("work_order_id") or "").strip() == str(work_order_id or "").strip()
-        ]
-        if len(matches) != 1:
-            return {
-                "status": "WORK_ORDER_NOT_FOUND",
-                "path": str(path),
-                "work_order_id": work_order_id,
-            }
-        current = dict(matches[0])
-        latest_observation_id = str(
-            current.get("latest_observation_id")
-            or current.get("observation_id")
-            or current.get("event_fingerprint")
-            or ""
-        ).strip()
-        if latest_observation_id != str(expected_observation_id or "").strip():
-            return {
-                "status": "WORK_ORDER_OBSERVATION_STALE",
-                "path": str(path),
-                "work_order_id": work_order_id,
-                "latest_observation_id": latest_observation_id or None,
-                "expected_observation_id": expected_observation_id,
-                "retry_required": True,
-            }
-        selected_event = (
-            current.get("selected_event")
-            if isinstance(current.get("selected_event"), dict)
-            else {}
+        result, updated_pending, updated = _apply_tuning_work_order_review(
+            path=path,
+            pending_entries=pending,
+            work_order_id=work_order_id,
+            expected_observation_id=expected_observation_id,
+            review=review,
+            reviewed_by=reviewed_by,
+            now=now,
         )
-        validation = _validate_bot_tuning_review(review, selected_event=selected_event)
-        normalized_review = (
-            validation.get("review")
-            if isinstance(validation.get("review"), dict)
-            else {}
-        )
-        incoming_status = str(normalized_review.get("review_status") or "").upper()
-        if (
-            validation.get("status") != "VALID"
-            or incoming_status not in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
-        ):
-            return {
-                "status": "STRUCTURED_REVIEW_REQUIRED",
-                "path": str(path),
-                "work_order_id": work_order_id,
-                "bot_tuning_review_status": validation.get("status") or "MISSING",
-                "issues": validation.get("issues") or [],
-                "retry_required": True,
-            }
-        current_review = (
-            current.get("bot_tuning_review")
-            if isinstance(current.get("bot_tuning_review"), dict)
-            else {}
-        )
-        current_status = str(current_review.get("review_status") or "").upper()
-        same_review = bool(
-            current_status == incoming_status
-            and current_status
-            in {"TEST_REQUIRED", "NO_CHANGE_INSUFFICIENT_EVIDENCE"}
-            and _tuning_review_digest(current_review)
-            == _tuning_review_digest(normalized_review)
-            and str(current.get("latest_reviewed_observation_id") or "")
-            == latest_observation_id
-        )
-        if same_review:
-            return {
-                "status": "WORK_ORDER_REVIEW_ALREADY_BOUND",
-                "path": str(path),
-                "work_order_id": work_order_id,
-                "observation_id": latest_observation_id,
-            }
-        current_validation = (
-            current.get("bot_tuning_review_validation")
-            if isinstance(current.get("bot_tuning_review_validation"), dict)
-            else {}
-        )
-        current_review_bound_to_latest = (
-            str(current.get("latest_reviewed_observation_id") or "")
-            == latest_observation_id
-        )
-        if (
-            current_status == "TEST_REQUIRED"
-            and incoming_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
-            and current_review_bound_to_latest
-        ):
-            return {
-                "status": "WORK_ORDER_REVIEW_CONFLICT",
-                "path": str(path),
-                "work_order_id": work_order_id,
-                "current_review_status": current_status,
-                "incoming_review_status": incoming_status,
-                "retry_required": True,
-            }
-        if (
-            str(current_validation.get("status") or "").upper() == "VALID"
-            and current_review_bound_to_latest
-            and current.get("review_reacquisition_required_after_abort") is not True
-            and not (
-                current_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
-                and incoming_status == "TEST_REQUIRED"
-            )
-        ):
-            return {
-                "status": "WORK_ORDER_REVIEW_CONFLICT",
-                "path": str(path),
-                "work_order_id": work_order_id,
-                "current_review_status": current_status,
-                "incoming_review_status": incoming_status,
-                "retry_required": True,
-            }
-        updated = {
-            **current,
-            "bot_tuning_review": normalized_review,
-            "bot_tuning_review_validation": {
-                key: value for key, value in validation.items() if key != "review"
-            },
-            "structured_review_completed_at_utc": now.astimezone(timezone.utc).isoformat(),
-            "structured_review_completed_by": str(reviewed_by or "").strip(),
-            "latest_reviewed_observation_id": latest_observation_id,
-        }
-        updated_pending = [
-            updated
-            if str(item.get("work_order_id") or "").strip() == str(work_order_id or "").strip()
-            else item
-            for item in pending
-        ]
+        if result.get("status") != "WORK_ORDER_REVIEW_ENRICHED":
+            return result
+        assert updated is not None
         payload = _tuning_queue_payload(
             primary=updated,
             pending_entries=updated_pending,
@@ -3517,16 +3600,287 @@ def enrich_tuning_work_order_review(
             return _tuning_work_order_write_failure(
                 path=path,
                 work_order_id=work_order_id,
-                observation_id=latest_observation_id,
-                semantic_state_id=_work_order_semantic_state_id(current),
+                observation_id=str(result.get("observation_id") or ""),
+                semantic_state_id=_work_order_semantic_state_id(updated),
                 exc=exc,
             )
+        return result
+
+
+def enrich_tuning_work_order_reviews_batch(
+    *,
+    path: Path,
+    reviews: list[dict[str, Any]],
+    reviewed_by: str,
+    now: datetime,
+) -> dict[str, Any]:
+    """Atomically bind a bounded set of current-observation reviews.
+
+    Every item is revalidated against queue bytes loaded under the stable queue
+    lock. All mutations remain in memory until one whole-queue CAS write, so a
+    stale/conflicting review or a failed write cannot partially bind the batch.
+    """
+
+    requested_count = len(reviews) if isinstance(reviews, list) else 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f"{path.name}.lock")
+    with lock_path.open("a+") as lock_handle:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "status": "WORK_ORDER_CONCURRENT_UPDATE",
+                "path": str(path),
+                "requested_count": requested_count,
+                "prevalidated_count": 0,
+                "success_count": 0,
+                "enriched_count": 0,
+                "already_bound_count": 0,
+                "failure_count": 1,
+                "written_count": 0,
+                "queue_write_count": 0,
+                "failures": [
+                    {
+                        "status": "WORK_ORDER_CONCURRENT_UPDATE",
+                        "error": "guardian tuning queue lock is held by another lifecycle writer",
+                        "retry_required": True,
+                    }
+                ],
+                "results": [],
+                "retry_required": True,
+            }
+
+        structural_failures: list[dict[str, Any]] = []
+        structured: list[dict[str, Any]] = []
+        if not isinstance(reviews, list) or not reviews:
+            structural_failures.append({"code": "MANIFEST_REVIEWS_REQUIRED"})
+        elif len(reviews) > MAX_PENDING_TUNING_WORK_ORDERS:
+            structural_failures.append(
+                {
+                    "code": "MANIFEST_REVIEW_COUNT_EXCEEDED",
+                    "review_count": len(reviews),
+                    "max_review_count": MAX_PENDING_TUNING_WORK_ORDERS,
+                }
+            )
+        normalized_reviewer = str(reviewed_by or "").strip()
+        if not normalized_reviewer or len(normalized_reviewer) > 256:
+            structural_failures.append({"code": "REVIEWED_BY_INVALID"})
+        if now.tzinfo is None:
+            structural_failures.append({"code": "REVIEWED_AT_INVALID"})
+        seen_work_order_ids: set[str] = set()
+        seen_observation_ids: set[str] = set()
+        for index, item in enumerate(reviews if isinstance(reviews, list) else []):
+            if not isinstance(item, dict):
+                structural_failures.append(
+                    {"index": index, "code": "MANIFEST_ITEM_NOT_OBJECT"}
+                )
+                continue
+            unexpected = sorted(set(item) - TUNING_REVIEW_BATCH_ITEM_FIELDS)
+            missing = sorted(TUNING_REVIEW_BATCH_ITEM_FIELDS - set(item))
+            work_order_id = str(item.get("work_order_id") or "").strip()
+            observation_id = str(item.get("expected_observation_id") or "").strip()
+            if unexpected or missing:
+                structural_failures.append(
+                    {
+                        "index": index,
+                        "code": "MANIFEST_ITEM_FIELDS_INVALID",
+                        "work_order_id": work_order_id or None,
+                        "unexpected_fields": unexpected,
+                        "missing_fields": missing,
+                    }
+                )
+                continue
+            if (
+                not work_order_id
+                or not observation_id
+                or len(work_order_id) > 256
+                or len(observation_id) > 256
+            ):
+                structural_failures.append(
+                    {
+                        "index": index,
+                        "code": "MANIFEST_ITEM_ID_INVALID",
+                        "work_order_id": work_order_id or None,
+                    }
+                )
+                continue
+            if work_order_id in seen_work_order_ids:
+                structural_failures.append(
+                    {
+                        "index": index,
+                        "code": "DUPLICATE_WORK_ORDER_ID",
+                        "work_order_id": work_order_id,
+                    }
+                )
+                continue
+            if observation_id in seen_observation_ids:
+                structural_failures.append(
+                    {
+                        "index": index,
+                        "code": "DUPLICATE_OBSERVATION_ID",
+                        "work_order_id": work_order_id,
+                        "expected_observation_id": observation_id,
+                    }
+                )
+                continue
+            seen_work_order_ids.add(work_order_id)
+            seen_observation_ids.add(observation_id)
+            structured.append(
+                {
+                    "index": index,
+                    "work_order_id": work_order_id,
+                    "expected_observation_id": observation_id,
+                    "review": item.get("review"),
+                }
+            )
+        if structural_failures:
+            return {
+                "status": "BATCH_MANIFEST_VALIDATION_FAILED",
+                "path": str(path),
+                "requested_count": requested_count,
+                "prevalidated_count": 0,
+                "success_count": 0,
+                "enriched_count": 0,
+                "already_bound_count": 0,
+                "failure_count": len(structural_failures),
+                "written_count": 0,
+                "queue_write_count": 0,
+                "failures": structural_failures,
+                "results": [],
+            }
+
+        existing = _load_tuning_work_order(path)
+        if existing.get("_read_error"):
+            failure = {
+                "status": "WORK_ORDER_READ_FAILED",
+                "path": str(path),
+                "error": existing.get("_read_error"),
+                "retry_required": True,
+            }
+            return {
+                "status": "WORK_ORDER_READ_FAILED",
+                "path": str(path),
+                "requested_count": requested_count,
+                "prevalidated_count": 0,
+                "success_count": 0,
+                "enriched_count": 0,
+                "already_bound_count": 0,
+                "failure_count": 1,
+                "written_count": 0,
+                "queue_write_count": 0,
+                "failures": [failure],
+                "results": [],
+                "retry_required": True,
+            }
+        expected_source_sha256 = existing.get("_queue_source_sha256")
+        pending, terminal_history = _normalized_tuning_work_order_queue(existing)
+        updated_pending = pending
+        updated_primary: dict[str, Any] | None = None
+        results: list[dict[str, Any]] = []
+        validation_failures: list[dict[str, Any]] = []
+        for item in structured:
+            result, candidate_pending, candidate_primary = (
+                _apply_tuning_work_order_review(
+                    path=path,
+                    pending_entries=updated_pending,
+                    work_order_id=item["work_order_id"],
+                    expected_observation_id=item["expected_observation_id"],
+                    review=item["review"],
+                    reviewed_by=normalized_reviewer,
+                    now=now,
+                )
+            )
+            status = str(result.get("status") or "")
+            if status == "WORK_ORDER_REVIEW_ENRICHED":
+                updated_pending = candidate_pending
+                updated_primary = candidate_primary
+                results.append(result)
+            elif status == "WORK_ORDER_REVIEW_ALREADY_BOUND":
+                results.append(result)
+            else:
+                validation_failures.append(
+                    {"index": item["index"], **result}
+                )
+        if validation_failures:
+            return {
+                "status": "BATCH_MANIFEST_VALIDATION_FAILED",
+                "path": str(path),
+                "requested_count": requested_count,
+                "prevalidated_count": len(results),
+                "success_count": 0,
+                "enriched_count": 0,
+                "already_bound_count": 0,
+                "failure_count": len(validation_failures),
+                "written_count": 0,
+                "queue_write_count": 0,
+                "failures": validation_failures,
+                "results": [],
+            }
+
+        enriched_count = sum(
+            result.get("status") == "WORK_ORDER_REVIEW_ENRICHED"
+            for result in results
+        )
+        already_bound_count = sum(
+            result.get("status") == "WORK_ORDER_REVIEW_ALREADY_BOUND"
+            for result in results
+        )
+        if enriched_count:
+            assert updated_primary is not None
+            payload = _tuning_queue_payload(
+                primary=updated_primary,
+                pending_entries=updated_pending,
+                terminal_history=terminal_history,
+                experiment_digest_history=_tuning_experiment_digest_history(existing),
+                experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
+                override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+            )
+            try:
+                _write_tuning_queue_json(
+                    path,
+                    payload,
+                    expected_source_sha256=expected_source_sha256,
+                )
+            except OSError as exc:
+                failure = _tuning_work_order_write_failure(
+                    path=path,
+                    work_order_id="BATCH",
+                    observation_id=str(
+                        updated_primary.get("latest_observation_id")
+                        or updated_primary.get("observation_id")
+                        or ""
+                    ),
+                    semantic_state_id=_work_order_semantic_state_id(updated_primary),
+                    exc=exc,
+                )
+                return {
+                    "status": failure["status"],
+                    "path": str(path),
+                    "requested_count": requested_count,
+                    "prevalidated_count": len(results),
+                    "success_count": 0,
+                    "enriched_count": 0,
+                    "already_bound_count": 0,
+                    "failure_count": 1,
+                    "written_count": 0,
+                    "queue_write_count": 0,
+                    "failures": [failure],
+                    "results": [],
+                    "retry_required": True,
+                }
         return {
-            "status": "WORK_ORDER_REVIEW_ENRICHED",
+            "status": "BATCH_REVIEW_ENRICHED",
             "path": str(path),
-            "work_order_id": work_order_id,
-            "observation_id": latest_observation_id,
-            "review_digest_sha256": _tuning_review_digest(normalized_review),
+            "requested_count": requested_count,
+            "prevalidated_count": len(results),
+            "success_count": len(results),
+            "enriched_count": enriched_count,
+            "already_bound_count": already_bound_count,
+            "failure_count": 0,
+            "written_count": enriched_count,
+            "queue_write_count": 1 if enriched_count else 0,
+            "failures": [],
+            "results": results,
         }
 
 
@@ -7096,6 +7450,10 @@ def _validate_bot_tuning_review(
                 len(success_condition) < 24
                 or len(success_condition) > 500
                 or success_condition.lower() in _TUNING_VAGUE_ACQUISITION_TEXT
+                or any(
+                    pattern.search(success_condition)
+                    for pattern in _TUNING_VAGUE_ACQUISITION_PATTERNS
+                )
                 or _unsafe_tuning_instruction(success_condition)
             ):
                 issues.append(
@@ -7560,11 +7918,21 @@ def _tuning_queue_json_shape_error(value: Any) -> str | None:
         if isinstance(item, str):
             if len(item) > MAX_TUNING_QUEUE_STRING_CHARS:
                 return "tuning queue JSON contains an oversized string"
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return "tuning queue JSON contains a non-UTF-8 string"
             continue
         if isinstance(item, dict):
             for key, child in item.items():
+                if not isinstance(key, str):
+                    return "tuning queue JSON contains a non-string object key"
                 if len(key) > MAX_TUNING_QUEUE_STRING_CHARS:
                     return "tuning queue JSON contains an oversized object key"
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError:
+                    return "tuning queue JSON contains a non-UTF-8 object key"
                 stack.append((child, depth + 1))
         elif isinstance(item, list):
             stack.extend((child, depth + 1) for child in item)
@@ -8105,10 +8473,22 @@ def _write_tuning_queue_json(
 ) -> None:
     """Optimistic CAS so an hourly-AI lifecycle write is never overwritten."""
 
+    shape_error = _tuning_queue_json_shape_error(payload)
+    if shape_error is not None:
+        raise OSError(f"refusing to write invalid guardian tuning queue: {shape_error}")
+    serialized = (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    if len(serialized) > MAX_TUNING_QUEUE_BYTES:
+        raise OSError(
+            "refusing to write guardian tuning queue raw bytes above "
+            f"{MAX_TUNING_QUEUE_BYTES} (would write {len(serialized)})"
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tuning.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     try:
+        tmp.write_bytes(serialized)
         try:
             current_raw = path.read_bytes()
         except FileNotFoundError:

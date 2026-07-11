@@ -117,6 +117,74 @@ class MarketReadOverlayTest(unittest.TestCase):
 
             self.assertFalse(paths["output"].exists())
 
+    def test_accept_close_baseline_preserves_exact_close_trade_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = _baseline(action="CLOSE", lane_ids=[])
+            baseline["cancel_order_ids"] = []
+            baseline["close_trade_ids"] = ["555"]
+            baseline["method"] = "POSITION_MANAGEMENT"
+            paths = _prepared_paths(root, baseline=baseline)
+            _write_overlay(paths, disposition="ACCEPT_BASELINE")
+
+            summary = _apply(paths)
+
+            final = json.loads(paths["output"].read_text())
+            self.assertEqual(summary.action, "CLOSE")
+            self.assertEqual(final["action"], "CLOSE")
+            self.assertEqual(final["close_trade_ids"], ["555"])
+            self.assertEqual(final["selected_lane_ids"], [])
+            self.assertEqual(final["cancel_order_ids"], [])
+            self.assertEqual(
+                final["decision_provenance"]["baseline_action"],
+                "CLOSE",
+            )
+            self.assertTrue(
+                final["decision_provenance"]["execution_fields_preserved"]
+            )
+
+    def test_accept_rejects_multi_target_close_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = _baseline(action="CLOSE", lane_ids=[])
+            baseline["cancel_order_ids"] = []
+            baseline["close_trade_ids"] = ["555", "556"]
+            baseline["method"] = "POSITION_MANAGEMENT"
+            paths = _prepared_paths(root, baseline=baseline)
+            _write_overlay(paths, disposition="ACCEPT_BASELINE")
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_BASELINE_SINGLE_CLOSE_REQUIRED",
+            ):
+                _apply(paths)
+
+            self.assertFalse(paths["output"].exists())
+
+    def test_accept_rejects_close_baseline_with_entry_or_cancel_scope(self) -> None:
+        for field, value in (
+            ("selected_lane_id", LANE_ID),
+            ("selected_lane_ids", [LANE_ID]),
+            ("cancel_order_ids", ["123"]),
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                baseline = _baseline(action="CLOSE", lane_ids=[])
+                baseline["cancel_order_ids"] = []
+                baseline["close_trade_ids"] = ["555"]
+                baseline["method"] = "POSITION_MANAGEMENT"
+                baseline[field] = value
+                paths = _prepared_paths(root, baseline=baseline)
+                _write_overlay(paths, disposition="ACCEPT_BASELINE")
+
+                with self.assertRaisesRegex(
+                    MarketReadOverlayError,
+                    "MARKET_READ_BASELINE_CLOSE_SCOPE_INVALID",
+                ):
+                    _apply(paths)
+
+                self.assertFalse(paths["output"].exists())
+
     def test_overlay_rejects_any_execution_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))

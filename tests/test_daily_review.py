@@ -912,6 +912,122 @@ class DailyReviewTest(unittest.TestCase):
                 report.narrative_summary,
             )
 
+    def test_market_read_v2_ineligible_unresolved_is_counted_in_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+            unresolved = {
+                "resolution_status": "UNRESOLVED",
+                "direction_status": "UNRESOLVED",
+                "target_completion_status": "UNRESOLVED",
+                "invalidation_status": "UNRESOLVED",
+                "first_touch_status": "UNRESOLVED",
+                "full_read_status": "UNRESOLVED",
+                "truth_source": "MID_CANDLE_DIAGNOSTIC",
+                "live_permission": False,
+            }
+            row = {
+                "schema_version": 2,
+                "prediction_id": "mr2:stale",
+                "generated_at_utc": self._ts(2),
+                "pair": "EUR_USD",
+                "direction": "RANGE",
+                "score_eligible": False,
+                "score_ineligible_reasons": [
+                    "SOURCE_QUOTE_LAG_EXCEEDS_WINDOW"
+                ],
+                "verdict": "UNRESOLVED",
+                "horizon_results": {
+                    "30m": dict(unresolved),
+                    "2h": dict(unresolved),
+                },
+            }
+            score_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            report = compute_daily_review(
+                db_path,
+                now=self.now,
+                market_read_score_path=score_path,
+            )
+            review = report.market_read_review
+
+            self.assertEqual(review["schema_v2_predictions"], 1)
+            self.assertEqual(review["v2_score_eligible_predictions"], 0)
+            self.assertEqual(review["v2_score_ineligible_predictions"], 1)
+            self.assertEqual(review["v2_lifecycle_resolved_predictions"], 0)
+            self.assertEqual(review["v2_lifecycle_unresolved_predictions"], 1)
+            self.assertEqual(
+                review["v2_score_eligible_unresolved_predictions"],
+                0,
+            )
+            self.assertEqual(
+                review["v2_score_ineligible_unresolved_predictions"],
+                1,
+            )
+            self.assertEqual(review["v2_resolved_horizons"], 0)
+            self.assertEqual(review["v2_unresolved_horizons"], 2)
+            self.assertEqual(
+                review["v2_score_eligible_unresolved_horizons"],
+                0,
+            )
+            self.assertEqual(
+                review["v2_score_ineligible_unresolved_horizons"],
+                2,
+            )
+            self.assertEqual(
+                review["v2_score_ineligible_reason_counts"],
+                {"SOURCE_QUOTE_LAG_EXCEEDS_WINDOW": 1},
+            )
+            for horizon in ("30m", "2h"):
+                metrics = review["v2_horizons"][horizon]
+                self.assertEqual(metrics["unresolved"], 1)
+                self.assertEqual(metrics["eligible_unresolved"], 0)
+                self.assertEqual(metrics["ineligible_unresolved"], 1)
+
+    def test_market_read_v2_malformed_ineligible_reasons_are_fail_contained(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+            row = {
+                "schema_version": 2,
+                "prediction_id": "mr2:malformed-reasons",
+                "generated_at_utc": self._ts(2),
+                "pair": "EUR_USD",
+                "direction": "RANGE",
+                "score_eligible": False,
+                "score_ineligible_reasons": 1,
+                "verdict": "UNRESOLVED",
+                "horizon_results": {},
+            }
+            surrogate_row = {
+                **row,
+                "prediction_id": "mr2:surrogate-reasons",
+                "score_ineligible_reasons": ["bad\ud800reason"],
+            }
+            score_path.write_text(
+                json.dumps(row) + "\n" + json.dumps(surrogate_row) + "\n",
+                encoding="utf-8",
+            )
+
+            report = compute_daily_review(
+                db_path,
+                now=self.now,
+                market_read_score_path=score_path,
+            )
+
+            self.assertEqual(
+                report.market_read_review["v2_score_ineligible_reason_counts"],
+                {"MALFORMED_SCORE_INELIGIBLE_REASONS": 2},
+            )
+            self.assertTrue(
+                all(
+                    example["score_eligible"] is False
+                    for example in report.market_read_review["examples"]
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,16 @@ MARKET_READ_STATE_CHANGE_EVENTS = {
     "SQUEEZE_RELEASE",
 }
 MATERIAL_ACK_EVENT_TYPES = MARKET_READ_STATE_CHANGE_EVENTS | {"TECHNICAL_STATE_CHANGE"}
+OPEN_POSITION_IDENTITY_KEYS = {
+    "trade_id",
+    "tradeid",
+    "opentradeid",
+    "position_id",
+    "positionid",
+    "open_trade_id",
+    "open_position_id",
+    "openpositionid",
+}
 
 
 @dataclass(frozen=True)
@@ -367,28 +377,64 @@ def evaluate_guardian_escalation(
             else prior
         )
         reasons = _wake_reasons_for_event(event, reference)
-        market_closed_tuning_reasons: list[str] = []
-        market_closed_tuning_suppressed = bool(
-            event.event_type in TUNING_ONLY_EVENT_TYPES
+        market_closed_observation_reasons: list[str] = []
+        failed_acceptance_entry_watch = bool(
+            event.event_type == "FAILED_ACCEPTANCE"
+            and event.recommended_review_type == "ENTRY_REVIEW"
+            and event.action_hint in {"TRADE", "HOLD"}
+        )
+        details = event.details if isinstance(event.details, dict) else {}
+        fresh_entry_observation = bool(
+            event.recommended_review_type == "ENTRY_REVIEW"
+            and event.action_hint in {"TRADE", "ADD"}
+            and not _event_details_have_open_position_identity(details)
+        )
+        candidate_harvest_watch = bool(
+            event.event_type == "HARVEST_ZONE"
+            and event.recommended_review_type == "HARVEST_REVIEW"
+            and event.action_hint == "HARVEST"
+            and str(details.get("lane_id") or "").strip()
+            and str(details.get("status") or "").strip()
+            and not str(details.get("trade_id") or "").strip()
+        )
+        market_closed_observation_suppressed = bool(
+            (
+                event.event_type in TUNING_ONLY_EVENT_TYPES
+                or failed_acceptance_entry_watch
+                or fresh_entry_observation
+                or candidate_harvest_watch
+            )
             and not market_status.is_fx_open
         )
-        if market_closed_tuning_suppressed:
+        if market_closed_observation_suppressed:
             # A closed weekly market cannot produce a new tradable candle or
-            # technical price observation.  Keep the event, state, and report
-            # for manual/safety monitoring, but never spend GPT or mint a
-            # tuning obligation from regenerated/stale weekend inputs.
-            market_closed_tuning_reasons = list(reasons)
+            # executable failed-acceptance entry observation. Keep the event,
+            # state, and report for manual/safety monitoring, but never spend
+            # GPT or mint a tuning obligation from regenerated/stale weekend
+            # inputs. Safety actions remain outside this observation-only gate.
+            market_closed_observation_reasons = list(reasons)
             reasons = []
-        elif market_reopened and event.event_type == "TECHNICAL_INPUT_STALE":
-            # Weekend staleness is expected, but the same missing input becomes
-            # actionable operational evidence once the market reopens.  NEW_EVENT
-            # keeps the existing dispatcher contract without turning this into
-            # a market-state tuning work order.
-            reasons = list(
-                dict.fromkeys(
-                    [*reasons, "NEW_EVENT", "MARKET_REOPEN_TECHNICAL_INPUT_STILL_STALE"]
-                )
+        elif market_reopened and (
+            event.event_type == "TECHNICAL_INPUT_STALE"
+            or failed_acceptance_entry_watch
+            or fresh_entry_observation
+            or candidate_harvest_watch
+        ):
+            # Weekend staleness and entry watches are expected to be silent
+            # while the market is closed, but the same still-present condition
+            # becomes actionable once the market reopens. NEW_EVENT keeps the
+            # existing dispatcher contract; the market-reopen reason preserves
+            # why this otherwise unchanged event is being reviewed again.
+            reopen_reason = (
+                "MARKET_REOPEN_TECHNICAL_INPUT_STILL_STALE"
+                if event.event_type == "TECHNICAL_INPUT_STALE"
+                else "MARKET_REOPEN_CANDIDATE_HARVEST_WATCH"
+                if candidate_harvest_watch
+                else "MARKET_REOPEN_FAILED_ACCEPTANCE_WATCH"
+                if failed_acceptance_entry_watch
+                else "MARKET_REOPEN_ENTRY_OBSERVATION"
             )
+            reasons = list(dict.fromkeys([*reasons, "NEW_EVENT", reopen_reason]))
         last_wake = _parse_utc((prior or {}).get("last_wake_at_utc"))
         throttle_seconds = _event_throttle_seconds(event)
         bypass_throttle = _event_bypasses_throttle(event, reasons)
@@ -423,8 +469,23 @@ def evaluate_guardian_escalation(
                 suppressed_payload = {
                     **event_payload,
                     "suppressed_reason": (
-                        "MARKET_CLOSED_TUNING_OBSERVATION"
-                        if market_closed_tuning_suppressed
+                        "MARKET_CLOSED_FAILED_ACCEPTANCE_WATCH"
+                        if (
+                            market_closed_observation_suppressed
+                            and failed_acceptance_entry_watch
+                        )
+                        else "MARKET_CLOSED_CANDIDATE_HARVEST_WATCH"
+                        if (
+                            market_closed_observation_suppressed
+                            and candidate_harvest_watch
+                        )
+                        else "MARKET_CLOSED_ENTRY_OBSERVATION"
+                        if (
+                            market_closed_observation_suppressed
+                            and fresh_entry_observation
+                        )
+                        else "MARKET_CLOSED_TUNING_OBSERVATION"
+                        if market_closed_observation_suppressed
                         else "THROTTLED"
                         if repeated_in_throttle
                         else "NO_STATE_CHANGE"
@@ -432,9 +493,9 @@ def evaluate_guardian_escalation(
                     "throttle_seconds": throttle_seconds,
                     "last_wake_at_utc": last_wake_at,
                 }
-                if market_closed_tuning_suppressed:
+                if market_closed_observation_suppressed:
                     suppressed_payload["suppressed_wake_reason_codes"] = (
-                        market_closed_tuning_reasons
+                        market_closed_observation_reasons
                     )
                 suppressed_events.append(suppressed_payload)
         material_reference = (
@@ -3610,6 +3671,52 @@ def _technical_closed_candle_watermarks(details: dict[str, Any]) -> dict[str, st
         if timestamp is not None:
             result[str(timeframe).upper()] = timestamp.isoformat()
     return result
+
+
+def _event_details_have_open_position_identity(details: dict[str, Any]) -> bool:
+    """Keep ambiguous/open-exposure events outside closed-market entry suppression."""
+    pending: list[Any] = [details]
+    seen: set[int] = set()
+    inspected_containers = 0
+    while pending:
+        current = pending.pop()
+        if not isinstance(current, (dict, list, tuple)):
+            continue
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        inspected_containers += 1
+        if inspected_containers > 128:
+            # Event details are expected to be a small JSON object. An
+            # unexpectedly large/ambiguous shape must not silence a possible
+            # open-position action while the market is closed.
+            return True
+        if isinstance(current, dict):
+            for key, value in current.items():
+                normalized_key = re.sub(
+                    r"[^a-z0-9]+",
+                    "_",
+                    str(key).strip().lower(),
+                ).strip("_")
+                if normalized_key in {"open_exposure", "has_open_exposure", "hasopenexposure"}:
+                    if _truthy(value):
+                        return True
+                identity_key = normalized_key in OPEN_POSITION_IDENTITY_KEYS or (
+                    normalized_key.endswith("id")
+                    and ("trade" in normalized_key or "position" in normalized_key)
+                )
+                if identity_key and (
+                    isinstance(value, (str, int, float))
+                    and not isinstance(value, bool)
+                    and str(value).strip()
+                ):
+                    return True
+                if isinstance(value, (dict, list, tuple)):
+                    pending.append(value)
+        else:
+            pending.extend(current)
+    return False
 
 
 def _event_throttle_seconds(event: GuardianEvent) -> int:

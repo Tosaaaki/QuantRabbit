@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,7 +29,10 @@ from quant_rabbit.broker.execution import LiveOrderStageSummary
 import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit import forecast_precision
-from quant_rabbit.gpt_trader import StaticTraderProvider as _ProductionStaticTraderProvider
+from quant_rabbit.gpt_trader import (
+    StaticTraderProvider as _ProductionStaticTraderProvider,
+    _decision_from_payload,
+)
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
@@ -43,7 +46,7 @@ from tests.support_bidask_rules import write_nonmatching_bidask_rules
 
 
 class StaticTraderProvider(_ProductionStaticTraderProvider):
-    """Publish legacy TRADE fixtures through the real AI artifact chain.
+    """Publish legacy TRADE/CLOSE fixtures through the real GPT artifact chain.
 
     AutoTradeCycle tests exercise gateway/capacity behavior, not the overlay
     authoring tool itself. Production rejects self-declared digest strings, so
@@ -54,7 +57,8 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
 
     def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         decision = super().decide(input_packet, schema)
-        if str(decision.get("action") or "").upper() != "TRADE":
+        action = str(decision.get("action") or "").upper()
+        if action not in {"TRADE", "CLOSE"}:
             return decision
         if isinstance(decision.get("decision_provenance"), dict):
             return decision
@@ -69,11 +73,16 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
             str(name): Path(str(path))
             for name, path in (artifact_contract.get("evidence_source_paths") or {}).items()
         }
-        primary_lane = _test_primary_lane(input_packet, decision)
-        primary_lane_id = str(primary_lane.get("lane_id") or "")
-        decision["selected_lane_id"] = primary_lane_id
-        decision["selected_lane_ids"] = [primary_lane_id]
-        market_read = _test_artifact_bound_market_read(input_packet, primary_lane)
+        if action == "TRADE":
+            primary_lane = _test_primary_lane(input_packet, decision)
+            primary_lane_id = str(primary_lane.get("lane_id") or "")
+            decision["selected_lane_id"] = primary_lane_id
+            decision["selected_lane_ids"] = [primary_lane_id]
+            market_read = _test_artifact_bound_market_read(input_packet, primary_lane)
+        else:
+            market_read = decision.get("market_read_first")
+            if not isinstance(market_read, dict):
+                raise AssertionError("test CLOSE fixture is missing market_read_first")
         authored_at = datetime.now(timezone.utc)
         decision["generated_at_utc"] = authored_at.isoformat()
         decision["market_read_first"] = market_read
@@ -6555,7 +6564,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 os.utime(position_execution_path, (104.0, 104.0))
                 client = FakeCycleClient(snapshot)
 
-                summary = AutoTradeCycle(
+                provider = StaticTraderProvider(
+                    close_decision,
+                    source_path=response_path,
+                )
+                cycle = AutoTradeCycle(
                     client=client,
                     snapshot_path=snapshot_path,
                     intents_path=intents_path,
@@ -6579,22 +6592,54 @@ class AutoTradeCycleTest(unittest.TestCase):
                     strategy_profile_path=_candidate_profile(root),
                     market_story_profile_path=_stories(root),
                     receipt_promotion_report_path=root / "promotion.md",
-                    target_state_path=target_state,
+                    target_state_path=None,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
                     use_gpt_trader=True,
-                    gpt_provider=StaticTraderProvider(close_decision, source_path=response_path),
+                    gpt_provider=provider,
                     reuse_market_artifacts=True,
                     refresh_market_story=False,
                     live_enabled=True,
-                ).run(send=True)
+                )
+                brain = cycle._gpt_brain()
+                bound_close = provider.decide(
+                    brain._input_packet(snapshot_path),
+                    {},
+                )
+                response_path.write_text(
+                    json.dumps(bound_close, ensure_ascii=False, indent=2, sort_keys=True)
+                    + "\n"
+                )
+                normalized_close = json.loads(
+                    json.dumps(asdict(_decision_from_payload(bound_close)))
+                )
+                _write_accepted_gpt_close_receipt(
+                    gpt_decision_path,
+                    trade_id="close-me",
+                    generated_at_utc=now.isoformat(),
+                    decision=normalized_close,
+                )
+                reusable = cycle._load_reusable_verified_gpt_handoff()
+                self.assertIsNotNone(reusable)
+                self.assertEqual(reusable.action, "CLOSE")
+                baseline_bytes = brain.market_read_baseline_path.read_bytes()
+                mutated_baseline = json.loads(baseline_bytes)
+                mutated_baseline["risk_notes"] = ["mutated after accepted CLOSE"]
+                brain.market_read_baseline_path.write_text(
+                    json.dumps(mutated_baseline) + "\n"
+                )
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+                brain.market_read_baseline_path.write_bytes(baseline_bytes)
+                self.assertIsNotNone(cycle._load_reusable_verified_gpt_handoff())
+
+                summary = cycle.run(send=True)
         finally:
             if prior_sl is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
-        self.assertEqual(summary.status, "POSITION_ACTION_SENT")
+        self.assertEqual(summary.status, "POSITION_ACTION_SENT", msg=summary)
         self.assertEqual(summary.decision_source, "gpt_trader")
         self.assertEqual(summary.gpt_status, "ACCEPTED")
         self.assertEqual(summary.gpt_action, "CLOSE")
@@ -7694,7 +7739,10 @@ class SequenceTraderProvider:
     def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         index = min(self.calls, len(self.decisions) - 1)
         self.calls += 1
-        return dict(self.decisions[index])
+        return StaticTraderProvider(dict(self.decisions[index])).decide(
+            input_packet,
+            schema,
+        )
 
 
 class LedgerCycleClient(FakeCycleClient):

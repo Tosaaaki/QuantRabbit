@@ -890,9 +890,7 @@ def _score_horizon(
     candle_issue: str | None,
     now: datetime,
 ) -> dict[str, Any]:
-    ineligible_reasons = {
-        str(reason) for reason in row.get("score_ineligible_reasons", []) or []
-    }
+    ineligible_reasons = set(_normalized_score_ineligible_reasons(row))
     if any("GEOMETRY" in reason for reason in ineligible_reasons):
         result = _empty_horizon_result("PREDICTION_GEOMETRY_INVALID")
         result.update(
@@ -1936,30 +1934,108 @@ def _pct(numerator: int, denominator: int) -> float | None:
     )
 
 
+def _normalized_score_ineligible_reasons(row: Mapping[str, Any]) -> list[str]:
+    """Return bounded diagnostic reasons from an untrusted ledger row."""
+
+    raw = row.get("score_ineligible_reasons")
+    if raw is None or raw == []:
+        return ["UNSPECIFIED_SCORE_INELIGIBLE"]
+    if not isinstance(raw, list):
+        return ["MALFORMED_SCORE_INELIGIBLE_REASONS"]
+
+    reasons: list[str] = []
+    malformed = len(raw) > 32
+    for reason in raw[:32]:
+        if not isinstance(reason, str):
+            malformed = True
+            continue
+        text = reason.strip()
+        if not text or len(text) > 256:
+            malformed = True
+            continue
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            malformed = True
+            continue
+        if text not in reasons:
+            reasons.append(text)
+    if malformed:
+        reasons.append("MALFORMED_SCORE_INELIGIBLE_REASONS")
+    return reasons or ["UNSPECIFIED_SCORE_INELIGIBLE"]
+
+
+def _nonnegative_int_or_zero(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value or 0))
+    except (OverflowError, TypeError, ValueError):
+        return 0
+
+
 def _v2_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     eligible = [row for row in rows if row.get("score_eligible") is True]
+    ineligible = [row for row in rows if row.get("score_eligible") is not True]
+    ineligible_reason_counts: dict[str, int] = {}
+    for row in ineligible:
+        for reason in _normalized_score_ineligible_reasons(row):
+            ineligible_reason_counts[reason] = ineligible_reason_counts.get(reason, 0) + 1
     horizons: dict[str, Any] = {}
     for horizon, _minutes in HORIZONS_MINUTES:
-        results: list[Mapping[str, Any]] = []
-        for row in eligible:
-            horizon_results = (
-                row.get("horizon_results")
-                if isinstance(row.get("horizon_results"), Mapping)
-                else {}
-            )
-            result = horizon_results.get(horizon)
-            results.append(result if isinstance(result, Mapping) else {})
-        resolved = [result for result in results if result.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC"]
-        direction = [result for result in resolved if result.get("direction_status") in {"CORRECT", "WRONG"}]
-        target = [result for result in resolved if result.get("target_completion_status") in {"TOUCHED", "NOT_TOUCHED"}]
+        def horizon_results_for(
+            source_rows: Sequence[Mapping[str, Any]],
+        ) -> list[Mapping[str, Any]]:
+            results: list[Mapping[str, Any]] = []
+            for row in source_rows:
+                horizon_results = (
+                    row.get("horizon_results")
+                    if isinstance(row.get("horizon_results"), Mapping)
+                    else {}
+                )
+                result = horizon_results.get(horizon)
+                results.append(result if isinstance(result, Mapping) else {})
+            return results
+
+        all_results = horizon_results_for(rows)
+        eligible_results = horizon_results_for(eligible)
+        ineligible_results = horizon_results_for(ineligible)
+
+        def resolved_results(
+            results: Sequence[Mapping[str, Any]],
+        ) -> list[Mapping[str, Any]]:
+            return [
+                result
+                for result in results
+                if result.get("resolution_status")
+                == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+            ]
+
+        resolved = resolved_results(all_results)
+        eligible_resolved = resolved_results(eligible_results)
+        ineligible_resolved = resolved_results(ineligible_results)
+        direction = [
+            result
+            for result in eligible_resolved
+            if result.get("direction_status") in {"CORRECT", "WRONG"}
+        ]
+        target = [
+            result
+            for result in eligible_resolved
+            if result.get("target_completion_status") in {"TOUCHED", "NOT_TOUCHED"}
+        ]
         full = [
             result
-            for result in resolved
+            for result in eligible_resolved
             if str(result.get("full_read_status") or "").startswith("UNSCORABLE") is False
         ]
         horizons[horizon] = {
             "resolved": len(resolved),
-            "unresolved": len(results) - len(resolved),
+            "unresolved": len(all_results) - len(resolved),
+            "eligible_resolved": len(eligible_resolved),
+            "eligible_unresolved": len(eligible_results) - len(eligible_resolved),
+            "ineligible_resolved": len(ineligible_resolved),
+            "ineligible_unresolved": len(ineligible_results) - len(ineligible_resolved),
             "direction_scoreable": len(direction),
             "direction_correct": sum(result.get("direction_status") == "CORRECT" for result in direction),
             "direction_accuracy_pct": _pct(
@@ -1982,9 +2058,13 @@ def _v2_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "rows": len(rows),
         "score_eligible": len(eligible),
-        "score_ineligible": len(rows) - len(eligible),
+        "score_ineligible": len(ineligible),
+        "score_ineligible_reason_counts": dict(sorted(ineligible_reason_counts.items())),
         "source_snapshot_conflicts": sum(bool(row.get("source_snapshot_conflict")) for row in rows),
-        "coalesced_duplicate_observations": sum(int(row.get("duplicate_observation_count") or 0) for row in rows),
+        "coalesced_duplicate_observations": sum(
+            _nonnegative_int_or_zero(row.get("duplicate_observation_count"))
+            for row in rows
+        ),
         "horizons": horizons,
         "direct_execution": _direct_execution_metrics(rows),
         "reaction_chains": _reaction_metrics(rows),
@@ -2070,6 +2150,10 @@ def _write_score_report(report_path: Path, entries: Sequence[_DocumentEntry], *,
     legacy = [entry.payload for entry in entries if not entry.is_v2 and entry.payload]
     v2 = [entry.payload for entry in entries if entry.is_v2]
     metrics = _v2_metrics(v2)
+    ineligible_reason_summary = ", ".join(
+        f"{reason}={count}"
+        for reason, count in metrics["score_ineligible_reason_counts"].items()
+    ) or "none"
     legacy_resolved = [row for row in legacy if str(row.get("verdict") or "PENDING") != "PENDING"]
     legacy_correct = sum(row.get("verdict") == "CORRECT" for row in legacy_resolved)
     lines = [
@@ -2083,6 +2167,7 @@ def _write_score_report(report_path: Path, entries: Sequence[_DocumentEntry], *,
         f"- Legacy resolved/full-correct: `{len(legacy_resolved)}` / `{legacy_correct}`",
         f"- Schema-v2 predictions: `{metrics['rows']}`",
         f"- Schema-v2 score eligible/ineligible: `{metrics['score_eligible']}` / `{metrics['score_ineligible']}`",
+        f"- Schema-v2 score-ineligible reasons: `{ineligible_reason_summary}`",
         f"- Coalesced exact duplicate observations: `{metrics['coalesced_duplicate_observations']}`",
         f"- Source-snapshot conflict rows: `{metrics['source_snapshot_conflicts']}`",
         f"- Direct originating decision bound/unbound: `{metrics['direct_execution']['originating_decision_bound']}` / `{metrics['direct_execution']['originating_decision_unbound']}`",
@@ -2101,7 +2186,9 @@ def _write_score_report(report_path: Path, entries: Sequence[_DocumentEntry], *,
             [
                 f"### {horizon}",
                 "",
-                f"- Resolved/unresolved: `{item['resolved']}` / `{item['unresolved']}`",
+                f"- Lifecycle resolved/unresolved (all v2): `{item['resolved']}` / `{item['unresolved']}`",
+                f"- Score-eligible resolved/unresolved: `{item['eligible_resolved']}` / `{item['eligible_unresolved']}`",
+                f"- Score-ineligible resolved/unresolved: `{item['ineligible_resolved']}` / `{item['ineligible_unresolved']}`",
                 f"- Direction accuracy: `{item['direction_accuracy_pct']}` ({item['direction_correct']}/{item['direction_scoreable']})",
                 f"- Target completion: `{item['target_completion_pct']}` ({item['target_touched']}/{item['target_scoreable']})",
                 f"- Full-read completion: `{item['full_read_completion_pct']}` ({item['full_read_complete']}/{item['full_read_scoreable']})",

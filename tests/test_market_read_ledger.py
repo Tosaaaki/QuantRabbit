@@ -304,6 +304,89 @@ class MarketReadLedgerTest(unittest.TestCase):
             self.assertEqual(row["source_quote_lag_seconds"], 30.0)
             self.assertTrue(row["score_eligible"])
 
+    def test_ineligible_unresolved_prediction_remains_in_lifecycle_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            applied_at = self.predicted_at + timedelta(minutes=10)
+
+            self._record(
+                root,
+                decision=_decision(self.predicted_at, applied_at=applied_at),
+                now=applied_at + timedelta(minutes=1),
+            )
+            feedback = market_read_feedback_summary(
+                root / "market_read_predictions.jsonl"
+            )
+
+            self.assertEqual(feedback["status"], "V2_EVIDENCE_UNRESOLVED")
+            self.assertEqual(feedback["metrics"]["rows"], 1)
+            self.assertEqual(feedback["metrics"]["score_eligible"], 0)
+            self.assertEqual(feedback["metrics"]["score_ineligible"], 1)
+            self.assertEqual(
+                feedback["metrics"]["score_ineligible_reason_counts"][
+                    "SOURCE_QUOTE_LAG_EXCEEDS_WINDOW"
+                ],
+                1,
+            )
+            for horizon in ("30m", "2h"):
+                metrics = feedback["metrics"]["horizons"][horizon]
+                self.assertEqual(metrics["resolved"], 0)
+                self.assertEqual(metrics["unresolved"], 1)
+                self.assertEqual(metrics["eligible_resolved"], 0)
+                self.assertEqual(metrics["eligible_unresolved"], 0)
+                self.assertEqual(metrics["ineligible_resolved"], 0)
+                self.assertEqual(metrics["ineligible_unresolved"], 1)
+
+            report = (root / "market_read_score_report.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "Lifecycle resolved/unresolved (all v2): `0` / `1`",
+                report,
+            )
+            self.assertIn(
+                "Score-eligible resolved/unresolved: `0` / `0`",
+                report,
+            )
+            self.assertIn(
+                "Score-ineligible resolved/unresolved: `0` / `1`",
+                report,
+            )
+
+    def test_malformed_ineligible_reasons_are_fail_contained(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            applied_at = self.predicted_at + timedelta(minutes=10)
+            path = root / "market_read_predictions.jsonl"
+            self._record(
+                root,
+                decision=_decision(self.predicted_at, applied_at=applied_at),
+                now=applied_at + timedelta(minutes=1),
+            )
+            row = _rows(path)[0]
+            row["score_ineligible_reasons"] = 1
+            row["duplicate_observation_count"] = {"invalid": True}
+            surrogate_row = dict(row)
+            surrogate_row["prediction_id"] = "mr2:surrogate-reason"
+            surrogate_row["score_ineligible_reasons"] = ["bad\ud800reason"]
+            surrogate_row["duplicate_observation_count"] = "not-an-int"
+            path.write_text(
+                json.dumps(row) + "\n" + json.dumps(surrogate_row) + "\n",
+                encoding="utf-8",
+            )
+
+            feedback = market_read_feedback_summary(path)
+
+            self.assertEqual(feedback["metrics"]["score_ineligible"], 2)
+            self.assertEqual(
+                feedback["metrics"]["score_ineligible_reason_counts"],
+                {"MALFORMED_SCORE_INELIGIBLE_REASONS": 2},
+            )
+            self.assertEqual(
+                feedback["metrics"]["coalesced_duplicate_observations"],
+                0,
+            )
+
     def test_first_touch_requires_path_and_same_candle_is_ambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -2272,7 +2272,10 @@ class GPTTraderBrain:
         raw_decision = self.provider.decide(packet, GPT_TRADER_SCHEMA)
         decision = _decision_from_payload(raw_decision)
         artifact_issues: list[tuple[str, str]] = []
-        if self.market_read_artifact_validation_required and decision.action == "TRADE":
+        if self.market_read_artifact_validation_required and decision.action in {
+            "TRADE",
+            "CLOSE",
+        }:
             artifact_issues = revalidate_codex_market_read_artifacts(
                 final_payload=raw_decision,
                 baseline_path=self.market_read_baseline_path,
@@ -2402,7 +2405,8 @@ class GPTTraderBrain:
         sources = self._market_read_evidence_sources(snapshot_path)
         return {
             "contract": "CODEX_MARKET_READ_ARTIFACT_BINDING_V1",
-            "required_for_action": "TRADE",
+            "required_for_action": "TRADE_OR_CLOSE",
+            "required_for_actions": ["TRADE", "CLOSE"],
             "validation_required": self.market_read_artifact_validation_required,
             "baseline_path": str(self.market_read_baseline_path),
             "evidence_packet_path": str(self.market_read_evidence_packet_path),
@@ -3243,6 +3247,20 @@ class DecisionVerifier:
                     reasons=position_close_reasons,
                 )
             if decision.action == "CLOSE":
+                if decision.selected_lane_id is not None or decision.selected_lane_ids:
+                    issues.append(
+                        VerificationIssue(
+                            "CLOSE_SELECTED_LANE_FORBIDDEN",
+                            "CLOSE is close-only and must not select an entry lane",
+                        )
+                    )
+                if decision.cancel_order_ids:
+                    issues.append(
+                        VerificationIssue(
+                            "CLOSE_CANCEL_ORDER_IDS_FORBIDDEN",
+                            "CLOSE is bound to one trade id and must not cancel pending entry orders",
+                        )
+                    )
                 soft_advisory_reasons = _soft_nonblocking_close_advisory_reasons(
                     self.packet,
                     decision.close_trade_ids,
@@ -3930,6 +3948,14 @@ class DecisionVerifier:
                     )
                 )
             return
+        if len(decision.close_trade_ids) != 1:
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_SINGLE_TRADE_REQUIRED",
+                    "CLOSE must bind exactly one current trader-owned trade id; "
+                    "multiple or duplicate targets require separately refreshed receipts",
+                )
+            )
         snapshot = self.packet.get("broker_snapshot", {}) or {}
         trader_trade_ids: set[str] = set()
         for position in snapshot.get("position_summaries", []) or []:
@@ -4987,7 +5013,11 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
 
     blockers: list[str] = []
     position_close_reasons = _position_close_sidecar_reasons(packet)
+    close_candidate, close_selection_blockers = _authorized_single_position_close_candidate(packet)
+    if close_candidate is not None:
+        return _close_decision_draft(packet, close_candidate), position_close_reasons
     blockers.extend(position_close_reasons)
+    blockers.extend(close_selection_blockers)
     blockers.extend(_trade_exposure_blockers(packet))
     blockers.extend(_entry_thesis_sidecar_reasons(packet))
     blockers.extend(_projection_ledger_trade_blockers(packet))
@@ -5504,9 +5534,10 @@ def _draft_market_read_first(
     *,
     selected_lane_ids: tuple[str, ...] = (),
     fallback_lane_ids: tuple[str, ...] = (),
+    focus_pair: str = "",
 ) -> dict[str, Any]:
     lane = _market_read_primary_lane(lanes_by_id, selected_lane_ids, fallback_lane_ids)
-    pair = str((lane or {}).get("pair") or _market_read_fallback_pair(packet) or "").strip()
+    pair = str(focus_pair or (lane or {}).get("pair") or _market_read_fallback_pair(packet) or "").strip()
     side = str((lane or {}).get("direction") or "").strip().upper()
     if not side:
         side = _market_read_chart_direction(packet, pair)
@@ -6056,6 +6087,83 @@ def _trade_decision_draft(
     }
 
 
+def _close_decision_draft(
+    packet: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    trade_id = str(candidate["trade_id"])
+    pair = str(candidate["pair"])
+    side = str(candidate["side"]).upper()
+    recommendations = [
+        item
+        for item in candidate.get("recommendations", [])
+        if isinstance(item, dict)
+    ]
+    reasons = [
+        str(item.get("reason") or "position thesis is invalidated").strip()
+        for item in recommendations
+    ]
+    reason_text = "; ".join(reason for reason in reasons if reason) or "position thesis is invalidated"
+    source_text = ", ".join(
+        dict.fromkeys(
+            str(item.get("source") or "position_sidecar").strip()
+            for item in recommendations
+        )
+    )
+    market_read = _draft_market_read_first(packet, {}, focus_pair=pair)
+    market_summary = _market_read_prediction_summary(market_read)
+    refs = _draft_close_evidence_refs(packet, candidate)
+    gate_b = (
+        "standing hard Gate B"
+        if candidate.get("gate_b_standing_authorized")
+        else "fresh explicit operator Gate B"
+    )
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": market_read,
+        "action": "CLOSE",
+        "selected_lane_id": None,
+        "selected_lane_ids": [],
+        "cancel_order_ids": [],
+        "close_trade_ids": [trade_id],
+        "confidence": "HIGH",
+        "thesis": (
+            f"{market_summary} After that read, close only trader-owned {pair} {side} trade {trade_id}: "
+            f"current {source_text or 'position sidecar'} evidence blocks non-CLOSE actions and {gate_b} is satisfied."
+        ),
+        "method": "POSITION_MANAGEMENT",
+        "narrative": (
+            f"The exact current position and sidecar identity match trade {trade_id} {pair} {side}. "
+            f"Gate A reason: {reason_text}."
+        ),
+        "chart_story": (
+            f"Current {pair} market read and position sidecar evidence are cited in this receipt; "
+            "the gateway must refresh the executable quote and spread before sending the close."
+        ),
+        "invalidation": (
+            "The cited current structural exit condition is the invalidation; refresh and fail closed if it no longer holds."
+        ),
+        "rejected_alternatives": [
+            "HOLD rejected because current authorized Gate A evidence explicitly blocks non-CLOSE actions.",
+            "TRADE/re-entry rejected for this cycle; broker truth and intents require a fresh next-cycle receipt.",
+            "Mass close rejected; this receipt binds exactly one current trader-owned trade id.",
+        ],
+        "risk_notes": [
+            f"Close scope is immutable and limited to trade {trade_id}; no entry or pending-order cancellation is authorized.",
+            "Profitability and execution-timing evidence refs are bound when present so this loss-side close cannot bypass the MARKET_ORDER_TRADE_CLOSE leak audit.",
+            "If the latest quote, spread cap, position ownership, Gate A, or Gate B no longer matches, fail closed and refresh the full cycle.",
+        ],
+        "evidence_refs": refs,
+        "strategy_reviews": [],
+        "specialist_reviews": [],
+        "operator_close_authorized": bool(candidate.get("gate_b_explicit_operator_authorized")),
+        "operator_summary": (
+            f"Close only trader-owned {pair} {side} trade {trade_id}, end the cycle, then refresh broker truth "
+            "before any separate entry decision."
+        ),
+    }
+
+
 def _non_trade_decision_draft(
     packet: dict[str, Any],
     blockers: list[str],
@@ -6199,6 +6307,35 @@ def _draft_cancel_pending_evidence_refs(packet: dict[str, Any]) -> list[str]:
     user_alpha = _active_user_alpha_continuation(packet)
     if user_alpha is not None:
         refs.extend(_user_alpha_evidence_refs(user_alpha))
+    return _known_ordered_refs(packet, refs)
+
+
+def _draft_close_evidence_refs(
+    packet: dict[str, Any],
+    candidate: dict[str, Any],
+) -> list[str]:
+    trade_id = str(candidate.get("trade_id") or "")
+    pair = str(candidate.get("pair") or "")
+    side = str(candidate.get("side") or "").upper()
+    refs: list[str] = ["broker:snapshot", "target:daily"]
+    for item in candidate.get("recommendations", []) or []:
+        if isinstance(item, dict):
+            refs.append(str(item.get("evidence_ref") or ""))
+    refs.extend(_draft_pair_refs(pair, side))
+    refs.extend(
+        [
+            "capture:economics",
+            "profitability:acceptance",
+            "self_improvement:audit",
+            "self_improvement:profitability",
+            "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+            "timing:audit",
+            "timing:loss_closes",
+            "timing:market_closes",
+            f"timing:loss_close:{trade_id}",
+            f"timing:market_close:{trade_id}",
+        ]
+    )
     return _known_ordered_refs(packet, refs)
 
 
@@ -7279,10 +7416,10 @@ def _allowed_refs(
         "btc",
     )
     refs = ["broker:snapshot", "target:daily", "verification:ledger"]
+    pairs: set[str] = set()
+    currencies: set[str] = set()
     if isinstance(market_status, dict):
         refs.append(str(market_status.get("evidence_ref") or "market:status"))
-        pairs: set[str] = set()
-        currencies: set[str] = set()
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
             continue
@@ -9248,6 +9385,115 @@ def _position_close_sidecar_reasons(
         prefix = f"{source} {verdict}"
         reasons.append(f"{prefix} {label}: {reason}" if label else f"{prefix}: {reason}")
     return reasons
+
+
+def _authorized_single_position_close_candidate(
+    packet: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Select one exact current trader-owned CLOSE target, or fail closed.
+
+    The deterministic draft may translate a sidecar into CLOSE only when the
+    packet already marks it as preempting non-CLOSE actions and the verifier's
+    hard/explicit Gate B path is currently available. Recommendations are
+    grouped by trade id so multiple independent refs may support one close,
+    while two close targets can never become a deterministic mass close.
+    """
+
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return None, []
+    recommendations = sidecars.get("position_close_recommendations")
+    if not isinstance(recommendations, list):
+        return None, []
+
+    positions = _trader_position_lookup(packet)
+    allowed_refs = {
+        str(ref)
+        for ref in packet.get("allowed_evidence_refs", []) or []
+        if str(ref)
+    }
+    explicit_operator_gate_b = _operator_close_gate_authorized()
+    eligible_by_trade_id: dict[str, list[dict[str, Any]]] = {}
+    selection_blockers: list[str] = []
+
+    for rec in recommendations:
+        if not isinstance(rec, dict) or rec.get("blocks_non_close_actions") is not True:
+            continue
+        trade_id = str(rec.get("trade_id") or "").strip()
+        position = positions.get(trade_id)
+        if position is None:
+            selection_blockers.append(
+                f"CLOSE_BASELINE_POSITION_MISMATCH id={trade_id or 'missing'}: target is not a current trader-owned trade"
+            )
+            continue
+        pair = str(position.get("pair") or "").strip()
+        side = str(position.get("side") or "").strip().upper()
+        if not pair or not side or str(rec.get("pair") or "").strip() != pair or str(
+            rec.get("side") or ""
+        ).strip().upper() != side:
+            selection_blockers.append(
+                f"CLOSE_BASELINE_IDENTITY_MISMATCH id={trade_id}: sidecar pair/side does not match broker truth"
+            )
+            continue
+
+        standing_authorized = bool(rec.get("gate_b_standing_authorized"))
+        if not standing_authorized:
+            invalidated, _reason, standing_authorized = _close_thesis_invalidation(
+                packet,
+                pair,
+                side,
+                trade_id=trade_id,
+                decision=None,
+            )
+            standing_authorized = bool(invalidated and standing_authorized)
+        if not standing_authorized and not explicit_operator_gate_b:
+            selection_blockers.append(
+                f"CLOSE_BASELINE_GATE_B_MISSING id={trade_id}: blocking sidecar has neither standing hard nor explicit Gate B"
+            )
+            continue
+
+        evidence_ref = str(rec.get("evidence_ref") or "").strip()
+        if not evidence_ref or evidence_ref not in allowed_refs:
+            selection_blockers.append(
+                f"CLOSE_BASELINE_EVIDENCE_REF_MISSING id={trade_id}: blocking sidecar lacks a current allowed evidence ref"
+            )
+            continue
+
+        eligible_by_trade_id.setdefault(trade_id, []).append(rec)
+
+    if selection_blockers:
+        return None, selection_blockers
+    if not eligible_by_trade_id:
+        return None, selection_blockers
+    if len(eligible_by_trade_id) != 1:
+        ids = ", ".join(sorted(eligible_by_trade_id))
+        selection_blockers.append(
+            "CLOSE_BASELINE_SINGLE_TRADE_REQUIRED: multiple authorized current close targets "
+            f"({ids}); require one separately refreshed CLOSE receipt per trade"
+        )
+        return None, selection_blockers
+
+    trade_id, matched_recommendations = next(iter(eligible_by_trade_id.items()))
+    position = positions[trade_id]
+    return {
+        "trade_id": trade_id,
+        "pair": str(position.get("pair") or ""),
+        "side": str(position.get("side") or "").upper(),
+        "position": position,
+        "recommendations": matched_recommendations,
+        "gate_b_standing_authorized": any(
+            bool(rec.get("gate_b_standing_authorized"))
+            or _close_thesis_invalidation(
+                packet,
+                str(position.get("pair") or ""),
+                str(position.get("side") or ""),
+                trade_id=trade_id,
+                decision=None,
+            )[2]
+            for rec in matched_recommendations
+        ),
+        "gate_b_explicit_operator_authorized": explicit_operator_gate_b,
+    }, selection_blockers
 
 
 def _soft_nonblocking_close_advisory_reasons(

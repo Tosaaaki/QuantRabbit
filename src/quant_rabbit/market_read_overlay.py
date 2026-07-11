@@ -372,6 +372,29 @@ def apply_codex_market_read_overlay(
             "MARKET_READ_NONTRADE_UPGRADE_FORBIDDEN",
             f"a {baseline_action or 'missing'} baseline may only use ACCEPT_BASELINE",
         )
+    if baseline_action == "CLOSE":
+        raw_close_trade_ids = baseline.get("close_trade_ids")
+        if (
+            not isinstance(raw_close_trade_ids, list)
+            or len(raw_close_trade_ids) != 1
+            or not isinstance(raw_close_trade_ids[0], str)
+            or not raw_close_trade_ids[0]
+        ):
+            raise MarketReadOverlayError(
+                "MARKET_READ_BASELINE_SINGLE_CLOSE_REQUIRED",
+                "an accepted CLOSE baseline must bind exactly one non-empty close_trade_ids item",
+            )
+        raw_selected_lane_ids = baseline.get("selected_lane_ids")
+        raw_cancel_order_ids = baseline.get("cancel_order_ids")
+        if (
+            baseline.get("selected_lane_id") is not None
+            or raw_selected_lane_ids != []
+            or raw_cancel_order_ids != []
+        ):
+            raise MarketReadOverlayError(
+                "MARKET_READ_BASELINE_CLOSE_SCOPE_INVALID",
+                "a CLOSE baseline must be close-only with no selected lane or pending-order cancellation",
+            )
     if disposition.startswith("VETO_") and not veto_reason:
         raise MarketReadOverlayError(
             "MARKET_READ_VETO_REASON_MISSING",
@@ -500,24 +523,26 @@ def revalidate_codex_market_read_artifacts(
     evidence_sources: Mapping[str, Path],
     max_overlay_age_seconds: int = DEFAULT_OVERLAY_MAX_AGE_SECONDS,
 ) -> list[tuple[str, str]]:
-    """Rebuild a TRADE receipt from its actual handoff artifacts.
+    """Rebuild an execution-bearing receipt from its actual handoff artifacts.
 
     Provenance fields inside the final JSON are claims, not proof.  The
     verifier therefore re-runs the same content-addressed merge against the
     current baseline, stored packet, overlay, and every named evidence source,
-    then requires the rebuilt final object to be identical.  Non-TRADE
-    receipts retain their existing verifier behavior; a veto cannot grant
-    entry permission and does not need this extra execution-boundary check.
+    then requires the rebuilt final object to be identical.  Both TRADE and
+    CLOSE carry execution authority and require this boundary check.  Other
+    non-TRADE receipts retain their existing verifier behavior; a veto cannot
+    grant entry permission and does not need the extra artifact comparison.
     """
 
-    if str(final_payload.get("action") or "").strip().upper() != "TRADE":
+    action = str(final_payload.get("action") or "").strip().upper()
+    if action not in {"TRADE", "CLOSE"}:
         return []
     provenance = final_payload.get("decision_provenance")
     if not isinstance(provenance, Mapping):
         return [
             (
                 "AI_MARKET_READ_ARTIFACT_PROVENANCE_MISSING",
-                "TRADE cannot bind market-read artifacts without decision_provenance",
+                f"{action} cannot bind market-read artifacts without decision_provenance",
             )
         ]
     try:
@@ -550,7 +575,7 @@ def revalidate_codex_market_read_artifacts(
         return [
             (
                 "AI_MARKET_READ_ARTIFACT_REVALIDATION_FAILED",
-                f"could not rebuild the final TRADE receipt from market-read artifacts: {exc}",
+                f"could not rebuild the final {action} receipt from market-read artifacts: {exc}",
             )
         ]
 
@@ -560,7 +585,7 @@ def revalidate_codex_market_read_artifacts(
         return [
             (
                 "AI_MARKET_READ_ARTIFACT_FINAL_MISMATCH",
-                "final TRADE receipt does not exactly match the current baseline/evidence/overlay merge "
+                f"final {action} receipt does not exactly match the current baseline/evidence/overlay merge "
                 f"(rebuilt={rebuilt_sha}, final={final_sha})",
             )
         ]

@@ -114,7 +114,50 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         self.assertIn('"no_direct_oanda": true', prompt)
         self.assertIn('"bot_tuning_review"', prompt)
         self.assertIn('"falsifiable_experiment"', prompt)
+        self.assertIn('"evidence_acquisition"', prompt)
+        self.assertIn('"action_kind"', prompt)
+        self.assertIn('"source_ref"', prompt)
+        self.assertIn('"required_new_samples"', prompt)
+        self.assertIn('"success_condition"', prompt)
+        for action_kind in dispatcher_module._TUNING_ACQUISITION_ACTION_KINDS:
+            self.assertIn(action_kind, prompt)
         self.assertIn('"live_permission_allowed": false', prompt)
+
+    def test_prompt_no_change_tuning_review_matches_validator_contract(self) -> None:
+        selected_event = _technical_tuning_event(pair="EUR_USD")
+        prompt_no_change_review = {
+            "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            "affected_pairs": ["EUR_USD"],
+            "affected_bot_families": ["forecast"],
+            "hypothesis": (
+                "the current state change lacks enough pre-entry observations "
+                "to precommit a tighter forecast floor"
+            ),
+            "falsifiable_experiment": (
+                "collect one bounded forward cohort and compare its recorded "
+                "entry-time forecast confidence with canonical outcomes"
+            ),
+            "evidence_acquisition": {
+                "action_kind": "COLLECT_FORWARD_ENTRIES",
+                "source_ref": "data/forecast_history.jsonl",
+                "required_new_samples": 20,
+                "success_condition": (
+                    "resolve the first 20 canonical attributed post-review entries"
+                ),
+            },
+            "proposed_adjustments": [],
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+
+        result = dispatcher_module._validate_bot_tuning_review(
+            prompt_no_change_review,
+            selected_event=selected_event,
+        )
+
+        self.assertEqual(result["status"], "VALID")
+        self.assertEqual(result["review"], prompt_no_change_review)
 
     def test_wake_false_does_not_start_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -693,6 +736,40 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
         self.assertEqual(selected["event_id"], "open-event")
         self.assertTrue(selection["selected_priority"]["open_exposure"])
+
+    def test_candidate_harvest_is_not_classified_as_open_exposure(self) -> None:
+        candidate = {
+            **_event(
+                severity="P1",
+                event_id="candidate-harvest",
+                pair="EUR_USD",
+                dedupe_key="candidate-harvest-key",
+            ),
+            "event_type": "HARVEST_ZONE",
+            "action_hint": "HARVEST",
+            "details": {
+                "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                "status": "LIVE_READY",
+            },
+        }
+        open_position = {
+            **candidate,
+            "event_id": "open-position-harvest",
+            "details": {**candidate["details"], "trade_id": "t1"},
+        }
+
+        self.assertFalse(dispatcher_module._event_has_open_exposure(candidate))
+        self.assertFalse(
+            dispatcher_module._dispatch_priority_evidence(candidate)[
+                "open_exposure"
+            ]
+        )
+        self.assertTrue(dispatcher_module._event_has_open_exposure(open_position))
+        self.assertTrue(
+            dispatcher_module._dispatch_priority_evidence(open_position)[
+                "open_exposure"
+            ]
+        )
 
     def test_multiple_review_events_are_durably_drained_across_router_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2323,6 +2400,39 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         self.assertEqual(vague_result["status"], "INVALID_INCOMPLETE_REVIEW")
         self.assertNotIn("review", vague_result)
 
+        vague_phrase = {
+            **no_change,
+            "evidence_acquisition": {
+                **no_change["evidence_acquisition"],
+                "success_condition": (
+                    "wait and monitor later until enough evidence appears"
+                ),
+            },
+        }
+        vague_phrase_result = dispatcher_module._validate_bot_tuning_review(
+            vague_phrase,
+            selected_event=selected,
+        )
+        self.assertEqual(
+            vague_phrase_result["status"],
+            "INVALID_INCOMPLETE_REVIEW",
+        )
+
+        concrete_count = {
+            **no_change,
+            "evidence_acquisition": {
+                **no_change["evidence_acquisition"],
+                "success_condition": (
+                    "pass when sample count reaches exactly 20 canonical attributed entries"
+                ),
+            },
+        }
+        concrete_result = dispatcher_module._validate_bot_tuning_review(
+            concrete_count,
+            selected_event=selected,
+        )
+        self.assertEqual(concrete_result["status"], "VALID")
+
     def test_test_required_review_precommits_exact_lane(self) -> None:
         selected = _technical_tuning_event(pair="EUR_USD")
         missing = _valid_tuning_review("EUR_USD")
@@ -2693,8 +2803,16 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 )
             )
             output = io.StringIO()
+            real_write_queue = dispatcher_module._write_tuning_queue_json
 
-            with redirect_stdout(output):
+            with (
+                patch.object(
+                    dispatcher_module,
+                    "_write_tuning_queue_json",
+                    wraps=real_write_queue,
+                ) as write_queue,
+                redirect_stdout(output),
+            ):
                 code = tuning_review_enrich_tool.main(
                     [
                         "--path",
@@ -2719,6 +2837,642 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 json.loads(path.read_text())["bot_tuning_review"]["review_status"],
                 "NO_CHANGE_INSUFFICIENT_EVIDENCE",
             )
+            self.assertEqual(write_queue.call_count, 1)
+
+    def test_hourly_review_enrich_batch_prevalidates_then_binds_every_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created: list[tuple[str, dict]] = []
+            for index, pair in enumerate(("EUR_USD", "USD_JPY")):
+                result = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(
+                        pair=pair,
+                        event_id=f"hourly-batch-{index}",
+                    ),
+                    receipt={},
+                    now=NOW + timedelta(seconds=index),
+                )
+                self.assertEqual(result["status"], "STRUCTURED_REVIEW_REQUIRED")
+                created.append((pair, result))
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "reviews": [
+                            {
+                                "work_order_id": result["work_order_id"],
+                                "expected_observation_id": result["observation_id"],
+                                "review": {
+                                    **_valid_tuning_review(pair),
+                                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                                    "proposed_adjustments": [],
+                                },
+                            }
+                            for pair, result in created
+                        ]
+                    }
+                )
+            )
+            output = io.StringIO()
+            real_write_queue = dispatcher_module._write_tuning_queue_json
+
+            with (
+                patch.object(
+                    dispatcher_module,
+                    "_write_tuning_queue_json",
+                    wraps=real_write_queue,
+                ) as write_queue,
+                redirect_stdout(output),
+            ):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(path),
+                        "--manifest-json",
+                        str(manifest_path),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            summary = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["status"], "BATCH_REVIEW_ENRICHED")
+            self.assertEqual(summary["requested_count"], 2)
+            self.assertEqual(summary["prevalidated_count"], 2)
+            self.assertEqual(summary["success_count"], 2)
+            self.assertEqual(summary["enriched_count"], 2)
+            self.assertEqual(summary["failure_count"], 0)
+            self.assertEqual(summary["queue_write_count"], 1)
+            self.assertEqual(write_queue.call_count, 1)
+            payload = json.loads(path.read_text())
+            self.assertEqual(
+                [
+                    item["bot_tuning_review_validation"]["status"]
+                    for item in payload["work_orders"]
+                ],
+                ["VALID", "VALID"],
+            )
+            self.assertEqual(
+                {
+                    item["latest_reviewed_observation_id"]
+                    for item in payload["work_orders"]
+                },
+                {result["observation_id"] for _, result in created},
+            )
+
+    def test_hourly_review_enrich_batch_invalid_review_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created: list[tuple[str, dict]] = []
+            for index, pair in enumerate(("EUR_USD", "USD_JPY")):
+                result = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(
+                        pair=pair,
+                        event_id=f"hourly-batch-invalid-{index}",
+                    ),
+                    receipt={},
+                    now=NOW + timedelta(seconds=index),
+                )
+                created.append((pair, result))
+            valid_review = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            invalid_review = {
+                **_valid_tuning_review("USD_JPY"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            invalid_review.pop("evidence_acquisition")
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "reviews": [
+                            {
+                                "work_order_id": created[0][1]["work_order_id"],
+                                "expected_observation_id": created[0][1]["observation_id"],
+                                "review": valid_review,
+                            },
+                            {
+                                "work_order_id": created[1][1]["work_order_id"],
+                                "expected_observation_id": created[1][1]["observation_id"],
+                                "review": invalid_review,
+                            },
+                        ]
+                    }
+                )
+            )
+            before = path.read_bytes()
+            output = io.StringIO()
+
+            with (
+                patch.object(dispatcher_module, "_write_tuning_queue_json") as write_queue,
+                redirect_stdout(output),
+            ):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(path),
+                        "--manifest-json",
+                        str(manifest_path),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            summary = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertEqual(summary["status"], "BATCH_MANIFEST_VALIDATION_FAILED")
+            self.assertEqual(summary["written_count"], 0)
+            self.assertIn(
+                "STRUCTURED_REVIEW_REQUIRED",
+                {failure["code"] for failure in summary["failures"]},
+            )
+            self.assertEqual(path.read_bytes(), before)
+            write_queue.assert_not_called()
+
+    def test_hourly_review_enrich_batch_rejects_duplicate_or_stale_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="hourly-batch-identity",
+                ),
+                receipt={},
+                now=NOW,
+            )
+            review = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            item = {
+                "work_order_id": created["work_order_id"],
+                "expected_observation_id": created["observation_id"],
+                "review": review,
+            }
+            before = path.read_bytes()
+
+            duplicate = tuning_review_enrich_tool._prevalidate_batch_manifest(
+                path=path,
+                manifest={"reviews": [item, item]},
+            )
+            stale = tuning_review_enrich_tool._prevalidate_batch_manifest(
+                path=path,
+                manifest={
+                    "reviews": [
+                        {
+                            **item,
+                            "expected_observation_id": "0" * 64,
+                        }
+                    ]
+                },
+            )
+
+            self.assertEqual(duplicate["status"], "BATCH_MANIFEST_VALIDATION_FAILED")
+            self.assertIn(
+                "DUPLICATE_WORK_ORDER_ID",
+                {failure["code"] for failure in duplicate["failures"]},
+            )
+            self.assertEqual(stale["status"], "BATCH_MANIFEST_VALIDATION_FAILED")
+            self.assertIn(
+                "WORK_ORDER_OBSERVATION_STALE",
+                {failure["code"] for failure in stale["failures"]},
+            )
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_hourly_review_enrich_batch_mixes_already_bound_and_new_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created: list[tuple[str, dict, dict]] = []
+            for index, pair in enumerate(("EUR_USD", "USD_JPY")):
+                result = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(
+                        pair=pair,
+                        event_id=f"hourly-batch-mixed-{index}",
+                    ),
+                    receipt={},
+                    now=NOW + timedelta(seconds=index),
+                )
+                review = {
+                    **_valid_tuning_review(pair),
+                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                    "proposed_adjustments": [],
+                }
+                created.append((pair, result, review))
+            first = dispatcher_module.enrich_tuning_work_order_review(
+                path=path,
+                work_order_id=created[0][1]["work_order_id"],
+                expected_observation_id=created[0][1]["observation_id"],
+                review=created[0][2],
+                reviewed_by="qr-trader-hourly",
+                now=NOW + timedelta(minutes=1),
+            )
+            self.assertEqual(first["status"], "WORK_ORDER_REVIEW_ENRICHED")
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "reviews": [
+                            {
+                                "work_order_id": result["work_order_id"],
+                                "expected_observation_id": result["observation_id"],
+                                "review": review,
+                            }
+                            for _, result, review in created
+                        ]
+                    }
+                )
+            )
+            before = path.read_bytes()
+            output = io.StringIO()
+            real_write_queue = dispatcher_module._write_tuning_queue_json
+
+            with (
+                patch.object(
+                    dispatcher_module,
+                    "_write_tuning_queue_json",
+                    wraps=real_write_queue,
+                ) as write_queue,
+                redirect_stdout(output),
+            ):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(path),
+                        "--manifest-json",
+                        str(manifest_path),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            summary = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["status"], "BATCH_REVIEW_ENRICHED")
+            self.assertEqual(summary["enriched_count"], 1)
+            self.assertEqual(summary["already_bound_count"], 1)
+            self.assertEqual(summary["queue_write_count"], 1)
+            self.assertEqual(write_queue.call_count, 1)
+            self.assertNotEqual(path.read_bytes(), before)
+            payload = json.loads(path.read_text())
+            self.assertEqual(
+                {
+                    item["latest_reviewed_observation_id"]
+                    for item in payload["work_orders"]
+                },
+                {result["observation_id"] for _, result, _ in created},
+            )
+
+    def test_hourly_review_enrich_batch_revalidates_stale_item_without_partial_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created: list[tuple[str, dict, dict]] = []
+            for index, pair in enumerate(("USD_JPY", "EUR_USD")):
+                result = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(
+                        pair=pair,
+                        event_id=f"hourly-batch-revalidate-{index}",
+                    ),
+                    receipt={},
+                    now=NOW + timedelta(seconds=index),
+                )
+                review = {
+                    **_valid_tuning_review(pair),
+                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                    "proposed_adjustments": [],
+                }
+                created.append((pair, result, review))
+            manifest = {
+                "reviews": [
+                    {
+                        "work_order_id": result["work_order_id"],
+                        "expected_observation_id": result["observation_id"],
+                        "review": review,
+                    }
+                    for _, result, review in created
+                ]
+            }
+            preview = tuning_review_enrich_tool._prevalidate_batch_manifest(
+                path=path,
+                manifest=manifest,
+            )
+            self.assertEqual(preview["status"], "VALID")
+            advanced = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="hourly-batch-revalidate-new-observation",
+                    mid=0.581025,
+                    reasons=("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",),
+                ),
+                receipt={},
+                now=NOW + timedelta(minutes=5),
+            )
+            self.assertNotEqual(
+                advanced["observation_id"],
+                created[1][1]["observation_id"],
+            )
+            before = path.read_bytes()
+
+            with patch.object(
+                dispatcher_module, "_write_tuning_queue_json"
+            ) as write_queue:
+                result = dispatcher_module.enrich_tuning_work_order_reviews_batch(
+                    path=path,
+                    reviews=preview["reviews"],
+                    reviewed_by="qr-trader-hourly",
+                    now=NOW + timedelta(minutes=6),
+                )
+
+            self.assertEqual(result["status"], "BATCH_MANIFEST_VALIDATION_FAILED")
+            self.assertEqual(result["written_count"], 0)
+            self.assertIn(
+                "WORK_ORDER_OBSERVATION_STALE",
+                {failure["status"] for failure in result["failures"]},
+            )
+            write_queue.assert_not_called()
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_hourly_review_enrich_batch_write_failure_preserves_queue_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            manifest_path = root / "manifest.json"
+            reviews = []
+            for index, pair in enumerate(("EUR_USD", "USD_JPY")):
+                created = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(
+                        pair=pair,
+                        event_id=f"hourly-batch-write-failure-{index}",
+                    ),
+                    receipt={},
+                    now=NOW + timedelta(seconds=index),
+                )
+                reviews.append(
+                    {
+                        "work_order_id": created["work_order_id"],
+                        "expected_observation_id": created["observation_id"],
+                        "review": {
+                            **_valid_tuning_review(pair),
+                            "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                            "proposed_adjustments": [],
+                        },
+                    }
+                )
+            manifest_path.write_text(json.dumps({"reviews": reviews}))
+            before = path.read_bytes()
+            output = io.StringIO()
+            real_write_queue = dispatcher_module._write_tuning_queue_json
+
+            with (
+                patch.object(
+                    dispatcher_module,
+                    "_write_tuning_queue_json",
+                    wraps=real_write_queue,
+                ) as write_queue,
+                patch.object(
+                    dispatcher_module.os,
+                    "replace",
+                    side_effect=OSError("ENOSPC"),
+                ),
+                redirect_stdout(output),
+            ):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(path),
+                        "--manifest-json",
+                        str(manifest_path),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            summary = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertEqual(summary["status"], "WORK_ORDER_WRITE_FAILED")
+            self.assertEqual(summary["written_count"], 0)
+            self.assertEqual(summary["queue_write_count"], 0)
+            self.assertEqual(write_queue.call_count, 1)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(
+                list(path.parent.glob(f".{path.name}.*.tuning.tmp")),
+                [],
+            )
+
+    def test_hourly_review_enrich_batch_rejects_post_merge_oversize_without_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="hourly-batch-post-merge-size",
+                ),
+                receipt={},
+                now=NOW,
+            )
+            review = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            before = path.read_bytes()
+
+            with patch.object(
+                dispatcher_module,
+                "MAX_TUNING_QUEUE_BYTES",
+                len(before) + 1,
+            ):
+                result = dispatcher_module.enrich_tuning_work_order_reviews_batch(
+                    path=path,
+                    reviews=[
+                        {
+                            "work_order_id": created["work_order_id"],
+                            "expected_observation_id": created["observation_id"],
+                            "review": review,
+                        }
+                    ],
+                    reviewed_by="qr-trader-hourly",
+                    now=NOW + timedelta(minutes=1),
+                )
+
+            self.assertEqual(result["status"], "WORK_ORDER_WRITE_FAILED")
+            self.assertEqual(result["written_count"], 0)
+            self.assertEqual(result["queue_write_count"], 0)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertNotIn(
+                "_read_error",
+                dispatcher_module._load_tuning_work_order(path),
+            )
+            self.assertEqual(
+                list(path.parent.glob(f".{path.name}.*.tuning.tmp")),
+                [],
+            )
+
+    def test_hourly_review_enrich_batch_lock_contention_preserves_queue_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "guardian_tuning_work_order.json"
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="hourly-batch-lock-contention",
+                ),
+                receipt={},
+                now=NOW,
+            )
+            review = {
+                **_valid_tuning_review("EUR_USD"),
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "proposed_adjustments": [],
+            }
+            before = path.read_bytes()
+            lock_path = path.with_name(f"{path.name}.lock")
+
+            with lock_path.open("a+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(
+                    dispatcher_module, "_write_tuning_queue_json"
+                ) as write_queue:
+                    result = dispatcher_module.enrich_tuning_work_order_reviews_batch(
+                        path=path,
+                        reviews=[
+                            {
+                                "work_order_id": created["work_order_id"],
+                                "expected_observation_id": created["observation_id"],
+                                "review": review,
+                            }
+                        ],
+                        reviewed_by="qr-trader-hourly",
+                        now=NOW + timedelta(minutes=1),
+                    )
+
+            self.assertEqual(result["status"], "WORK_ORDER_CONCURRENT_UPDATE")
+            self.assertEqual(result["written_count"], 0)
+            write_queue.assert_not_called()
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_hourly_review_enrich_manifest_reader_enforces_size_and_shape_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b" " * (dispatcher_module.MAX_TUNING_QUEUE_BYTES + 1))
+
+            with patch.object(tuning_review_enrich_tool.json, "loads") as loads:
+                manifest, error = tuning_review_enrich_tool._read_batch_manifest_json(
+                    oversized
+                )
+
+            self.assertIsNone(manifest)
+            self.assertEqual(error["status"], "MANIFEST_JSON_TOO_LARGE")
+            loads.assert_not_called()
+
+            output = io.StringIO()
+            with (
+                patch.object(
+                    tuning_review_enrich_tool,
+                    "_prevalidate_batch_manifest",
+                ) as prevalidate,
+                redirect_stdout(output),
+            ):
+                code = tuning_review_enrich_tool.main(
+                    [
+                        "--path",
+                        str(root / "queue.json"),
+                        "--manifest-json",
+                        str(oversized),
+                        "--reviewed-by",
+                        "qr-trader-hourly",
+                    ]
+                )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(
+                json.loads(output.getvalue())["status"],
+                "MANIFEST_JSON_TOO_LARGE",
+            )
+            prevalidate.assert_not_called()
+
+            too_deep = root / "too-deep.json"
+            nested: dict = {"leaf": True}
+            for _ in range(dispatcher_module.MAX_TUNING_QUEUE_JSON_DEPTH + 1):
+                nested = {"nested": nested}
+            too_deep.write_text(json.dumps({"reviews": [{"review": nested}]}))
+
+            manifest, error = tuning_review_enrich_tool._read_batch_manifest_json(
+                too_deep
+            )
+
+            self.assertIsNone(manifest)
+            self.assertEqual(error["status"], "MANIFEST_JSON_SHAPE_INVALID")
+
+            lone_surrogate = root / "lone-surrogate.json"
+            lone_surrogate.write_text(
+                json.dumps(
+                    {
+                        "reviews": [
+                            {
+                                "review": {
+                                    "hypothesis": "bad\ud800text",
+                                }
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest, error = tuning_review_enrich_tool._read_batch_manifest_json(
+                lone_surrogate
+            )
+
+            self.assertIsNone(manifest)
+            self.assertEqual(error["status"], "MANIFEST_JSON_SHAPE_INVALID")
+
+            oversized_string = root / "oversized-string.json"
+            oversized_string.write_text(
+                json.dumps(
+                    {
+                        "reviews": [
+                            {
+                                "review": {
+                                    "hypothesis": "x"
+                                    * (
+                                        dispatcher_module.MAX_TUNING_QUEUE_STRING_CHARS
+                                        + 1
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                )
+            )
+
+            manifest, error = tuning_review_enrich_tool._read_batch_manifest_json(
+                oversized_string
+            )
+
+            self.assertIsNone(manifest)
+            self.assertEqual(error["status"], "MANIFEST_JSON_SHAPE_INVALID")
 
     def test_tuning_work_order_write_failure_is_retried_without_accepted_ack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

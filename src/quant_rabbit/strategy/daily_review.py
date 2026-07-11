@@ -618,6 +618,37 @@ def _user_alpha_counts(trades: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _normalized_score_ineligible_reasons(row: dict[str, Any]) -> list[str]:
+    """Return bounded diagnostic reasons from an untrusted JSONL row."""
+
+    raw = row.get("score_ineligible_reasons")
+    if raw is None or raw == []:
+        return ["UNSPECIFIED_SCORE_INELIGIBLE"]
+    if not isinstance(raw, list):
+        return ["MALFORMED_SCORE_INELIGIBLE_REASONS"]
+
+    reasons: list[str] = []
+    malformed = len(raw) > 32
+    for reason in raw[:32]:
+        if not isinstance(reason, str):
+            malformed = True
+            continue
+        text = reason.strip()
+        if not text or len(text) > 256:
+            malformed = True
+            continue
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            malformed = True
+            continue
+        if text not in reasons:
+            reasons.append(text)
+    if malformed:
+        reasons.append("MALFORMED_SCORE_INELIGIBLE_REASONS")
+    return reasons or ["UNSPECIFIED_SCORE_INELIGIBLE"]
+
+
 def _market_read_review(
     path: Path | None,
     window_start: datetime,
@@ -632,6 +663,13 @@ def _market_read_review(
         "legacy_v1_resolved_predictions": 0,
         "v2_score_eligible_predictions": 0,
         "v2_score_ineligible_predictions": 0,
+        "v2_score_ineligible_reason_counts": {},
+        "v2_lifecycle_resolved_predictions": 0,
+        "v2_lifecycle_unresolved_predictions": 0,
+        "v2_score_eligible_resolved_predictions": 0,
+        "v2_score_eligible_unresolved_predictions": 0,
+        "v2_score_ineligible_resolved_predictions": 0,
+        "v2_score_ineligible_unresolved_predictions": 0,
         "score_eligible_predictions": 0,
         "score_ineligible_predictions": 0,
         "geometry_ineligible_predictions": 0,
@@ -659,6 +697,10 @@ def _market_read_review(
         "full_read_completion_2h_pct": None,
         "v2_resolved_horizons": 0,
         "v2_unresolved_horizons": 0,
+        "v2_score_eligible_resolved_horizons": 0,
+        "v2_score_eligible_unresolved_horizons": 0,
+        "v2_score_ineligible_resolved_horizons": 0,
+        "v2_score_ineligible_unresolved_horizons": 0,
         "v2_horizons": {},
         "direct_origin_counts": {
             "predictions": 0,
@@ -724,9 +766,24 @@ def _market_read_review(
 
     legacy_rows = [row for row in rows if row.get("schema_version") != 2]
     v2_rows = [row for row in rows if row.get("schema_version") == 2]
-    score_rows = [row for row in rows if _market_read_score_eligible(row)]
     legacy_score_rows = [row for row in legacy_rows if _market_read_score_eligible(row)]
-    v2_score_rows = [row for row in v2_rows if _market_read_score_eligible(row)]
+    v2_score_rows = [
+        row
+        for row in v2_rows
+        if row.get("score_eligible") is True and _market_read_score_eligible(row)
+    ]
+    v2_ineligible_rows = [
+        row
+        for row in v2_rows
+        if not (row.get("score_eligible") is True and _market_read_score_eligible(row))
+    ]
+    score_rows = [*legacy_score_rows, *v2_score_rows]
+    v2_ineligible_reason_counts: dict[str, int] = {}
+    for row in v2_ineligible_rows:
+        for reason in _normalized_score_ineligible_reasons(row):
+            v2_ineligible_reason_counts[reason] = (
+                v2_ineligible_reason_counts.get(reason, 0) + 1
+            )
     verdict_counts: dict[str, int] = {}
     for row in score_rows:
         default_verdict = "UNRESOLVED" if row.get("schema_version") == 2 else "PENDING"
@@ -746,7 +803,7 @@ def _market_read_review(
         if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"
     ]
     v2_horizons = {
-        horizon: _market_read_v2_horizon_review(v2_score_rows, horizon=horizon)
+        horizon: _market_read_v2_horizon_review(v2_rows, horizon=horizon)
         for horizon in ("30m", "2h")
     }
     direct_origin_counts = _market_read_direct_origin_review(v2_rows)
@@ -762,6 +819,20 @@ def _market_read_review(
             for horizon in ("30m", "2h")
         )
     ]
+    v2_ineligible_fully_resolved = [
+        row
+        for row in v2_ineligible_rows
+        if all(
+            isinstance(row.get("horizon_results"), dict)
+            and isinstance(row.get("horizon_results", {}).get(horizon), dict)
+            and row.get("horizon_results", {}).get(horizon, {}).get("resolution_status")
+            == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+            for horizon in ("30m", "2h")
+        )
+    ]
+    v2_lifecycle_resolved_count = len(v2_fully_resolved) + len(
+        v2_ineligible_fully_resolved
+    )
     resolved = [*legacy_resolved, *v2_fully_resolved]
     pending = [row for row in score_rows if row not in resolved]
 
@@ -795,7 +866,12 @@ def _market_read_review(
                 "direction": row.get("direction"),
                 "action": row.get("action"),
                 "verification_status": row.get("verification_status"),
-                "score_eligible": _market_read_score_eligible(row),
+                "score_eligible": (
+                    row.get("score_eligible") is True
+                    and _market_read_score_eligible(row)
+                    if row.get("schema_version") == 2
+                    else _market_read_score_eligible(row)
+                ),
                 "verdict": row.get("verdict"),
                 "thirty_minute_verdict": row.get("thirty_minute_verdict"),
                 "two_hour_verdict": row.get("two_hour_verdict"),
@@ -835,6 +911,20 @@ def _market_read_review(
         "legacy_v1_resolved_predictions": len(legacy_resolved),
         "v2_score_eligible_predictions": len(v2_score_rows),
         "v2_score_ineligible_predictions": len(v2_rows) - len(v2_score_rows),
+        "v2_score_ineligible_reason_counts": dict(
+            sorted(v2_ineligible_reason_counts.items())
+        ),
+        "v2_lifecycle_resolved_predictions": v2_lifecycle_resolved_count,
+        "v2_lifecycle_unresolved_predictions": len(v2_rows)
+        - v2_lifecycle_resolved_count,
+        "v2_score_eligible_resolved_predictions": len(v2_fully_resolved),
+        "v2_score_eligible_unresolved_predictions": len(v2_score_rows)
+        - len(v2_fully_resolved),
+        "v2_score_ineligible_resolved_predictions": len(
+            v2_ineligible_fully_resolved
+        ),
+        "v2_score_ineligible_unresolved_predictions": len(v2_ineligible_rows)
+        - len(v2_ineligible_fully_resolved),
         "score_eligible_predictions": len(score_rows),
         "score_ineligible_predictions": len(rows) - len(score_rows),
         "geometry_ineligible_predictions": sum(
@@ -868,6 +958,18 @@ def _market_read_review(
         "full_read_completion_2h_pct": v2_horizons["2h"]["full_read_completion_pct"],
         "v2_resolved_horizons": sum(item["resolved"] for item in v2_horizons.values()),
         "v2_unresolved_horizons": sum(item["unresolved"] for item in v2_horizons.values()),
+        "v2_score_eligible_resolved_horizons": sum(
+            item["eligible_resolved"] for item in v2_horizons.values()
+        ),
+        "v2_score_eligible_unresolved_horizons": sum(
+            item["eligible_unresolved"] for item in v2_horizons.values()
+        ),
+        "v2_score_ineligible_resolved_horizons": sum(
+            item["ineligible_resolved"] for item in v2_horizons.values()
+        ),
+        "v2_score_ineligible_unresolved_horizons": sum(
+            item["ineligible_unresolved"] for item in v2_horizons.values()
+        ),
         "v2_horizons": v2_horizons,
         "direct_origin_counts": direct_origin_counts,
         "reaction_chain_counts": reaction_chain_counts,
@@ -891,43 +993,73 @@ def _market_read_v2_horizon_review(
     *,
     horizon: str,
 ) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
-    for row in rows:
-        horizon_results = (
-            row.get("horizon_results")
-            if isinstance(row.get("horizon_results"), dict)
-            else {}
-        )
-        result = horizon_results.get(horizon)
-        results.append(result if isinstance(result, dict) else {})
-    resolved = [
-        result
-        for result in results
-        if result.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+    eligible_rows = [
+        row
+        for row in rows
+        if row.get("score_eligible") is True and _market_read_score_eligible(row)
     ]
-    direction = [result for result in resolved if result.get("direction_status") in {"CORRECT", "WRONG"}]
+    ineligible_rows = [
+        row
+        for row in rows
+        if not (row.get("score_eligible") is True and _market_read_score_eligible(row))
+    ]
+
+    def horizon_results_for(source_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for row in source_rows:
+            horizon_results = (
+                row.get("horizon_results")
+                if isinstance(row.get("horizon_results"), dict)
+                else {}
+            )
+            result = horizon_results.get(horizon)
+            results.append(result if isinstance(result, dict) else {})
+        return results
+
+    def resolved_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            result
+            for result in results
+            if result.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+        ]
+
+    results = horizon_results_for(rows)
+    eligible_results = horizon_results_for(eligible_rows)
+    ineligible_results = horizon_results_for(ineligible_rows)
+    resolved = resolved_results(results)
+    eligible_resolved = resolved_results(eligible_results)
+    ineligible_resolved = resolved_results(ineligible_results)
+    direction = [
+        result
+        for result in eligible_resolved
+        if result.get("direction_status") in {"CORRECT", "WRONG"}
+    ]
     target = [
         result
-        for result in resolved
+        for result in eligible_resolved
         if result.get("target_completion_status") in {"TOUCHED", "NOT_TOUCHED"}
     ]
     invalidation = [
         result
-        for result in resolved
+        for result in eligible_resolved
         if result.get("invalidation_status") in {"TOUCHED", "NOT_TOUCHED"}
     ]
     full = [
         result
-        for result in resolved
+        for result in eligible_resolved
         if not str(result.get("full_read_status") or "").startswith("UNSCORABLE")
     ]
     first_touch_counts: dict[str, int] = {}
-    for result in resolved:
+    for result in eligible_resolved:
         status = str(result.get("first_touch_status") or "UNRESOLVED")
         first_touch_counts[status] = first_touch_counts.get(status, 0) + 1
     return {
         "resolved": len(resolved),
         "unresolved": len(results) - len(resolved),
+        "eligible_resolved": len(eligible_resolved),
+        "eligible_unresolved": len(eligible_results) - len(eligible_resolved),
+        "ineligible_resolved": len(ineligible_resolved),
+        "ineligible_unresolved": len(ineligible_results) - len(ineligible_resolved),
         "direction_scoreable": len(direction),
         "direction_correct": sum(result.get("direction_status") == "CORRECT" for result in direction),
         "direction_accuracy_pct": _pct(
@@ -1094,7 +1226,7 @@ def _market_read_score_eligible(row: dict[str, Any]) -> bool:
 
 
 def _market_read_geometry_ineligible(row: dict[str, Any]) -> bool:
-    reasons = {str(reason) for reason in row.get("score_ineligible_reasons", []) or []}
+    reasons = set(_normalized_score_ineligible_reasons(row))
     if any("GEOMETRY" in reason for reason in reasons):
         return True
     # Re-run only the geometry portion for legacy rows that predate structured

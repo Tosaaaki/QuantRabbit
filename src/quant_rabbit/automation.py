@@ -4106,12 +4106,14 @@ class AutoTradeCycle:
         rerunning the verifier against a newer broker snapshot can reject the
         same receipt as stale even though the live gateway will fetch fresh
         broker truth before any staging/sending. Reuse is therefore allowed
-        only for the same external receipt. A TRADE receipt additionally needs
-        a fresh CODEX provenance timestamp and a full rebuild from the current
-        baseline, evidence packet, overlay, and named evidence sources. The
+        only for the same external receipt. A TRADE or CLOSE receipt additionally
+        needs a fresh CODEX provenance timestamp and a full rebuild from the
+        current baseline, evidence packet, overlay, and named evidence sources. The
         market-read prediction ledger binds only its resolved projection, so
         the verifier's own unresolved append does not stale an otherwise exact
-        handoff. CLOSE / CANCEL_PENDING / protection actions do not select
+        handoff. CLOSE still does not select order-intent lanes, but it carries
+        execution authority and therefore cannot use the lighter non-entry
+        reuse check. CANCEL_PENDING / protection actions do not select
         order-intent lanes. WAIT / REQUEST_EVIDENCE are not gateway
         permissions at all; they are reusable only as one-shot verified cycle
         outcomes so position maintenance still runs. Every reusable action
@@ -4142,11 +4144,15 @@ class AutoTradeCycle:
         action = str(decision.get("action") or "").upper()
         if action not in ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS:
             return None
-        if action == "TRADE":
+        if action in {"TRADE", "CLOSE"}:
             if (
                 not self._verified_gpt_trade_decision_matches_source(decision, source_payload)
                 or not self._verified_gpt_trade_artifacts_still_current(source_payload)
-                or not self._verified_gpt_entry_artifacts_still_match(verified_payload, decision)
+            ):
+                return None
+            if action == "TRADE" and not self._verified_gpt_entry_artifacts_still_match(
+                verified_payload,
+                decision,
             ):
                 return None
         elif not self._verified_gpt_decision_matches_source(decision, source_payload):
@@ -4229,7 +4235,7 @@ class AutoTradeCycle:
         return True
 
     def _verified_gpt_trade_artifacts_still_current(self, decision: dict[str, Any]) -> bool:
-        """Re-prove a cached TRADE against current artifact bytes.
+        """Re-prove a cached TRADE or CLOSE against current artifact bytes.
 
         The ACCEPTED wrapper is only a historical verifier result. Before it
         can be reused, require the original CODEX application to remain inside
@@ -4272,7 +4278,7 @@ class AutoTradeCycle:
         decision: dict[str, Any],
         source: dict[str, Any],
     ) -> bool:
-        """Require the verifier's normalized TRADE to equal the raw receipt.
+        """Require the normalized execution decision to equal the raw receipt.
 
         GPTTraderBrain stores the parsed dataclass form (for example, omitted
         optional id arrays become empty arrays), while the artifact merge
