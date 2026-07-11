@@ -1116,8 +1116,6 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
                     "active",
                     "canonical_present",
                     "dependency_before_next_run",
-                    "emergency_or_margin_risk",
-                    "high_urgency_action",
                 )
             ):
                 continue
@@ -1149,6 +1147,37 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
             str(item.get("action") or ""),
         )
     )
+
+    guardian_material = _mapping_fields(
+        guardian,
+        (
+            "active",
+            "dependency_before_next_run",
+            "exists",
+            "issues",
+        ),
+    )
+    guardian_is_current = bool(
+        guardian.get("active") is True
+        or guardian.get("exists") is True
+        or guardian.get("dependency_before_next_run") is True
+        or guardian.get("issues")
+    )
+    if guardian_is_current:
+        guardian_material.update(
+            _mapping_fields(
+                guardian,
+                (
+                    "action",
+                    "consumed_by_trader",
+                    "emergency_or_margin_risk",
+                    "high_urgency_action",
+                    "receipt_lifecycle",
+                    "receipt_status",
+                ),
+            )
+        )
+    guardian_material["current_receipts"] = current_receipts
 
     return {
         "parse_status": "VALID",
@@ -1212,29 +1241,7 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
                 "reason",
             ),
         ),
-        "guardian_receipt": {
-            **_mapping_fields(
-                guardian,
-                (
-                    "action",
-                    "active",
-                    "consumed_by_trader",
-                    "dependency_before_next_run",
-                    "emergency_or_margin_risk",
-                    "exists",
-                    "expired_before_trader_run",
-                    "high_urgency_action",
-                    "issues",
-                    "next_run_window_missed",
-                    "receipt_after_last_trader_run",
-                    "receipt_lifecycle",
-                    "receipt_status",
-                    "terminal_lifecycle",
-                    "will_expire_before_next_run",
-                ),
-            ),
-            "current_receipts": current_receipts,
-        },
+        "guardian_receipt": guardian_material,
         "execution_boundary": deepcopy(raw.get("execution_boundary")),
         "environment": deepcopy(raw.get("environment")),
     }

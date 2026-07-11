@@ -156,6 +156,30 @@ class MarketReadOverlayTest(unittest.TestCase):
             watchdog["last_trader_run_at"] = NOW.isoformat()
             watchdog["last_trader_run_source"] = "decision_response.generated_at_utc"
             watchdog["last_decision_artifact_at"] = NOW.isoformat()
+            watchdog["guardian_receipt"].update(
+                {
+                    "action": "NO_ACTION",
+                    "expired_before_trader_run": True,
+                    "next_run_window_missed": False,
+                    "receipt_after_last_trader_run": True,
+                    "receipt_lifecycle": "EXPIRED",
+                    "receipt_status": "ACCEPTED",
+                    "terminal_lifecycle": True,
+                    "will_expire_before_next_run": False,
+                    "receipt_summaries": [
+                        {
+                            "action": "REDUCE",
+                            "active": False,
+                            "canonical_present": False,
+                            "emergency_or_margin_risk": False,
+                            "event_id": "historical-event",
+                            "high_urgency_action": True,
+                            "identity": "event|historical-event|REDUCE",
+                            "receipt_lifecycle": "SUPERSEDED",
+                        }
+                    ],
+                }
+            )
             watchdog["weekend_pause"]["now_jst"] = "2026-07-11T12:01:00+09:00"
             watchdog["automation_config"]["weekend_pause"]["now_jst"] = (
                 "2026-07-11T12:01:00+09:00"
