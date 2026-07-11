@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 
+from quant_rabbit.analysis.candles import Candle
+from quant_rabbit.analysis.structure import analyze_structure
 from quant_rabbit.strategy.pattern_signals import (
     FAILED_BREAKOUT_BONUS,
     PATTERN_TOTAL_CAP,
@@ -25,6 +28,7 @@ def _view(
     aroon_down: float | None = None,
     structure_events: list | None = None,
     dealing_range: dict | None = None,
+    recent_candle_time: str | None = None,
 ) -> dict:
     ind = {}
     if rsi is not None: ind["rsi_14"] = rsi
@@ -36,6 +40,8 @@ def _view(
     view = {"granularity": tf, "indicators": ind}
     if structure_events is not None:
         view["structure"] = {"structure_events": structure_events}
+    if recent_candle_time is not None:
+        view["recent_candles"] = [{"t": recent_candle_time}]
     if dealing_range is not None:
         view["smc"] = {"dealing_range": dealing_range}
     return view
@@ -53,10 +59,67 @@ class FailedBreakoutTest(unittest.TestCase):
     def test_wick_only_bos_up_fades_down(self) -> None:
         chart = _chart([_view(
             structure_events=[
-                {"kind": "BOS_UP", "broken_pivot_price": 1.17, "close_confirmed": False, "index": 10},
+                {
+                    "kind": "BOS_UP",
+                    "broken_pivot_price": 1.17,
+                    "close_confirmed": False,
+                    "index": 10,
+                    # Canonical pivot_strength=3 means this event first becomes
+                    # observable three bars after its own candle.
+                    "timestamp": "2026-07-01T11:15:00Z",
+                },
             ],
+            recent_candle_time="2026-07-01T12:00:00Z",
         )])
         signals = detect_pattern_signals(chart)
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].name, "failed_breakout")
+        self.assertEqual(signals[0].direction, "DOWN")
+
+    def test_canonical_three_bar_pivot_confirmation_remains_actionable(self) -> None:
+        base = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        highs = [
+            1.090,
+            1.092,
+            1.094,
+            1.096,
+            1.100,
+            1.096,
+            1.094,
+            1.095,
+            1.097,
+            1.099,
+            1.110,
+            1.098,
+            1.096,
+            1.095,
+        ]
+        candles = []
+        for index, high in enumerate(highs):
+            close = 1.095 if index == 10 else min(high - 0.001, 1.095)
+            candles.append(
+                Candle(
+                    timestamp_utc=base + timedelta(minutes=15 * index),
+                    open=close,
+                    high=high,
+                    low=1.080,
+                    close=close,
+                )
+            )
+        structure = analyze_structure(candles, pivot_strength=3).to_dict()
+        chart = _chart(
+            [
+                {
+                    "granularity": "M15",
+                    "indicators": {},
+                    "structure": structure,
+                    "recent_candles": [{"t": candles[-1].timestamp_utc.isoformat()}],
+                }
+            ]
+        )
+
+        signals = detect_pattern_signals(chart)
+
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].name, "failed_breakout")
         self.assertEqual(signals[0].direction, "DOWN")
@@ -73,11 +136,54 @@ class FailedBreakoutTest(unittest.TestCase):
     def test_wick_only_bos_down_fades_up(self) -> None:
         chart = _chart([_view(
             structure_events=[
-                {"kind": "BOS_DOWN", "broken_pivot_price": 1.17, "close_confirmed": False, "index": 10},
+                {
+                    "kind": "BOS_DOWN",
+                    "broken_pivot_price": 1.17,
+                    "close_confirmed": False,
+                    "index": 10,
+                    "timestamp": "2026-07-01T11:45:00Z",
+                },
             ],
+            recent_candle_time="2026-07-01T12:00:00Z",
         )])
         signals = detect_pattern_signals(chart)
         self.assertEqual(signals[0].direction, "UP")
+
+    def test_stale_wick_only_event_does_not_keep_voting(self) -> None:
+        chart = _chart([_view(
+            structure_events=[
+                {
+                    "kind": "BOS_UP",
+                    "broken_pivot_price": 1.17,
+                    "close_confirmed": False,
+                    "timestamp": "2026-07-01T10:00:00Z",
+                },
+            ],
+            recent_candle_time="2026-07-01T12:00:00Z",
+        )])
+
+        self.assertEqual(detect_pattern_signals(chart), [])
+
+    def test_older_failed_event_is_superseded_by_latest_confirmed_structure(self) -> None:
+        chart = _chart([_view(
+            structure_events=[
+                {
+                    "kind": "BOS_UP",
+                    "broken_pivot_price": 1.17,
+                    "close_confirmed": False,
+                    "timestamp": "2026-07-01T11:45:00Z",
+                },
+                {
+                    "kind": "BOS_DOWN",
+                    "broken_pivot_price": 1.16,
+                    "close_confirmed": True,
+                    "timestamp": "2026-07-01T12:00:00Z",
+                },
+            ],
+            recent_candle_time="2026-07-01T12:00:00Z",
+        )])
+
+        self.assertEqual(detect_pattern_signals(chart), [])
 
 
 class RSIExtremeTest(unittest.TestCase):

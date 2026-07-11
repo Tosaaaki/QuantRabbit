@@ -1549,6 +1549,60 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(bucket["hit_rate"], 1.0)
             self.assertEqual(bucket["invalidation_first_count"], 0)
 
+    def test_low_confidence_directional_timeouts_do_not_bypass_entry_grade_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = []
+            for index in range(12):
+                entries.append(
+                    LedgerEntry(
+                        timestamp_emitted_utc=f"2026-06-16T00:{index:02d}:00Z",
+                        pair="EUR_USD",
+                        signal_name="directional_forecast",
+                        direction="UP",
+                        lead_time_min=60,
+                        confidence=0.35,
+                        entry_price=1.1,
+                        predicted_target_price=1.102,
+                        predicted_invalidation_price=1.099,
+                        resolution_window_min=60,
+                        resolution_status="TIMEOUT",
+                        resolution_evidence="target and invalidation both untouched in forecast window",
+                        regime_at_emission="TREND",
+                        cycle_id=f"watch-only-timeout-{index}",
+                    )
+                )
+            for index in range(4):
+                entries.append(
+                    LedgerEntry(
+                        timestamp_emitted_utc=f"2026-06-16T01:{index:02d}:00Z",
+                        pair="EUR_USD",
+                        signal_name="directional_forecast",
+                        direction="UP",
+                        lead_time_min=60,
+                        confidence=0.7,
+                        entry_price=1.1,
+                        predicted_target_price=1.102,
+                        predicted_invalidation_price=1.099,
+                        resolution_window_min=60,
+                        resolution_status="HIT",
+                        resolution_evidence="target 1.10200 touched before invalidation 1.09900",
+                        regime_at_emission="TREND",
+                        cycle_id=f"entry-grade-hit-{index}",
+                    )
+                )
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            bucket = hr["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 4)
+            self.assertEqual(bucket["calibration_samples"], 4)
+            self.assertEqual(bucket["target_timeout_count"], 0)
+            self.assertAlmostEqual(bucket["hit_rate"], 1.0)
+
     def test_compute_hit_rates_excludes_no_touch_miss_from_direction_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -193,7 +193,7 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertLess(forecast.confidence, forecast.raw_confidence)
         self.assertIn("robust forecast geometry missing target", forecast.rationale_summary)
 
-    def test_forecast_geometry_clears_pending_entry_spread_envelope(self) -> None:
+    def test_rollover_spread_does_not_move_forecast_geometry(self) -> None:
         pair_chart = {
             "views": [
                 {
@@ -214,7 +214,7 @@ class ForecastGeometryTest(unittest.TestCase):
             ]
         }
 
-        forecast = synthesize_forecast(
+        normal_spread = synthesize_forecast(
             pair="EUR_USD",
             pair_chart=pair_chart,
             current_price=1.1000,
@@ -222,14 +222,25 @@ class ForecastGeometryTest(unittest.TestCase):
             projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
             correlation_signals=[],
             paths=[],
-            spread_pips=2.0,
+            spread_pips=0.8,
+        )
+        rollover_spread = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
+            correlation_signals=[],
+            paths=[],
+            spread_pips=20.0,
         )
 
-        self.assertEqual(forecast.direction, "DOWN")
-        self.assertIsNone(forecast.target_price)
-        self.assertIsNone(forecast.invalidation_price)
-        self.assertLess(forecast.confidence, forecast.raw_confidence)
-        self.assertIn("robust forecast geometry missing target/invalidation", forecast.rationale_summary)
+        self.assertEqual(normal_spread.direction, "DOWN")
+        self.assertEqual(normal_spread.target_price, 1.0988)
+        self.assertEqual(normal_spread.invalidation_price, 1.1012)
+        self.assertEqual(rollover_spread.target_price, normal_spread.target_price)
+        self.assertEqual(rollover_spread.invalidation_price, normal_spread.invalidation_price)
+        self.assertEqual(rollover_spread.confidence, normal_spread.confidence)
 
     def test_lagging_htf_downtrend_dampens_micro_up_signal_to_unclear(self) -> None:
         pair_chart = {

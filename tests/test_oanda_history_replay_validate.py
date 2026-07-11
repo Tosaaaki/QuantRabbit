@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import gzip
 import json
 import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -34,6 +35,184 @@ def _candle(ts: str, *, bid_o: float, bid_h: float, bid_l: float, bid_c: float, 
 
 
 class OandaHistoryReplayValidateTest(unittest.TestCase):
+    def test_forecast_loader_skips_non_object_json_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text("[]\n", encoding="utf-8")
+
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(stats["skipped_invalid_rows"], 1)
+
+    def test_candle_parser_rejects_incomplete_or_non_executable_bid_ask(self) -> None:
+        base = {
+            "pair": "EUR_USD",
+            "time": "2026-07-01T00:00:00Z",
+            "bid": {"o": 1.1000, "h": 1.1002, "l": 1.0998, "c": 1.1001},
+            "ask": {"o": 1.1002, "h": 1.1004, "l": 1.1000, "c": 1.1003},
+        }
+        incomplete = {**base, "complete": False}
+        crossed = {
+            **base,
+            "complete": True,
+            "ask": {"o": 1.0999, "h": 1.1001, "l": 1.0997, "c": 1.1000},
+        }
+
+        self.assertIsNone(replay._candle_from_payload(incomplete))
+        self.assertIsNone(replay._candle_from_payload(crossed))
+        self.assertIsNotNone(replay._candle_from_payload({**base, "complete": True}))
+
+    def test_load_candles_excludes_conflicting_duplicate_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "run"
+            pair_dir = run / "EUR_USD"
+            pair_dir.mkdir(parents=True)
+
+            def payload(bid_close: str) -> str:
+                return json.dumps(
+                    {
+                        "pair": "EUR_USD",
+                        "time": "2026-07-01T00:00:00Z",
+                        "bid": {"o": "1.1000", "h": "1.1002", "l": "1.0998", "c": bid_close},
+                        "ask": {"o": "1.1002", "h": "1.1004", "l": "1.1000", "c": "1.1002"},
+                    }
+                )
+
+            (pair_dir / "EUR_USD_M5_BA_20260701T000000Z_20260701T010000Z.jsonl").write_text(
+                payload("1.1000") + "\n",
+                encoding="utf-8",
+            )
+            (pair_dir / "EUR_USD_M5_BA_20260701T000000Z_20260701T020000Z.jsonl").write_text(
+                payload("1.1001") + "\n",
+                encoding="utf-8",
+            )
+
+            candles, stats = replay._load_candles([run], granularity="M5")
+
+        self.assertEqual(candles.get("EUR_USD"), [])
+        self.assertEqual(stats["history_conflicting_candles"], 1)
+
+    def test_truth_window_rejects_internal_candle_gap(self) -> None:
+        window = [
+            _candle(
+                "2026-07-01T00:00:00",
+                bid_o=1.1,
+                bid_h=1.1,
+                bid_l=1.1,
+                bid_c=1.1,
+                ask_o=1.1002,
+                ask_h=1.1002,
+                ask_l=1.1002,
+                ask_c=1.1002,
+            ),
+            _candle(
+                "2026-07-01T00:10:00",
+                bid_o=1.1,
+                bid_h=1.1,
+                bid_l=1.1,
+                bid_c=1.1,
+                ask_o=1.1002,
+                ask_h=1.1002,
+                ask_l=1.1002,
+                ask_c=1.1002,
+            ),
+        ]
+
+        self.assertFalse(replay._truth_window_complete(window, candle_delta=timedelta(minutes=5)))
+
+    def test_truth_window_rejects_missing_leading_or_trailing_candle(self) -> None:
+        complete = [
+            _candle(
+                f"2026-07-01T00:{minute:02d}:00",
+                bid_o=1.1,
+                bid_h=1.1,
+                bid_l=1.1,
+                bid_c=1.1,
+                ask_o=1.1002,
+                ask_h=1.1002,
+                ask_l=1.1002,
+                ask_c=1.1002,
+            )
+            for minute in (5, 10, 15)
+        ]
+        start = datetime(2026, 7, 1, 0, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 1, 0, 21, tzinfo=timezone.utc)
+
+        self.assertTrue(
+            replay._truth_window_complete(
+                complete,
+                candle_delta=timedelta(minutes=5),
+                window_start=start,
+                window_end=end,
+            )
+        )
+        self.assertFalse(
+            replay._truth_window_complete(
+                complete[1:],
+                candle_delta=timedelta(minutes=5),
+                window_start=start,
+                window_end=end,
+            )
+        )
+        self.assertFalse(
+            replay._truth_window_complete(
+                complete[:-1],
+                candle_delta=timedelta(minutes=5),
+                window_start=start,
+                window_end=end,
+            )
+        )
+
+    def test_m5_report_exposes_effective_horizon_shortening(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 7, 1, 0, 1, tzinfo=timezone.utc),
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.7,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=60,
+            cycle_id=None,
+        )
+        candles = [
+            _candle(
+                f"2026-07-01T00:{minute:02d}:00",
+                bid_o=1.1,
+                bid_h=1.1,
+                bid_l=1.1,
+                bid_c=1.1,
+                ask_o=1.1002,
+                ask_h=1.1002,
+                ask_l=1.1002,
+                ask_c=1.1002,
+            )
+            for minute in range(5, 60, 5)
+        ]
+
+        results, _, _, _ = replay._score_forecasts(
+            [row],
+            {"EUR_USD": candles},
+            now_utc=datetime(2026, 7, 1, 2, tzinfo=timezone.utc),
+            granularity="M5",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["entry_delay_seconds"], 240.0)
+        self.assertEqual(results[0]["effective_holding_min"], 55.0)
+        self.assertEqual(results[0]["unobserved_horizon_tail_seconds"], 60.0)
+
+    def test_atomic_writer_replaces_without_leaving_temp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.json"
+            replay._write_text_atomic(path, "first")
+            replay._write_text_atomic(path, "second")
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "second")
+            self.assertEqual(list(path.parent.glob(".report.json.*.tmp")), [])
+
     def test_history_dirs_keeps_multi_month_suite_and_windowed_overlays(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -369,6 +548,634 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(stats["pair_filter"], ["EUR_USD"])
         self.assertEqual(stats["skipped_pair_filter_rows"], 1)
         self.assertEqual(stats["deduped_directional_rows"], 1)
+
+    def test_confidence_filter_runs_before_non_overlap_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-07-01T00:00:00Z",
+                                "pair": "EUR_USD",
+                                "direction": "UP",
+                                "confidence": 0.40,
+                                "raw_confidence": 0.40,
+                                "horizon_min": 60,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-07-01T00:10:00Z",
+                                "pair": "EUR_USD",
+                                "direction": "DOWN",
+                                "confidence": 0.80,
+                                "raw_confidence": 0.80,
+                                "horizon_min": 60,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            filtered, stats = replay._load_forecasts(
+                path,
+                min_confidence=0.70,
+                confidence_field="calibrated",
+            )
+            selected, selection = replay._select_independent_forecasts(filtered)
+
+        self.assertEqual([row.direction for row in selected], ["DOWN"])
+        self.assertEqual(stats["skipped_confidence_filter_rows"], 1)
+        self.assertEqual(selection["skipped_overlapping_rows"], 0)
+
+    def test_conflicting_cycle_is_quarantined_before_confidence_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-07-01T00:00:00Z",
+                                "pair": "EUR_USD",
+                                "direction": "UP",
+                                "confidence": 0.40,
+                                "cycle_id": "same-cycle",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-07-01T00:00:01Z",
+                                "pair": "EUR_USD",
+                                "direction": "UP",
+                                "confidence": 0.90,
+                                "cycle_id": "same-cycle",
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows, stats = replay._load_forecasts(
+                path,
+                min_confidence=0.55,
+                confidence_field="calibrated",
+            )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(stats["canonical_directional_rows"], 0)
+        self.assertEqual(stats["skipped_duplicate_rows"], 0)
+        self.assertEqual(stats["skipped_conflicting_forecast_rows"], 1)
+        self.assertEqual(stats["skipped_confidence_filter_rows"], 0)
+
+    def test_subsecond_duplicate_emissions_are_not_false_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            base = {
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.70,
+                "raw_confidence": 0.80,
+                "current_price": 1.1000,
+                "target_price": 1.1010,
+                "invalidation_price": 1.0990,
+                "horizon_min": 60,
+            }
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({**base, "timestamp_utc": "2026-07-01T00:00:00.100000Z"}),
+                        json.dumps({**base, "timestamp_utc": "2026-07-01T00:00:00.200000Z"}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(stats["skipped_duplicate_rows"], 1)
+        self.assertEqual(stats["skipped_conflicting_forecast_rows"], 0)
+
+    def test_raw_confidence_filter_can_audit_calibration_suppression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-07-01T00:00:00Z",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.35,
+                        "raw_confidence": 0.78,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            calibrated, _ = replay._load_forecasts(
+                path,
+                min_confidence=0.55,
+                confidence_field="calibrated",
+            )
+            raw, _ = replay._load_forecasts(
+                path,
+                min_confidence=0.55,
+                confidence_field="raw",
+            )
+
+        self.assertEqual(calibrated, [])
+        self.assertEqual(len(raw), 1)
+        self.assertAlmostEqual(raw[0].raw_confidence, 0.78)
+
+    def test_raw_confidence_filter_does_not_fallback_to_calibrated_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-07-01T00:00:00Z",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.90,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            rows, stats = replay._load_forecasts(
+                path,
+                min_confidence=0.55,
+                confidence_field="raw",
+            )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(stats["raw_confidence_missing_rows"], 1)
+        self.assertEqual(stats["skipped_confidence_filter_rows"], 1)
+
+    def test_forecast_loader_classifies_driver_families(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-07-01T00:00:00Z",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.7,
+                        "drivers_for": [
+                            "M15 BOS_UP wick-only → trap fade DOWN",
+                            "M5 price HH but macd_hist LH → bearish divergence",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            rows, _ = replay._load_forecasts(path)
+
+        self.assertEqual(rows[0].driver_families, ("WICK_TRAP_FADE", "DIVERGENCE"))
+
+    def test_independent_selection_is_per_pair_and_accepts_horizon_boundary(self) -> None:
+        base = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+        def row(index: int, pair: str, minute: int) -> object:
+            return replay.ForecastRow(
+                source_index=index,
+                timestamp_utc=base + timedelta(minutes=minute),
+                pair=pair,
+                direction="UP",
+                confidence=0.7,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=60,
+                cycle_id=None,
+            )
+
+        selected, stats = replay._select_independent_forecasts(
+            [row(0, "EUR_USD", 0), row(1, "EUR_USD", 30), row(2, "GBP_USD", 30), row(3, "EUR_USD", 60)]
+        )
+
+        self.assertEqual([(item.pair, item.timestamp_utc) for item in selected], [
+            ("EUR_USD", base),
+            ("GBP_USD", base + timedelta(minutes=30)),
+            ("EUR_USD", base + timedelta(minutes=60)),
+        ])
+        self.assertEqual(stats["skipped_overlapping_rows"], 1)
+
+    def test_experiment_identity_ignores_input_order_and_paths(self) -> None:
+        row_a = replay.ForecastRow(
+            source_index=2,
+            timestamp_utc=datetime(2026, 7, 1, 1, tzinfo=timezone.utc),
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.7,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=60,
+            cycle_id="a",
+        )
+        row_b = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 7, 1, 0, tzinfo=timezone.utc),
+            pair="GBP_USD",
+            direction="DOWN",
+            confidence=0.8,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=60,
+            cycle_id="b",
+        )
+        candle_a = _candle(
+            "2026-07-01T00:00:00",
+            bid_o=1.10,
+            bid_h=1.11,
+            bid_l=1.09,
+            bid_c=1.10,
+            ask_o=1.1002,
+            ask_h=1.1102,
+            ask_l=1.0902,
+            ask_c=1.1002,
+        )
+        args = argparse.Namespace(
+            audit_mode="DIAGNOSTIC",
+            granularity="M5",
+            pairs="EUR_USD,GBP_USD",
+            confidence_field="calibrated",
+            min_confidence=0.55,
+            independent_non_overlap=True,
+            tp_grid_pips=(2.0, 5.0),
+            sl_grid_pips=(2.0, 4.0),
+            train_fraction=0.6,
+            min_train_samples=20,
+            min_validation_samples=10,
+            min_group_samples=5,
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+            stable_min_active_days=3,
+            stable_max_daily_sample_share=0.70,
+            stable_min_positive_day_rate=2.0 / 3.0,
+            auto_history_min_days=30.0,
+        )
+
+        first = replay._experiment_identity(
+            args=args,
+            rows=[row_a, row_b],
+            candles_by_pair={"EUR_USD": [candle_a]},
+            history_dirs=[Path("/one/location")],
+            forecast_from=None,
+            forecast_to=None,
+        )
+        second = replay._experiment_identity(
+            args=args,
+            rows=[row_b, row_a],
+            candles_by_pair={"EUR_USD": [candle_a]},
+            history_dirs=[Path("/another/location")],
+            forecast_from=None,
+            forecast_to=None,
+        )
+
+        self.assertEqual(first["experiment_id"], second["experiment_id"])
+
+    def test_experiment_identity_changes_when_decision_threshold_changes(self) -> None:
+        args = argparse.Namespace(
+            audit_mode="DIAGNOSTIC",
+            granularity="M5",
+            pairs="EUR_USD",
+            confidence_field="calibrated",
+            min_confidence=0.55,
+            independent_non_overlap=True,
+            tp_grid_pips=(2.0,),
+            sl_grid_pips=(4.0,),
+            train_fraction=0.6,
+            min_train_samples=20,
+            min_validation_samples=10,
+            min_group_samples=5,
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+            stable_min_active_days=3,
+            stable_max_daily_sample_share=0.70,
+            stable_min_positive_day_rate=2.0 / 3.0,
+            auto_history_min_days=30.0,
+        )
+        changed = argparse.Namespace(**vars(args))
+        changed.edge_min_samples = 31
+
+        common = {
+            "rows": [],
+            "candles_by_pair": {},
+            "history_dirs": [],
+            "forecast_from": None,
+            "forecast_to": None,
+        }
+        first = replay._experiment_identity(args=args, **common)
+        second = replay._experiment_identity(args=changed, **common)
+
+        self.assertNotEqual(first["experiment_id"], second["experiment_id"])
+
+    def test_experiment_identity_changes_when_cohort_conflict_status_changes(self) -> None:
+        args = argparse.Namespace(
+            audit_mode="DIAGNOSTIC",
+            granularity="M5",
+            pairs="EUR_USD",
+            confidence_field="calibrated",
+            min_confidence=0.55,
+            independent_non_overlap=True,
+            tp_grid_pips=(2.0,),
+            sl_grid_pips=(4.0,),
+            train_fraction=0.6,
+            min_train_samples=20,
+            min_validation_samples=10,
+            min_group_samples=5,
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+            stable_min_active_days=3,
+            stable_max_daily_sample_share=0.70,
+            stable_min_positive_day_rate=2.0 / 3.0,
+            auto_history_min_days=30.0,
+        )
+        common = {
+            "args": args,
+            "rows": [],
+            "candles_by_pair": {},
+            "history_dirs": [],
+            "forecast_from": None,
+            "forecast_to": None,
+            "candle_stats": {"history_conflicting_candles": 0},
+        }
+
+        clean = replay._experiment_identity(
+            **common,
+            load_stats={"skipped_conflicting_forecast_rows": 0},
+        )
+        conflicted = replay._experiment_identity(
+            **common,
+            load_stats={"skipped_conflicting_forecast_rows": 1},
+        )
+
+        self.assertNotEqual(clean["experiment_id"], conflicted["experiment_id"])
+
+    def test_experiment_complete_requires_both_reports_and_complete_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_json = root / "report.json"
+            report_md = root / "report.md"
+            manifest = root / "manifest.json"
+            report_payload = {
+                "experiment": {"experiment_id": "abc", "status": "COMPLETE"},
+            }
+            report_json.write_text(json.dumps(report_payload), encoding="utf-8")
+            manifest.write_text(
+                json.dumps({"experiment_id": "abc", "status": "PENDING"}),
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                replay._experiment_is_complete(
+                    report_json,
+                    report_md,
+                    manifest,
+                    experiment_id="abc",
+                )
+            )
+            report_md.write_text("ok", encoding="utf-8")
+            json_sha = replay.hashlib.sha256(report_json.read_bytes()).hexdigest()
+            md_sha = replay.hashlib.sha256(report_md.read_bytes()).hexdigest()
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "experiment_id": "abc",
+                        "status": "COMPLETE",
+                        "report_json_sha256": json_sha,
+                        "report_md_sha256": md_sha,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                replay._experiment_is_complete(
+                    report_json,
+                    report_md,
+                    manifest,
+                    experiment_id="abc",
+                )
+            )
+            report_md.write_text("corrupt", encoding="utf-8")
+            self.assertFalse(
+                replay._experiment_is_complete(
+                    report_json,
+                    report_md,
+                    manifest,
+                    experiment_id="abc",
+                )
+            )
+
+    def test_experiment_lock_rejects_concurrent_evaluator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            experiment_dir = Path(tmp) / "experiment"
+            first = replay._acquire_experiment_lock(experiment_dir)
+            try:
+                with self.assertRaises(RuntimeError):
+                    replay._acquire_experiment_lock(experiment_dir)
+            finally:
+                first.close()
+
+    def test_mode_label_alone_never_makes_historical_run_proof_eligible(self) -> None:
+        args = argparse.Namespace(
+            audit_mode="LOCKED_HOLDOUT",
+            independent_non_overlap=True,
+            min_confidence=0.55,
+            edge_min_samples=1,
+        )
+
+        proof = replay._proof_eligibility(
+            args=args,
+            forecast_from=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            forecast_to=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            load_stats={"skipped_conflicting_forecast_rows": 0},
+            candle_stats={"history_conflicting_candles": 0},
+            score_stats={
+                "skipped_no_pair_candles": 0,
+                "skipped_no_price_window": 0,
+                "skipped_incomplete_truth_window_rows": 0,
+                "pending_future_truth_rows": 0,
+            },
+            evaluated_rows=10,
+            split={"status": "OK"},
+        )
+
+        self.assertFalse(proof["eligible"])
+        self.assertIn("PRE_EVALUATION_COHORT_LOCK_NOT_VERIFIED", proof["blockers"])
+        self.assertIn("SEGMENT_HOLDOUT_RULE_VALIDATION_NOT_IMPLEMENTED", proof["blockers"])
+
+    def test_verified_lock_still_rejects_negative_validation(self) -> None:
+        args = argparse.Namespace(
+            audit_mode="LOCKED_HOLDOUT",
+            independent_non_overlap=True,
+            min_confidence=0.55,
+            edge_min_samples=1,
+        )
+
+        proof = replay._proof_eligibility(
+            args=args,
+            forecast_from=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            forecast_to=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            load_stats={"skipped_conflicting_forecast_rows": 0},
+            candle_stats={"history_conflicting_candles": 0},
+            score_stats={
+                "skipped_no_pair_candles": 0,
+                "skipped_no_price_window": 0,
+                "skipped_incomplete_truth_window_rows": 0,
+                "pending_future_truth_rows": 0,
+            },
+            evaluated_rows=10,
+            split={
+                "status": "OK",
+                "validation": {"avg_realized_pips": -0.1, "profit_factor": 0.9},
+            },
+            cohort_lock_verified=True,
+        )
+
+        self.assertFalse(proof["eligible"])
+        self.assertIn("VALIDATION_EXPECTANCY_NOT_POSITIVE", proof["blockers"])
+        self.assertIn("VALIDATION_PROFIT_FACTOR_NOT_ABOVE_ONE", proof["blockers"])
+
+    def test_unverified_replay_cannot_publish_positive_precision_rule(self) -> None:
+        precision = {
+            "edge_rules": [{"name": "in_sample_edge"}],
+            "daily_stable_edge_rules": [{"name": "in_sample_edge"}],
+            "contrarian_edge_rules": [{"name": "in_sample_fade"}],
+            "daily_stable_contrarian_edge_rules": [],
+            "negative_rules": [{"name": "known_bad"}],
+            "rejected_daily_stability_segments": [],
+        }
+
+        blocked = replay._block_unverified_positive_rules(
+            precision,
+            blockers=["PRE_EVALUATION_COHORT_LOCK_NOT_VERIFIED"],
+        )
+
+        self.assertEqual(blocked["edge_rules"], [])
+        self.assertEqual(blocked["contrarian_edge_rules"], [])
+        self.assertEqual(blocked["diagnostic_edge_rules"][0]["name"], "in_sample_edge")
+        self.assertFalse(blocked["diagnostic_edge_rules"][0]["live_grade"])
+        self.assertEqual(
+            blocked["diagnostic_edge_rules"][0]["adoption_status"],
+            "DIAGNOSTIC_ONLY_NOT_ADOPTABLE",
+        )
+        self.assertEqual(blocked["negative_rules"], [{"name": "known_bad"}])
+        self.assertTrue(blocked["positive_rule_adoption_blocked"])
+
+    def test_train_validation_split_purges_overlapping_truth_horizon(self) -> None:
+        base = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        candle = _candle(
+            "2026-07-01T00:00:00",
+            bid_o=1.1000,
+            bid_h=1.1000,
+            bid_l=1.1000,
+            bid_c=1.1000,
+            ask_o=1.1002,
+            ask_h=1.1002,
+            ask_l=1.1002,
+            ask_c=1.1002,
+        )
+        rows = [
+            {
+                "timestamp_utc": replay._iso(base + timedelta(minutes=30 * index)),
+                "horizon_min": 60,
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "entry_price": 1.1002,
+                "final_pips": -2.0,
+                "_window": [candle],
+            }
+            for index in range(6)
+        ]
+
+        split = replay._train_validation_exit_selection(
+            rows,
+            tp_grid=(2.0,),
+            sl_grid=(4.0,),
+            train_fraction=0.5,
+            min_train_samples=2,
+            min_validation_samples=2,
+        )
+
+        self.assertEqual(split["status"], "OK")
+        self.assertEqual(split["train_n"], 2)
+        self.assertEqual(split["validation_n"], 3)
+        self.assertEqual(split["purged_train_rows"], 1)
+
+    def test_score_exposes_conservative_realized_r(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.7,
+            current_price=None,
+            target_price=1.1007,
+            invalidation_price=1.0997,
+            horizon_min=1,
+            cycle_id=None,
+        )
+        result = replay._score_one(
+            row,
+            [
+                _candle(
+                    "2026-07-01T00:00:00",
+                    bid_o=1.1000,
+                    bid_h=1.1008,
+                    bid_l=1.1000,
+                    bid_c=1.1006,
+                    ask_o=1.1002,
+                    ask_h=1.1010,
+                    ask_l=1.1002,
+                    ask_c=1.1008,
+                )
+            ],
+        )
+
+        self.assertEqual(result["geometry_outcome"], "TARGET_FIRST")
+        self.assertAlmostEqual(result["reward_pips"], 5.0)
+        self.assertAlmostEqual(result["risk_pips"], 5.0)
+        self.assertAlmostEqual(result["realized_r"], 1.0)
 
     def test_same_candle_tp_and_sl_counts_as_stop_first(self) -> None:
         row = {
@@ -1207,6 +2014,45 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(truth["history_fetch_command_mode"], "WINDOWED")
         self.assertEqual(truth["history_fetch_command_count"], 1)
         self.assertEqual(truth["history_fetch_commands"][0]["date"], "2026-06-18")
+        self.assertIn("--pairs GBP_USD", truth["history_fetch_commands"][0]["command"])
+
+    def test_incomplete_truth_windows_also_publish_fetch_plan(self) -> None:
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 40, "deduped_directional_rows": 40},
+            candle_stats={"history_files": 1, "history_candles": 500},
+            score_stats={
+                "evaluated_rows": 35,
+                "missing_price_window_groups": [],
+                "incomplete_truth_window_groups": [
+                    {
+                        "date": "2026-06-18",
+                        "count": 5,
+                        "needed_from_utc": "2026-06-18T00:00:00Z",
+                        "needed_to_utc": "2026-06-18T02:00:00Z",
+                        "pairs": ["GBP_USD"],
+                        "pair_directions": ["GBP_USD:UP"],
+                    }
+                ],
+            },
+            sample_coverage={
+                "pairs": [
+                    {
+                        "pair": "GBP_USD",
+                        "forecast_samples": 5,
+                        "evaluated_samples": 0,
+                        "missing_price_truth_samples": 5,
+                    }
+                ],
+                "under_sampled_pair_directions": [],
+            },
+            granularity="M1",
+            edge_min_samples=30,
+            now_utc=datetime(2026, 6, 19, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(truth["status"], "PARTIAL_PRICE_TRUTH")
+        self.assertEqual(truth["incomplete_price_window_group_count"], 1)
+        self.assertEqual(truth["history_fetch_command_count"], 1)
         self.assertIn("--pairs GBP_USD", truth["history_fetch_commands"][0]["command"])
 
     def test_load_candles_filters_to_forecast_truth_windows(self) -> None:

@@ -1331,8 +1331,17 @@ def _projection_timing_penalty_eligible(entry: LedgerEntry) -> bool:
     calibration_samples/economic_hit_rate while excluding explicitly
     non-tradable market-closed emissions from learning.
     """
-    if _directional_forecast_timing_penalty_eligible(entry):
-        return True
+    if (
+        entry.signal_name == "directional_forecast"
+        and str(entry.direction or "").upper() in {"UP", "DOWN"}
+    ):
+        # Final directional forecasts have an explicit entry-grade contract.
+        # Do not let the generic TIMEOUT branch below re-admit watch-only rows
+        # that `_directional_forecast_timing_penalty_eligible` deliberately
+        # excludes. Otherwise low-confidence no-touch telemetry trains the
+        # live confidence bucket, pushes every pair toward the timeout floor,
+        # and then prevents fresh entry-grade evidence from recovering it.
+        return _directional_forecast_timing_penalty_eligible(entry)
     if str(entry.resolution_status or "").upper() != "TIMEOUT":
         return False
     evidence = str(entry.resolution_evidence or "").lower()

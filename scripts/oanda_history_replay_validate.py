@@ -11,12 +11,17 @@ from __future__ import annotations
 import argparse
 import bisect
 import collections
+import fcntl
 import gzip
+import hashlib
 import json
 import math
+import os
 import re
 import statistics
 import sys
+import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -91,27 +96,105 @@ class ForecastRow:
     invalidation_price: float | None
     horizon_min: float
     cycle_id: str | None
+    raw_confidence: float | None = None
+    calibration_multiplier: float | None = None
+    driver_families: tuple[str, ...] = ()
 
 
 def main() -> int:
     args = _parse_args()
+    with ExitStack() as resources:
+        return _run(args, resources=resources)
+
+
+def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
+    forecast_from = _parse_required_time(args.forecast_from, flag="--from") if args.forecast_from else None
+    forecast_to = _parse_required_time(args.forecast_to, flag="--to") if args.forecast_to else None
+    if forecast_from is not None and forecast_to is not None and forecast_from >= forecast_to:
+        raise ValueError("--from must be earlier than --to")
     history_dirs = _history_dirs(
         args.history_dir,
         granularity=args.granularity,
         auto_min_days=args.auto_history_min_days,
     )
     pair_filter = _parse_pair_filter(args.pairs)
-    rows, load_stats = _load_forecasts(args.forecast_history, pairs=pair_filter)
+    rows, load_stats = _load_forecasts(
+        args.forecast_history,
+        pairs=pair_filter,
+        time_from=forecast_from,
+        time_to=forecast_to,
+        min_confidence=args.min_confidence,
+        confidence_field=args.confidence_field,
+    )
+    if args.independent_non_overlap:
+        rows, independence_stats = _select_independent_forecasts(rows)
+    else:
+        independence_stats = {
+            "independent_non_overlap": False,
+            "independent_input_rows": len(rows),
+            "independent_selected_rows": len(rows),
+            "skipped_overlapping_rows": 0,
+        }
     candles_by_pair, candle_stats = _load_candles(
         history_dirs,
         granularity=args.granularity,
         windows_by_pair=_forecast_truth_windows(rows),
     )
+    if args.allow_repeat_experiment and not str(args.repeat_reason or "").strip():
+        raise ValueError("--allow-repeat-experiment requires --repeat-reason")
+    out_dir = args.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    json_out = out_dir / f"oanda_history_replay_validate_{run_ts}.json"
+    md_out = out_dir / f"oanda_history_replay_validate_{run_ts}.md"
+    latest_json = out_dir / "oanda_history_replay_validate_latest.json"
+    latest_md = out_dir / "oanda_history_replay_validate_latest.md"
+    experiment = _experiment_identity(
+        args=args,
+        rows=rows,
+        candles_by_pair=candles_by_pair,
+        history_dirs=history_dirs,
+        forecast_from=forecast_from,
+        forecast_to=forecast_to,
+        load_stats=load_stats,
+        candle_stats=candle_stats,
+    )
+    experiment_dir = out_dir / "experiments" / experiment["experiment_id"]
+    canonical_json = experiment_dir / "report.json"
+    canonical_md = experiment_dir / "report.md"
+    manifest_path = experiment_dir / "manifest.json"
+    repeat_reason = str(args.repeat_reason or "").strip() or None
+    if args.independent_non_overlap:
+        resources.enter_context(_acquire_experiment_lock(experiment_dir))
+        json_out = canonical_json
+        md_out = canonical_md
+        if (
+            _experiment_is_complete(
+                canonical_json,
+                canonical_md,
+                manifest_path,
+                experiment_id=experiment["experiment_id"],
+            )
+            and not args.allow_repeat_experiment
+        ):
+            print(f"experiment already evaluated: {canonical_json}")
+            print("use --allow-repeat-experiment only when an intentional rerun is required")
+            return 0
+        pending_manifest = {
+            **experiment,
+            "status": "PENDING",
+            "repeat_reason": repeat_reason,
+        }
+        _write_text_atomic(
+            manifest_path,
+            json.dumps(pending_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+        )
     validation_now = datetime.now(timezone.utc)
     results, score_stats, unscorable_no_market_rows, pending_future_truth_rows = _score_forecasts(
         rows,
         candles_by_pair,
         now_utc=validation_now,
+        granularity=args.granularity,
     )
     contrarian_results = [
         item for item in (_contrarian_row(row) for row in results)
@@ -163,14 +246,17 @@ def main() -> int:
         min_train_samples=args.min_train_samples,
         min_validation_samples=args.min_validation_samples,
     )
+    proof_eligibility = _proof_eligibility(
+        args=args,
+        forecast_from=forecast_from,
+        forecast_to=forecast_to,
+        load_stats=load_stats,
+        candle_stats=candle_stats,
+        score_stats=score_stats,
+        evaluated_rows=len(results),
+        split=split,
+    )
 
-    out_dir = args.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
-    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    json_out = out_dir / f"oanda_history_replay_validate_{run_ts}.json"
-    md_out = out_dir / f"oanda_history_replay_validate_{run_ts}.md"
-    latest_json = out_dir / "oanda_history_replay_validate_latest.json"
-    latest_md = out_dir / "oanda_history_replay_validate_latest.md"
     precision_rules = _bidask_precision_rules(
         segment_exit_grids["by_pair_direction"],
         contrarian_segment_rows=[
@@ -201,6 +287,11 @@ def main() -> int:
         stable_max_daily_sample_share=args.stable_max_daily_sample_share,
         stable_min_positive_day_rate=args.stable_min_positive_day_rate,
     )
+    if not proof_eligibility["eligible"]:
+        precision_rules = _block_unverified_positive_rules(
+            precision_rules,
+            blockers=proof_eligibility["blockers"],
+        )
     sample_coverage = _forecast_sample_coverage(
         rows,
         results,
@@ -228,6 +319,20 @@ def main() -> int:
             "DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss"
         ),
         "granularity": args.granularity,
+        "selection_contract": {
+            "audit_mode": args.audit_mode,
+            "proof_eligible": proof_eligibility["eligible"],
+            "proof_blockers": proof_eligibility["blockers"],
+            "forecast_from_utc_inclusive": _iso(forecast_from) if forecast_from is not None else None,
+            "forecast_to_utc_exclusive": _iso(forecast_to) if forecast_to is not None else None,
+            "min_confidence": args.min_confidence,
+            "confidence_field": args.confidence_field,
+            "confidence_filter_before_non_overlap": True,
+            "independent_non_overlap_per_pair": bool(args.independent_non_overlap),
+            "independence_limit": (
+                "same-pair horizons do not overlap; cross-pair currency correlation is not removed"
+            ),
+        },
         "exit_grid_config": {
             "take_profit_pips": list(args.tp_grid_pips),
             "stop_loss_pips": list(args.sl_grid_pips),
@@ -236,6 +341,7 @@ def main() -> int:
             "min_validation_samples": args.min_validation_samples,
         },
         **load_stats,
+        **independence_stats,
         **candle_stats,
         **score_stats,
         "summary": _summary(results),
@@ -247,16 +353,51 @@ def main() -> int:
             "by_pair_direction": _group(results, ("pair", "direction"), min_n=args.min_group_samples),
             "by_horizon": _group(results, ("horizon_bucket",), min_n=args.min_group_samples),
             "by_confidence": _group(results, ("confidence_bucket",), min_n=args.min_group_samples),
+            "by_month": _group(results, ("month",), min_n=args.min_group_samples),
+            "by_pair_direction_confidence": _group(
+                results,
+                ("pair", "direction", "confidence_bucket"),
+                min_n=args.min_group_samples,
+            ),
+            "by_primary_driver_family": _group(
+                results,
+                ("primary_driver_family",),
+                min_n=args.min_group_samples,
+            ),
+            "by_driver_family_presence": _group_driver_family_presence(
+                results,
+                min_n=args.min_group_samples,
+            ),
         },
         "exit_grid": exit_grid,
         "segment_exit_grids": segment_exit_grids,
         "precision_rules": precision_rules,
         "train_validation_exit_selection": split,
     }
-    json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    latest_json.write_text(json_out.read_text(encoding="utf-8"), encoding="utf-8")
-    md_out.write_text(_markdown(report), encoding="utf-8")
-    latest_md.write_text(md_out.read_text(encoding="utf-8"), encoding="utf-8")
+    completed_experiment = {
+        **experiment,
+        "status": "COMPLETE" if args.independent_non_overlap else "UNLOCKED_DIAGNOSTIC",
+        "repeat_reason": repeat_reason,
+    }
+    report["experiment"] = completed_experiment
+    report_json = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    report_markdown = _markdown(report)
+    _write_text_atomic(json_out, report_json)
+    _write_text_atomic(md_out, report_markdown)
+    if args.independent_non_overlap:
+        completed_manifest = {
+            **completed_experiment,
+            "report_json_sha256": hashlib.sha256(report_json.encode("utf-8")).hexdigest(),
+            "report_md_sha256": hashlib.sha256(report_markdown.encode("utf-8")).hexdigest(),
+        }
+        _write_text_atomic(
+            manifest_path,
+            json.dumps(completed_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+    # Latest pointers move only after the canonical report is COMPLETE. A
+    # crash may leave latest stale, but never pointing at an unverified run.
+    _write_text_atomic(latest_json, report_json)
+    _write_text_atomic(latest_md, report_markdown)
     print(f"wrote {json_out}")
     print(f"wrote {md_out}")
     return 0
@@ -273,6 +414,32 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--history-dir", type=Path, action="append")
     parser.add_argument("--granularity", default="S5")
     parser.add_argument("--output-dir", type=Path, default=Path("logs/reports/forecast_improvement"))
+    parser.add_argument("--from", dest="forecast_from", help="inclusive forecast timestamp in UTC/ISO-8601")
+    parser.add_argument("--to", dest="forecast_to", help="exclusive forecast timestamp in UTC/ISO-8601")
+    parser.add_argument("--min-confidence", type=float)
+    parser.add_argument(
+        "--audit-mode",
+        choices=("DIAGNOSTIC", "LOCKED_HOLDOUT", "FORWARD"),
+        default="DIAGNOSTIC",
+        help="distinguish exploratory diagnostics from pre-locked proof cohorts",
+    )
+    parser.add_argument(
+        "--confidence-field",
+        choices=("calibrated", "raw"),
+        default="calibrated",
+        help="field filtered by --min-confidence; filtering happens before non-overlap selection",
+    )
+    parser.add_argument(
+        "--independent-non-overlap",
+        action="store_true",
+        help="keep only the first forecast per pair until its horizon expires",
+    )
+    parser.add_argument(
+        "--allow-repeat-experiment",
+        action="store_true",
+        help="intentionally rerun an identical independent experiment",
+    )
+    parser.add_argument("--repeat-reason", help="required reason for --allow-repeat-experiment")
     parser.add_argument("--auto-history-min-days", type=float, default=DEFAULT_AUTO_HISTORY_MIN_DAYS)
     parser.add_argument("--tp-grid-pips", type=_parse_float_csv, default=DEFAULT_TP_GRID_PIPS)
     parser.add_argument("--sl-grid-pips", type=_parse_float_csv, default=DEFAULT_SL_GRID_PIPS)
@@ -512,6 +679,9 @@ def _load_candles(
     rows = 0
     filtered = 0
     skipped = 0
+    duplicate_candles = 0
+    conflicting_candles = 0
+    conflict_keys: set[tuple[str, datetime]] = set()
     for history_dir in history_dirs:
         for path in sorted(history_dir.glob(f"*/*_{granularity}_BA_*.jsonl*")):
             if not _is_supported_history_file(path):
@@ -533,6 +703,9 @@ def _load_candles(
                     if candle is None:
                         skipped += 1
                         continue
+                    if candle.pair != path_pair:
+                        skipped += 1
+                        continue
                     rows += 1
                     if windows_by_pair is not None and not _timestamp_in_windows(
                         candle.timestamp_utc,
@@ -541,7 +714,19 @@ def _load_candles(
                     ):
                         filtered += 1
                         continue
-                    by_pair[candle.pair][candle.timestamp_utc] = candle
+                    key = (candle.pair, candle.timestamp_utc)
+                    if key in conflict_keys:
+                        conflicting_candles += 1
+                        continue
+                    existing = by_pair[candle.pair].get(candle.timestamp_utc)
+                    if existing is None:
+                        by_pair[candle.pair][candle.timestamp_utc] = candle
+                    elif existing == candle:
+                        duplicate_candles += 1
+                    else:
+                        conflicting_candles += 1
+                        conflict_keys.add(key)
+                        del by_pair[candle.pair][candle.timestamp_utc]
     sorted_by_pair = {
         pair: [items[key] for key in sorted(items)]
         for pair, items in by_pair.items()
@@ -551,6 +736,8 @@ def _load_candles(
         "history_raw_rows": rows,
         "history_filtered_rows": filtered,
         "history_skipped_rows": skipped,
+        "history_duplicate_candles": duplicate_candles,
+        "history_conflicting_candles": conflicting_candles,
         "history_pairs": len(sorted_by_pair),
         "history_candles": sum(len(items) for items in sorted_by_pair.values()),
     }
@@ -614,11 +801,18 @@ def _timestamp_in_windows(
 
 
 def _candle_from_payload(payload: dict[str, Any]) -> QuoteCandle | None:
+    if payload.get("complete") is False:
+        return None
     pair = str(payload.get("pair") or "").upper()
     timestamp = _parse_time(payload.get("time"))
     bid = _ohlc_from_payload(payload.get("bid"))
     ask = _ohlc_from_payload(payload.get("ask"))
     if not pair or timestamp is None or bid is None or ask is None:
+        return None
+    if any(
+        getattr(ask, field) <= getattr(bid, field)
+        for field in ("o", "h", "l", "c")
+    ):
         return None
     return QuoteCandle(timestamp_utc=timestamp, pair=pair, bid=bid, ask=ask)
 
@@ -627,7 +821,7 @@ def _ohlc_from_payload(payload: object) -> Ohlc | None:
     if not isinstance(payload, dict):
         return None
     try:
-        return Ohlc(
+        value = Ohlc(
             o=float(payload["o"]),
             h=float(payload["h"]),
             l=float(payload["l"]),
@@ -635,16 +829,40 @@ def _ohlc_from_payload(payload: object) -> Ohlc | None:
         )
     except (KeyError, TypeError, ValueError):
         return None
+    prices = (value.o, value.h, value.l, value.c)
+    if not all(math.isfinite(price) and price > 0.0 for price in prices):
+        return None
+    if value.h < max(value.o, value.c, value.l):
+        return None
+    if value.l > min(value.o, value.c, value.h):
+        return None
+    return value
 
 
-def _load_forecasts(path: Path, *, pairs: set[str] | None = None) -> tuple[list[ForecastRow], dict[str, Any]]:
+def _load_forecasts(
+    path: Path,
+    *,
+    pairs: set[str] | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+    min_confidence: float | None = None,
+    confidence_field: str = "calibrated",
+) -> tuple[list[ForecastRow], dict[str, Any]]:
     pair_filter = {str(item).upper() for item in (pairs or set()) if str(item).strip()}
-    rows: list[ForecastRow] = []
-    seen: set[tuple[Any, ...]] = set()
+    if confidence_field not in {"calibrated", "raw"}:
+        raise ValueError("confidence_field must be calibrated or raw")
+    if min_confidence is not None and not 0.0 <= float(min_confidence) <= 1.0:
+        raise ValueError("min_confidence must be between 0 and 1")
+    canonical_by_key: dict[tuple[Any, ...], ForecastRow] = {}
+    conflict_keys: set[tuple[Any, ...]] = set()
+    conflict_members: dict[tuple[Any, ...], list[ForecastRow]] = collections.defaultdict(list)
     raw_directional = 0
     skipped_pair_filter = 0
+    skipped_time_filter = 0
+    skipped_confidence_filter = 0
     skipped_duplicate = 0
     skipped_invalid = 0
+    raw_confidence_missing_rows = 0
     with path.open(encoding="utf-8") as handle:
         for idx, line in enumerate(handle):
             if not line.strip():
@@ -652,6 +870,9 @@ def _load_forecasts(path: Path, *, pairs: set[str] | None = None) -> tuple[list[
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
+                skipped_invalid += 1
+                continue
+            if not isinstance(payload, dict):
                 skipped_invalid += 1
                 continue
             direction = str(payload.get("direction") or "").upper()
@@ -663,10 +884,9 @@ def _load_forecasts(path: Path, *, pairs: set[str] | None = None) -> tuple[list[
             if timestamp is None or not pair:
                 skipped_invalid += 1
                 continue
-            if pair_filter and pair not in pair_filter:
-                skipped_pair_filter += 1
-                continue
             confidence = _safe_float(payload.get("confidence"))
+            raw_confidence = _safe_float(payload.get("raw_confidence"))
+            calibration_multiplier = _safe_float(payload.get("calibration_multiplier"))
             target = _safe_float(payload.get("target_price"))
             invalidation = _safe_float(payload.get("invalidation_price"))
             cycle_id = str(payload.get("cycle_id") or "").strip() or None
@@ -679,32 +899,164 @@ def _load_forecasts(path: Path, *, pairs: set[str] | None = None) -> tuple[list[
                 target=target,
                 invalidation=invalidation,
             )
-            if key in seen:
-                skipped_duplicate += 1
-                continue
-            seen.add(key)
-            rows.append(
-                ForecastRow(
-                    source_index=idx,
-                    timestamp_utc=timestamp,
-                    pair=pair,
-                    direction=direction,
-                    confidence=confidence,
-                    current_price=_safe_float(payload.get("current_price")),
-                    target_price=target,
-                    invalidation_price=invalidation,
-                    horizon_min=_safe_horizon(payload.get("horizon_min")),
-                    cycle_id=cycle_id,
-                )
+            candidate = ForecastRow(
+                source_index=idx,
+                timestamp_utc=timestamp,
+                pair=pair,
+                direction=direction,
+                confidence=confidence,
+                raw_confidence=raw_confidence,
+                calibration_multiplier=calibration_multiplier,
+                current_price=_safe_float(payload.get("current_price")),
+                target_price=target,
+                invalidation_price=invalidation,
+                horizon_min=_safe_horizon(payload.get("horizon_min")),
+                cycle_id=cycle_id,
+                driver_families=_forecast_driver_families(payload.get("drivers_for")),
             )
+            if key in conflict_keys:
+                conflict_members[key].append(candidate)
+                continue
+            existing = canonical_by_key.get(key)
+            if existing is None:
+                canonical_by_key[key] = candidate
+            elif _forecast_rows_equivalent_for_dedupe(existing, candidate):
+                skipped_duplicate += 1
+            else:
+                conflict_keys.add(key)
+                conflict_members[key].extend((existing, candidate))
+                del canonical_by_key[key]
+    canonical_rows = sorted(canonical_by_key.values(), key=lambda row: row.source_index)
+    scoped_conflicting_forecast_groups = sum(
+        1
+        for members in conflict_members.values()
+        if any(
+            (not pair_filter or row.pair in pair_filter)
+            and (time_from is None or row.timestamp_utc >= time_from)
+            and (time_to is None or row.timestamp_utc < time_to)
+            for row in members
+        )
+    )
+    # Canonicalize duplicate emissions before any policy filter. Otherwise a
+    # later duplicate can be selectively admitted merely because an earlier
+    # copy failed the requested confidence/time/pair cohort.
+    rows: list[ForecastRow] = []
+    for row in canonical_rows:
+        if pair_filter and row.pair not in pair_filter:
+            skipped_pair_filter += 1
+            continue
+        if time_from is not None and row.timestamp_utc < time_from:
+            skipped_time_filter += 1
+            continue
+        if time_to is not None and row.timestamp_utc >= time_to:
+            skipped_time_filter += 1
+            continue
+        selected_confidence = row.confidence
+        if confidence_field == "raw":
+            selected_confidence = row.raw_confidence
+            if row.raw_confidence is None:
+                raw_confidence_missing_rows += 1
+        if min_confidence is not None and (
+            selected_confidence is None or selected_confidence < min_confidence
+        ):
+            skipped_confidence_filter += 1
+            continue
+        rows.append(row)
     return rows, {
         "raw_directional_rows": raw_directional,
+        "canonical_directional_rows": len(canonical_rows),
         "pair_filter": sorted(pair_filter),
         "skipped_pair_filter_rows": skipped_pair_filter,
+        "forecast_time_from_utc": _iso(time_from) if time_from is not None else None,
+        "forecast_time_to_utc": _iso(time_to) if time_to is not None else None,
+        "confidence_filter_field": confidence_field,
+        "min_confidence_filter": min_confidence,
+        "skipped_time_filter_rows": skipped_time_filter,
+        "skipped_confidence_filter_rows": skipped_confidence_filter,
+        "raw_confidence_missing_rows": raw_confidence_missing_rows,
         "deduped_directional_rows": len(rows),
         "skipped_duplicate_rows": skipped_duplicate,
+        "skipped_conflicting_forecast_rows": scoped_conflicting_forecast_groups,
+        "global_conflicting_forecast_groups": len(conflict_members),
         "skipped_invalid_rows": skipped_invalid,
     }
+
+
+def _select_independent_forecasts(
+    rows: Sequence[ForecastRow],
+) -> tuple[list[ForecastRow], dict[str, Any]]:
+    """Select non-overlapping forecast windows after all policy filters.
+
+    Repeated forecasts inside one unresolved horizon share most of the same
+    future candles. Counting them as separate trials inflates precision and
+    lets one market move dominate calibration. Different pairs retain their
+    own clocks so a forecast on EUR_USD does not suppress an unrelated pair.
+    """
+
+    selected: list[ForecastRow] = []
+    accepted_until: dict[str, datetime] = {}
+    skipped = 0
+    for row in sorted(rows, key=lambda item: (item.timestamp_utc, item.source_index)):
+        current_until = accepted_until.get(row.pair)
+        if current_until is not None and row.timestamp_utc < current_until:
+            skipped += 1
+            continue
+        selected.append(row)
+        accepted_until[row.pair] = _forecast_truth_end(row)
+    return selected, {
+        "independent_non_overlap": True,
+        "independent_input_rows": len(rows),
+        "independent_selected_rows": len(selected),
+        "skipped_overlapping_rows": skipped,
+    }
+
+
+def _forecast_driver_families(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    families: list[str] = []
+    for item in value:
+        family = _driver_family(str(item or ""))
+        if family not in families:
+            families.append(family)
+    return tuple(families)
+
+
+def _driver_family(text: str) -> str:
+    lower = text.lower()
+    if "wick-only" in lower and "trap fade" in lower:
+        return "WICK_TRAP_FADE"
+    if "reversal-from-extreme" in lower:
+        return "EXTREME_REVERSAL"
+    if "range breakout pending" in lower:
+        return "RANGE_BREAKOUT_PENDING"
+    if "range breakout confirmed" in lower:
+        return "RANGE_BREAKOUT_CONFIRMED"
+    if "divergence" in lower:
+        return "DIVERGENCE"
+    if ("equal-high" in lower or "equal-low" in lower) and "fade" in lower:
+        return "LIQUIDITY_SWEEP_FADE"
+    if "hvn" in lower or "price magnet" in lower:
+        return "HVN_MAGNET"
+    if "aroon" in lower or "momentum" in lower:
+        return "MOMENTUM"
+    if any(
+        marker in lower
+        for marker in (
+            "inside bar",
+            "morning star",
+            "evening star",
+            "shooting star",
+            "white soldiers",
+            "black crows",
+            "engulf",
+            "doji",
+        )
+    ):
+        return "CANDLE_PATTERN"
+    if "market location" in lower:
+        return "MARKET_LOCATION"
+    return "OTHER"
 
 
 def _dedupe_key(
@@ -730,11 +1082,40 @@ def _dedupe_key(
     )
 
 
+def _forecast_rows_equivalent_for_dedupe(first: ForecastRow, second: ForecastRow) -> bool:
+    """Compare duplicate emissions at the one-second ledger resolution.
+
+    Legacy writers emitted the same forecast several times a few milliseconds
+    apart. Their canonical key intentionally buckets timestamps to one second;
+    sub-second drift alone is therefore not a conflict. Any material forecast
+    field change is quarantined instead of selecting the more favorable copy.
+    """
+
+    def payload(row: ForecastRow) -> tuple[Any, ...]:
+        return (
+            row.timestamp_utc.replace(microsecond=0),
+            row.pair,
+            row.direction,
+            row.confidence,
+            row.raw_confidence,
+            row.calibration_multiplier,
+            row.current_price,
+            row.target_price,
+            row.invalidation_price,
+            row.horizon_min,
+            row.cycle_id,
+            row.driver_families,
+        )
+
+    return payload(first) == payload(second)
+
+
 def _score_forecasts(
     rows: Sequence[ForecastRow],
     candles_by_pair: dict[str, list[QuoteCandle]],
     *,
     now_utc: datetime | None = None,
+    granularity: str = "S5",
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[ForecastRow], list[ForecastRow]]:
     results: list[dict[str, Any]] = []
     skipped_no_pair = 0
@@ -742,7 +1123,9 @@ def _score_forecasts(
     missing_windows: list[ForecastRow] = []
     unscorable_no_market: list[ForecastRow] = []
     pending_future_truth: list[ForecastRow] = []
+    incomplete_truth_rows: list[ForecastRow] = []
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    candle_delta = _granularity_delta(granularity)
     for row in rows:
         if _forecast_truth_end(row) > now:
             pending_future_truth.append(row)
@@ -757,13 +1140,22 @@ def _score_forecasts(
             continue
         times = [c.timestamp_utc for c in candles]
         start = bisect.bisect_left(times, row.timestamp_utc)
-        end = bisect.bisect_right(times, _forecast_truth_end(row))
+        last_complete_open = _forecast_truth_end(row) - candle_delta
+        end = bisect.bisect_right(times, last_complete_open)
         if start >= len(candles) or end <= start:
             skipped_no_window += 1
             missing_windows.append(row)
             continue
         window = candles[start:end]
-        scored = _score_one(row, window)
+        if not _truth_window_complete(
+            window,
+            candle_delta=candle_delta,
+            window_start=row.timestamp_utc,
+            window_end=_forecast_truth_end(row),
+        ):
+            incomplete_truth_rows.append(row)
+            continue
+        scored = _score_one(row, window, candle_delta=candle_delta)
         if scored is not None:
             results.append(scored)
     return (
@@ -777,10 +1169,73 @@ def _score_forecasts(
             "unscorable_no_market_window_groups": _missing_price_window_groups(unscorable_no_market),
             "pending_future_truth_rows": len(pending_future_truth),
             "pending_future_truth_window_groups": _missing_price_window_groups(pending_future_truth),
+            "skipped_incomplete_truth_window_rows": len(incomplete_truth_rows),
+            "incomplete_truth_window_groups": _missing_price_window_groups(incomplete_truth_rows),
         },
         unscorable_no_market,
         pending_future_truth,
     )
+
+
+def _granularity_delta(granularity: str) -> timedelta:
+    seconds = {
+        "S5": 5,
+        "S10": 10,
+        "S15": 15,
+        "S30": 30,
+        "M1": 60,
+        "M2": 120,
+        "M4": 240,
+        "M5": 300,
+        "M10": 600,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H2": 7200,
+        "H3": 10800,
+        "H4": 14400,
+        "H6": 21600,
+        "H8": 28800,
+        "H12": 43200,
+        "D": 86400,
+    }.get(str(granularity or "").upper())
+    if seconds is None:
+        raise ValueError(f"unsupported replay granularity {granularity!r}")
+    return timedelta(seconds=seconds)
+
+
+def _truth_window_complete(
+    window: Sequence[QuoteCandle],
+    *,
+    candle_delta: timedelta,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+) -> bool:
+    if not window:
+        return False
+    expected = candle_delta.total_seconds()
+    if expected <= 0:
+        return False
+    if window_start is not None:
+        leading_gap = (window[0].timestamp_utc - window_start).total_seconds()
+        # The first executable candle may start after an unaligned forecast,
+        # but it must be the immediately following candle. A full interval or
+        # more means the leading truth candle is missing.
+        if leading_gap < 0 or leading_gap >= expected:
+            return False
+    if window_end is not None:
+        last_close = window[-1].timestamp_utc + candle_delta
+        trailing_gap = (window_end - last_close).total_seconds()
+        # Only fully closed candles are scored. Less than one residual candle
+        # is expected for an unaligned horizon; a full interval means trailing
+        # truth is missing.
+        if trailing_gap < 0 or trailing_gap >= expected:
+            return False
+    for previous, current in zip(window, window[1:]):
+        gap = (current.timestamp_utc - previous.timestamp_utc).total_seconds()
+        if abs(gap - expected) > 1e-6:
+            return False
+    return True
 
 
 def _is_likely_fx_no_market_window(row: ForecastRow) -> bool:
@@ -969,6 +1424,8 @@ def _price_truth_coverage(
     history_candles = _int_metric(candle_stats.get("history_candles"))
     evaluated_rows = _int_metric(score_stats.get("evaluated_rows"))
     missing_groups = list(score_stats.get("missing_price_window_groups") or [])
+    incomplete_groups = list(score_stats.get("incomplete_truth_window_groups") or [])
+    fetchable_gap_groups = _merge_price_truth_window_groups(missing_groups, incomplete_groups)
     no_market_groups = list(score_stats.get("unscorable_no_market_window_groups") or [])
     no_market_rows = _int_metric(score_stats.get("unscorable_no_market_rows"))
     pending_future_groups = list(score_stats.get("pending_future_truth_window_groups") or [])
@@ -1023,7 +1480,7 @@ def _price_truth_coverage(
     elif evaluated_rows < int(edge_min_samples):
         status = "INSUFFICIENT_EVALUATED_SAMPLES"
         reason = "Evaluated rows are below the precision-rule sample floor."
-    elif missing_truth_samples > 0 or missing_groups:
+    elif missing_truth_samples > 0 or fetchable_gap_groups:
         status = "PARTIAL_PRICE_TRUTH"
         reason = "Some forecast pairs or windows still lack matching bid/ask candle truth."
     else:
@@ -1061,7 +1518,7 @@ def _price_truth_coverage(
         warnings.append("FORECAST_ROWS_WITH_PENDING_FUTURE_TRUTH_WINDOW")
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     history_fetch_commands = _history_fetch_commands(
-        missing_groups,
+        fetchable_gap_groups,
         granularity,
         now_utc=now,
     )
@@ -1084,12 +1541,14 @@ def _price_truth_coverage(
         "history_candles": history_candles,
         "missing_price_truth_samples": missing_truth_samples,
         "missing_price_window_group_count": len(missing_groups),
+        "incomplete_price_window_group_count": len(incomplete_groups),
+        "fetchable_price_window_group_count": len(fetchable_gap_groups),
         "unscorable_no_market_window_group_count": len(no_market_groups),
         "unscorable_no_market_window_groups": no_market_groups[:12],
         "pending_future_truth_window_group_count": len(pending_future_groups),
         "pending_future_truth_window_groups": pending_future_groups[:12],
         "future_price_truth_window_group_count": _future_missing_window_group_count(
-            missing_groups,
+            fetchable_gap_groups,
             now_utc=now,
         ),
         "missing_pairs": missing_pairs,
@@ -1102,11 +1561,52 @@ def _price_truth_coverage(
         "history_fetch_command_count": len(history_fetch_commands),
         "history_fetch_commands": history_fetch_commands,
         "history_fetch_command": _history_fetch_command(
-            missing_groups,
+            fetchable_gap_groups,
             granularity,
             now_utc=now,
         ),
     }
+
+
+def _merge_price_truth_window_groups(
+    *group_sets: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for groups in group_sets:
+        for group in groups:
+            date = str(group.get("date") or "").strip()
+            start = _parse_time(group.get("needed_from_utc"))
+            end = _parse_time(group.get("needed_to_utc"))
+            if not date or start is None or end is None:
+                continue
+            item = merged.setdefault(
+                date,
+                {
+                    "date": date,
+                    "count": 0,
+                    "needed_from_utc": start,
+                    "needed_to_utc": end,
+                    "pairs": set(),
+                    "pair_directions": set(),
+                },
+            )
+            item["count"] += _int_metric(group.get("count"))
+            item["needed_from_utc"] = min(item["needed_from_utc"], start)
+            item["needed_to_utc"] = max(item["needed_to_utc"], end)
+            item["pairs"].update(str(value).upper() for value in group.get("pairs") or [])
+            item["pair_directions"].update(
+                str(value).upper() for value in group.get("pair_directions") or []
+            )
+    return [
+        {
+            **item,
+            "needed_from_utc": _iso(item["needed_from_utc"]),
+            "needed_to_utc": _iso(item["needed_to_utc"]),
+            "pairs": sorted(value for value in item["pairs"] if value),
+            "pair_directions": sorted(value for value in item["pair_directions"] if value),
+        }
+        for _date, item in sorted(merged.items())
+    ]
 
 
 def _history_fetch_commands(
@@ -1242,8 +1742,19 @@ def _missing_price_window_groups(rows: Sequence[ForecastRow]) -> list[dict[str, 
     return out
 
 
-def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any] | None:
-    return _score_direction(row, window, direction=row.direction, forecast_direction=row.direction)
+def _score_one(
+    row: ForecastRow,
+    window: Sequence[QuoteCandle],
+    *,
+    candle_delta: timedelta | None = None,
+) -> dict[str, Any] | None:
+    return _score_direction(
+        row,
+        window,
+        direction=row.direction,
+        forecast_direction=row.direction,
+        candle_delta=candle_delta,
+    )
 
 
 def _score_direction(
@@ -1252,6 +1763,7 @@ def _score_direction(
     *,
     direction: str,
     forecast_direction: str,
+    candle_delta: timedelta | None = None,
 ) -> dict[str, Any] | None:
     if not window:
         return None
@@ -1262,6 +1774,10 @@ def _score_direction(
     pip_factor = instrument_pip_factor(row.pair)
     first = window[0]
     last = window[-1]
+    effective_delta = candle_delta
+    if effective_delta is None and len(window) >= 2:
+        effective_delta = window[1].timestamp_utc - window[0].timestamp_utc
+    last_close = last.timestamp_utc + effective_delta if effective_delta is not None else last.timestamp_utc
     if direction == "UP":
         entry = first.ask.o
         final_pips = (last.bid.c - entry) * pip_factor
@@ -1286,19 +1802,53 @@ def _score_direction(
         target_reward_side=target_reward_side,
         invalidation_adverse_side=invalidation_adverse_side,
     )
+    reward_pips = (
+        abs(float(geometry_row.target_price) - entry) * pip_factor
+        if target_reward_side and geometry_row.target_price is not None
+        else None
+    )
+    risk_pips = (
+        abs(float(geometry_row.invalidation_price) - entry) * pip_factor
+        if invalidation_adverse_side and geometry_row.invalidation_price is not None
+        else None
+    )
+    realized_r = None
+    geometry_outcome = "MISSING_GEOMETRY"
+    if reward_pips is not None and risk_pips is not None and risk_pips > 0:
+        if target_first is True:
+            realized_r = reward_pips / risk_pips
+            geometry_outcome = "TARGET_FIRST"
+        elif target_first is False:
+            realized_r = -1.0
+            geometry_outcome = "INVALIDATION_FIRST_OR_SAME_BAR"
+        else:
+            realized_r = final_pips / risk_pips
+            geometry_outcome = "NO_TOUCH_MARK_TO_HORIZON"
     return {
         "source_index": row.source_index,
         "timestamp_utc": _iso(row.timestamp_utc),
         "entry_timestamp_utc": _iso(first.timestamp_utc),
         "last_timestamp_utc": _iso(last.timestamp_utc),
+        "entry_delay_seconds": (first.timestamp_utc - row.timestamp_utc).total_seconds(),
+        "effective_holding_min": (last_close - first.timestamp_utc).total_seconds() / 60.0,
+        "unobserved_horizon_tail_seconds": max(
+            0.0,
+            (_forecast_truth_end(row) - last_close).total_seconds(),
+        ),
         "pair": row.pair,
         "direction": direction,
         "forecast_direction": forecast_direction,
         "contrarian": direction != forecast_direction,
         "confidence": row.confidence,
+        "raw_confidence": row.raw_confidence,
+        "calibration_multiplier": row.calibration_multiplier,
         "confidence_bucket": _confidence_bucket(row.confidence),
+        "raw_confidence_bucket": _confidence_bucket(row.raw_confidence),
+        "driver_families": row.driver_families,
+        "primary_driver_family": row.driver_families[0] if row.driver_families else "MISSING",
         "horizon_min": row.horizon_min,
         "horizon_bucket": _horizon_bucket(row.horizon_min),
+        "month": row.timestamp_utc.strftime("%Y-%m"),
         "entry_price": entry,
         "final_pips": final_pips,
         "final_direction_hit": final_pips > 0.0,
@@ -1309,6 +1859,10 @@ def _score_direction(
         "target_before_invalidation": target_first,
         "target_reward_side": target_reward_side,
         "invalidation_adverse_side": invalidation_adverse_side,
+        "reward_pips": reward_pips,
+        "risk_pips": risk_pips,
+        "realized_r": realized_r,
+        "geometry_outcome": geometry_outcome,
         "_window": window,
     }
 
@@ -1353,6 +1907,10 @@ def _contrarian_row(row: dict[str, Any]) -> dict[str, Any] | None:
             "target_before_invalidation": None,
             "target_reward_side": None,
             "invalidation_adverse_side": None,
+            "reward_pips": None,
+            "risk_pips": None,
+            "realized_r": None,
+            "geometry_outcome": "CONTRARIAN_NO_SOURCE_GEOMETRY",
             "source_direction": forecast_direction,
             "source_final_pips": row.get("final_pips"),
             "source_direction_hit": row.get("final_direction_hit"),
@@ -1482,8 +2040,42 @@ def _train_validation_exit_selection(
             "min_required": min_train_samples + min_validation_samples,
         }
     split_at = min(max(int(len(ordered) * train_fraction), min_train_samples), len(ordered) - min_validation_samples)
-    train = ordered[:split_at]
-    validation = ordered[split_at:]
+    validation_start = _parse_time(ordered[split_at].get("timestamp_utc"))
+    if validation_start is None:
+        return {"status": "INVALID_TIMESTAMPS", "n": len(ordered)}
+    # Keep a timestamp cluster wholly on one side and purge any training
+    # forecast whose truth horizon reaches into validation. This prevents the
+    # optimizer from learning on outcomes that occur during the holdout.
+    train_candidates = [
+        row
+        for row in ordered
+        if (_parse_time(row.get("timestamp_utc")) or validation_start) < validation_start
+    ]
+    validation = [
+        row
+        for row in ordered
+        if (_parse_time(row.get("timestamp_utc")) or validation_start) >= validation_start
+    ]
+    train = [
+        row
+        for row in train_candidates
+        if (
+            (_parse_time(row.get("timestamp_utc")) or validation_start)
+            + timedelta(minutes=float(row.get("horizon_min") or 0.0))
+        ) <= validation_start
+    ]
+    purged_train_rows = len(train_candidates) - len(train)
+    if len(train) < min_train_samples or len(validation) < min_validation_samples:
+        return {
+            "status": "INSUFFICIENT_SAMPLES_AFTER_PURGE",
+            "n": len(ordered),
+            "train_n": len(train),
+            "validation_n": len(validation),
+            "purged_train_rows": purged_train_rows,
+            "validation_start_utc": _iso(validation_start),
+            "min_train_samples": min_train_samples,
+            "min_validation_samples": min_validation_samples,
+        }
     train_grid = _exit_grid(train, tp_grid=tp_grid, sl_grid=sl_grid)
     selected = train_grid[0]
     validation_realized = [
@@ -1503,6 +2095,8 @@ def _train_validation_exit_selection(
         "status": "OK",
         "train_n": len(train),
         "validation_n": len(validation),
+        "purged_train_rows": purged_train_rows,
+        "validation_start_utc": _iso(validation_start),
         "selected_by_train": selected,
         "validation": validation_summary,
     }
@@ -1516,13 +2110,31 @@ def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     target_first_known = [r for r in rows if r.get("target_before_invalidation") is not None]
     target_geometry_known = [r for r in rows if r.get("target_reward_side") is not None]
     invalidation_geometry_known = [r for r in rows if r.get("invalidation_adverse_side") is not None]
+    hits = sum(1 for row in rows if row["final_direction_hit"])
+    wilson_lower, wilson_upper = _wilson_interval(hits, len(rows))
+    r_rows = [r for r in rows if r.get("realized_r") is not None]
+    outcomes = collections.Counter(str(r.get("geometry_outcome") or "UNKNOWN") for r in rows)
     return {
         "n": len(rows),
-        "hit_rate": _rate(r["final_direction_hit"] for r in rows),
+        "hit_rate": hits / len(rows),
+        "hit_wilson95_lower": wilson_lower,
+        "hit_wilson95_upper": wilson_upper,
         "avg_final_pips": _mean(r["final_pips"] for r in rows),
+        "total_final_pips": sum(float(r["final_pips"]) for r in rows),
         "median_final_pips": _median(r["final_pips"] for r in rows),
         "avg_mfe_pips": _mean(r["mfe_pips"] for r in rows),
         "avg_mae_pips": _mean(r["mae_pips"] for r in rows),
+        "median_entry_delay_seconds": _median(
+            r["entry_delay_seconds"] for r in rows if r.get("entry_delay_seconds") is not None
+        ),
+        "median_effective_holding_min": _median(
+            r["effective_holding_min"] for r in rows if r.get("effective_holding_min") is not None
+        ),
+        "median_unobserved_horizon_tail_seconds": _median(
+            r["unobserved_horizon_tail_seconds"]
+            for r in rows
+            if r.get("unobserved_horizon_tail_seconds") is not None
+        ),
         "target_touch_rate": _rate(r["target_touch"] for r in target_known) if target_known else None,
         "invalidation_touch_rate": _rate(r["invalidation_touch"] for r in invalidation_known) if invalidation_known else None,
         "target_before_invalidation_rate": (
@@ -1536,6 +2148,15 @@ def _summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
             if invalidation_geometry_known
             else None
         ),
+        "geometry_outcomes": dict(sorted(outcomes.items())),
+        "realized_r_n": len(r_rows),
+        "avg_realized_r": _mean(float(r["realized_r"]) for r in r_rows) if r_rows else None,
+        "total_realized_r": sum(float(r["realized_r"]) for r in r_rows) if r_rows else None,
+        "positive_realized_r_rate": (
+            _rate(float(r["realized_r"]) > 0.0 for r in r_rows) if r_rows else None
+        ),
+        "avg_reward_pips": _mean(float(r["reward_pips"]) for r in r_rows) if r_rows else None,
+        "avg_risk_pips": _mean(float(r["risk_pips"]) for r in r_rows) if r_rows else None,
     }
 
 
@@ -1575,6 +2196,26 @@ def _group(
         if len(items) < min_n:
             continue
         payload = {field: value for field, value in zip(fields, key)}
+        payload.update(_summary(items))
+        out.append(payload)
+    out.sort(key=lambda item: (item["n"], item.get("avg_final_pips") or -999.0), reverse=True)
+    return out
+
+
+def _group_driver_family_presence(
+    rows: Sequence[dict[str, Any]],
+    *,
+    min_n: int = 1,
+) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        for family in row.get("driver_families") or ("MISSING",):
+            buckets[str(family)].append(row)
+    out: list[dict[str, Any]] = []
+    for family, items in buckets.items():
+        if len(items) < min_n:
+            continue
+        payload = {"driver_family": family}
         payload.update(_summary(items))
         out.append(payload)
     out.sort(key=lambda item: (item["n"], item.get("avg_final_pips") or -999.0), reverse=True)
@@ -2244,6 +2885,56 @@ def _bidask_precision_rules(
     }
 
 
+def _block_unverified_positive_rules(
+    precision: dict[str, Any],
+    *,
+    blockers: Sequence[str],
+) -> dict[str, Any]:
+    """Keep diagnostic candidates visible without publishing them as live edge.
+
+    Positive rules are optimized on the replay cohort. They cannot enter the
+    packageable rule sections until a pre-registered cohort and validation
+    contract are verified. Negative rules remain available as conservative
+    trade blockers.
+    """
+
+    out = dict(precision)
+    positive_sections = (
+        "edge_rules",
+        "daily_stable_edge_rules",
+        "contrarian_edge_rules",
+        "daily_stable_contrarian_edge_rules",
+    )
+    for section in positive_sections:
+        candidates = []
+        for raw_candidate in out.get(section) or []:
+            candidate = dict(raw_candidate)
+            candidate["live_grade"] = False
+            candidate["adoption_status"] = "DIAGNOSTIC_ONLY_NOT_ADOPTABLE"
+            candidate["adoption_blockers"] = list(
+                dict.fromkeys(
+                    [
+                        *(candidate.get("adoption_blockers") or []),
+                        *blockers,
+                    ]
+                )
+            )
+            candidates.append(candidate)
+        out[f"diagnostic_{section}"] = candidates
+        out[section] = []
+    out["positive_rule_adoption_blocked"] = True
+    out["positive_rule_adoption_blockers"] = list(blockers)
+    out["adoption_summary"] = _precision_adoption_summary(
+        edge_rules=[],
+        daily_stable_edge_rules=[],
+        contrarian_edge_rules=[],
+        daily_stable_contrarian_edge_rules=[],
+        negative_rules=list(out.get("negative_rules") or []),
+        rejected_daily_stability=list(out.get("rejected_daily_stability_segments") or []),
+    )
+    return out
+
+
 def _contrarian_bucket_name(fields: dict[str, str]) -> str:
     parts: list[str] = []
     horizon = fields.get("horizon_bucket")
@@ -2329,6 +3020,8 @@ def _round(value: float | None) -> float | None:
 def _markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
     split = report["train_validation_exit_selection"]
+    selection = report.get("selection_contract") or {}
+    experiment = report.get("experiment") or {}
     lines = [
         "# OANDA History Replay Validate",
         "",
@@ -2339,6 +3032,12 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- rows: raw_directional={report['raw_directional_rows']} deduped={report['deduped_directional_rows']} evaluated={report['evaluated_rows']}",
         f"- history: files={report['history_files']} candles={report['history_candles']} skipped={report['history_skipped_rows']}",
         f"- price_truth_coverage: status={(report.get('price_truth_coverage') or {}).get('status')} adoption={(report.get('price_truth_coverage') or {}).get('adoption_level')}",
+        f"- audit_mode: {selection.get('audit_mode')}",
+        f"- proof_eligible: {selection.get('proof_eligible')}",
+        f"- proof_blockers: {', '.join(selection.get('proof_blockers') or []) or 'none'}",
+        f"- confidence_policy: field={selection.get('confidence_field')} min={selection.get('min_confidence')}",
+        f"- independent_non_overlap_per_pair: {selection.get('independent_non_overlap_per_pair')}",
+        f"- experiment_id: {experiment.get('experiment_id')}",
         "",
         "## Summary",
         "",
@@ -2358,6 +3057,8 @@ def _markdown(report: dict[str, Any]) -> str:
             f"- unscorable_no_market_rows: {truth.get('unscorable_no_market_rows')}",
             f"- missing_price_truth_samples: {truth.get('missing_price_truth_samples')}",
             f"- missing_price_window_groups: {truth.get('missing_price_window_group_count')}",
+            f"- incomplete_price_window_groups: {truth.get('incomplete_price_window_group_count')}",
+            f"- fetchable_price_window_groups: {truth.get('fetchable_price_window_group_count')}",
             f"- unscorable_no_market_window_groups: {truth.get('unscorable_no_market_window_group_count')}",
             f"- future_price_truth_window_groups: {truth.get('future_price_truth_window_group_count')}",
             f"- missing_pairs: {', '.join(truth.get('missing_pairs') or []) or 'none'}",
@@ -2447,6 +3148,16 @@ def _markdown(report: dict[str, Any]) -> str:
         f"rank_only={adoption.get('rank_only_support_rules', 0)} "
         f"negative_blocks={adoption.get('negative_block_rules', 0)} "
         f"has_live_grade={adoption.get('has_live_grade_support', False)}"
+    )
+    lines.append(
+        "- positive_rule_adoption_blocked: "
+        f"{precision.get('positive_rule_adoption_blocked', False)} "
+        f"blockers={','.join(precision.get('positive_rule_adoption_blockers') or []) or 'none'}"
+    )
+    lines.append(
+        "- diagnostic_positive_candidates: "
+        f"edge={len(precision.get('diagnostic_edge_rules') or [])} "
+        f"contrarian={len(precision.get('diagnostic_contrarian_edge_rules') or [])}"
     )
     for rule in edge_rules[:12]:
         lines.append(
@@ -2541,29 +3252,54 @@ def _markdown(report: dict[str, Any]) -> str:
 _SUMMARY_KEYS = {
     "n",
     "hit_rate",
+    "hit_wilson95_lower",
+    "hit_wilson95_upper",
     "avg_final_pips",
+    "total_final_pips",
     "median_final_pips",
     "avg_mfe_pips",
     "avg_mae_pips",
+    "median_entry_delay_seconds",
+    "median_effective_holding_min",
+    "median_unobserved_horizon_tail_seconds",
     "target_touch_rate",
     "invalidation_touch_rate",
     "target_before_invalidation_rate",
     "reward_side_target_rate",
     "adverse_side_invalidation_rate",
+    "geometry_outcomes",
+    "realized_r_n",
+    "avg_realized_r",
+    "total_realized_r",
+    "positive_realized_r_rate",
+    "avg_reward_pips",
+    "avg_risk_pips",
 }
 
 
 def _summary_line(summary: dict[str, Any]) -> str:
     return (
         f"n={summary.get('n', 0)} hit={_pct(summary.get('hit_rate'))} "
+        f"wilson95=[{_pct(summary.get('hit_wilson95_lower'))},{_pct(summary.get('hit_wilson95_upper'))}] "
         f"avg_final={_fmt(summary.get('avg_final_pips'))} "
         f"median_final={_fmt(summary.get('median_final_pips'))} "
         f"avg_mfe={_fmt(summary.get('avg_mfe_pips'))} avg_mae={_fmt(summary.get('avg_mae_pips'))} "
+        f"entry_delay_s={_fmt(summary.get('median_entry_delay_seconds'))} "
+        f"effective_hold_m={_fmt(summary.get('median_effective_holding_min'))} "
+        f"horizon_tail_s={_fmt(summary.get('median_unobserved_horizon_tail_seconds'))} "
         f"reward_target={_pct(summary.get('reward_side_target_rate'))} "
         f"adverse_inv={_pct(summary.get('adverse_side_invalidation_rate'))} "
         f"target={_pct(summary.get('target_touch_rate'))} invalidation={_pct(summary.get('invalidation_touch_rate'))} "
-        f"target_first={_pct(summary.get('target_before_invalidation_rate'))}"
+        f"target_first={_pct(summary.get('target_before_invalidation_rate'))} "
+        f"avg_R={_fmt(summary.get('avg_realized_r'))} total_R={_fmt(summary.get('total_realized_r'))}"
     )
+
+
+def _parse_required_time(value: object, *, flag: str) -> datetime:
+    parsed = _parse_time(value)
+    if parsed is None:
+        raise ValueError(f"{flag} must be a valid ISO-8601 timestamp")
+    return parsed
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -2578,9 +3314,12 @@ def _parse_time(value: object) -> datetime | None:
         else:
             text = f"{core}+00:00"
     try:
-        return datetime.fromisoformat(text).astimezone(timezone.utc)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _safe_float(value: object) -> float | None:
@@ -2629,6 +3368,268 @@ def _rate(values: Iterable[object]) -> float | None:
     if not vals:
         return None
     return sum(1 for value in vals if bool(value)) / len(vals)
+
+
+def _wilson_interval(hits: int, total: int, *, z: float = 1.959963984540054) -> tuple[float | None, float | None]:
+    if total <= 0:
+        return None, None
+    p = hits / total
+    z2 = z * z
+    denominator = 1.0 + z2 / total
+    center = (p + z2 / (2.0 * total)) / denominator
+    margin = z * math.sqrt((p * (1.0 - p) + z2 / (4.0 * total)) / total) / denominator
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def _proof_eligibility(
+    *,
+    args: argparse.Namespace,
+    forecast_from: datetime | None,
+    forecast_to: datetime | None,
+    load_stats: dict[str, Any],
+    candle_stats: dict[str, Any],
+    score_stats: dict[str, Any],
+    evaluated_rows: int,
+    split: dict[str, Any],
+    cohort_lock_verified: bool = False,
+) -> dict[str, Any]:
+    """Return conservative blockers for calling a cohort proof-grade.
+
+    CLI mode names are declarations, not evidence that a holdout was locked
+    before outcomes were inspected. Until a durable pre-evaluation cohort lock
+    is supplied and verified, historical runs remain diagnostic evidence.
+    """
+
+    blockers: list[str] = []
+    if args.audit_mode not in {"LOCKED_HOLDOUT", "FORWARD"}:
+        blockers.append("AUDIT_MODE_IS_DIAGNOSTIC")
+    if forecast_from is None or forecast_to is None:
+        blockers.append("EXPLICIT_COHORT_WINDOW_REQUIRED")
+    if not args.independent_non_overlap:
+        blockers.append("SAME_PAIR_NON_OVERLAP_REQUIRED")
+    if args.min_confidence is None:
+        blockers.append("CONFIDENCE_POLICY_MUST_BE_PREDECLARED")
+    if not cohort_lock_verified:
+        blockers.append("PRE_EVALUATION_COHORT_LOCK_NOT_VERIFIED")
+    # Global train/validation output cannot validate a pair/side rule that was
+    # optimized on the full cohort. Keep proof closed until each candidate
+    # segment has an untouched holdout result of its own.
+    blockers.append("SEGMENT_HOLDOUT_RULE_VALIDATION_NOT_IMPLEMENTED")
+    if int(load_stats.get("skipped_conflicting_forecast_rows") or 0) > 0:
+        blockers.append("CONFLICTING_FORECAST_ROWS")
+    if int(candle_stats.get("history_conflicting_candles") or 0) > 0:
+        blockers.append("CONFLICTING_PRICE_TRUTH")
+    if int(score_stats.get("skipped_no_pair_candles") or 0) > 0:
+        blockers.append("MISSING_PAIR_PRICE_TRUTH")
+    if int(score_stats.get("skipped_no_price_window") or 0) > 0:
+        blockers.append("MISSING_PRICE_WINDOW")
+    if int(score_stats.get("skipped_incomplete_truth_window_rows") or 0) > 0:
+        blockers.append("INCOMPLETE_PRICE_WINDOW")
+    if int(score_stats.get("pending_future_truth_rows") or 0) > 0:
+        blockers.append("PENDING_FUTURE_TRUTH")
+    if evaluated_rows < int(args.edge_min_samples):
+        blockers.append("MINIMUM_SAMPLE_FLOOR_NOT_MET")
+    if str(split.get("status") or "").upper() != "OK":
+        blockers.append("TRAIN_VALIDATION_SPLIT_NOT_AVAILABLE")
+    else:
+        validation = split.get("validation") if isinstance(split.get("validation"), dict) else {}
+        validation_avg = _safe_metric((validation or {}).get("avg_realized_pips"))
+        validation_pf = _safe_metric((validation or {}).get("profit_factor"))
+        if validation_avg is None or validation_avg <= 0.0:
+            blockers.append("VALIDATION_EXPECTANCY_NOT_POSITIVE")
+        if validation_pf is None or validation_pf <= 1.0:
+            blockers.append("VALIDATION_PROFIT_FACTOR_NOT_ABOVE_ONE")
+    return {"eligible": not blockers, "blockers": blockers}
+
+
+def _experiment_identity(
+    *,
+    args: argparse.Namespace,
+    rows: Sequence[ForecastRow],
+    candles_by_pair: dict[str, list[QuoteCandle]],
+    history_dirs: Sequence[Path],
+    forecast_from: datetime | None,
+    forecast_to: datetime | None,
+    load_stats: dict[str, Any] | None = None,
+    candle_stats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    semantics = {
+        "version": "oanda-bidask-independent-v3",
+        "entry": "first complete candle at_or_after forecast; UP ask open; DOWN bid open",
+        "exit": "last fully closed candle inside signal horizon; UP bid close; DOWN ask close",
+        "truth_completeness": "leading, internal, and trailing candle intervals required",
+        "same_bar_tp_sl": "stop_first",
+        "non_overlap": "per_pair timestamp >= previous timestamp+horizon",
+        "filter_order": "canonical_dedupe,policy_filters,confidence,non_overlap,truth,score",
+    }
+    forecast_digest = _forecast_rows_digest(rows)
+    truth_digest = _truth_candles_digest(candles_by_pair)
+    evaluator_digest = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    contract = {
+        "schema_version": 1,
+        "audit_mode": args.audit_mode,
+        "semantics": semantics,
+        "evaluator_sha256": evaluator_digest,
+        "granularity": str(args.granularity).upper(),
+        "forecast_from_utc_inclusive": _iso(forecast_from) if forecast_from is not None else None,
+        "forecast_to_utc_exclusive": _iso(forecast_to) if forecast_to is not None else None,
+        "pairs": sorted(_parse_pair_filter(args.pairs)),
+        "confidence_field": args.confidence_field,
+        "min_confidence": args.min_confidence,
+        "independent_non_overlap": bool(args.independent_non_overlap),
+        "tp_grid_pips": [float(item) for item in args.tp_grid_pips],
+        "sl_grid_pips": [float(item) for item in args.sl_grid_pips],
+        "train_fraction": float(args.train_fraction),
+        "min_train_samples": int(args.min_train_samples),
+        "min_validation_samples": int(args.min_validation_samples),
+        "min_group_samples": int(args.min_group_samples),
+        "edge_min_samples": int(args.edge_min_samples),
+        "edge_min_directional_hit_rate": float(args.edge_min_directional_hit_rate),
+        "edge_min_avg_final_pips": float(args.edge_min_avg_final_pips),
+        "edge_min_avg_realized_pips": float(args.edge_min_avg_realized_pips),
+        "edge_min_win_rate": float(args.edge_min_win_rate),
+        "edge_min_profit_factor": float(args.edge_min_profit_factor),
+        "negative_min_samples": int(args.negative_min_samples),
+        "negative_max_directional_hit_rate": float(args.negative_max_directional_hit_rate),
+        "negative_max_avg_final_pips": float(args.negative_max_avg_final_pips),
+        "negative_max_avg_realized_pips": float(args.negative_max_avg_realized_pips),
+        "negative_max_win_rate": float(args.negative_max_win_rate),
+        "negative_max_profit_factor": float(args.negative_max_profit_factor),
+        "stable_min_active_days": int(args.stable_min_active_days),
+        "stable_max_daily_sample_share": float(args.stable_max_daily_sample_share),
+        "stable_min_positive_day_rate": float(args.stable_min_positive_day_rate),
+        "auto_history_min_days": float(args.auto_history_min_days),
+        "cohort_input_diagnostics": {
+            "raw_confidence_missing_rows": int(
+                (load_stats or {}).get("raw_confidence_missing_rows") or 0
+            ),
+            "conflicting_forecast_groups": int(
+                (load_stats or {}).get("skipped_conflicting_forecast_rows") or 0
+            ),
+            "duplicate_truth_candles": int(
+                (candle_stats or {}).get("history_duplicate_candles") or 0
+            ),
+            "conflicting_truth_candles": int(
+                (candle_stats or {}).get("history_conflicting_candles") or 0
+            ),
+        },
+        "forecast_rows_sha256": forecast_digest,
+        "truth_candles_sha256": truth_digest,
+    }
+    canonical = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    experiment_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return {
+        **contract,
+        "experiment_id": experiment_id,
+        "forecast_rows": len(rows),
+        "truth_candles": sum(len(items) for items in candles_by_pair.values()),
+        "history_sources": len(history_dirs),
+    }
+
+
+def _forecast_rows_digest(rows: Sequence[ForecastRow]) -> str:
+    digest = hashlib.sha256()
+    payloads: list[str] = []
+    for row in rows:
+        payload = (
+            row.timestamp_utc.astimezone(timezone.utc).isoformat(),
+            row.pair,
+            row.direction,
+            row.confidence,
+            row.raw_confidence,
+            row.calibration_multiplier,
+            row.current_price,
+            row.target_price,
+            row.invalidation_price,
+            row.horizon_min,
+            row.cycle_id,
+            row.driver_families,
+        )
+        payloads.append(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+    for payload in sorted(payloads):
+        digest.update(payload.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _truth_candles_digest(candles_by_pair: dict[str, list[QuoteCandle]]) -> str:
+    digest = hashlib.sha256()
+    for pair in sorted(candles_by_pair):
+        for candle in sorted(candles_by_pair[pair], key=lambda item: item.timestamp_utc):
+            payload = (
+                pair,
+                candle.timestamp_utc.astimezone(timezone.utc).isoformat(),
+                candle.bid.o,
+                candle.bid.h,
+                candle.bid.l,
+                candle.bid.c,
+                candle.ask.o,
+                candle.ask.h,
+                candle.ask.l,
+                candle.ask.c,
+            )
+            digest.update(json.dumps(payload, separators=(",", ":")).encode("ascii"))
+            digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _experiment_is_complete(
+    report_json: Path,
+    report_md: Path,
+    manifest_path: Path,
+    *,
+    experiment_id: str,
+) -> bool:
+    if not report_json.is_file() or not report_md.is_file() or not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        report_payload = json.loads(report_json.read_text(encoding="utf-8"))
+        report_md_text = report_md.read_text(encoding="utf-8")
+    except (OSError, json.JSONDecodeError):
+        return False
+    report_experiment = report_payload.get("experiment") if isinstance(report_payload, dict) else None
+    if not isinstance(report_experiment, dict) or not report_md_text.strip():
+        return False
+    if manifest.get("experiment_id") != experiment_id or manifest.get("status") != "COMPLETE":
+        return False
+    if report_experiment.get("experiment_id") != experiment_id:
+        return False
+    if report_experiment.get("status") != "COMPLETE":
+        return False
+    return (
+        manifest.get("report_json_sha256") == hashlib.sha256(report_json.read_bytes()).hexdigest()
+        and manifest.get("report_md_sha256") == hashlib.sha256(report_md.read_bytes()).hexdigest()
+    )
+
+
+def _acquire_experiment_lock(experiment_dir: Path):
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    handle = (experiment_dir / ".evaluation.lock").open(mode="a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise RuntimeError(f"experiment evaluation already in progress: {experiment_dir}") from exc
+    return handle
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, mode="w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _mean(values: Iterable[float]) -> float | None:

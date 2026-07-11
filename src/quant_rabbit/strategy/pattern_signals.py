@@ -39,12 +39,20 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
 # Tunable knobs
 PATTERN_TOTAL_CAP = float(os.environ.get("QR_PATTERN_TOTAL_CAP", "30.0"))
 FAILED_BREAKOUT_BONUS = float(os.environ.get("QR_FAILED_BREAKOUT_BONUS", "15.0"))
+# Structure pivots are confirmed three bars after their timestamp by the
+# canonical chart reader. Four bars keeps the first actionable cycle while
+# still preventing an old wick sweep from voting indefinitely.
+FAILED_BREAKOUT_MAX_AGE_BARS = max(
+    1,
+    int(os.environ.get("QR_FAILED_BREAKOUT_MAX_AGE_BARS", "4")),
+)
 RSI_EXTREME_BONUS = float(os.environ.get("QR_RSI_EXTREME_BONUS", "12.0"))
 DEALING_RANGE_BONUS = float(os.environ.get("QR_DEALING_RANGE_BONUS", "10.0"))
 AROON_FLIP_BONUS = float(os.environ.get("QR_AROON_FLIP_BONUS", "8.0"))
@@ -103,6 +111,7 @@ AROON_STRONG_THRESHOLD = float(os.environ.get("QR_PATTERN_AROON_STRONG", "70.0")
 AROON_WEAK_THRESHOLD = float(os.environ.get("QR_PATTERN_AROON_WEAK", "30.0"))
 
 PATTERN_TIMEFRAMES = ("M5", "M15", "M30", "H1")
+_TIMEFRAME_SECONDS = {"M5": 300, "M15": 900, "M30": 1800, "H1": 3600}
 
 
 @dataclass(frozen=True)
@@ -138,28 +147,60 @@ def _detect_failed_breakout(view: Dict[str, Any], tf: str) -> List[PatternSignal
     events = structure.get("structure_events") or []
     if not events:
         return []
-    # Inspect last 4 events; pick the most recent failed one.
-    for e in reversed(events[-4:]):
-        if not isinstance(e, dict):
-            continue
-        if e.get("close_confirmed"):
-            continue
-        kind = str(e.get("kind") or "")
-        if "UP" in kind:
-            fade_dir = "DOWN"
-        elif "DOWN" in kind:
-            fade_dir = "UP"
-        else:
-            continue
-        return [PatternSignal(
-            name="failed_breakout",
-            timeframe=tf,
-            direction=fade_dir,
-            confidence=0.75,
-            bonus_magnitude=FAILED_BREAKOUT_BONUS,
-            rationale=f"{tf} {kind}@{e.get('broken_pivot_price')} wick-only (close_confirmed=False) → trap fade {fade_dir}",
-        )]
-    return []
+    # A failed breakout is an immediate rejection pattern. Searching older
+    # events made one wick-only print vote on every later cycle—even after a
+    # newer confirmed structure event—and it became the dominant forecast
+    # family. Only the latest structure event can be the active failure, and it
+    # must still be within a bounded number of closed bars.
+    e = events[-1]
+    if not isinstance(e, dict) or e.get("close_confirmed") is not False:
+        return []
+    if not _structure_event_is_fresh(view, e, tf=tf):
+        return []
+    kind = str(e.get("kind") or "")
+    if "UP" in kind:
+        fade_dir = "DOWN"
+    elif "DOWN" in kind:
+        fade_dir = "UP"
+    else:
+        return []
+    return [PatternSignal(
+        name="failed_breakout",
+        timeframe=tf,
+        direction=fade_dir,
+        confidence=0.75,
+        bonus_magnitude=FAILED_BREAKOUT_BONUS,
+        rationale=f"{tf} {kind}@{e.get('broken_pivot_price')} fresh wick-only rejection → trap fade {fade_dir}",
+    )]
+
+
+def _structure_event_is_fresh(view: Dict[str, Any], event: Dict[str, Any], *, tf: str) -> bool:
+    timeframe_seconds = _TIMEFRAME_SECONDS.get(tf.upper())
+    candles = view.get("recent_candles") or []
+    if timeframe_seconds is None or not candles:
+        return False
+    latest = candles[-1] if isinstance(candles[-1], dict) else {}
+    event_at = _parse_timestamp(event.get("timestamp"))
+    latest_at = _parse_timestamp(latest.get("t") or latest.get("timestamp"))
+    if event_at is None or latest_at is None:
+        return False
+    age_seconds = (latest_at - event_at).total_seconds()
+    return 0.0 <= age_seconds <= timeframe_seconds * FAILED_BREAKOUT_MAX_AGE_BARS
+
+
+def _parse_timestamp(value: object) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _detect_rsi_extreme(view: Dict[str, Any], tf: str) -> List[PatternSignal]:

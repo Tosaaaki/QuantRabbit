@@ -97,17 +97,11 @@ FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
 # target/invalidation levels inside that distance are treated as non-structural
 # unless a future calibrated pair/session model replaces this floor.
 FORECAST_GEOMETRY_NOISE_ATR_MULT = float(os.environ.get("QR_FORECAST_GEOMETRY_NOISE_ATR_MULT", "1.0"))
-# Forecast geometry also has to clear executable spread noise. Live risk
-# validation requires target/invalidation to clear a spread multiple from the
-# actual entry, and forecast-first lanes expand into pending entries that sit
-# beyond the current quote by roughly another spread-offset envelope. Accepting
-# thinner forecast levels just creates STOP/LIMIT variants that are predictably
-# blocked later. This mirrors that contract without importing RiskPolicy or the
-# intent generator into the forecaster; replace it with pair/session MAE-MFE
-# calibration once the projection ledger has enough audited samples.
-FORECAST_GEOMETRY_SPREAD_NOISE_MULT = float(
-    os.environ.get("QR_FORECAST_GEOMETRY_SPREAD_NOISE_MULT", "7.5")
-)
+# Execution spread belongs to the order gateway, not to future-price geometry.
+# A transient rollover spread must not discard nearby structure and replace it
+# with a target tens or hundreds of pips away. Forecast levels therefore use
+# closed-chart ATR/structure only; live spread, slippage and RR remain mandatory
+# execution gates downstream.
 # Missing robust target or invalidation makes a directional forecast less
 # actionable, but not useless for advisory bias. This confidence haircut is an
 # evidence-quality penalty, not a trade gate; ENTRY_CONFIDENCE_MIN remains the
@@ -303,13 +297,8 @@ def _collect_structural_levels(pair_chart: Dict[str, Any], *, side: str) -> list
 
 def _forecast_noise_floor_pips(
     pair_chart: Dict[str, Any],
-    *,
-    current_spread_pips: Optional[float] = None,
 ) -> Optional[float]:
     floors: list[float] = []
-    explicit_spread_pips = _to_float(current_spread_pips)
-    if explicit_spread_pips is not None and explicit_spread_pips > 0:
-        floors.append(explicit_spread_pips * FORECAST_GEOMETRY_SPREAD_NOISE_MULT)
     for view in pair_chart.get("views") or []:
         if not isinstance(view, dict):
             continue
@@ -325,9 +314,6 @@ def _forecast_noise_floor_pips(
                 atr_pips = atr / pip_size
         if atr_pips is not None and atr_pips > 0:
             floors.append(atr_pips * FORECAST_GEOMETRY_NOISE_ATR_MULT)
-        spread_pips = _to_float((indicators or {}).get("spread_pips"))
-        if spread_pips is not None and spread_pips > 0:
-            floors.append(spread_pips * FORECAST_GEOMETRY_SPREAD_NOISE_MULT)
     return max(floors) if floors else None
 
 
@@ -479,7 +465,11 @@ def _forecast_geometry(
         pip_factor=pip_factor,
         intent="HARVEST",
     )
-    noise_floor_pips = _forecast_noise_floor_pips(pair_chart, current_spread_pips=spread_pips)
+    # Keep `spread_pips` in the public call contract for callers that already
+    # pass the live quote, but never let it alter prediction levels. The order
+    # gateway owns spread feasibility and can block execution independently.
+    _ = spread_pips
+    noise_floor_pips = _forecast_noise_floor_pips(pair_chart)
 
     high_levels = _collect_structural_levels(pair_chart, side="HIGH")
     low_levels = _collect_structural_levels(pair_chart, side="LOW")
