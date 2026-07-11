@@ -925,7 +925,7 @@ def _validate_trade_source_freshness(
             "MARKET_READ_SOURCE_STALE",
             "broker_snapshot evidence source is required for a TRADE",
         )
-    broker = _load_json_object(Path(broker_path), label="broker snapshot")
+    broker = _load_json_object(_normalize_source_path(broker_path), label="broker snapshot")
     require_fresh(broker.get("fetched_at_utc"), label="broker snapshot")
     quotes = broker.get("quotes")
     if not isinstance(quotes, Mapping):
@@ -968,11 +968,14 @@ def _build_evidence_packet(
     evidence_sources: Mapping[str, Path],
     prepared_at: datetime,
 ) -> dict[str, Any]:
+    normalized_sources = {
+        name: _normalize_source_path(path) for name, path in evidence_sources.items()
+    }
     sources: dict[str, dict[str, Any]] = {}
-    for name in sorted(evidence_sources):
-        path = Path(evidence_sources[name])
+    for name in sorted(normalized_sources):
+        path = normalized_sources[name]
         sources[name] = _source_descriptor(path)
-    predictions_path = evidence_sources.get("market_read_predictions")
+    predictions_path = normalized_sources.get("market_read_predictions")
     recent_predictions = (
         _recent_resolved_predictions(Path(predictions_path))
         if predictions_path is not None
@@ -1001,7 +1004,7 @@ def _build_evidence_packet(
             # safety meaning is unchanged. Bind that meaning so an ordinary
             # GPT review can finish, while material health/receipt changes
             # still invalidate the packet.
-            watchdog_path = evidence_sources.get(name)
+            watchdog_path = normalized_sources.get(name)
             watchdog_material = _watchdog_material_payload(
                 Path(watchdog_path) if watchdog_path is not None else None
             )
@@ -1024,9 +1027,9 @@ def _build_evidence_packet(
         "sources": material_sources,
     }
     packet_sha = canonical_json_sha256(material)
-    broker_path = evidence_sources.get("broker_snapshot")
+    broker_path = normalized_sources.get("broker_snapshot")
     broker = _load_optional_json_object(Path(broker_path)) if broker_path is not None else {}
-    overrides_path = evidence_sources.get("trader_overrides")
+    overrides_path = normalized_sources.get("trader_overrides")
     overrides = _load_optional_json_object(Path(overrides_path)) if overrides_path is not None else {}
     return {
         **material,
@@ -1039,7 +1042,7 @@ def _build_evidence_packet(
             "generated_at_utc": baseline.get("generated_at_utc"),
             "market_read_first": baseline.get("market_read_first"),
         },
-        "source_paths": {name: str(path) for name, path in sorted(evidence_sources.items())},
+        "source_paths": {name: str(path) for name, path in sorted(normalized_sources.items())},
         "source_metadata": sources,
         "quote_basis_by_pair": quote_basis_by_pair_from_broker_payload(broker),
         "prior_market_read_review": (
@@ -1083,6 +1086,10 @@ def _source_descriptor(path: Path) -> dict[str, Any]:
         "size_bytes": len(raw),
         "generated_at_utc": generated_at,
     }
+
+
+def _normalize_source_path(path: Path | str) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
 
 
 def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:

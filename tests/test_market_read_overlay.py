@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -145,6 +146,49 @@ class MarketReadOverlayTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(MarketReadOverlayError, expected_code):
                     _apply(paths)
+
+    def test_equivalent_relative_and_absolute_source_paths_share_one_evidence_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            relative_snapshot = Path(os.path.relpath(paths["snapshot"], Path.cwd()))
+            relative_sources = {**_sources(paths), "broker_snapshot": relative_snapshot}
+            prepare_market_read_baseline(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                evidence_sources=relative_sources,
+                now=NOW,
+            )
+            _write_overlay(paths)
+
+            summary = _apply(paths)
+
+            packet = json.loads(paths["packet"].read_text())
+            self.assertEqual(summary.action, "TRADE")
+            self.assertEqual(
+                packet["source_paths"]["broker_snapshot"],
+                str(paths["snapshot"].resolve()),
+            )
+
+    def test_identical_bytes_at_a_different_source_path_do_not_share_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            copied_snapshot = paths["snapshot"].with_name("copied_snapshot.json")
+            copied_snapshot.write_bytes(paths["snapshot"].read_bytes())
+            relocated_sources = {**_sources(paths), "broker_snapshot": copied_snapshot}
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_PACKET_STALE",
+            ):
+                apply_codex_market_read_overlay(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    overlay_path=paths["overlay"],
+                    output_path=paths["output"],
+                    evidence_sources=relocated_sources,
+                    now=NOW,
+                )
 
     def test_watchdog_observation_clock_rewrite_does_not_stale_ai_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
