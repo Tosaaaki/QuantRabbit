@@ -30,14 +30,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
+import tempfile
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+from quant_rabbit.forecast_precision import hit_rate_wilson_lower
+from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.paths import ROOT
 
 DEFAULT_CAPTURE_ECONOMICS = ROOT / "data" / "capture_economics.json"
@@ -101,6 +105,24 @@ _OANDA_TRANSACTION_COVERAGE_START_KEY = "oanda_transaction_coverage_start_utc"
 # so manual/replayed receipts remain defended without importing this module.
 SCOPED_TP_PROOF_MIN_EXIT_TRADES = MIN_SAMPLE_FOR_VERDICT
 
+# Capital allocation may use the same exact-vehicle all-exit surface from the
+# intent board and again immediately before a broker POST. Keep the arithmetic
+# and statistical contract in this ledger-owning module so those consumers
+# cannot drift into different definitions of "positive edge".
+EXACT_VEHICLE_NET_EDGE_MIN_TRADES = MIN_SAMPLE_FOR_VERDICT
+EXACT_VEHICLE_NET_ARITHMETIC_ABS_TOLERANCE_JPY = 0.05
+EXACT_VEHICLE_NET_ARITHMETIC_REL_TOLERANCE = 1e-6
+EXACT_VEHICLE_ALLOCATION_SURFACE_CONTRACT = (
+    "QR_EXACT_VEHICLE_ALLOCATION_SURFACE_V2"
+)
+EXECUTION_COST_FLOOR_CONTRACT = "QR_NET_EXECUTION_COST_FLOOR_V1"
+EXECUTION_COST_MIN_SAMPLES = MIN_SAMPLE_FOR_VERDICT
+# Execution quality is a slower-moving broker/transport measurement than a
+# quote.  Ninety days keeps a mature cohort usable through a temporary
+# no-entry repair period while still refusing an indefinitely historical cost
+# assumption.  The cost values themselves are always ledger-derived.
+EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS = 90 * 24 * 60 * 60
+
 
 @dataclass(frozen=True)
 class RealizedOutcome:
@@ -118,6 +140,31 @@ class RealizedOutcome:
     pure_take_profit_lifecycle: bool = False
     broker_close_ts_utc: str = ""
     broker_time_consistent: bool = False
+    entry_units: float = 0.0
+    audited_financing_jpy: float = 0.0
+    adverse_financing_jpy: float = 0.0
+
+
+@dataclass(frozen=True)
+class UnresolvedRealizedOutcome:
+    """Audited cash already realized on a system trade without a terminal close.
+
+    This row deliberately does not count as a completed trade. It does make an
+    exact-vehicle edge proof ineligible until the lifecycle terminates, so a
+    partial reduction or open-trade financing adjustment cannot disappear
+    behind an earlier completed winning sample.
+    """
+
+    ts_utc: str
+    trade_id: str
+    pair: str
+    side: str
+    lane_id: str
+    method: str
+    realized_pl_jpy: float
+    entry_vehicle: str = "UNKNOWN"
+    exit_reasons: tuple[str, ...] = ()
+    reduction_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -291,7 +338,11 @@ def read_attributed_system_entries(ledger_path: Path) -> list[AttributedEntry] |
     return entries
 
 
-def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | None:
+def read_attributed_net_outcomes(
+    ledger_path: Path,
+    *,
+    unresolved_realized_outcomes: list[UnresolvedRealizedOutcome] | None = None,
+) -> list[RealizedOutcome] | None:
     """Return audited, resolved system-attributed outcomes after financing.
 
     ``None`` means the ledger/query could not be read safely; an empty list is
@@ -386,7 +437,8 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
                     )
                 ).fetchall()
             ]
-            oanda_transaction_rows: list[dict[str, Any]] = []
+            oanda_order_fill_transaction_rows: list[dict[str, Any]] = []
+            oanda_daily_financing_transaction_rows: list[dict[str, Any]] = []
             oanda_transactions_authoritative = False
             if "oanda_transactions" in table_names:
                 transaction_columns = {
@@ -400,7 +452,7 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
                 ):
                     return None
                 oanda_transactions_authoritative = True
-                oanda_transaction_rows = [
+                oanda_order_fill_transaction_rows = [
                     dict(row)
                     for row in conn.execute(
                         """
@@ -411,18 +463,39 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
                         """
                     ).fetchall()
                 ]
+                oanda_daily_financing_transaction_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT transaction_id, type, raw_json
+                        FROM oanda_transactions
+                        WHERE type = 'DAILY_FINANCING'
+                        ORDER BY CAST(transaction_id AS INTEGER), transaction_id
+                        """
+                    ).fetchall()
+                ]
     except (sqlite3.Error, TypeError, ValueError):
         return None
 
     coverage_start = _parse_utc_instant(coverage_start_raw)
 
-    financing_by_trade = _audited_financing_by_trade(rows)
+    nonzero_financing_events_by_trade: dict[str, list[tuple[str, float]]] = {}
+    financing_by_trade = _audited_financing_by_trade(
+        rows,
+        nonzero_events_by_trade=nonzero_financing_events_by_trade,
+    )
     if financing_by_trade is None:
+        return None
+    if not _audit_daily_financing_transaction_completeness(
+        rows,
+        oanda_transaction_rows=oanda_daily_financing_transaction_rows,
+        oanda_transactions_authoritative=oanda_transactions_authoritative,
+    ):
         return None
 
     if not _audit_close_transaction_completeness(
         rows,
-        oanda_transaction_rows=oanda_transaction_rows,
+        oanda_transaction_rows=oanda_order_fill_transaction_rows,
         oanda_transactions_authoritative=oanda_transactions_authoritative,
     ):
         return None
@@ -468,14 +541,24 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
         trade_id = str(row.get("trade_id") or "").strip()
         if event_type in {"GATEWAY_ORDER_SENT", "ORDER_ACCEPTED"} and order_id:
             gateways_by_order.setdefault(order_id, []).append(row)
-        elif event_type == "ORDER_FILLED" and trade_id:
-            fills_by_trade.setdefault(trade_id, []).append(row)
+        elif event_type == "ORDER_FILLED":
+            # Index by both normalized and raw broker trade identity. A broken
+            # normalized id must not let a gateway-attributed financing/close
+            # lifecycle disappear; _resolve_system_entry will then compare the
+            # two identities and fail closed on any mismatch.
+            trade_ids = {trade_id} if trade_id else set()
+            raw = _optional_json_object(row.get("raw_json"))
+            opened = raw.get("tradeOpened") if isinstance(raw, dict) else None
+            if isinstance(opened, dict):
+                raw_trade_id = _identifier_text(opened.get("tradeID"))
+                if raw_trade_id:
+                    trade_ids.add(raw_trade_id)
+            for indexed_trade_id in trade_ids:
+                fills_by_trade.setdefault(indexed_trade_id, []).append(row)
 
     outcomes: list[RealizedOutcome] = []
+    unresolved: list[UnresolvedRealizedOutcome] = []
     for trade_id, lifecycle in close_rows_by_trade.items():
-        if not any(str(row.get("event_type") or "") == "TRADE_CLOSED" for row in lifecycle):
-            # Partial-only trades are unresolved and cannot increase n.
-            continue
         entry = _resolve_system_entry(
             fills=fills_by_trade.get(trade_id, []),
             gateways_by_order=gateways_by_order,
@@ -507,13 +590,45 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
         terminal_rows = [
             row for row in lifecycle if str(row.get("event_type") or "") == "TRADE_CLOSED"
         ]
-        final_close = terminal_rows[-1]
         exit_reasons = tuple(str(row["audited_exit_reason"]) for row in lifecycle)
-        net_jpy = sum(
-            float(row["audited_realized_pl_jpy"])
-            + float(row["audited_financing_jpy"])
+        audited_financing_jpy = sum(
+            float(row["audited_financing_jpy"])
             for row in lifecycle
         ) + financing_by_trade.get(trade_id, 0.0)
+        adverse_financing_jpy = sum(
+            max(0.0, -float(row["audited_financing_jpy"]))
+            for row in lifecycle
+        ) + sum(
+            max(0.0, -float(amount))
+            for _, amount in nonzero_financing_events_by_trade.get(
+                trade_id, []
+            )
+        )
+        net_jpy = sum(
+            float(row["audited_realized_pl_jpy"])
+            for row in lifecycle
+        ) + audited_financing_jpy
+        if not terminal_rows:
+            # Cash from a partial reduction is already real even though the
+            # trade is still open. Preserve it as unresolved evidence: it must
+            # not increase the completed sample, but it must prevent a stale
+            # positive sample from authorizing more risk.
+            unresolved.append(
+                UnresolvedRealizedOutcome(
+                    ts_utc=str(lifecycle[-1].get("ts_utc") or ""),
+                    trade_id=trade_id,
+                    pair=entry["pair"],
+                    side=entry["side"],
+                    lane_id=entry["lane_id"],
+                    method=entry["method"],
+                    realized_pl_jpy=float(net_jpy),
+                    entry_vehicle=entry["vehicle"],
+                    exit_reasons=exit_reasons,
+                    reduction_count=len(lifecycle),
+                )
+            )
+            continue
+        final_close = terminal_rows[-1]
         outcomes.append(
             RealizedOutcome(
                 ts_utc=str(final_close.get("ts_utc") or ""),
@@ -533,8 +648,54 @@ def read_attributed_net_outcomes(ledger_path: Path) -> list[RealizedOutcome] | N
                     final_close.get("audited_broker_close_ts_utc") or ""
                 ),
                 broker_time_consistent=True,
+                entry_units=abs(float(entry["entry_units"])),
+                audited_financing_jpy=float(audited_financing_jpy),
+                adverse_financing_jpy=float(adverse_financing_jpy),
             )
         )
+    for trade_id, financing_events in nonzero_financing_events_by_trade.items():
+        if trade_id in close_rows_by_trade:
+            # Terminal and partial-close lifecycles above already include the
+            # complete audited financing total exactly once.
+            continue
+        entry = _resolve_system_entry(
+            fills=fills_by_trade.get(trade_id, []),
+            gateways_by_order=gateways_by_order,
+        )
+        if entry is None:
+            if any(
+                _fill_has_system_attribution_candidate(
+                    fill,
+                    gateways_by_order=gateways_by_order,
+                )
+                for fill in fills_by_trade.get(trade_id, [])
+            ):
+                return None
+            # Manual/unattributed open-trade financing is account truth but is
+            # outside the autonomous trader's exact-vehicle edge surface.
+            continue
+        if not entry["truth_consistent"]:
+            return None
+        entry_ts = _parse_utc_instant(entry["entry_ts_utc"])
+        if coverage_start is None or entry_ts is None or entry_ts < coverage_start:
+            return None
+        latest_ts = financing_events[-1][0]
+        unresolved.append(
+            UnresolvedRealizedOutcome(
+                ts_utc=latest_ts,
+                trade_id=trade_id,
+                pair=entry["pair"],
+                side=entry["side"],
+                lane_id=entry["lane_id"],
+                method=entry["method"],
+                realized_pl_jpy=float(financing_by_trade.get(trade_id, 0.0)),
+                entry_vehicle=entry["vehicle"],
+                exit_reasons=("DAILY_FINANCING",),
+                reduction_count=0,
+            )
+        )
+    if unresolved_realized_outcomes is not None:
+        unresolved_realized_outcomes.extend(unresolved)
     return outcomes
 
 
@@ -552,9 +713,1460 @@ def read_exact_vehicle_take_profit_metrics(
     outcomes = read_attributed_net_outcomes(ledger_path)
     if outcomes is None:
         return None
-    accum: dict[tuple[str, str, str, str], dict[str, float]] = {}
+    return _aggregate_exact_vehicle_outcomes(outcomes, pure_take_profit_only=True)
+
+
+def read_exact_vehicle_net_metrics(
+    ledger_path: Path,
+) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
+    """Aggregate every audited net outcome by exact entry vehicle.
+
+    Unlike :func:`read_exact_vehicle_take_profit_metrics`, this includes market
+    closes, reductions, and every other terminal exit in the attributed trade
+    lifecycle.  It is the realized all-exit edge surface used by GPT capital
+    allocation so profitable TP rows cannot hide a larger stop/market-close
+    leak for the same pair, side, method, and entry vehicle.
+    """
+
+    unresolved: list[UnresolvedRealizedOutcome] = []
+    outcomes = read_attributed_net_outcomes(
+        ledger_path,
+        unresolved_realized_outcomes=unresolved,
+    )
+    if outcomes is None:
+        return None
+    metrics = _aggregate_exact_vehicle_outcomes(
+        outcomes,
+        pure_take_profit_only=False,
+    )
+    for row in metrics.values():
+        row["unresolved_realized_trades"] = 0
+        row["unresolved_realized_net_jpy"] = 0.0
+    unresolved_ids: dict[tuple[str, str, str, str], list[str]] = {}
+    for outcome in unresolved:
+        pair = str(outcome.pair or "UNKNOWN").upper()
+        side = str(outcome.side or "UNKNOWN").upper()
+        method = str(outcome.method or "UNKNOWN").upper()
+        vehicle = str(outcome.entry_vehicle or "UNKNOWN").upper()
+        if (
+            pair == "UNKNOWN"
+            or side not in {"LONG", "SHORT"}
+            or method == "UNKNOWN"
+            or vehicle not in {"LIMIT", "MARKET", "STOP"}
+        ):
+            continue
+        key = (pair, side, method, vehicle)
+        row = metrics.setdefault(key, _empty_exact_vehicle_net_metrics())
+        row["unresolved_realized_trades"] = int(
+            row.get("unresolved_realized_trades") or 0
+        ) + 1
+        row["unresolved_realized_net_jpy"] = round(
+            float(row.get("unresolved_realized_net_jpy") or 0.0)
+            + float(outcome.realized_pl_jpy),
+            4,
+        )
+        unresolved_ids.setdefault(key, []).append(outcome.trade_id)
+    for key, trade_ids in unresolved_ids.items():
+        metrics[key]["unresolved_trade_ids_sha256"] = hashlib.sha256(
+            json.dumps(sorted(trade_ids), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    for row in metrics.values():
+        row.setdefault("unresolved_trade_ids_sha256", canonical_empty_list_sha256())
+    return metrics
+
+
+def canonical_empty_list_sha256() -> str:
+    """Stable empty identity used by semantic execution-ledger surfaces."""
+
+    return hashlib.sha256(b"[]").hexdigest()
+
+
+def _empty_exact_vehicle_net_metrics() -> dict[str, Any]:
+    return {
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "expectancy_jpy_per_trade": 0.0,
+        "avg_win_jpy": 0.0,
+        "avg_loss_jpy": 0.0,
+        "net_jpy": 0.0,
+        "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "exit_scope": "ALL_AUDITED_EXITS",
+        "unresolved_realized_trades": 0,
+        "unresolved_realized_net_jpy": 0.0,
+        "entry_units_total": 0.0,
+        "financing_observation_trades": 0,
+        "financing_adverse_trades": 0,
+        "financing_adverse_total_jpy": 0.0,
+        "financing_adverse_mean_jpy_per_unit": 0.0,
+        "financing_adverse_occurrence_wilson95_upper": None,
+        "financing_adverse_stress_jpy_per_unit": None,
+        "latest_broker_close_ts_utc": None,
+        "oldest_broker_close_ts_utc": None,
+    }
+
+
+def evaluate_exact_vehicle_net_edge(
+    metrics: Mapping[str, Any] | None,
+    *,
+    min_trades: int = EXACT_VEHICLE_NET_EDGE_MIN_TRADES,
+) -> dict[str, Any]:
+    """Validate one exact-vehicle all-exit row and stress its realized edge.
+
+    A thin, arithmetically consistent positive row does not itself prove edge,
+    but it may coexist with the bounded exact-TP collection exception. Any
+    known loss, contradiction, mature non-robust row, or unresolved realized
+    lifecycle blocks that exception.
+    """
+
+    source = metrics if isinstance(metrics, Mapping) else {}
+
+    def strict_int(key: str) -> int | None:
+        value = source.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def strict_float(key: str) -> float | None:
+        value = source.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+
+    trades = strict_int("trades")
+    wins = strict_int("wins")
+    losses = strict_int("losses")
+    net_jpy = strict_float("net_jpy")
+    expectancy = strict_float("expectancy_jpy_per_trade")
+    avg_win = strict_float("avg_win_jpy")
+    avg_loss = strict_float("avg_loss_jpy")
+    unresolved_trades = strict_int("unresolved_realized_trades")
+    unresolved_net_jpy = strict_float("unresolved_realized_net_jpy")
+    if unresolved_trades is None and "unresolved_realized_trades" not in source:
+        unresolved_trades = 0
+    if unresolved_net_jpy is None and "unresolved_realized_net_jpy" not in source:
+        unresolved_net_jpy = 0.0
+
+    counts_consistent = bool(
+        trades is not None
+        and wins is not None
+        and losses is not None
+        and trades >= 0
+        and wins >= 0
+        and losses >= 0
+        and wins + losses <= trades
+        and unresolved_trades is not None
+        and unresolved_trades >= 0
+        and unresolved_net_jpy is not None
+    )
+    magnitudes_consistent = bool(
+        avg_win is not None
+        and avg_loss is not None
+        and avg_win >= 0.0
+        and avg_loss >= 0.0
+        and wins is not None
+        and losses is not None
+        and ((wins == 0 and avg_win == 0.0) or (wins > 0 and avg_win > 0.0))
+        and ((losses == 0 and avg_loss == 0.0) or (losses > 0 and avg_loss > 0.0))
+    )
+    implied_net = (
+        wins * avg_win - losses * avg_loss
+        if counts_consistent
+        and magnitudes_consistent
+        and wins is not None
+        and losses is not None
+        and avg_win is not None
+        and avg_loss is not None
+        else None
+    )
+    net_identity_consistent = bool(
+        implied_net is not None
+        and net_jpy is not None
+        and math.isclose(
+            implied_net,
+            net_jpy,
+            rel_tol=EXACT_VEHICLE_NET_ARITHMETIC_REL_TOLERANCE,
+            abs_tol=EXACT_VEHICLE_NET_ARITHMETIC_ABS_TOLERANCE_JPY,
+        )
+    )
+    expectancy_identity_consistent = bool(
+        trades is not None
+        and trades >= 0
+        and expectancy is not None
+        and net_jpy is not None
+        and math.isclose(
+            expectancy * trades,
+            net_jpy,
+            rel_tol=EXACT_VEHICLE_NET_ARITHMETIC_REL_TOLERANCE,
+            abs_tol=EXACT_VEHICLE_NET_ARITHMETIC_ABS_TOLERANCE_JPY,
+        )
+    )
+    arithmetic_consistent = bool(
+        counts_consistent
+        and magnitudes_consistent
+        and net_identity_consistent
+        and expectancy_identity_consistent
+    )
+    evidence_present = bool(
+        (trades is not None and trades > 0)
+        or (unresolved_trades is not None and unresolved_trades > 0)
+    )
+    win_rate = (
+        wins / trades
+        if arithmetic_consistent
+        and trades is not None
+        and trades > 0
+        and wins is not None
+        else None
+    )
+    wilson_lower = hit_rate_wilson_lower(win_rate, trades or 0)
+    loss_proxy = (
+        avg_loss
+        if losses is not None and losses > 0
+        else avg_win
+        if losses == 0
+        else None
+    )
+    stressed_expectancy = (
+        wilson_lower * avg_win - (1.0 - wilson_lower) * loss_proxy
+        if wilson_lower is not None
+        and avg_win is not None
+        and avg_win > 0.0
+        and loss_proxy is not None
+        and loss_proxy > 0.0
+        else None
+    )
+    no_unresolved_cash = bool(unresolved_trades == 0)
+    positive_consistent = bool(
+        arithmetic_consistent
+        and trades is not None
+        and trades > 0
+        and net_jpy is not None
+        and net_jpy > 0.0
+        and expectancy is not None
+        and expectancy > 0.0
+        and no_unresolved_cash
+    )
+    proven = bool(
+        positive_consistent
+        and trades is not None
+        and trades >= min_trades
+        and stressed_expectancy is not None
+        and stressed_expectancy > 0.0
+    )
+    thin_positive_consistent = bool(
+        positive_consistent
+        and trades is not None
+        and trades < min_trades
+        and losses == 0
+    )
+    blocks_tp_exception = bool(
+        evidence_present
+        and not thin_positive_consistent
+        and not proven
+    )
+    return {
+        "proven": proven,
+        "evidence_present": evidence_present,
+        "arithmetic_consistent": arithmetic_consistent,
+        "counts_consistent": counts_consistent,
+        "magnitudes_consistent": magnitudes_consistent,
+        "net_identity_consistent": net_identity_consistent,
+        "expectancy_identity_consistent": expectancy_identity_consistent,
+        "positive_consistent": positive_consistent,
+        "thin_positive_consistent": thin_positive_consistent,
+        "blocks_tp_exception": blocks_tp_exception,
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "net_jpy": net_jpy,
+        "expectancy_jpy": expectancy,
+        "avg_win_jpy": avg_win,
+        "avg_loss_jpy": avg_loss,
+        "unresolved_realized_trades": unresolved_trades,
+        "unresolved_realized_net_jpy": unresolved_net_jpy,
+        "implied_net_jpy": round(implied_net, 4) if implied_net is not None else None,
+        "win_rate_wilson95_lower": (
+            round(wilson_lower, 6) if wilson_lower is not None else None
+        ),
+        "wilson_stressed_expectancy_jpy": (
+            round(stressed_expectancy, 4)
+            if stressed_expectancy is not None
+            else None
+        ),
+        "minimum_trades": min_trades,
+    }
+
+
+def _nearest_rank_percentile(values: list[float], percentile: float) -> float | None:
+    if not values or not 0.0 < percentile <= 1.0:
+        return None
+    ordered = sorted(float(value) for value in values)
+    return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
+
+
+def _execution_cost_financing_metrics(
+    outcomes: list[RealizedOutcome],
+) -> dict[str, Any]:
+    timestamped = [
+        (
+            outcome,
+            _parse_utc_instant(
+                outcome.broker_close_ts_utc or outcome.ts_utc
+            ),
+        )
+        for outcome in outcomes
+    ]
+    if any(timestamp is None for _, timestamp in timestamped):
+        raise ValueError("financing observation has no broker close time")
+    latest_instant = max(
+        (timestamp for _, timestamp in timestamped if timestamp is not None),
+        default=None,
+    )
+    if latest_instant is not None:
+        window_start = latest_instant - timedelta(
+            seconds=EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+        )
+        outcomes = [
+            outcome
+            for outcome, timestamp in timestamped
+            if timestamp is not None and timestamp >= window_start
+        ]
+    adverse_per_unit: list[float] = []
+    latest: tuple[str, int] | None = None
+    latest_text: str | None = None
+    oldest: tuple[str, int] | None = None
+    oldest_text: str | None = None
+    entry_units_total = 0.0
+    adverse_total_jpy = 0.0
     for outcome in outcomes:
-        if not outcome.pure_take_profit_lifecycle or not outcome.entry_truth_consistent:
+        units = abs(float(outcome.entry_units))
+        financing = float(outcome.audited_financing_jpy)
+        adverse_financing = float(outcome.adverse_financing_jpy)
+        if (
+            not math.isfinite(units)
+            or units <= 0.0
+            or not math.isfinite(financing)
+            or not math.isfinite(adverse_financing)
+            or adverse_financing < 0.0
+        ):
+            raise ValueError("financing observation has invalid entry units or cash")
+        entry_units_total += units
+        if adverse_financing > 0.0:
+            adverse = adverse_financing
+            adverse_total_jpy += adverse
+            adverse_per_unit.append(adverse / units)
+        timestamp_text = str(
+            outcome.broker_close_ts_utc or outcome.ts_utc or ""
+        ).strip()
+        timestamp_key = _rfc3339_utc_key(timestamp_text)
+        if timestamp_key is None:
+            raise ValueError("financing observation has no exact broker close time")
+        if latest is None or timestamp_key > latest:
+            latest = timestamp_key
+            latest_text = timestamp_text
+        if oldest is None or timestamp_key < oldest:
+            oldest = timestamp_key
+            oldest_text = timestamp_text
+    observations = len(outcomes)
+    adverse_count = len(adverse_per_unit)
+    occurrence_upper = _wilson95_upper(
+        adverse_count / observations if observations else 0.0,
+        observations,
+    )
+    mean_adverse_per_unit = (
+        sum(adverse_per_unit) / adverse_count if adverse_count else 0.0
+    )
+    stress_per_unit = (
+        occurrence_upper * mean_adverse_per_unit
+        if occurrence_upper is not None
+        else None
+    )
+    return {
+        "observation_trades": observations,
+        "adverse_trades": adverse_count,
+        "entry_units_total": round(entry_units_total, 4),
+        "adverse_total_jpy": round(adverse_total_jpy, 8),
+        "adverse_mean_jpy_per_unit": round(mean_adverse_per_unit, 12),
+        "adverse_occurrence_wilson95_upper": (
+            round(occurrence_upper, 12)
+            if occurrence_upper is not None
+            else None
+        ),
+        "adverse_stress_jpy_per_unit": (
+            round(stress_per_unit, 12)
+            if stress_per_unit is not None
+            else None
+        ),
+        "latest_observation_utc": latest_text,
+        "oldest_observation_utc": oldest_text,
+    }
+
+
+def _read_audited_execution_slippage(
+    ledger_path: Path,
+) -> dict[str, Any] | None:
+    """Audit entry and broker-protection fill slippage from exact identities.
+
+    MARKET entry reference is the gateway's executable RiskMetrics entry.
+    Broker truth is ``tradeOpened.price``; deprecated/top-level price,
+    ``fullVWAP``, normalized price, immediate response, order id, trade id,
+    units, pair, and side must all agree. Protected exits bind the close fill's
+    exact order id and trade id to the authoritative OANDA
+    ``TAKE_PROFIT_ORDER``/``STOP_LOSS_ORDER`` transaction; a normalized
+    ``PROTECTION_CREATED`` row is only a consistency copy and may not replace
+    the authoritative join. Rows outside the system-attributed entry cohort
+    never enter the sample.
+    """
+
+    entries = read_attributed_system_entries(ledger_path)
+    if entries is None:
+        return None
+    try:
+        with closing(
+            sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)
+        ) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            columns = {
+                str(row["name"])
+                for row in conn.execute(
+                    "PRAGMA table_info(execution_events)"
+                ).fetchall()
+            }
+            required = {
+                "ts_utc",
+                "event_type",
+                "lane_id",
+                "order_id",
+                "trade_id",
+                "pair",
+                "side",
+                "units",
+                "exit_reason",
+                "raw_json",
+            }
+            if not required.issubset(columns):
+                return None
+            tables = {
+                str(row["name"])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            authoritative_transactions = "oanda_transactions" in tables
+            if authoritative_transactions:
+                transaction_columns = {
+                    str(row["name"])
+                    for row in conn.execute(
+                        "PRAGMA table_info(oanda_transactions)"
+                    ).fetchall()
+                }
+                if not {"transaction_id", "type", "raw_json"}.issubset(
+                    transaction_columns
+                ):
+                    return None
+            price_expr = "price" if "price" in columns else "NULL AS price"
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT rowid AS ledger_rowid, ts_utc, event_type, lane_id,
+                           order_id, trade_id, pair, side, units, {price_expr},
+                           exit_reason, raw_json
+                    FROM execution_events
+                    WHERE event_type IN (
+                        'GATEWAY_ORDER_SENT', 'ORDER_FILLED',
+                        'PROTECTION_CREATED', 'TRADE_CLOSED'
+                    )
+                    ORDER BY rowid ASC
+                    """.format(price_expr=price_expr)
+                ).fetchall()
+            ]
+            protection_transactions = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT transaction_id, type, raw_json
+                    FROM oanda_transactions
+                    WHERE type IN ('TAKE_PROFIT_ORDER', 'STOP_LOSS_ORDER')
+                    ORDER BY CAST(transaction_id AS INTEGER), transaction_id
+                    """
+                ).fetchall()
+            ] if authoritative_transactions else []
+    except (sqlite3.Error, TypeError, ValueError):
+        return None
+
+    gateways: dict[str, list[dict[str, Any]]] = {}
+    fills: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    protections: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    closes: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        event_type = str(row.get("event_type") or "")
+        order_id = _identifier_text(row.get("order_id"))
+        trade_id = _identifier_text(row.get("trade_id"))
+        if event_type == "GATEWAY_ORDER_SENT" and order_id:
+            gateways.setdefault(order_id, []).append(row)
+        elif event_type == "ORDER_FILLED" and order_id and trade_id:
+            fills.setdefault((order_id, trade_id), []).append(row)
+        elif event_type == "PROTECTION_CREATED" and order_id and trade_id:
+            protections.setdefault((order_id, trade_id), []).append(row)
+        elif event_type == "TRADE_CLOSED" and trade_id:
+            closes.setdefault(trade_id, []).append(row)
+    authoritative_protections: dict[
+        tuple[str, str], list[dict[str, Any]]
+    ] = {}
+    for transaction in protection_transactions:
+        raw = _optional_json_object(transaction.get("raw_json"))
+        if (
+            raw is None
+            or str(raw.get("type") or "").upper()
+            not in {"TAKE_PROFIT_ORDER", "STOP_LOSS_ORDER"}
+            or _identifier_text(raw.get("id"))
+            != _identifier_text(transaction.get("transaction_id"))
+            or str(transaction.get("type") or "").upper()
+            != str(raw.get("type") or "").upper()
+        ):
+            return None
+        order_id = _identifier_text(raw.get("id"))
+        trade_id = _identifier_text(raw.get("tradeID"))
+        if not order_id or not trade_id:
+            return None
+        authoritative_protections.setdefault(
+            (order_id, trade_id), []
+        ).append(raw)
+
+    entry_rows: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.entry_vehicle != "MARKET":
+            continue
+        matching_fill = fills.get((entry.order_id, entry.trade_id), [])
+        matching_gateway = gateways.get(entry.order_id, [])
+        # Legacy attributed fills predate durable gateway response receipts.
+        # They remain in realized economics but are outside this transport
+        # calibration cohort. Once a gateway response exists, its exact join
+        # is mandatory and any duplicate/malformed proof invalidates the
+        # surface instead of being skipped.
+        if not matching_gateway:
+            continue
+        if len(matching_fill) != 1 or len(matching_gateway) != 1:
+            return None
+        fill = matching_fill[0]
+        gateway = matching_gateway[0]
+        if int(gateway.get("ledger_rowid") or 0) >= int(
+            fill.get("ledger_rowid") or 0
+        ):
+            return None
+        fill_raw = _optional_json_object(fill.get("raw_json"))
+        gateway_raw = _optional_json_object(gateway.get("raw_json"))
+        opened = (
+            fill_raw.get("tradeOpened")
+            if isinstance(fill_raw, dict)
+            else None
+        )
+        order_request = (
+            gateway_raw.get("order_request")
+            if isinstance(gateway_raw, dict)
+            and isinstance(gateway_raw.get("order_request"), dict)
+            else None
+        )
+        risk_metrics = (
+            gateway_raw.get("risk_metrics")
+            if isinstance(gateway_raw, dict)
+            and isinstance(gateway_raw.get("risk_metrics"), dict)
+            else None
+        )
+        response = (
+            gateway_raw.get("response")
+            if isinstance(gateway_raw, dict)
+            and isinstance(gateway_raw.get("response"), dict)
+            else None
+        )
+        create = (
+            response.get("orderCreateTransaction")
+            if isinstance(response, dict)
+            and isinstance(response.get("orderCreateTransaction"), dict)
+            else None
+        )
+        immediate_fill = (
+            response.get("orderFillTransaction")
+            if isinstance(response, dict)
+            and isinstance(response.get("orderFillTransaction"), dict)
+            else None
+        )
+        immediate_opened = (
+            immediate_fill.get("tradeOpened")
+            if isinstance(immediate_fill, dict)
+            and isinstance(immediate_fill.get("tradeOpened"), dict)
+            else None
+        )
+        reference = (
+            _finite_float(risk_metrics.get("entry_price"))
+            if isinstance(risk_metrics, dict)
+            else None
+        )
+        broker_price = (
+            _finite_float(opened.get("price"))
+            if isinstance(opened, dict)
+            else None
+        )
+        comparable_prices = (
+            _finite_float(fill_raw.get("price"))
+            if isinstance(fill_raw, dict)
+            else None,
+            _finite_float(fill_raw.get("fullVWAP"))
+            if isinstance(fill_raw, dict)
+            else None,
+            _finite_float(immediate_fill.get("price"))
+            if isinstance(immediate_fill, dict)
+            else None,
+            _finite_float(immediate_fill.get("fullVWAP"))
+            if isinstance(immediate_fill, dict)
+            else None,
+            _finite_float(immediate_opened.get("price"))
+            if isinstance(immediate_opened, dict)
+            else None,
+        )
+        if authoritative_transactions:
+            comparable_prices = (
+                _finite_float(fill.get("price")),
+                *comparable_prices,
+            )
+        signed_units = _finite_float(
+            immediate_opened.get("units")
+            if isinstance(immediate_opened, dict)
+            else None
+        )
+        request_units = _finite_float(
+            order_request.get("units")
+            if isinstance(order_request, dict)
+            else None
+        )
+        create_units = _finite_float(
+            create.get("units") if isinstance(create, dict) else None
+        )
+        if (
+            not isinstance(order_request, dict)
+            or str(order_request.get("type") or "").upper() != "MARKET"
+            or str(order_request.get("instrument") or "").upper()
+            != entry.pair
+            or str(order_request.get("timeInForce") or "").upper() != "FOK"
+            or str(order_request.get("positionFill") or "").upper()
+            not in {"DEFAULT", "OPEN_ONLY"}
+            or request_units is None
+            or abs(request_units) != abs(entry.entry_units)
+            or (request_units > 0.0) != (entry.side == "LONG")
+            or reference is None
+            or reference <= 0.0
+            or broker_price is None
+            or broker_price <= 0.0
+            or any(
+                price is None
+                or not math.isclose(
+                    float(price), broker_price, rel_tol=0.0, abs_tol=1e-12
+                )
+                for price in comparable_prices
+            )
+            or _identifier_text(create.get("id") if isinstance(create, dict) else None)
+            != entry.order_id
+            or str(create.get("instrument") or "").upper() != entry.pair
+            or create_units is None
+            or abs(create_units) != abs(entry.entry_units)
+            or (create_units > 0.0) != (entry.side == "LONG")
+            or _identifier_text(immediate_fill.get("orderID") if isinstance(immediate_fill, dict) else None)
+            != entry.order_id
+            or _identifier_text(immediate_opened.get("tradeID") if isinstance(immediate_opened, dict) else None)
+            != entry.trade_id
+            or signed_units is None
+            or abs(signed_units) != abs(entry.entry_units)
+            or (signed_units > 0.0) != (entry.side == "LONG")
+            or str(immediate_fill.get("instrument") or "").upper()
+            != entry.pair
+        ):
+            return None
+        pip_factor = instrument_pip_factor(entry.pair)
+        signed_slippage_pips = (
+            (broker_price - reference) * pip_factor
+            if entry.side == "LONG"
+            else (reference - broker_price) * pip_factor
+        )
+        entry_rows.append(
+            {
+                "order_id": entry.order_id,
+                "trade_id": entry.trade_id,
+                "pair": entry.pair,
+                "side": entry.side,
+                "units": abs(entry.entry_units),
+                "reference_price": reference,
+                "broker_fill_price": broker_price,
+                "adverse_slippage_pips": round(
+                    max(0.0, signed_slippage_pips), 12
+                ),
+                "signed_slippage_pips": round(signed_slippage_pips, 12),
+                "fill_time_utc": entry.broker_entry_ts_utc,
+            }
+        )
+
+    system_entries_by_trade = {entry.trade_id: entry for entry in entries}
+    exit_rows: dict[str, list[dict[str, Any]]] = {
+        "TAKE_PROFIT_ORDER": [],
+        "STOP_LOSS_ORDER": [],
+    }
+    for trade_id, entry in system_entries_by_trade.items():
+        for close in closes.get(trade_id, []):
+            reason = str(close.get("exit_reason") or "").upper()
+            if reason not in exit_rows:
+                continue
+            order_id = _identifier_text(close.get("order_id"))
+            authoritative = authoritative_protections.get(
+                (order_id, trade_id), []
+            )
+            normalized_protection = protections.get(
+                (order_id, trade_id), []
+            )
+            if not authoritative_transactions:
+                authoritative = [
+                    raw
+                    for row in normalized_protection
+                    if (
+                        raw := _optional_json_object(row.get("raw_json"))
+                    )
+                    is not None
+                ]
+            if not order_id or len(authoritative) != 1:
+                return None
+            protection_raw = authoritative[0]
+            if len(normalized_protection) > 1:
+                return None
+            if normalized_protection:
+                normalized = normalized_protection[0]
+                if (
+                    int(normalized.get("ledger_rowid") or 0)
+                    >= int(close.get("ledger_rowid") or 0)
+                    or (
+                        authoritative_transactions
+                        and _optional_json_object(
+                            normalized.get("raw_json")
+                        )
+                        != protection_raw
+                    )
+                ):
+                    return None
+            close_raw = _optional_json_object(close.get("raw_json"))
+            components = (
+                close_raw.get("tradesClosed")
+                if isinstance(close_raw, dict)
+                else None
+            )
+            matching_components = [
+                component
+                for component in components or []
+                if isinstance(component, dict)
+                and _identifier_text(component.get("tradeID")) == trade_id
+            ]
+            component = (
+                matching_components[0]
+                if len(matching_components) == 1
+                else None
+            )
+            trigger = _finite_float(protection_raw.get("price"))
+            broker_price = (
+                _finite_float(component.get("price"))
+                if isinstance(component, dict)
+                else None
+            )
+            comparable_prices = (
+                _finite_float(close_raw.get("price"))
+                if isinstance(close_raw, dict)
+                else None,
+                _finite_float(close_raw.get("fullVWAP"))
+                if isinstance(close_raw, dict)
+                else None,
+            )
+            if authoritative_transactions:
+                comparable_prices = (
+                    _finite_float(close.get("price")),
+                    *comparable_prices,
+                )
+            expected_type = (
+                "TAKE_PROFIT_ORDER"
+                if reason == "TAKE_PROFIT_ORDER"
+                else "STOP_LOSS_ORDER"
+            )
+            if (
+                trigger is None
+                or trigger <= 0.0
+                or broker_price is None
+                or broker_price <= 0.0
+                or any(
+                    price is None
+                    or not math.isclose(
+                        float(price), broker_price, rel_tol=0.0, abs_tol=1e-12
+                    )
+                    for price in comparable_prices
+                )
+                or not isinstance(protection_raw, dict)
+                or str(protection_raw.get("type") or "").upper()
+                != expected_type
+                or _identifier_text(protection_raw.get("id")) != order_id
+                or _identifier_text(protection_raw.get("tradeID")) != trade_id
+                or not math.isclose(
+                    float(_finite_float(protection_raw.get("price")) or -1.0),
+                    trigger,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+                or _identifier_text(close_raw.get("orderID") if isinstance(close_raw, dict) else None)
+                != order_id
+                or str(close_raw.get("reason") or "").upper() != reason
+            ):
+                return None
+            pip_factor = instrument_pip_factor(entry.pair)
+            signed_slippage_pips = (
+                (trigger - broker_price) * pip_factor
+                if entry.side == "LONG"
+                else (broker_price - trigger) * pip_factor
+            )
+            exit_rows[reason].append(
+                {
+                    "order_id": order_id,
+                    "trade_id": trade_id,
+                    "pair": entry.pair,
+                    "entry_side": entry.side,
+                    "reason": reason,
+                    "trigger_price": trigger,
+                    "broker_fill_price": broker_price,
+                    "adverse_slippage_pips": round(
+                        max(0.0, signed_slippage_pips), 12
+                    ),
+                    "signed_slippage_pips": round(
+                        signed_slippage_pips, 12
+                    ),
+                    "fill_time_utc": str(close_raw.get("time") or ""),
+                }
+            )
+
+    def summarized(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        parsed_rows = [
+            (row, _parse_utc_instant(row.get("fill_time_utc")))
+            for row in rows
+        ]
+        if any(timestamp is None for _, timestamp in parsed_rows):
+            raise ValueError("slippage calibration row has invalid fill time")
+        latest_instant = max(
+            (
+                timestamp
+                for _, timestamp in parsed_rows
+                if timestamp is not None
+            ),
+            default=None,
+        )
+        if latest_instant is not None:
+            window_start = latest_instant - timedelta(
+                seconds=EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+            )
+            rows = [
+                row
+                for row, timestamp in parsed_rows
+                if timestamp is not None and timestamp >= window_start
+            ]
+        adverse = [float(row["adverse_slippage_pips"]) for row in rows]
+        latest_row = max(
+            rows,
+            key=lambda row: _rfc3339_utc_key(row["fill_time_utc"])
+            or ("", 0),
+        ) if rows else None
+        oldest_row = min(
+            rows,
+            key=lambda row: _rfc3339_utc_key(row["fill_time_utc"])
+            or ("", 0),
+        ) if rows else None
+        p95 = _nearest_rank_percentile(adverse, 0.95)
+        return {
+            "samples": len(rows),
+            "adverse_p95_pips": round(p95, 12) if p95 is not None else None,
+            "adverse_max_pips": round(max(adverse), 12) if adverse else None,
+            "latest_fill_utc": (
+                str(latest_row["fill_time_utc"]) if latest_row else None
+            ),
+            "oldest_fill_utc": (
+                str(oldest_row["fill_time_utc"]) if oldest_row else None
+            ),
+            "rows_sha256": _canonical_json_sha256(rows),
+        }
+
+    return {
+        "market_entry": summarized(entry_rows),
+        "take_profit_exit": summarized(exit_rows["TAKE_PROFIT_ORDER"]),
+        "stop_loss_exit": summarized(exit_rows["STOP_LOSS_ORDER"]),
+    }
+
+
+def read_execution_cost_surface(ledger_path: Path) -> dict[str, Any]:
+    """Return one content-addressed execution-cost calibration surface."""
+
+    try:
+        outcomes = read_attributed_net_outcomes(ledger_path)
+        slippage = _read_audited_execution_slippage(ledger_path)
+        if outcomes is None or slippage is None:
+            raise ValueError("execution-cost source is unreadable")
+        financing = _execution_cost_financing_metrics(outcomes)
+        material = {
+            "contract": EXECUTION_COST_FLOOR_CONTRACT,
+            "parse_status": "VALID",
+            "scope": "SYSTEM_GATEWAY_ATTRIBUTED_ALL_PAIRS_SIDES_METHODS",
+            "minimum_samples": EXECUTION_COST_MIN_SAMPLES,
+            "maximum_sample_age_seconds": (
+                EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+            ),
+            **slippage,
+            "global_financing": financing,
+        }
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        material = {
+            "contract": EXECUTION_COST_FLOOR_CONTRACT,
+            "parse_status": "INVALID",
+            "scope": "SYSTEM_GATEWAY_ATTRIBUTED_ALL_PAIRS_SIDES_METHODS",
+            "minimum_samples": EXECUTION_COST_MIN_SAMPLES,
+            "maximum_sample_age_seconds": (
+                EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+            ),
+            "market_entry": {},
+            "take_profit_exit": {},
+            "stop_loss_exit": {},
+            "global_financing": {},
+        }
+    return {
+        **material,
+        "execution_cost_surface_sha256": _canonical_json_sha256(material),
+    }
+
+
+def execution_cost_floor_from_surface(
+    surface: Mapping[str, Any] | None,
+    *,
+    exact_key: tuple[str, str, str, str],
+    as_of: datetime,
+) -> dict[str, Any]:
+    """Bind global transport tails and exact financing to one ordinary lane."""
+
+    source = surface if isinstance(surface, Mapping) else {}
+    cost = (
+        source.get("execution_cost")
+        if isinstance(source.get("execution_cost"), Mapping)
+        else {}
+    )
+    net_metrics = exact_vehicle_metrics_from_surface(
+        source,
+        field="exact_vehicle_net",
+    )
+    exact = dict(net_metrics.get(exact_key) or {}) if net_metrics else {}
+    as_of_utc = as_of.astimezone(timezone.utc)
+
+    def strict_nonnegative_number(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) and parsed >= 0.0 else None
+
+    def strict_count(value: Any) -> int | None:
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            else None
+        )
+
+    minimum = strict_count(cost.get("minimum_samples"))
+    max_age = strict_count(cost.get("maximum_sample_age_seconds"))
+    failed: list[str] = []
+    if (
+        source.get("parse_status") != "VALID"
+        or cost.get("parse_status") != "VALID"
+        or cost.get("contract") != EXECUTION_COST_FLOOR_CONTRACT
+        or minimum != EXECUTION_COST_MIN_SAMPLES
+        or max_age != EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+    ):
+        failed.append("EXECUTION_COST_SURFACE_INVALID")
+
+    sections: dict[str, Mapping[str, Any]] = {}
+    for name in (
+        "market_entry",
+        "take_profit_exit",
+        "stop_loss_exit",
+        "global_financing",
+    ):
+        section = cost.get(name)
+        if not isinstance(section, Mapping):
+            failed.append(f"{name.upper()}_MISSING")
+            section = {}
+        sections[name] = section
+
+    for name in ("market_entry", "take_profit_exit", "stop_loss_exit"):
+        samples = strict_count(sections[name].get("samples"))
+        p95 = strict_nonnegative_number(
+            sections[name].get("adverse_p95_pips")
+        )
+        latest = _parse_utc_instant(sections[name].get("latest_fill_utc"))
+        oldest = _parse_utc_instant(sections[name].get("oldest_fill_utc"))
+        rows_sha = str(sections[name].get("rows_sha256") or "")
+        age = (
+            (as_of_utc - latest).total_seconds()
+            if latest is not None
+            else math.inf
+        )
+        if samples is None or minimum is None or samples < minimum:
+            failed.append(f"{name.upper()}_SAMPLE_FLOOR_NOT_MET")
+        if p95 is None:
+            failed.append(f"{name.upper()}_P95_INVALID")
+        if (
+            latest is None
+            or max_age is None
+            or age < -60.0
+            or age > max_age
+        ):
+            failed.append(f"{name.upper()}_STALE")
+        if (
+            latest is None
+            or oldest is None
+            or max_age is None
+            or (latest - oldest).total_seconds() > max_age
+        ):
+            failed.append(f"{name.upper()}_COHORT_EXCEEDS_AGE_WINDOW")
+        if not re.fullmatch(r"[0-9a-f]{64}", rows_sha):
+            failed.append(f"{name.upper()}_DIGEST_INVALID")
+
+    global_financing = sections["global_financing"]
+    global_observations = strict_count(
+        global_financing.get("observation_trades")
+    )
+    global_adverse_trades = strict_count(
+        global_financing.get("adverse_trades")
+    )
+    global_adverse_mean = strict_nonnegative_number(
+        global_financing.get("adverse_mean_jpy_per_unit")
+    )
+    global_financing_stress = strict_nonnegative_number(
+        global_financing.get("adverse_stress_jpy_per_unit")
+    )
+    global_latest = _parse_utc_instant(
+        global_financing.get("latest_observation_utc")
+    )
+    global_oldest = _parse_utc_instant(
+        global_financing.get("oldest_observation_utc")
+    )
+    global_age = (
+        (as_of_utc - global_latest).total_seconds()
+        if global_latest is not None
+        else math.inf
+    )
+    if (
+        global_observations is None
+        or minimum is None
+        or global_observations < minimum
+    ):
+        failed.append("GLOBAL_FINANCING_SAMPLE_FLOOR_NOT_MET")
+    if global_financing_stress is None:
+        failed.append("GLOBAL_FINANCING_STRESS_INVALID")
+    if (
+        global_adverse_trades is None
+        or global_adverse_trades < 1
+        or global_adverse_mean is None
+        or global_adverse_mean <= 0.0
+        or global_financing_stress is None
+        or global_financing_stress <= 0.0
+    ):
+        failed.append("GLOBAL_ADVERSE_FINANCING_OBSERVATION_MISSING")
+    if (
+        global_latest is None
+        or max_age is None
+        or global_age < -60.0
+        or global_age > max_age
+    ):
+        failed.append("GLOBAL_FINANCING_STALE")
+    if (
+        global_latest is None
+        or global_oldest is None
+        or max_age is None
+        or (global_latest - global_oldest).total_seconds() > max_age
+    ):
+        failed.append("GLOBAL_FINANCING_COHORT_EXCEEDS_AGE_WINDOW")
+
+    exact_observations = strict_count(exact.get("financing_observation_trades"))
+    exact_trades = strict_count(exact.get("trades"))
+    exact_financing_stress = strict_nonnegative_number(
+        exact.get("financing_adverse_stress_jpy_per_unit")
+    )
+    exact_latest = _parse_utc_instant(
+        exact.get("financing_latest_observation_utc")
+    )
+    exact_oldest = _parse_utc_instant(
+        exact.get("financing_oldest_observation_utc")
+    )
+    exact_age = (
+        (as_of_utc - exact_latest).total_seconds()
+        if exact_latest is not None
+        else math.inf
+    )
+    if (
+        exact_observations is None
+        or exact_trades is None
+        or exact_observations <= 0
+        or exact_observations > exact_trades
+        or exact_financing_stress is None
+    ):
+        failed.append("EXACT_FINANCING_STRESS_INVALID")
+    if (
+        exact_latest is None
+        or max_age is None
+        or exact_age < -60.0
+        or exact_age > max_age
+    ):
+        failed.append("EXACT_FINANCING_STALE")
+    if (
+        exact_latest is None
+        or exact_oldest is None
+        or max_age is None
+        or (exact_latest - exact_oldest).total_seconds() > max_age
+    ):
+        failed.append("EXACT_FINANCING_COHORT_EXCEEDS_AGE_WINDOW")
+
+    entry_p95 = strict_nonnegative_number(
+        sections["market_entry"].get("adverse_p95_pips")
+    )
+    tp_exit_p95 = strict_nonnegative_number(
+        sections["take_profit_exit"].get("adverse_p95_pips")
+    )
+    sl_exit_p95 = strict_nonnegative_number(
+        sections["stop_loss_exit"].get("adverse_p95_pips")
+    )
+    audited_exit_p95 = (
+        max(tp_exit_p95, sl_exit_p95)
+        if tp_exit_p95 is not None and sl_exit_p95 is not None
+        else None
+    )
+    financing_stress = (
+        max(global_financing_stress, exact_financing_stress)
+        if global_financing_stress is not None
+        and exact_financing_stress is not None
+        else None
+    )
+    surface_sha = str(cost.get("execution_cost_surface_sha256") or "")
+    cost_material = dict(cost)
+    cost_material.pop("execution_cost_surface_sha256", None)
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", surface_sha)
+        or surface_sha != _canonical_json_sha256(cost_material)
+    ):
+        failed.append("EXECUTION_COST_SURFACE_DIGEST_MISMATCH")
+    material = {
+        "contract": EXECUTION_COST_FLOOR_CONTRACT,
+        "status": "PASSED" if not failed else "BLOCKED",
+        "reason": (
+            "DYNAMIC_LEDGER_EXECUTION_COST_FLOOR_PROVEN"
+            if not failed
+            else failed[0]
+        ),
+        "failed_checks": failed,
+        "scope_key": "|".join(exact_key),
+        "execution_cost_surface_sha256": surface_sha or None,
+        "minimum_samples": minimum,
+        "maximum_sample_age_seconds": max_age,
+        "market_entry_samples": strict_count(
+            sections["market_entry"].get("samples")
+        ),
+        "market_entry_adverse_p95_pips": entry_p95,
+        "market_entry_latest_fill_utc": sections["market_entry"].get(
+            "latest_fill_utc"
+        ),
+        "market_entry_oldest_fill_utc": sections["market_entry"].get(
+            "oldest_fill_utc"
+        ),
+        "take_profit_exit_samples": strict_count(
+            sections["take_profit_exit"].get("samples")
+        ),
+        "take_profit_exit_adverse_p95_pips": tp_exit_p95,
+        "take_profit_exit_latest_fill_utc": sections[
+            "take_profit_exit"
+        ].get("latest_fill_utc"),
+        "take_profit_exit_oldest_fill_utc": sections[
+            "take_profit_exit"
+        ].get("oldest_fill_utc"),
+        "stop_loss_exit_samples": strict_count(
+            sections["stop_loss_exit"].get("samples")
+        ),
+        "stop_loss_exit_adverse_p95_pips": sl_exit_p95,
+        "stop_loss_exit_latest_fill_utc": sections[
+            "stop_loss_exit"
+        ].get("latest_fill_utc"),
+        "stop_loss_exit_oldest_fill_utc": sections[
+            "stop_loss_exit"
+        ].get("oldest_fill_utc"),
+        "audited_protected_exit_adverse_p95_pips": audited_exit_p95,
+        "global_financing_observation_trades": global_observations,
+        "global_financing_adverse_trades": global_adverse_trades,
+        "global_financing_adverse_mean_jpy_per_unit": global_adverse_mean,
+        "global_financing_adverse_stress_jpy_per_unit": (
+            global_financing_stress
+        ),
+        "global_financing_latest_observation_utc": global_financing.get(
+            "latest_observation_utc"
+        ),
+        "global_financing_oldest_observation_utc": global_financing.get(
+            "oldest_observation_utc"
+        ),
+        "exact_financing_observation_trades": exact_observations,
+        "exact_financing_adverse_stress_jpy_per_unit": (
+            exact_financing_stress
+        ),
+        "exact_financing_latest_observation_utc": exact.get(
+            "financing_latest_observation_utc"
+        ),
+        "exact_financing_oldest_observation_utc": exact.get(
+            "financing_oldest_observation_utc"
+        ),
+        "financing_floor_basis": "MAX_GLOBAL_AND_EXACT_WILSON95_UPPER_STRESS",
+        "financing_adverse_stress_jpy_per_unit": financing_stress,
+        "spread_double_count_forbidden": True,
+    }
+    return {
+        **material,
+        "proof_sha256": _canonical_json_sha256(material),
+    }
+
+
+def read_exact_vehicle_allocation_surface(ledger_path: Path) -> dict[str, Any]:
+    """Return a WAL-safe semantic snapshot of allocation-relevant ledger truth.
+
+    SQLite's main file hash does not include uncheckpointed WAL rows. The
+    online backup API copies one coherent database snapshot including WAL, and
+    both exact-vehicle readers then evaluate that immutable copy. The returned
+    digest therefore changes for a new audited close/reduction even when the
+    main ``.db`` bytes have not changed yet.
+    """
+
+    path = Path(ledger_path).expanduser().resolve(strict=False)
+    if not path.exists() or not path.is_file():
+        missing_execution_cost = read_execution_cost_surface(path)
+        material = {
+            "contract": EXACT_VEHICLE_ALLOCATION_SURFACE_CONTRACT,
+            "parse_status": "MISSING",
+            "coverage_start_utc": None,
+            "latest_realized_event": None,
+            "last_oanda_transaction_id": None,
+            "exact_vehicle_net": [],
+            "exact_vehicle_take_profit": [],
+            "execution_cost": missing_execution_cost,
+        }
+        return {
+            **material,
+            "allocation_surface_sha256": _canonical_json_sha256(material),
+        }
+    try:
+        with tempfile.TemporaryDirectory(prefix="qr-ledger-allocation-surface-") as tmp:
+            snapshot = Path(tmp) / "execution_ledger_snapshot.db"
+            with closing(
+                sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            ) as source, closing(sqlite3.connect(snapshot)) as destination:
+                source.backup(destination)
+            # `sqlite3_backup` preserves the source's WAL journal mode.  The
+            # immutable temp snapshot has no pre-existing `-shm` file, so the
+            # strict read-only readers below otherwise fail with "unable to
+            # open database file" before they can inspect valid rows. Convert
+            # only this isolated copy to DELETE mode; the live ledger and its
+            # WAL remain untouched.
+            with closing(sqlite3.connect(snapshot)) as normalized:
+                normalized.execute("PRAGMA journal_mode=DELETE").fetchone()
+            net_metrics = read_exact_vehicle_net_metrics(snapshot)
+            tp_metrics = read_exact_vehicle_take_profit_metrics(snapshot)
+            execution_cost = read_execution_cost_surface(snapshot)
+            if (
+                net_metrics is None
+                or tp_metrics is None
+            ):
+                raise ValueError("exact-vehicle ledger surface is unreadable")
+            coverage_start, latest_event, last_transaction_id = (
+                _allocation_surface_ledger_identity(snapshot)
+            )
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        material = {
+            "contract": EXACT_VEHICLE_ALLOCATION_SURFACE_CONTRACT,
+            "parse_status": "INVALID",
+            "coverage_start_utc": None,
+            "latest_realized_event": None,
+            "last_oanda_transaction_id": None,
+            "exact_vehicle_net": [],
+            "exact_vehicle_take_profit": [],
+            "execution_cost": read_execution_cost_surface(path),
+        }
+        return {
+            **material,
+            "allocation_surface_sha256": _canonical_json_sha256(material),
+        }
+
+    material = {
+        "contract": EXACT_VEHICLE_ALLOCATION_SURFACE_CONTRACT,
+        "parse_status": "VALID",
+        "coverage_start_utc": coverage_start,
+        "latest_realized_event": latest_event,
+        "last_oanda_transaction_id": last_transaction_id,
+        "exact_vehicle_net": _serialize_exact_vehicle_metrics(net_metrics),
+        "exact_vehicle_take_profit": _serialize_exact_vehicle_metrics(tp_metrics),
+        "execution_cost": execution_cost,
+    }
+    return {
+        **material,
+        "allocation_surface_sha256": _canonical_json_sha256(material),
+    }
+
+
+def exact_vehicle_metrics_from_surface(
+    surface: Mapping[str, Any] | None,
+    *,
+    field: str,
+) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
+    """Rehydrate one canonical metric map from an allocation surface."""
+
+    if not isinstance(surface, Mapping) or surface.get("parse_status") != "VALID":
+        return None
+    raw_rows = surface.get(field)
+    if not isinstance(raw_rows, list):
+        return None
+    rows: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping):
+            return None
+        key_parts = tuple(
+            str(raw.get(name) or "").strip().upper()
+            for name in ("pair", "side", "method", "vehicle")
+        )
+        if (
+            len(key_parts) != 4
+            or not all(key_parts)
+            or key_parts[1] not in {"LONG", "SHORT"}
+            or key_parts[3] not in {"LIMIT", "MARKET", "STOP"}
+            or key_parts in rows
+        ):
+            return None
+        rows[key_parts] = {
+            str(name): value
+            for name, value in raw.items()
+            if name not in {"pair", "side", "method", "vehicle"}
+        }
+    return rows
+
+
+def _serialize_exact_vehicle_metrics(
+    metrics: Mapping[tuple[str, str, str, str], Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for (pair, side, method, vehicle), values in sorted(metrics.items()):
+        rows.append(
+            {
+                "pair": str(pair).upper(),
+                "side": str(side).upper(),
+                "method": str(method).upper(),
+                "vehicle": str(vehicle).upper(),
+                **{str(name): value for name, value in sorted(values.items())},
+            }
+        )
+    return rows
+
+
+def _allocation_surface_ledger_identity(
+    ledger_path: Path,
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    with closing(sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True)) as conn, conn:
+        conn.row_factory = sqlite3.Row
+        tables = {
+            str(row["name"])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        coverage_start: str | None = None
+        if "sync_state" in tables:
+            row = conn.execute(
+                "SELECT value FROM sync_state WHERE key=?",
+                (_OANDA_TRANSACTION_COVERAGE_START_KEY,),
+            ).fetchone()
+            coverage_start = str(row["value"]) if row is not None else None
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+        }
+        required = {"ts_utc", "event_type", "trade_id", "raw_json"}
+        if not required.issubset(columns):
+            raise ValueError("execution_events identity columns are missing")
+        optional = [
+            name
+            for name in ("event_uid", "order_id", "oanda_transaction_id")
+            if name in columns
+        ]
+        select_columns = ["rowid", "ts_utc", "event_type", "trade_id", "raw_json", *optional]
+        latest = conn.execute(
+            f"""
+            SELECT {', '.join(select_columns)}
+            FROM execution_events
+            WHERE event_type IN ('TRADE_REDUCED', 'TRADE_CLOSED')
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        latest_event = None
+        if latest is not None:
+            raw_json = latest["raw_json"]
+            raw_bytes = (
+                raw_json.encode("utf-8")
+                if isinstance(raw_json, str)
+                else b""
+            )
+            latest_event = {
+                "rowid": int(latest["rowid"]),
+                "ts_utc": latest["ts_utc"],
+                "event_type": latest["event_type"],
+                "trade_id": latest["trade_id"],
+                "raw_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                **{name: latest[name] for name in optional},
+            }
+        last_transaction_id: str | None = None
+        if "oanda_transactions" in tables:
+            row = conn.execute(
+                """
+                SELECT transaction_id
+                FROM oanda_transactions
+                ORDER BY CAST(transaction_id AS INTEGER) DESC, transaction_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            last_transaction_id = (
+                str(row["transaction_id"]) if row is not None else None
+            )
+    return coverage_start, latest_event, last_transaction_id
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _aggregate_exact_vehicle_outcomes(
+    outcomes: list[RealizedOutcome],
+    *,
+    pure_take_profit_only: bool,
+) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    accum: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    financing_outcomes: dict[
+        tuple[str, str, str, str], list[RealizedOutcome]
+    ] = {}
+    for outcome in outcomes:
+        if not outcome.entry_truth_consistent:
+            continue
+        if pure_take_profit_only and not outcome.pure_take_profit_lifecycle:
             continue
         pair = str(outcome.pair or "UNKNOWN").upper()
         side = str(outcome.side or "UNKNOWN").upper()
@@ -566,6 +2178,7 @@ def read_exact_vehicle_take_profit_metrics(
             continue
         net_jpy = float(outcome.realized_pl_jpy)
         key = (pair, side, method, vehicle)
+        financing_outcomes.setdefault(key, []).append(outcome)
         slot = accum.setdefault(
             key,
             {
@@ -575,6 +2188,12 @@ def read_exact_vehicle_take_profit_metrics(
                 "net_jpy": 0.0,
                 "win_jpy": 0.0,
                 "loss_jpy": 0.0,
+                "entry_units_total": 0.0,
+                "financing_adverse_trades": 0.0,
+                "financing_adverse_total_jpy": 0.0,
+                "financing_adverse_per_unit_sum": 0.0,
+                "latest_broker_close_ts_utc": "",
+                "oldest_broker_close_ts_utc": "",
             },
         )
         slot["trades"] += 1
@@ -583,13 +2202,75 @@ def read_exact_vehicle_take_profit_metrics(
         slot["net_jpy"] += net_jpy
         slot["win_jpy"] += net_jpy if net_jpy > 0.0 else 0.0
         slot["loss_jpy"] += net_jpy if net_jpy < 0.0 else 0.0
+        entry_units = abs(float(outcome.entry_units))
+        financing = float(outcome.audited_financing_jpy)
+        adverse_financing = float(outcome.adverse_financing_jpy)
+        if (
+            not math.isfinite(entry_units)
+            or entry_units <= 0.0
+            or not math.isfinite(financing)
+            or not math.isfinite(adverse_financing)
+            or adverse_financing < 0.0
+        ):
+            # The strict ledger reader should make this unreachable. Keeping
+            # the aggregate fail-closed prevents a future alternate caller
+            # from manufacturing a zero financing rate with missing units.
+            raise ValueError(
+                "exact-vehicle financing observation has invalid entry units"
+            )
+        slot["entry_units_total"] += entry_units
+        close_key = _rfc3339_utc_key(outcome.broker_close_ts_utc)
+        current_latest_key = _rfc3339_utc_key(
+            slot["latest_broker_close_ts_utc"]
+        )
+        current_oldest_key = _rfc3339_utc_key(
+            slot["oldest_broker_close_ts_utc"]
+        )
+        if close_key is None:
+            raise ValueError(
+                "exact-vehicle financing observation has no broker close time"
+            )
+        if current_latest_key is None or close_key > current_latest_key:
+            slot["latest_broker_close_ts_utc"] = (
+                outcome.broker_close_ts_utc
+            )
+        if current_oldest_key is None or close_key < current_oldest_key:
+            slot["oldest_broker_close_ts_utc"] = (
+                outcome.broker_close_ts_utc
+            )
+        if adverse_financing > 0.0:
+            adverse = adverse_financing
+            slot["financing_adverse_trades"] += 1
+            slot["financing_adverse_total_jpy"] += adverse
+            slot["financing_adverse_per_unit_sum"] += adverse / entry_units
 
     metrics: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for key, slot in accum.items():
+        # Cost calibration is intentionally a rolling cohort even though the
+        # exact-vehicle realized edge remains a lifetime ledger aggregate.
+        # Otherwise an arbitrary number of old zero/credit observations can
+        # dilute a recent adverse financing event.  The helper uses the exact
+        # key's own latest observation as the 90-day anchor; the consumer also
+        # checks that anchor against the current quote time.
+        financing_metrics = _execution_cost_financing_metrics(
+            financing_outcomes[key]
+        )
         trades = int(slot["trades"])
         wins = int(slot["wins"])
         losses = int(slot["losses"])
         net_jpy = float(slot["net_jpy"])
+        adverse_financing_trades = int(
+            financing_metrics["adverse_trades"]
+        )
+        adverse_mean_per_unit = float(
+            financing_metrics["adverse_mean_jpy_per_unit"]
+        )
+        adverse_occurrence_upper = financing_metrics[
+            "adverse_occurrence_wilson95_upper"
+        ]
+        adverse_stress_per_unit = financing_metrics[
+            "adverse_stress_jpy_per_unit"
+        ]
         metrics[key] = {
             "trades": trades,
             "wins": wins,
@@ -600,9 +2281,61 @@ def read_exact_vehicle_take_profit_metrics(
                 round(abs(float(slot["loss_jpy"])) / losses, 4) if losses else 0.0
             ),
             "net_jpy": round(net_jpy, 4),
+            "entry_units_total": round(float(slot["entry_units_total"]), 4),
+            "financing_observation_trades": int(
+                financing_metrics["observation_trades"]
+            ),
+            "financing_adverse_trades": adverse_financing_trades,
+            "financing_adverse_total_jpy": financing_metrics[
+                "adverse_total_jpy"
+            ],
+            "financing_adverse_mean_jpy_per_unit": round(
+                adverse_mean_per_unit,
+                12,
+            ),
+            "financing_adverse_occurrence_wilson95_upper": (
+                round(adverse_occurrence_upper, 12)
+                if adverse_occurrence_upper is not None
+                else None
+            ),
+            "financing_adverse_stress_jpy_per_unit": (
+                round(adverse_stress_per_unit, 12)
+                if adverse_stress_per_unit is not None
+                else None
+            ),
+            "financing_latest_observation_utc": financing_metrics[
+                "latest_observation_utc"
+            ],
+            "financing_oldest_observation_utc": financing_metrics[
+                "oldest_observation_utc"
+            ],
+            "latest_broker_close_ts_utc": str(
+                slot["latest_broker_close_ts_utc"]
+            ),
+            "oldest_broker_close_ts_utc": str(
+                slot["oldest_broker_close_ts_utc"]
+            ),
             "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "exit_scope": (
+                "PURE_TAKE_PROFIT_LIFECYCLE"
+                if pure_take_profit_only
+                else "ALL_AUDITED_EXITS"
+            ),
         }
     return metrics
+
+
+def _wilson95_upper(rate: float, samples: int) -> float | None:
+    """Wilson 95% upper bound, mirrored from the shared lower bound."""
+
+    if samples <= 0 or not math.isfinite(rate) or not 0.0 <= rate <= 1.0:
+        return None
+    lower_for_complement = hit_rate_wilson_lower(1.0 - rate, samples)
+    return (
+        1.0 - lower_for_complement
+        if lower_for_complement is not None
+        else None
+    )
 
 
 def _finite_float(value: object) -> float | None:
@@ -728,7 +2461,11 @@ def _raw_has_nonzero_cash(raw: dict[str, Any]) -> bool:
     return walk(raw)
 
 
-def _audited_financing_by_trade(rows: list[dict[str, Any]]) -> dict[str, float] | None:
+def _audited_financing_by_trade(
+    rows: list[dict[str, Any]],
+    *,
+    nonzero_events_by_trade: dict[str, list[tuple[str, float]]] | None = None,
+) -> dict[str, float] | None:
     allocated: dict[str, float] = {}
     tolerance = FINANCING_COMPONENT_RECONCILIATION_TOLERANCE_JPY
     for row in rows:
@@ -773,6 +2510,10 @@ def _audited_financing_by_trade(rows: list[dict[str, Any]]) -> dict[str, float] 
             # manual components may offset exactly at account level.
             for trade_id, amount in transaction_components:
                 allocated[trade_id] = allocated.get(trade_id, 0.0) + amount
+                if nonzero_events_by_trade is not None and amount != 0.0:
+                    nonzero_events_by_trade.setdefault(trade_id, []).append(
+                        (str(row.get("ts_utc") or ""), amount)
+                    )
             continue
 
         # Known non-P/L transactions are intentionally outside realized trade
@@ -787,6 +2528,75 @@ def _audited_financing_by_trade(rows: list[dict[str, Any]]) -> dict[str, float] 
         if raw.get("accountBalance") is not None:
             return None
     return allocated
+
+
+def _audit_daily_financing_transaction_completeness(
+    rows: list[dict[str, Any]],
+    *,
+    oanda_transaction_rows: list[dict[str, Any]],
+    oanda_transactions_authoritative: bool,
+) -> bool:
+    """Require every authoritative DAILY_FINANCING row to remain normalized.
+
+    Component arithmetic in :func:`_audited_financing_by_trade` proves each
+    execution event that is present, but cannot detect an event that disappeared
+    completely. Current ledgers retain the raw broker transaction table, so bind
+    each broker-identified financing event one-to-one to that authoritative row.
+    Legacy/synthetic events without a broker id remain internally audited when
+    no authoritative counterpart exists.
+    """
+
+    if not oanda_transactions_authoritative:
+        return True
+
+    actual_broker_rows: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if str(row.get("event_type") or "") != "OANDA_TRANSACTION":
+            continue
+        raw = _optional_json_object(row.get("raw_json"))
+        if raw is None:
+            return False
+        if str(raw.get("type") or "").upper() != "DAILY_FINANCING":
+            continue
+        identity = _close_transaction_identity(
+            oanda_transaction_id=row.get("oanda_transaction_id"),
+            raw=raw,
+            legacy_order_id=None,
+        )
+        if identity is None:
+            # Once the authoritative table exists, every normalized financing
+            # row must be broker-identifiable even when that table is empty.
+            # Otherwise an id-less synthetic cash row can manufacture profit or
+            # cancel broker carry without any authoritative counterpart.
+            if _identifier_text(row.get("oanda_transaction_id")) or _identifier_text(
+                raw.get("id")
+            ):
+                return False
+            return False
+        if identity in actual_broker_rows:
+            return False
+        actual_broker_rows[identity] = raw
+
+    authoritative_rows: dict[str, dict[str, Any]] = {}
+    for transaction in oanda_transaction_rows:
+        raw = _optional_json_object(transaction.get("raw_json"))
+        if raw is None or str(raw.get("type") or "").upper() != "DAILY_FINANCING":
+            return False
+        identity = _close_transaction_identity(
+            oanda_transaction_id=transaction.get("transaction_id"),
+            raw=raw,
+            legacy_order_id=None,
+        )
+        if identity is None or identity in authoritative_rows:
+            return False
+        authoritative_rows[identity] = raw
+
+    if set(authoritative_rows) != set(actual_broker_rows):
+        return False
+    return all(
+        actual_broker_rows[identity] == raw
+        for identity, raw in authoritative_rows.items()
+    )
 
 
 def _audit_close_transaction_completeness(

@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
@@ -45,7 +46,16 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
-from quant_rabbit.capture_economics import read_attributed_net_outcomes
+from quant_rabbit.forecast_precision import hit_rate_wilson_lower
+from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.capture_economics import (
+    EXECUTION_COST_FLOOR_CONTRACT,
+    execution_cost_floor_from_surface,
+    evaluate_exact_vehicle_net_edge,
+    exact_vehicle_metrics_from_surface,
+    read_attributed_net_outcomes,
+    read_exact_vehicle_allocation_surface,
+)
 from quant_rabbit.decision_execution_lineage import (
     DEFAULT_MARKET_READ_EXECUTION_LINKS,
     DecisionExecutionLineageError,
@@ -113,6 +123,17 @@ from quant_rabbit.strategy.profile import StrategyProfile
 # macro confidence path.  The macro signal may choose a smaller fraction but
 # cannot own or bypass this absolute pre-POST boundary.
 FRESH_ENTRY_MAX_RISK_PCT_NAV = MACRO_EVENT_MAX_RISK_PCT_NAV
+# Exact broker-TP history below five completed zero-loss lifecycles is not a
+# usable capital-allocation exception. This is an evidence-collection floor,
+# not a market tuning parameter; the all-exit contradiction check still wins.
+CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES = 5
+FORECAST_S5_SECONDS = 5
+FORECAST_S5_MAX_WINDOW_SECONDS = 15 * 60
+PRE_ENTRY_FORECAST_CYCLE_RE = re.compile(
+    r"^pre-entry-forecast-refresh:"
+    r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})):"
+)
 
 
 class ExecutionClient(Protocol):
@@ -157,6 +178,12 @@ class _PrePostReconciliationResult:
 class _OrdinaryEntryPostClaimResult:
     evidence: dict[str, Any]
     issue: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class _FinalPrePostBoundaryResult:
+    evidence: dict[str, Any]
+    issues: tuple[RiskIssue, ...] = ()
 
 
 # Portfolio occupancy needs to scale with the campaign pace. Three active FX
@@ -289,6 +316,18 @@ class LiveOrderGateway:
         confirm_live: bool = False,
     ) -> LiveOrderStageSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
+        verified_decision_sha_at_entry = _file_sha256(self.verified_decision_path)
+        (
+            numeric_allocation_recheck_required,
+            numeric_allocation_requirement_issue,
+        ) = (
+            _codex_numeric_allocation_requirement_at_entry(
+                self.verified_decision_path,
+                expected_sha256=verified_decision_sha_at_entry,
+            )
+            if send
+            else (False, None)
+        )
         intents_payload = json.loads(intents_path.read_text())
         selected = _select_intent(intents_payload, lane_id)
         if selected is None:
@@ -310,12 +349,17 @@ class LiveOrderGateway:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
+        verified_intent = intent
         intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
             intent,
             selected_lane_id=selected_lane_id,
         )
         requested_units = intent.units
+        authorized_size_multiple = size_multiple
         scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
+        authorized_units = abs(int(scaled_units)) if scaled_units is not None else None
+        capital_allocation_validated = False
+        pre_reservation_capital_allocation_validated = False
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         portfolio_position_cap = _portfolio_position_cap_from_state()
@@ -426,8 +470,17 @@ class LiveOrderGateway:
             send=send,
             require_receipt=predictive_scout_intent_claimed(intent),
             intent=intent,
+            base_units=requested_units,
+            authorized_size_multiple=authorized_size_multiple,
+            authorized_units=authorized_units,
+            final_units=intent.units,
+            order_request=order_request,
         )
         gpt_verified_decision_issues.extend(decision_lineage_issues)
+        if numeric_allocation_requirement_issue is not None:
+            gpt_verified_decision_issues.append(
+                numeric_allocation_requirement_issue
+            )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -487,8 +540,10 @@ class LiveOrderGateway:
         entry_thesis_issues: list[dict[str, str]] = []
         ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
         ordinary_entry_claim_issues: list[dict[str, str]] = []
+        final_pre_post_boundary_issues: list[dict[str, str]] = []
         market_read_execution_link: dict[str, Any] = {"status": "NOT_RUN"}
         pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
+        reservation_order_request_sha256: str | None = None
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             predictive_scout_issues.extend(
@@ -503,10 +558,7 @@ class LiveOrderGateway:
         if send and order_request is not None and not all_blocked:
             reconciliation = self._pre_post_reconcile(
                 intent=intent,
-                verified_intent=_intent_with_gateway_metadata(
-                    _intent_from_json(selected["intent"]),
-                    selected_lane_id,
-                ),
+                verified_intent=verified_intent,
                 snapshot=snapshot,
                 risk=risk,
                 order_request=order_request,
@@ -520,6 +572,9 @@ class LiveOrderGateway:
                 portfolio_position_cap=portfolio_position_cap,
                 intents_path=intents_path,
                 ignore_pending_order_ids=(),
+                numeric_allocation_recheck_required=(
+                    numeric_allocation_recheck_required
+                ),
             )
             # The final deep attestation is useful only while building this
             # reconciliation result.  Do not carry it across reservations or
@@ -537,6 +592,20 @@ class LiveOrderGateway:
             scale_issues.extend(reconciliation.issues)
             pre_post_reconciliation = reconciliation.evidence
             risk_issues = [issue.__dict__ for issue in risk.issues]
+            final_gpt_allocation_issues = _gpt_verified_decision_live_send_issues(
+                self.verified_decision_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                require_receipt=predictive_scout_intent_claimed(intent),
+                intent=intent,
+                base_units=requested_units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                final_units=intent.units,
+                order_request=order_request,
+            )
+            gpt_verified_decision_issues.extend(final_gpt_allocation_issues)
             sl_lint, sl_lint_issues = _sl_lint_result(
                 intent=intent,
                 snapshot=snapshot,
@@ -562,11 +631,43 @@ class LiveOrderGateway:
             if (
                 any(issue.severity == "BLOCK" for issue in reconciliation.issues)
                 or any(issue.severity == "BLOCK" for issue in risk.issues)
+                or any(
+                    issue.get("severity") == "BLOCK"
+                    for issue in final_gpt_allocation_issues
+                )
                 or any(issue.get("severity") == "BLOCK" for issue in order_build_issues)
                 or any(issue.get("severity") == "BLOCK" for issue in sl_lint_issues)
             ):
                 all_blocked = True
                 status = "BLOCKED"
+        if (
+            send
+            and order_request is not None
+            and self.verified_decision_path is not None
+        ):
+            receipt_change_issue = _verified_decision_receipt_change_issue(
+                self.verified_decision_path,
+                expected_sha256=verified_decision_sha_at_entry,
+            )
+            if receipt_change_issue is not None:
+                gpt_verified_decision_issues.append(receipt_change_issue)
+                all_blocked = True
+                status = "BLOCKED"
+            else:
+                pre_reservation_capital_allocation_validated = (
+                    _gpt_capital_allocation_binding_validated(
+                        self.verified_decision_path,
+                        expected_sha256=verified_decision_sha_at_entry,
+                        issues=gpt_verified_decision_issues,
+                    )
+                    and _pre_post_capital_allocation_edge_validated(
+                        pre_post_reconciliation
+                    )
+                )
+        if send and order_request is not None and not all_blocked:
+            reservation_order_request_sha256 = _canonical_order_request_sha256(
+                order_request
+            )
         if send and order_request is not None and not all_blocked:
             reservation_issue = self._reserve_predictive_scout_post(
                 intent=intent,
@@ -588,6 +689,46 @@ class LiveOrderGateway:
             ordinary_entry_claim = claim_result.evidence
             if claim_result.issue is not None:
                 ordinary_entry_claim_issues.append(claim_result.issue)
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            final_boundary = self._final_pre_post_boundary(
+                verified_intent=verified_intent,
+                final_intent=intent,
+                early_reconciliation=pre_post_reconciliation,
+                expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_order_request_sha256=reservation_order_request_sha256,
+                order_request=order_request,
+                ordinary_entry_claim=ordinary_entry_claim,
+            )
+            pre_post_reconciliation = {
+                **pre_post_reconciliation,
+                "final_post_reservation_boundary": final_boundary.evidence,
+            }
+            final_pre_post_boundary_issues.extend(
+                issue.__dict__ for issue in final_boundary.issues
+            )
+            final_boundary_blocked = any(
+                issue.severity == "BLOCK" for issue in final_boundary.issues
+            )
+            capital_allocation_validated = bool(
+                pre_reservation_capital_allocation_validated
+                and not final_boundary_blocked
+                and final_boundary.evidence.get("status") == "PASSED"
+            )
+            if final_boundary_blocked:
+                ordinary_entry_claim, claim_finalize_issue = (
+                    self._finalize_ordinary_entry_post_claim(
+                        ordinary_entry_claim,
+                        status="FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                        broker_outcome={
+                            "post_attempted": False,
+                            "final_post_reservation_boundary": final_boundary.evidence,
+                        },
+                    )
+                )
+                if claim_finalize_issue is not None:
+                    ordinary_entry_claim_issues.append(claim_finalize_issue)
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
@@ -673,6 +814,9 @@ class LiveOrderGateway:
                 gateway_max_loss_jpy=max_loss_jpy,
                 requested_units=requested_units,
                 scaled_units=intent.units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                capital_allocation_validated=capital_allocation_validated,
             ),
             "target_path_receipt": _target_path_receipt_from_intent(
                 intent,
@@ -701,6 +845,7 @@ class LiveOrderGateway:
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
                 *ordinary_entry_claim_issues,
+                *final_pre_post_boundary_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
@@ -1045,15 +1190,32 @@ class LiveOrderGateway:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         ignore_pending_order_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
+        verified_decision_sha_at_entry = _file_sha256(self.verified_decision_path)
+        (
+            numeric_allocation_recheck_required,
+            numeric_allocation_requirement_issue,
+        ) = (
+            _codex_numeric_allocation_requirement_at_entry(
+                self.verified_decision_path,
+                expected_sha256=verified_decision_sha_at_entry,
+            )
+            if send
+            else (False, None)
+        )
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
+        verified_intent = intent
         intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
             intent,
             selected_lane_id=selected_lane_id,
         )
         requested_units = intent.units
+        authorized_size_multiple = size_multiple
         scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
+        authorized_units = abs(int(scaled_units)) if scaled_units is not None else None
+        capital_allocation_validated = False
+        pre_reservation_capital_allocation_validated = False
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         max_loss_jpy = self._resolve_gateway_max_loss_jpy()
@@ -1193,8 +1355,17 @@ class LiveOrderGateway:
             send=send,
             require_receipt=predictive_scout_intent_claimed(intent),
             intent=intent,
+            base_units=requested_units,
+            authorized_size_multiple=authorized_size_multiple,
+            authorized_units=authorized_units,
+            final_units=intent.units,
+            order_request=order_request,
         )
         gpt_verified_decision_issues.extend(decision_lineage_issues)
+        if numeric_allocation_requirement_issue is not None:
+            gpt_verified_decision_issues.append(
+                numeric_allocation_requirement_issue
+            )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -1254,8 +1425,10 @@ class LiveOrderGateway:
         entry_thesis_issues: list[dict[str, str]] = []
         ordinary_entry_claim: dict[str, Any] = {"status": "NOT_RUN"}
         ordinary_entry_claim_issues: list[dict[str, str]] = []
+        final_pre_post_boundary_issues: list[dict[str, str]] = []
         market_read_execution_link: dict[str, Any] = {"status": "NOT_RUN"}
         pre_post_reconciliation: dict[str, Any] = {"status": "NOT_RUN"}
+        reservation_order_request_sha256: str | None = None
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             predictive_scout_issues.extend(
@@ -1271,10 +1444,7 @@ class LiveOrderGateway:
             final_position_cap = portfolio_position_cap or _portfolio_position_cap_from_state()
             reconciliation = self._pre_post_reconcile(
                 intent=intent,
-                verified_intent=_intent_with_gateway_metadata(
-                    _intent_from_json(selected["intent"]),
-                    selected_lane_id,
-                ),
+                verified_intent=verified_intent,
                 snapshot=snapshot,
                 risk=risk,
                 order_request=order_request,
@@ -1288,6 +1458,9 @@ class LiveOrderGateway:
                 portfolio_position_cap=final_position_cap,
                 intents_path=intents_path,
                 ignore_pending_order_ids=ignore_pending_order_ids,
+                numeric_allocation_recheck_required=(
+                    numeric_allocation_recheck_required
+                ),
             )
             clear_guardian_tuning_validation_cache()
             intent = reconciliation.intent
@@ -1302,6 +1475,20 @@ class LiveOrderGateway:
             scale_issues.extend(reconciliation.issues)
             pre_post_reconciliation = reconciliation.evidence
             risk_issues = [issue.__dict__ for issue in risk.issues]
+            final_gpt_allocation_issues = _gpt_verified_decision_live_send_issues(
+                self.verified_decision_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                require_receipt=predictive_scout_intent_claimed(intent),
+                intent=intent,
+                base_units=requested_units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                final_units=intent.units,
+                order_request=order_request,
+            )
+            gpt_verified_decision_issues.extend(final_gpt_allocation_issues)
             sl_lint, sl_lint_issues = _sl_lint_result(
                 intent=intent,
                 snapshot=snapshot,
@@ -1327,11 +1514,43 @@ class LiveOrderGateway:
             if (
                 any(issue.severity == "BLOCK" for issue in reconciliation.issues)
                 or any(issue.severity == "BLOCK" for issue in risk.issues)
+                or any(
+                    issue.get("severity") == "BLOCK"
+                    for issue in final_gpt_allocation_issues
+                )
                 or any(issue.get("severity") == "BLOCK" for issue in order_build_issues)
                 or any(issue.get("severity") == "BLOCK" for issue in sl_lint_issues)
             ):
                 all_blocked = True
                 status = "BLOCKED"
+        if (
+            send
+            and order_request is not None
+            and self.verified_decision_path is not None
+        ):
+            receipt_change_issue = _verified_decision_receipt_change_issue(
+                self.verified_decision_path,
+                expected_sha256=verified_decision_sha_at_entry,
+            )
+            if receipt_change_issue is not None:
+                gpt_verified_decision_issues.append(receipt_change_issue)
+                all_blocked = True
+                status = "BLOCKED"
+            else:
+                pre_reservation_capital_allocation_validated = (
+                    _gpt_capital_allocation_binding_validated(
+                        self.verified_decision_path,
+                        expected_sha256=verified_decision_sha_at_entry,
+                        issues=gpt_verified_decision_issues,
+                    )
+                    and _pre_post_capital_allocation_edge_validated(
+                        pre_post_reconciliation
+                    )
+                )
+        if send and order_request is not None and not all_blocked:
+            reservation_order_request_sha256 = _canonical_order_request_sha256(
+                order_request
+            )
         if send and order_request is not None and not all_blocked:
             reservation_issue = self._reserve_predictive_scout_post(
                 intent=intent,
@@ -1353,6 +1572,46 @@ class LiveOrderGateway:
             ordinary_entry_claim = claim_result.evidence
             if claim_result.issue is not None:
                 ordinary_entry_claim_issues.append(claim_result.issue)
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked:
+            final_boundary = self._final_pre_post_boundary(
+                verified_intent=verified_intent,
+                final_intent=intent,
+                early_reconciliation=pre_post_reconciliation,
+                expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_order_request_sha256=reservation_order_request_sha256,
+                order_request=order_request,
+                ordinary_entry_claim=ordinary_entry_claim,
+            )
+            pre_post_reconciliation = {
+                **pre_post_reconciliation,
+                "final_post_reservation_boundary": final_boundary.evidence,
+            }
+            final_pre_post_boundary_issues.extend(
+                issue.__dict__ for issue in final_boundary.issues
+            )
+            final_boundary_blocked = any(
+                issue.severity == "BLOCK" for issue in final_boundary.issues
+            )
+            capital_allocation_validated = bool(
+                pre_reservation_capital_allocation_validated
+                and not final_boundary_blocked
+                and final_boundary.evidence.get("status") == "PASSED"
+            )
+            if final_boundary_blocked:
+                ordinary_entry_claim, claim_finalize_issue = (
+                    self._finalize_ordinary_entry_post_claim(
+                        ordinary_entry_claim,
+                        status="FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                        broker_outcome={
+                            "post_attempted": False,
+                            "final_post_reservation_boundary": final_boundary.evidence,
+                        },
+                    )
+                )
+                if claim_finalize_issue is not None:
+                    ordinary_entry_claim_issues.append(claim_finalize_issue)
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
@@ -1433,6 +1692,9 @@ class LiveOrderGateway:
                 gateway_max_loss_jpy=max_loss_jpy,
                 requested_units=requested_units,
                 scaled_units=intent.units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                capital_allocation_validated=capital_allocation_validated,
             ),
             "target_path_receipt": _target_path_receipt_from_intent(
                 intent,
@@ -1461,6 +1723,7 @@ class LiveOrderGateway:
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
                 *ordinary_entry_claim_issues,
+                *final_pre_post_boundary_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
@@ -1641,6 +1904,7 @@ class LiveOrderGateway:
         portfolio_position_cap: int,
         intents_path: Path,
         ignore_pending_order_ids: tuple[str, ...] = (),
+        numeric_allocation_recheck_required: bool = False,
     ) -> _PrePostReconciliationResult:
         """Reconcile loss capacity against broker truth immediately before POST.
 
@@ -1746,6 +2010,56 @@ class LiveOrderGateway:
                 "PRE_POST_TRANSACTION_ID_MISMATCH",
                 f"ledger lastTransactionID {ledger_transaction_id or 'missing'} does not match fresh broker snapshot "
                 f"{broker_transaction_id or 'missing'}; retry after both views converge",
+            )
+
+        fresh_base_risk = None
+        fresh_forecast_s5_path_proof = None
+        if numeric_allocation_recheck_required:
+            try:
+                # Re-measure the immutable GPT baseline units against the same
+                # fresh broker snapshot used for the final order. A deliberately
+                # high validation cap keeps RiskEngine from clipping the proof;
+                # the ordinary current loss/NAV/capacity gates are applied below.
+                fresh_base_risk = self._validate_intent(
+                    intent=verified_intent,
+                    snapshot=fresh_snapshot,
+                    max_loss_jpy=max(float(max_loss_jpy), 1.0e18),
+                    portfolio_loss_cap=None,
+                    validate_live_enabled=True,
+                    allow_basket_pending=True,
+                    portfolio_position_cap=portfolio_position_cap,
+                )
+            except Exception as exc:
+                return blocked(
+                    "PRE_POST_GPT_ALLOCATION_BASE_RISK_REMEASURE_FAILED",
+                    "fresh GPT allocation proof could not remeasure the original "
+                    f"base units with RiskEngine: {type(exc).__name__}: {exc}",
+                )
+
+        (
+            capital_allocation_edge_recheck,
+            capital_allocation_edge_issue,
+        ) = _capital_allocation_edge_pre_post_recheck(
+            verified_intent,
+            ledger_path=self.execution_ledger_db_path,
+            expected_execution_cost_floor_sha256=(
+                _verified_execution_cost_floor_sha256(
+                    self.verified_decision_path
+                )
+                if numeric_allocation_recheck_required
+                else None
+            ),
+            execution_cost_floor_required=(
+                numeric_allocation_recheck_required
+            ),
+        )
+        evidence["capital_allocation_edge_recheck"] = (
+            capital_allocation_edge_recheck
+        )
+        if capital_allocation_edge_issue is not None:
+            return blocked(
+                capital_allocation_edge_issue.code,
+                capital_allocation_edge_issue.message,
             )
 
         (
@@ -2149,6 +2463,263 @@ class LiveOrderGateway:
                     str(scout_issue.get("severity") or "BLOCK"),
                 )
             )
+        if numeric_allocation_recheck_required:
+            # Bind the path proof to the exact reconciled rails and units that
+            # will be reserved, after every loss-cap/attachment/target refresh.
+            fresh_forecast_s5_path_proof = _forecast_s5_no_touch_proof(
+                self.client,
+                intent=final_intent,
+                snapshot=fresh_snapshot,
+            )
+        (
+            capital_allocation_numeric_recheck,
+            capital_allocation_numeric_issue,
+        ) = _capital_allocation_numeric_pre_post_recheck(
+            verified_intent=verified_intent,
+            final_intent=final_intent,
+            fresh_snapshot=fresh_snapshot,
+            fresh_base_risk=fresh_base_risk,
+            required=numeric_allocation_recheck_required,
+            forecast_s5_path_proof=fresh_forecast_s5_path_proof,
+            execution_cost_floor=(
+                capital_allocation_edge_recheck.get("execution_cost_floor")
+                if isinstance(capital_allocation_edge_recheck, dict)
+                else None
+            ),
+        )
+        if (
+            numeric_allocation_recheck_required
+            and capital_allocation_numeric_issue is None
+        ):
+            price_bound_proof, price_bound_issue = (
+                _capital_allocation_market_price_bound(
+                    intent=final_intent,
+                    snapshot=fresh_snapshot,
+                    effective_max_loss_jpy=final_max_loss,
+                    execution_cost_floor=(
+                        capital_allocation_edge_recheck.get(
+                            "execution_cost_floor"
+                        )
+                        if isinstance(
+                            capital_allocation_edge_recheck, dict
+                        )
+                        else None
+                    ),
+                    portfolio_loss_remaining_jpy=(
+                        _portfolio_loss_remaining_jpy(
+                            snapshot=fresh_snapshot,
+                            portfolio_loss_cap=final_portfolio_cap,
+                            cumulative_risk_jpy=0.0,
+                        )
+                    ),
+                )
+            )
+            if price_bound_issue is not None:
+                final_issues.append(price_bound_issue)
+            elif price_bound_proof.get("status") == "PASSED":
+                price_bound = float(price_bound_proof["price_bound"])
+                final_order_request = {
+                    **final_order_request,
+                    "priceBound": price_bound_proof["price_bound_text"],
+                }
+                bound_snapshot = _snapshot_at_market_price_bound(
+                    fresh_snapshot,
+                    intent=final_intent,
+                    price_bound=price_bound,
+                )
+                bound_verified_intent = replace(
+                    verified_intent,
+                    entry=price_bound,
+                )
+                bound_final_intent = replace(
+                    final_intent,
+                    entry=price_bound,
+                )
+                bound_base_risk = self._validate_intent(
+                    intent=bound_verified_intent,
+                    snapshot=bound_snapshot,
+                    max_loss_jpy=1.0e18,
+                    portfolio_loss_cap=None,
+                    validate_live_enabled=True,
+                    allow_basket_pending=True,
+                    portfolio_position_cap=portfolio_position_cap,
+                )
+                bound_final_risk = self._validate_intent(
+                    intent=bound_final_intent,
+                    snapshot=bound_snapshot,
+                    max_loss_jpy=final_max_loss,
+                    portfolio_loss_cap=None,
+                    validate_live_enabled=True,
+                    allow_basket_pending=True,
+                    portfolio_position_cap=portfolio_position_cap,
+                )
+                bound_risk_issues = list(bound_final_risk.issues)
+                bound_risk_issues.extend(
+                    _basket_issues(
+                        intent=bound_final_intent,
+                        snapshot=bound_snapshot,
+                        metrics=bound_final_risk.metrics,
+                        portfolio_loss_cap=final_portfolio_cap,
+                        cumulative_risk_jpy=0.0,
+                        cumulative_margin_jpy=0.0,
+                        seen_geometry=set(),
+                    )
+                )
+                bound_attached_stop = _attached_stop_risk_metrics(
+                    bound_final_intent,
+                    final_order_request,
+                    bound_final_risk.metrics,
+                )
+                bound_outcome_cost_jpy = float(
+                    price_bound_proof.get("outcome_cost_jpy") or 0.0
+                )
+                if bound_attached_stop is not None:
+                    bound_attached_stop = {
+                        **bound_attached_stop,
+                        "execution_outcome_cost_jpy": (
+                            bound_outcome_cost_jpy
+                        ),
+                        "cost_adjusted_total_downside_jpy": (
+                            float(bound_attached_stop["risk_jpy"])
+                            + bound_outcome_cost_jpy
+                        ),
+                    }
+                    if bound_attached_stop.get("basis") == "DISASTER_SL":
+                        bound_disaster_remaining = (
+                            _portfolio_loss_remaining_jpy(
+                                snapshot=bound_snapshot,
+                                portfolio_loss_cap=final_portfolio_cap,
+                                cumulative_risk_jpy=0.0,
+                            )
+                        )
+                        if (
+                            bound_disaster_remaining is not None
+                            and float(
+                                bound_attached_stop[
+                                    "cost_adjusted_total_downside_jpy"
+                                ]
+                            )
+                            > bound_disaster_remaining
+                        ):
+                            bound_risk_issues.append(
+                                RiskIssue(
+                                    "PRICE_BOUND_DISASTER_STOP_PORTFOLIO_CAP_EXCEEDED",
+                                    "worst-fill disaster-stop risk exceeds fresh "
+                                    "portfolio remaining capacity",
+                                )
+                            )
+                    elif (
+                        float(
+                            bound_attached_stop[
+                                "cost_adjusted_total_downside_jpy"
+                            ]
+                        )
+                        > final_max_loss
+                    ):
+                        bound_risk_issues.append(
+                            RiskIssue(
+                                "PRICE_BOUND_ATTACHED_STOP_LOSS_CAP_EXCEEDED",
+                                "worst-fill attached intent-stop risk exceeds "
+                                "the fresh effective loss/NAV cap",
+                            )
+                        )
+                bound_blockers = [
+                    issue for issue in bound_risk_issues
+                    if issue.severity == "BLOCK"
+                ]
+                if bound_blockers:
+                    final_issues.append(
+                        RiskIssue(
+                            "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_RISK_RECHECK_FAILED",
+                            "worst-fill priceBound failed fresh RiskEngine/basket "
+                            "validation: "
+                            + ", ".join(issue.code for issue in bound_blockers),
+                        )
+                    )
+                bound_material = dict(price_bound_proof)
+                bound_material.pop("proof_sha256", None)
+                bound_material.update(
+                    {
+                        "risk_engine_status": (
+                            "BLOCKED" if bound_blockers else "PASSED"
+                        ),
+                        "risk_engine_metrics": (
+                            asdict(bound_final_risk.metrics)
+                            if isinstance(bound_final_risk.metrics, RiskMetrics)
+                            else None
+                        ),
+                        "risk_engine_entry_basis": (
+                            "SYNTHETIC_WORST_FILL_ONLY_RESERVED_INTENT_UNCHANGED"
+                        ),
+                        "risk_engine_blocking_codes": [
+                            issue.code for issue in bound_blockers
+                        ],
+                        "take_profit_attached": isinstance(
+                            final_order_request.get("takeProfitOnFill"),
+                            dict,
+                        ),
+                        "stop_loss_attached": isinstance(
+                            final_order_request.get("stopLossOnFill"),
+                            dict,
+                        ),
+                        "attached_stop_risk": bound_attached_stop,
+                    }
+                )
+                price_bound_proof = {
+                    **bound_material,
+                    "proof_sha256": _canonical_json_sha256(bound_material),
+                }
+                (
+                    bound_numeric_recheck,
+                    bound_numeric_issue,
+                ) = _capital_allocation_numeric_pre_post_recheck(
+                    verified_intent=bound_verified_intent,
+                    final_intent=bound_final_intent,
+                    fresh_snapshot=bound_snapshot,
+                    fresh_base_risk=bound_base_risk,
+                    required=True,
+                    forecast_s5_path_proof=fresh_forecast_s5_path_proof,
+                    execution_cost_floor=(
+                        capital_allocation_edge_recheck.get(
+                            "execution_cost_floor"
+                        )
+                        if isinstance(
+                            capital_allocation_edge_recheck, dict
+                        )
+                        else None
+                    ),
+                    market_entry_slippage_embedded=True,
+                )
+                capital_allocation_numeric_recheck = (
+                    _numeric_proof_with_market_price_bound(
+                        bound_numeric_recheck,
+                        price_bound_proof,
+                    )
+                )
+                if bound_numeric_issue is not None:
+                    final_issues.append(
+                        RiskIssue(
+                            "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_NUMERIC_REPROOF_FAILED",
+                            "worst-fill priceBound no longer preserves the "
+                            "floor-unit Wilson EV/quarter-Kelly allocation: "
+                            f"{bound_numeric_issue.message}",
+                        )
+                    )
+            else:
+                # HEDGE and the strictly pre-bounded predictive SCOUT contract
+                # do not acquire a new MARKET priceBound, but their bypass is
+                # still frozen into the numeric proof.
+                capital_allocation_numeric_recheck = (
+                    _numeric_proof_with_market_price_bound(
+                        capital_allocation_numeric_recheck,
+                        price_bound_proof,
+                    )
+                )
+        evidence["capital_allocation_numeric_recheck"] = (
+            capital_allocation_numeric_recheck
+        )
+        if capital_allocation_numeric_issue is not None:
+            final_issues.append(capital_allocation_numeric_issue)
         blocking_codes = [
             issue.code
             for issue in (*final_risk.issues, *final_issues)
@@ -2166,6 +2737,7 @@ class LiveOrderGateway:
                 "final_blocking_codes": blocking_codes,
                 "final_max_loss_jpy": final_max_loss,
                 "final_portfolio_loss_cap_jpy": final_portfolio_cap,
+                "portfolio_position_cap": portfolio_position_cap,
                 "final_units": final_intent.units,
                 "macro_event_fresh_nav_recheck": macro_event_fresh_nav_recheck,
                 "tp_proven_fresh_recheck": tp_proven_fresh_recheck,
@@ -2185,6 +2757,1079 @@ class LiveOrderGateway:
             order_build_issues=final_order_build_issues,
             issues=tuple(final_issues),
             evidence=evidence,
+        )
+
+    def _final_pre_post_boundary(
+        self,
+        *,
+        verified_intent: OrderIntent,
+        final_intent: OrderIntent,
+        early_reconciliation: dict[str, Any],
+        expected_receipt_sha256: str | None,
+        expected_order_request_sha256: str | None,
+        order_request: dict[str, Any],
+        ordinary_entry_claim: dict[str, Any],
+    ) -> _FinalPrePostBoundaryResult:
+        """Fence reservations from the broker POST with immutable current truth.
+
+        The earlier reconciliation is allowed to rebuild and downsize an order.
+        Once a durable one-shot reservation exists, this boundary is validation
+        only: it never changes units, switches the allocation basis, or releases
+        the reservation. Any broker transaction after the earlier risk snapshot
+        invalidates that snapshot and requires a genuinely fresh signal.
+        """
+
+        clear_guardian_tuning_validation_cache()
+
+        early_edge = (
+            early_reconciliation.get("capital_allocation_edge_recheck")
+            if isinstance(
+                early_reconciliation.get("capital_allocation_edge_recheck"),
+                dict,
+            )
+            else {}
+        )
+        early_numeric = (
+            early_reconciliation.get("capital_allocation_numeric_recheck")
+            if isinstance(
+                early_reconciliation.get("capital_allocation_numeric_recheck"),
+                dict,
+            )
+            else {}
+        )
+        early_numeric_required_value = early_numeric.get("required")
+        early_numeric_required_marker_valid = isinstance(
+            early_numeric_required_value,
+            bool,
+        )
+        # Do not reread/reclassify the receipt after the early proof. A missing
+        # or malformed marker is treated as required and then blocked below.
+        numeric_allocation_required = (
+            early_numeric_required_value
+            if early_numeric_required_marker_valid
+            else True
+        )
+        early_numeric_frozen = _capital_allocation_numeric_proof_is_frozen(
+            early_numeric,
+            order_request=order_request,
+            required=numeric_allocation_required,
+            expected_intent=final_intent,
+        )
+        early_price_bound = (
+            early_numeric.get("market_price_bound")
+            if isinstance(early_numeric.get("market_price_bound"), dict)
+            else {}
+        )
+        expected_reserved_price_bound = (
+            str(early_price_bound.get("price_bound_text") or "")
+            if numeric_allocation_required
+            and str(early_price_bound.get("status") or "").upper()
+            == "PASSED"
+            else None
+        )
+        early_ledger_transaction_id = str(
+            early_reconciliation.get("ledger_last_transaction_id") or ""
+        ).strip()
+        early_broker_transaction_id = str(
+            early_reconciliation.get("broker_last_transaction_id") or ""
+        ).strip()
+        reservation_kind = (
+            "PREDICTIVE_SCOUT"
+            if predictive_scout_intent_claimed(verified_intent)
+            else "ORDINARY_ENTRY"
+            if ordinary_entry_claim.get("claim_id")
+            else "NONE"
+        )
+        evidence: dict[str, Any] = {
+            "status": "BLOCKED",
+            "execution_ledger_db_path": (
+                str(self.execution_ledger_db_path)
+                if self.execution_ledger_db_path is not None
+                else None
+            ),
+            "early_ledger_last_transaction_id": (
+                early_ledger_transaction_id or None
+            ),
+            "early_broker_last_transaction_id": (
+                early_broker_transaction_id or None
+            ),
+            "early_edge_basis": early_edge.get("basis"),
+            "early_edge_proof_key": early_edge.get("proof_key"),
+            "early_numeric_proof_sha256": early_numeric.get("proof_sha256"),
+            "early_numeric_proof_status": early_numeric.get("status"),
+            "early_numeric_proof_frozen": early_numeric_frozen,
+            "numeric_allocation_recheck_required": numeric_allocation_required,
+            "reservation_kind": reservation_kind,
+            "reservation_retained_on_block": reservation_kind != "NONE",
+            "post_attempted": False,
+        }
+        issues: list[RiskIssue] = []
+
+        if not early_numeric_required_marker_valid:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_NUMERIC_REQUIREMENT_MARKER_INVALID",
+                    "early reconciliation did not freeze an exact boolean numeric "
+                    "allocation requirement; do not downgrade unreadable receipt "
+                    "state to NOT_APPLICABLE",
+                )
+            )
+
+        if not early_numeric_frozen:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_EARLY_NUMERIC_ALLOCATION_PROOF_INVALID",
+                    "post-reservation broker fence requires an immutable early "
+                    "fresh-NAV/quote/base-risk numeric allocation proof whose "
+                    "floor-unit cap matches the reserved order",
+                )
+            )
+
+        if (
+            str(early_reconciliation.get("status") or "").upper() != "PASSED"
+            or not early_ledger_transaction_id
+            or early_ledger_transaction_id != early_broker_transaction_id
+            or str(early_edge.get("status") or "").upper()
+            not in {"PASSED", "BYPASSED"}
+        ):
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_EARLY_RECONCILIATION_INVALID",
+                    "post-reservation broker fence requires the earlier reconciliation, "
+                    "transaction-id match, and allocation edge proof to have passed",
+                )
+            )
+
+        sync_summary = None
+        if self.execution_ledger_db_path is None:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_LEDGER_PATH_MISSING",
+                    "post-reservation broker fence requires the canonical execution ledger",
+                )
+            )
+        else:
+            report_path = self.execution_ledger_report_path or (
+                self.execution_ledger_db_path.with_suffix(".md")
+            )
+            try:
+                sync_summary = ExecutionLedger(
+                    db_path=self.execution_ledger_db_path,
+                    report_path=report_path,
+                ).sync_oanda_transactions(self.client)
+            except Exception as exc:
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_LEDGER_SYNC_FAILED",
+                        "execution ledger re-sync failed after durable reservation and "
+                        f"before broker POST: {type(exc).__name__}: {exc}",
+                    )
+                )
+
+        final_ledger_transaction_id = ""
+        if sync_summary is not None:
+            final_ledger_transaction_id = str(
+                sync_summary.last_transaction_id or ""
+            ).strip()
+            evidence.update(
+                {
+                    "final_ledger_sync_status": sync_summary.status,
+                    "final_ledger_last_transaction_id": (
+                        final_ledger_transaction_id or None
+                    ),
+                }
+            )
+            if sync_summary.status != "SYNCED" or not final_ledger_transaction_id:
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_LEDGER_NOT_SYNCED",
+                        "post-reservation execution ledger must finish SYNCED with a "
+                        "non-empty lastTransactionID before broker POST",
+                    )
+                )
+
+        final_edge: dict[str, Any] = {"status": "NOT_RUN"}
+        if (
+            sync_summary is not None
+            and sync_summary.status == "SYNCED"
+            and final_ledger_transaction_id
+            and self.execution_ledger_db_path is not None
+        ):
+            try:
+                final_edge, final_edge_issue = (
+                    _capital_allocation_edge_pre_post_recheck(
+                        verified_intent,
+                        ledger_path=self.execution_ledger_db_path,
+                        expected_execution_cost_floor_sha256=(
+                            str(
+                                (
+                                    early_edge.get("execution_cost_floor")
+                                    or {}
+                                ).get("proof_sha256")
+                                or ""
+                            )
+                            if numeric_allocation_required
+                            else None
+                        ),
+                        execution_cost_floor_required=(
+                            numeric_allocation_required
+                        ),
+                    )
+                )
+            except Exception as exc:
+                final_edge_issue = RiskIssue(
+                    "FINAL_PRE_POST_GPT_ALLOCATION_EDGE_RECHECK_FAILED",
+                    "post-reservation same-basis allocation reproof raised before "
+                    f"broker POST: {type(exc).__name__}: {exc}",
+                )
+                final_edge = {
+                    "status": "BLOCKED",
+                    "issue_code": final_edge_issue.code,
+                }
+            if final_edge_issue is not None:
+                issues.append(final_edge_issue)
+            if (
+                final_edge.get("basis") != early_edge.get("basis")
+                or final_edge.get("proof_key") != early_edge.get("proof_key")
+            ):
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_GPT_ALLOCATION_EDGE_BASIS_CHANGED",
+                        "post-reservation allocation reproof must preserve the exact "
+                        "earlier evidence basis and pair/side/method/vehicle proof key",
+                    )
+                )
+        evidence["capital_allocation_edge_recheck"] = final_edge
+
+        final_numeric: dict[str, Any] = {"status": "NOT_APPLICABLE"}
+        final_numeric_snapshot_transaction_id = ""
+        final_numeric_frozen = not numeric_allocation_required
+        final_reserved_risk_evidence: dict[str, Any] = {
+            "status": "NOT_APPLICABLE"
+        }
+        final_price_bound_proof: dict[str, Any] = {
+            "status": "NOT_APPLICABLE"
+        }
+        final_bound_snapshot: BrokerSnapshot | None = None
+        final_boundary_snapshot: BrokerSnapshot | None = None
+        final_reserved_intent: OrderIntent | None = None
+        try:
+            final_boundary_snapshot = self.client.snapshot(
+                (verified_intent.pair,)
+            )
+        except Exception as exc:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_BROKER_SNAPSHOT_FAILED",
+                    "post-reservation final broker snapshot failed before "
+                    f"POST: {type(exc).__name__}: {exc}",
+                )
+            )
+            if numeric_allocation_required:
+                final_numeric = {
+                    "status": "BLOCKED",
+                    "issue_code": "FINAL_PRE_POST_BROKER_SNAPSHOT_FAILED",
+                }
+                final_numeric_frozen = False
+        if final_boundary_snapshot is not None:
+            final_numeric_snapshot_transaction_id = (
+                str(
+                    final_boundary_snapshot.account.last_transaction_id
+                    if final_boundary_snapshot.account is not None
+                    else ""
+                ).strip()
+            )
+            try:
+                final_reserved_intent = _intent_from_reserved_order_request(
+                    final_intent,
+                    order_request=order_request,
+                    expected_price_bound=expected_reserved_price_bound,
+                )
+                raw_final_max_loss = early_reconciliation.get(
+                    "final_max_loss_jpy"
+                )
+                if (
+                    isinstance(raw_final_max_loss, bool)
+                    or not isinstance(raw_final_max_loss, (int, float))
+                    or not math.isfinite(float(raw_final_max_loss))
+                    or float(raw_final_max_loss) <= 0.0
+                ):
+                    raise ValueError(
+                        "early reconciliation has no finite positive final_max_loss_jpy"
+                    )
+                final_account = final_boundary_snapshot.account
+                final_nav_jpy = (
+                    float(final_account.nav_jpy)
+                    if final_account is not None
+                    and isinstance(final_account.nav_jpy, (int, float))
+                    and not isinstance(final_account.nav_jpy, bool)
+                    and math.isfinite(float(final_account.nav_jpy))
+                    and float(final_account.nav_jpy) > 0.0
+                    else None
+                )
+                if final_nav_jpy is None:
+                    raise ValueError(
+                        "final broker snapshot has no finite positive NAV"
+                    )
+                final_nav_hard_cap_jpy = final_nav_jpy * (
+                    FRESH_ENTRY_MAX_RISK_PCT_NAV / 100.0
+                )
+                final_reserved_max_loss_jpy = min(
+                    float(raw_final_max_loss),
+                    final_nav_hard_cap_jpy,
+                )
+                macro_event_confidence_sizing = _metadata_truthy(
+                    (verified_intent.metadata or {}).get(
+                        "macro_event_confidence_sizing"
+                    )
+                )
+                final_macro_nav_cap_jpy = (
+                    final_nav_jpy * (MACRO_EVENT_MAX_RISK_PCT_NAV / 100.0)
+                    if macro_event_confidence_sizing
+                    else None
+                )
+                if final_macro_nav_cap_jpy is not None:
+                    final_reserved_max_loss_jpy = min(
+                        final_reserved_max_loss_jpy,
+                        final_macro_nav_cap_jpy,
+                    )
+                risk_validation_snapshot = final_boundary_snapshot
+                risk_validation_intent = final_reserved_intent
+                if numeric_allocation_required:
+                    (
+                        final_price_bound_proof,
+                        final_price_bound_issue,
+                    ) = _capital_allocation_market_price_bound(
+                        intent=final_reserved_intent,
+                        snapshot=final_boundary_snapshot,
+                        effective_max_loss_jpy=final_reserved_max_loss_jpy,
+                        reserved_price_bound=order_request.get("priceBound"),
+                        execution_cost_floor=(
+                            final_edge.get("execution_cost_floor")
+                            if isinstance(final_edge, dict)
+                            else None
+                        ),
+                        portfolio_loss_remaining_jpy=(
+                            _portfolio_loss_remaining_jpy(
+                                snapshot=final_boundary_snapshot,
+                                portfolio_loss_cap=(
+                                    float(
+                                        early_reconciliation.get(
+                                            "final_portfolio_loss_cap_jpy"
+                                        )
+                                    )
+                                    if isinstance(
+                                        early_reconciliation.get(
+                                            "final_portfolio_loss_cap_jpy"
+                                        ),
+                                        (int, float),
+                                    )
+                                    and not isinstance(
+                                        early_reconciliation.get(
+                                            "final_portfolio_loss_cap_jpy"
+                                        ),
+                                        bool,
+                                    )
+                                    else None
+                                ),
+                                cumulative_risk_jpy=0.0,
+                            )
+                        ),
+                    )
+                    if final_price_bound_issue is not None:
+                        issues.append(
+                            RiskIssue(
+                                "FINAL_PRE_POST_GPT_ALLOCATION_PRICE_BOUND_REPROOF_FAILED",
+                                final_price_bound_issue.message,
+                            )
+                        )
+                    elif final_price_bound_proof.get("status") == "PASSED":
+                        final_bound_snapshot = _snapshot_at_market_price_bound(
+                            final_boundary_snapshot,
+                            intent=final_reserved_intent,
+                            price_bound=float(
+                                final_price_bound_proof["price_bound"]
+                            ),
+                        )
+                        risk_validation_snapshot = final_bound_snapshot
+                        risk_validation_intent = replace(
+                            final_reserved_intent,
+                            entry=float(final_price_bound_proof["price_bound"]),
+                        )
+                raw_position_cap = early_reconciliation.get(
+                    "portfolio_position_cap"
+                )
+                final_position_cap = (
+                    raw_position_cap
+                    if isinstance(raw_position_cap, int)
+                    and not isinstance(raw_position_cap, bool)
+                    and raw_position_cap > 0
+                    else _portfolio_position_cap_from_state()
+                )
+                final_reserved_risk = self._validate_intent(
+                    intent=risk_validation_intent,
+                    snapshot=risk_validation_snapshot,
+                    max_loss_jpy=final_reserved_max_loss_jpy,
+                    portfolio_loss_cap=None,
+                    validate_live_enabled=True,
+                    allow_basket_pending=True,
+                    portfolio_position_cap=final_position_cap,
+                )
+                final_reserved_issues = list(final_reserved_risk.issues)
+                raw_final_portfolio_cap = early_reconciliation.get(
+                    "final_portfolio_loss_cap_jpy"
+                )
+                final_portfolio_cap = (
+                    float(raw_final_portfolio_cap)
+                    if isinstance(raw_final_portfolio_cap, (int, float))
+                    and not isinstance(raw_final_portfolio_cap, bool)
+                    and math.isfinite(float(raw_final_portfolio_cap))
+                    and float(raw_final_portfolio_cap) >= 0.0
+                    else None
+                )
+                final_reserved_issues.extend(
+                    _basket_issues(
+                        intent=risk_validation_intent,
+                        snapshot=risk_validation_snapshot,
+                        metrics=final_reserved_risk.metrics,
+                        portfolio_loss_cap=final_portfolio_cap,
+                        cumulative_risk_jpy=0.0,
+                        cumulative_margin_jpy=0.0,
+                        seen_geometry=set(),
+                    )
+                )
+                final_attached_stop = _attached_stop_risk_metrics(
+                    risk_validation_intent,
+                    order_request,
+                    final_reserved_risk.metrics,
+                )
+                final_outcome_cost_jpy = float(
+                    final_price_bound_proof.get("outcome_cost_jpy") or 0.0
+                )
+                if final_attached_stop is not None:
+                    final_attached_stop = {
+                        **final_attached_stop,
+                        "execution_outcome_cost_jpy": (
+                            final_outcome_cost_jpy
+                        ),
+                        "cost_adjusted_total_downside_jpy": (
+                            float(final_attached_stop["risk_jpy"])
+                            + final_outcome_cost_jpy
+                        ),
+                    }
+                    if final_attached_stop.get("basis") == "DISASTER_SL":
+                        final_disaster_remaining = (
+                            _portfolio_loss_remaining_jpy(
+                                snapshot=risk_validation_snapshot,
+                                portfolio_loss_cap=final_portfolio_cap,
+                                cumulative_risk_jpy=0.0,
+                            )
+                        )
+                        if (
+                            final_disaster_remaining is not None
+                            and float(
+                                final_attached_stop[
+                                    "cost_adjusted_total_downside_jpy"
+                                ]
+                            )
+                            > final_disaster_remaining
+                        ):
+                            final_reserved_issues.append(
+                                RiskIssue(
+                                    "DISASTER_STOP_PORTFOLIO_CAP_EXCEEDED",
+                                    "post-reservation disaster-stop risk "
+                                    f"{float(final_attached_stop['risk_jpy']):.0f} JPY "
+                                    "exceeds final portfolio remaining capacity "
+                                    f"{final_disaster_remaining:.0f} JPY",
+                                )
+                            )
+                    elif (
+                        float(
+                            final_attached_stop[
+                                "cost_adjusted_total_downside_jpy"
+                            ]
+                        )
+                        > final_reserved_max_loss_jpy
+                    ):
+                        final_reserved_issues.append(
+                            RiskIssue(
+                                "ATTACHED_STOP_LOSS_CAP_EXCEEDED",
+                                "post-reservation attached intent-stop risk "
+                                f"{float(final_attached_stop['risk_jpy']):.0f} JPY "
+                                "exceeds final effective max loss "
+                                f"{final_reserved_max_loss_jpy:.0f} JPY",
+                            )
+                        )
+                final_reserved_blockers = [
+                    issue
+                    for issue in final_reserved_issues
+                    if issue.severity == "BLOCK"
+                ]
+                if final_price_bound_proof.get("status") == "PASSED":
+                    bound_material = dict(final_price_bound_proof)
+                    bound_material.pop("proof_sha256", None)
+                    bound_material.update(
+                        {
+                            "risk_engine_status": (
+                                "BLOCKED"
+                                if final_reserved_blockers
+                                else "PASSED"
+                            ),
+                            "risk_engine_metrics": (
+                                asdict(final_reserved_risk.metrics)
+                                if isinstance(
+                                    final_reserved_risk.metrics,
+                                    RiskMetrics,
+                                )
+                                else None
+                            ),
+                            "risk_engine_entry_basis": (
+                                "SYNTHETIC_WORST_FILL_ONLY_RESERVED_INTENT_UNCHANGED"
+                            ),
+                            "risk_engine_blocking_codes": [
+                                issue.code
+                                for issue in final_reserved_blockers
+                            ],
+                            "take_profit_attached": isinstance(
+                                order_request.get("takeProfitOnFill"),
+                                dict,
+                            ),
+                            "stop_loss_attached": isinstance(
+                                order_request.get("stopLossOnFill"),
+                                dict,
+                            ),
+                            "attached_stop_risk": final_attached_stop,
+                        }
+                    )
+                    final_price_bound_proof = {
+                        **bound_material,
+                        "proof_sha256": _canonical_json_sha256(
+                            bound_material
+                        ),
+                    }
+                final_reserved_metrics = (
+                    asdict(final_reserved_risk.metrics)
+                    if isinstance(final_reserved_risk.metrics, RiskMetrics)
+                    else None
+                )
+                final_reserved_risk_jpy = (
+                    final_reserved_risk.metrics.risk_jpy
+                    if isinstance(final_reserved_risk.metrics, RiskMetrics)
+                    else None
+                )
+                final_reserved_material = {
+                    "status": (
+                        "BLOCKED" if final_reserved_blockers else "PASSED"
+                    ),
+                    "snapshot_fetched_at_utc": (
+                        final_boundary_snapshot.fetched_at_utc.isoformat()
+                    ),
+                    "quote_timestamp_utc": (
+                        final_boundary_snapshot.quotes[
+                            verified_intent.pair
+                        ].timestamp_utc.isoformat()
+                        if verified_intent.pair
+                        in final_boundary_snapshot.quotes
+                        else None
+                    ),
+                    "risk_quote_basis": (
+                        "RESERVED_PRICE_BOUND_WORST_FILL"
+                        if final_bound_snapshot is not None
+                        else "FINAL_EXECUTABLE_QUOTE"
+                    ),
+                    "actual_executable_entry": (
+                        final_boundary_snapshot.quotes[
+                            final_reserved_intent.pair
+                        ].ask
+                        if final_reserved_intent.side == Side.LONG
+                        else final_boundary_snapshot.quotes[
+                            final_reserved_intent.pair
+                        ].bid
+                    ),
+                    "worst_fill_entry": (
+                        final_price_bound_proof.get("price_bound")
+                        if final_bound_snapshot is not None
+                        else None
+                    ),
+                    "pair": final_reserved_intent.pair,
+                    "side": final_reserved_intent.side.value,
+                    "order_type": final_reserved_intent.order_type.value,
+                    "units": abs(final_reserved_intent.units),
+                    "entry": final_reserved_intent.entry,
+                    "tp": final_reserved_intent.tp,
+                    "sl": final_reserved_intent.sl,
+                    "final_nav_jpy": final_nav_jpy,
+                    "fresh_entry_max_risk_pct_nav": (
+                        FRESH_ENTRY_MAX_RISK_PCT_NAV
+                    ),
+                    "final_nav_hard_cap_jpy": final_nav_hard_cap_jpy,
+                    "final_macro_nav_cap_jpy": final_macro_nav_cap_jpy,
+                    "early_final_max_loss_jpy": float(raw_final_max_loss),
+                    "reserved_effective_max_loss_jpy": (
+                        final_reserved_max_loss_jpy
+                    ),
+                    "reserved_risk_nav_pct": (
+                        final_reserved_risk_jpy / final_nav_jpy * 100.0
+                        if final_reserved_risk_jpy is not None
+                        else None
+                    ),
+                    "max_loss_cap_basis": (
+                        "MIN_EARLY_FINAL_AND_FINAL_NAV_HARD_CAP_AND_OPTIONAL_MACRO_NAV_CAP"
+                    ),
+                    "portfolio_position_cap": final_position_cap,
+                    "final_portfolio_loss_cap_jpy": final_portfolio_cap,
+                    "metrics": final_reserved_metrics,
+                    "take_profit_attached": (
+                        isinstance(
+                            order_request.get("takeProfitOnFill"),
+                            dict,
+                        )
+                    ),
+                    "stop_loss_attached": (
+                        isinstance(
+                            order_request.get("stopLossOnFill"),
+                            dict,
+                        )
+                    ),
+                    "attached_stop_risk": final_attached_stop,
+                    "market_price_bound": final_price_bound_proof,
+                    "blocking_codes": [
+                        issue.code for issue in final_reserved_blockers
+                    ],
+                }
+                final_reserved_risk_evidence = {
+                    **final_reserved_material,
+                    "proof_sha256": _canonical_json_sha256(
+                        final_reserved_material
+                    ),
+                }
+                if final_reserved_risk.metrics is None:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_RESERVED_RISK_METRICS_MISSING",
+                            "post-reservation exact reserved order has no fresh "
+                            "RiskMetrics; broker POST is forbidden",
+                        )
+                    )
+                issues.extend(final_reserved_blockers)
+            except Exception as exc:
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_RESERVED_RISK_RECHECK_FAILED",
+                        "post-reservation exact broker order could not be rebuilt "
+                        f"and risk-validated: {type(exc).__name__}: {exc}",
+                    )
+                )
+                final_reserved_risk_evidence = {
+                    "status": "BLOCKED",
+                    "issue_code": (
+                        "FINAL_PRE_POST_RESERVED_RISK_RECHECK_FAILED"
+                    ),
+                }
+
+            if numeric_allocation_required:
+                if (
+                    not final_numeric_snapshot_transaction_id
+                    or final_numeric_snapshot_transaction_id
+                    != final_ledger_transaction_id
+                ):
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_NUMERIC_SNAPSHOT_TRANSACTION_ID_MISMATCH",
+                            "post-reservation numeric snapshot lastTransactionID "
+                            f"{final_numeric_snapshot_transaction_id or 'missing'} does not "
+                            "match the just-synced execution ledger "
+                            f"{final_ledger_transaction_id or 'missing'}",
+                        )
+                    )
+                try:
+                    if final_reserved_intent is None:
+                        raise ValueError(
+                            "exact reserved order intent is unavailable"
+                        )
+                    numeric_reproof_snapshot = (
+                        final_bound_snapshot
+                        if final_bound_snapshot is not None
+                        else final_boundary_snapshot
+                    )
+                    numeric_verified_intent = (
+                        replace(
+                            verified_intent,
+                            entry=float(final_price_bound_proof["price_bound"]),
+                        )
+                        if final_bound_snapshot is not None
+                        else verified_intent
+                    )
+                    numeric_final_intent = (
+                        replace(
+                            final_reserved_intent,
+                            entry=float(final_price_bound_proof["price_bound"]),
+                        )
+                        if final_bound_snapshot is not None
+                        else final_reserved_intent
+                    )
+                    final_base_risk = self._validate_intent(
+                        intent=numeric_verified_intent,
+                        snapshot=numeric_reproof_snapshot,
+                        max_loss_jpy=1.0e18,
+                        portfolio_loss_cap=None,
+                        validate_live_enabled=True,
+                        allow_basket_pending=True,
+                        portfolio_position_cap=(
+                            _portfolio_position_cap_from_state()
+                        ),
+                    )
+                    final_forecast_s5_path_proof = (
+                        _forecast_s5_no_touch_proof(
+                            self.client,
+                            intent=final_reserved_intent,
+                            snapshot=final_boundary_snapshot,
+                        )
+                    )
+                    final_numeric, final_numeric_issue = (
+                        _capital_allocation_numeric_pre_post_recheck(
+                            verified_intent=numeric_verified_intent,
+                            final_intent=numeric_final_intent,
+                            fresh_snapshot=numeric_reproof_snapshot,
+                            fresh_base_risk=final_base_risk,
+                            required=True,
+                            forecast_s5_path_proof=(
+                                final_forecast_s5_path_proof
+                            ),
+                            execution_cost_floor=(
+                                final_edge.get("execution_cost_floor")
+                                if isinstance(final_edge, dict)
+                                else None
+                            ),
+                            market_entry_slippage_embedded=(
+                                final_bound_snapshot is not None
+                            ),
+                        )
+                    )
+                    final_numeric = _numeric_proof_with_market_price_bound(
+                        final_numeric,
+                        final_price_bound_proof,
+                    )
+                except Exception as exc:
+                    final_numeric_issue = RiskIssue(
+                        "FINAL_PRE_POST_GPT_ALLOCATION_NUMERIC_REPROOF_FAILED",
+                        "post-reservation numeric allocation reproof raised "
+                        f"before broker POST: {type(exc).__name__}: {exc}",
+                    )
+                    final_numeric = {
+                        "status": "BLOCKED",
+                        "issue_code": final_numeric_issue.code,
+                    }
+                if final_numeric_issue is not None:
+                    issues.append(
+                        RiskIssue(
+                            (
+                                "FINAL_" + final_numeric_issue.code
+                                if final_numeric_issue.code.startswith("PRE_POST_")
+                                else final_numeric_issue.code
+                            ),
+                            final_numeric_issue.message,
+                            final_numeric_issue.severity,
+                        )
+                    )
+                final_numeric_frozen = (
+                    _capital_allocation_numeric_proof_is_frozen(
+                        final_numeric,
+                        order_request=order_request,
+                        required=True,
+                        expected_intent=final_intent,
+                    )
+                )
+                if not final_numeric_frozen:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_NUMERIC_ALLOCATION_PROOF_INVALID",
+                            "post-reservation fresh numeric allocation proof is "
+                            "not content-addressed to the immutable reserved order",
+                        )
+                    )
+        evidence.update(
+            {
+                "final_numeric_snapshot_last_transaction_id": (
+                    final_numeric_snapshot_transaction_id or None
+                ),
+                "capital_allocation_numeric_recheck": final_numeric,
+                "final_numeric_proof_sha256": final_numeric.get(
+                    "proof_sha256"
+                ),
+                "final_numeric_proof_frozen": final_numeric_frozen,
+                "final_reserved_risk_recheck": (
+                    final_reserved_risk_evidence
+                ),
+            }
+        )
+
+        # S5 is a historical read, but time still passes while its complete
+        # candle path and worst-fill proof are verified. Read account truth
+        # exactly once afterward. Any transaction or NAV/margin deterioration
+        # blocks; improvements do not relax the conservative coherent snapshot
+        # used above.
+        final_account_fence: dict[str, Any] = {
+            "status": "NOT_APPLICABLE"
+        }
+        final_broker_transaction_id = final_numeric_snapshot_transaction_id
+        if numeric_allocation_required:
+            final_snapshot_account = (
+                final_boundary_snapshot.account
+                if final_boundary_snapshot is not None
+                else None
+            )
+            try:
+                if final_snapshot_account is None:
+                    raise ValueError("final coherent snapshot account is missing")
+                account_summary_fn = getattr(self.client, "account_summary", None)
+                if not callable(account_summary_fn):
+                    raise ValueError("execution client has no account_summary fence")
+                observed_account = account_summary_fn(
+                    now_utc=datetime.now(timezone.utc)
+                )
+
+                def finite_nonnegative(value: Any) -> float | None:
+                    if isinstance(value, bool) or not isinstance(
+                        value,
+                        (int, float),
+                    ):
+                        return None
+                    parsed = float(value)
+                    return (
+                        parsed
+                        if math.isfinite(parsed) and parsed >= 0.0
+                        else None
+                    )
+
+                observed_tx = str(
+                    getattr(observed_account, "last_transaction_id", "")
+                    or ""
+                ).strip()
+                observed_nav = _positive_float(
+                    getattr(observed_account, "nav_jpy", None)
+                )
+                observed_margin_used = finite_nonnegative(
+                    getattr(observed_account, "margin_used_jpy", None)
+                )
+                observed_margin_available = finite_nonnegative(
+                    getattr(observed_account, "margin_available_jpy", None)
+                )
+                basis_nav = _positive_float(final_snapshot_account.nav_jpy)
+                basis_margin_used = finite_nonnegative(
+                    final_snapshot_account.margin_used_jpy
+                )
+                basis_margin_available = finite_nonnegative(
+                    final_snapshot_account.margin_available_jpy
+                )
+                values_valid = None not in (
+                    observed_nav,
+                    observed_margin_used,
+                    observed_margin_available,
+                    basis_nav,
+                    basis_margin_used,
+                    basis_margin_available,
+                )
+                transaction_matches = bool(
+                    observed_tx
+                    and observed_tx == final_numeric_snapshot_transaction_id
+                    and observed_tx == final_ledger_transaction_id
+                )
+                nav_worsened = bool(
+                    values_valid and observed_nav + 1e-9 < basis_nav
+                )
+                margin_used_worsened = bool(
+                    values_valid
+                    and observed_margin_used > basis_margin_used + 1e-9
+                )
+                margin_available_worsened = bool(
+                    values_valid
+                    and observed_margin_available + 1e-9
+                    < basis_margin_available
+                )
+                fence_passed = bool(
+                    values_valid
+                    and transaction_matches
+                    and not nav_worsened
+                    and not margin_used_worsened
+                    and not margin_available_worsened
+                )
+                final_account_fence = {
+                    "status": "PASSED" if fence_passed else "BLOCKED",
+                    "read_order": "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                    "adopted_risk_basis": (
+                        "EARLIER_COHERENT_PAIR_SNAPSHOT_CONSERVATIVE"
+                    ),
+                    "snapshot_last_transaction_id": (
+                        final_numeric_snapshot_transaction_id or None
+                    ),
+                    "ledger_last_transaction_id": (
+                        final_ledger_transaction_id or None
+                    ),
+                    "observed_last_transaction_id": observed_tx or None,
+                    "transaction_matches": transaction_matches,
+                    "snapshot_nav_jpy": basis_nav,
+                    "observed_nav_jpy": observed_nav,
+                    "snapshot_margin_used_jpy": basis_margin_used,
+                    "observed_margin_used_jpy": observed_margin_used,
+                    "snapshot_margin_available_jpy": basis_margin_available,
+                    "observed_margin_available_jpy": (
+                        observed_margin_available
+                    ),
+                    "nav_worsened": nav_worsened,
+                    "margin_used_worsened": margin_used_worsened,
+                    "margin_available_worsened": margin_available_worsened,
+                }
+                final_broker_transaction_id = observed_tx
+                if not fence_passed:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_ACCOUNT_FENCE_FAILED",
+                            "post-S5 account fence detected changed transaction "
+                            "truth, invalid account values, or worse NAV/margin; "
+                            "the durable reservation is retained and no POST is allowed",
+                        )
+                    )
+            except Exception as exc:
+                final_account_fence = {
+                    "status": "BLOCKED",
+                    "read_order": "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                final_broker_transaction_id = ""
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_ACCOUNT_FENCE_FAILED",
+                        "post-S5 account summary fence could not be completed: "
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                )
+        evidence["post_s5_account_fence"] = final_account_fence
+        evidence["final_broker_last_transaction_id"] = (
+            final_broker_transaction_id or None
+        )
+
+        if final_ledger_transaction_id and final_broker_transaction_id:
+            if final_ledger_transaction_id != final_broker_transaction_id:
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_TRANSACTION_ID_MISMATCH",
+                        "post-reservation execution ledger and final broker "
+                        "lastTransactionID differ; no broker POST is allowed",
+                    )
+                )
+            elif (
+                final_ledger_transaction_id != early_ledger_transaction_id
+                or final_broker_transaction_id != early_broker_transaction_id
+            ):
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_TRANSACTION_ID_CHANGED_AFTER_RESERVATION",
+                        "broker transaction truth changed after the risk snapshot and "
+                        "during durable reservation; rebuild and reverify a fresh signal",
+                    )
+                )
+        elif sync_summary is not None and not any(
+            issue.code
+            in {
+                "FINAL_PRE_POST_BROKER_SNAPSHOT_FAILED",
+                "FINAL_PRE_POST_GPT_ALLOCATION_SNAPSHOT_FAILED",
+            }
+            for issue in issues
+        ):
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_TRANSACTION_ID_MISSING",
+                    "post-reservation ledger and broker lastTransactionID must both be present",
+                )
+            )
+        evidence["transaction_id_unchanged"] = bool(
+            early_ledger_transaction_id
+            and early_ledger_transaction_id == early_broker_transaction_id
+            and early_ledger_transaction_id == final_ledger_transaction_id
+            and early_ledger_transaction_id == final_broker_transaction_id
+            and (
+                not numeric_allocation_required
+                or early_ledger_transaction_id
+                == final_numeric_snapshot_transaction_id
+            )
+        )
+
+        current_receipt_sha256 = _file_sha256(self.verified_decision_path)
+        receipt_sha_matches: bool | None = None
+        if self.verified_decision_path is not None:
+            receipt_sha_matches = bool(
+                expected_receipt_sha256 is not None
+                and current_receipt_sha256 == expected_receipt_sha256
+            )
+            receipt_issue = _verified_decision_receipt_change_issue(
+                self.verified_decision_path,
+                expected_sha256=expected_receipt_sha256,
+            )
+            if receipt_issue is not None:
+                issues.append(
+                    RiskIssue(
+                        str(receipt_issue.get("code") or "GPT_RECEIPT_CHANGED"),
+                        str(
+                            receipt_issue.get("message")
+                            or "verified GPT receipt changed before broker POST"
+                        ),
+                        str(receipt_issue.get("severity") or "BLOCK"),
+                    )
+                )
+        evidence.update(
+            {
+                "verified_decision_expected_sha256": expected_receipt_sha256,
+                "verified_decision_current_sha256": current_receipt_sha256,
+                "verified_decision_sha_matches": receipt_sha_matches,
+            }
+        )
+
+        current_order_request_sha256 = _canonical_order_request_sha256(
+            order_request
+        )
+        claimed_order_request_sha256 = str(
+            ordinary_entry_claim.get("order_request_sha256") or ""
+        ).strip()
+        order_sha_matches = bool(
+            expected_order_request_sha256
+            and current_order_request_sha256 == expected_order_request_sha256
+            and (
+                not claimed_order_request_sha256
+                or claimed_order_request_sha256 == current_order_request_sha256
+            )
+        )
+        evidence.update(
+            {
+                "expected_order_request_sha256": expected_order_request_sha256,
+                "current_order_request_sha256": current_order_request_sha256,
+                "claimed_order_request_sha256": (
+                    claimed_order_request_sha256 or None
+                ),
+                "order_request_sha_matches": order_sha_matches,
+            }
+        )
+        if not order_sha_matches:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_ORDER_REQUEST_CHANGED_AFTER_RESERVATION",
+                    "broker order request changed after durable reservation; do not "
+                    "send an order that is not bound to the consumed claim",
+                )
+            )
+
+        blocking_codes = [
+            issue.code for issue in issues if issue.severity == "BLOCK"
+        ]
+        evidence.update(
+            {
+                "status": "BLOCKED" if blocking_codes else "PASSED",
+                "blocking_codes": blocking_codes,
+            }
+        )
+        return _FinalPrePostBoundaryResult(
+            evidence=evidence,
+            issues=tuple(issues),
         )
 
     def _validate_intent(
@@ -2730,14 +4375,7 @@ class LiveOrderGateway:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        order_request_sha256 = hashlib.sha256(
-            json.dumps(
-                order_request,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        order_request_sha256 = _canonical_order_request_sha256(order_request)
         claim_id = hashlib.sha256(
             f"{receipt_sha256}\0{parent_lane_id}\0{forecast_cycle_id}".encode("utf-8")
         ).hexdigest()
@@ -2966,14 +4604,14 @@ class LiveOrderGateway:
             }, None
         except (OSError, sqlite3.Error, ValueError) as exc:
             # The original committed reservation remains consumed.  Never
-            # delete/release it merely because post-response annotation failed.
+            # delete/release it merely because outcome annotation failed.
             return {
                 **claim_evidence,
                 "status": "FINALIZE_FAILED_RESERVATION_RETAINED",
                 "finalize_error": f"{type(exc).__name__}: {exc}",
             }, RiskIssue(
                 "ORDINARY_ENTRY_CLAIM_FINALIZE_FAILED",
-                "broker POST returned but its one-shot claim outcome could not be annotated; "
+                "the one-shot claim outcome could not be annotated; "
                 "the reservation remains consumed and must not be retried",
             ).__dict__
 
@@ -4430,6 +6068,1790 @@ def _portfolio_loss_remaining_jpy(
     return max(0.0, portfolio_loss_cap - open_risk - pending_risk - max(0.0, cumulative_risk_jpy))
 
 
+def _codex_numeric_allocation_requirement_at_entry(
+    path: Path | None,
+    *,
+    expected_sha256: str | None,
+) -> tuple[bool, dict[str, str] | None]:
+    """Freeze numeric-proof applicability from one exact entry receipt read."""
+
+    if path is None:
+        return False, None
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return True, {
+            "severity": "BLOCK",
+            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
+            "message": (
+                "verified GPT receipt could not be read while freezing numeric "
+                f"allocation applicability: {type(exc).__name__}: {exc}"
+            ),
+        }
+    current_sha256 = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is None or current_sha256 != expected_sha256:
+        return True, {
+            "severity": "BLOCK",
+            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_RECEIPT_CHANGED_AT_GATEWAY_ENTRY",
+            "message": (
+                "verified GPT receipt bytes changed while freezing numeric "
+                "allocation applicability"
+            ),
+        }
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        return True, {
+            "severity": "BLOCK",
+            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
+            "message": (
+                "verified GPT receipt is not strict JSON while freezing numeric "
+                f"allocation applicability: {type(exc).__name__}: {exc}"
+            ),
+        }
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("decision"),
+        dict,
+    ):
+        return True, {
+            "severity": "BLOCK",
+            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
+            "message": (
+                "verified GPT receipt lacks an object decision while freezing "
+                "numeric allocation applicability"
+            ),
+        }
+    decision = payload["decision"]
+    provenance = decision.get("decision_provenance")
+    allocation = decision.get("capital_allocation")
+    required = bool(
+        isinstance(provenance, dict)
+        and isinstance(allocation, dict)
+        and provenance.get("schema_version") == 2
+        and str(provenance.get("author_kind") or "").strip().upper()
+        == "CODEX_MARKET_READ"
+        and str(decision.get("action") or "").strip().upper() == "TRADE"
+        and str(allocation.get("decision") or "").strip().upper() == "ALLOCATE"
+    )
+    return required, None
+
+
+def _verified_execution_cost_floor_sha256(path: Path | None) -> str | None:
+    """Read the auto-stamped cost proof identity from one verified receipt."""
+
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    decision = (
+        payload.get("decision")
+        if isinstance(payload, dict)
+        and isinstance(payload.get("decision"), dict)
+        else {}
+    )
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    value = str(provenance.get("execution_cost_floor_sha256") or "")
+    return value if re.fullmatch(r"[0-9a-f]{64}", value) else None
+
+
+def _numeric_predictive_scout_contract(intent: OrderIntent) -> bool:
+    metadata = dict(intent.metadata or {})
+    method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else ""
+    )
+    return bool(
+        predictive_scout_intent_claimed(intent)
+        and predictive_scout_metadata_supported(metadata)
+        and intent.order_type == OrderType.LIMIT
+        and method == "BREAKOUT_FAILURE"
+        and str(metadata.get("desk") or "").strip().lower()
+        == "failure_trader"
+        and str(metadata.get("campaign_role") or "").strip().upper()
+        == "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+        and metadata.get("attach_take_profit_on_fill") is True
+        and str(metadata.get("tp_execution_mode") or "").strip().upper()
+        == "ATTACHED_TECHNICAL_TP"
+    )
+
+
+def _forecast_s5_no_touch_proof(
+    client: Any,
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+) -> dict[str, Any]:
+    """Prove no TP/target/invalidation touch from forecast emission to quote."""
+
+    def finished(material: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **material,
+            "proof_sha256": _canonical_json_sha256(material),
+        }
+
+    metadata = dict(intent.metadata or {})
+    hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    scout = _numeric_predictive_scout_contract(intent)
+    if hedge or scout:
+        return finished(
+            {
+                "status": "BYPASSED",
+                "reason": (
+                    "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
+                    if hedge
+                    else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
+                ),
+                "pair": intent.pair,
+            }
+        )
+
+    cycle_id = str(metadata.get("forecast_cycle_id") or "").strip()
+    match = PRE_ENTRY_FORECAST_CYCLE_RE.match(cycle_id)
+    if match is None:
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_CYCLE_ID_NOT_PRODUCTION_ISO",
+                "pair": intent.pair,
+                "forecast_cycle_id": cycle_id or None,
+            }
+        )
+    emission = _parse_utc_timestamp(match.group("ts"))
+    quote = snapshot.quotes.get(intent.pair)
+    quote_time = quote.timestamp_utc if quote is not None else None
+    if emission is None or quote_time is None:
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_OR_QUOTE_TIME_MISSING",
+                "pair": intent.pair,
+                "forecast_cycle_id": cycle_id,
+            }
+        )
+    emission = emission.astimezone(timezone.utc)
+    quote_time = quote_time.astimezone(timezone.utc)
+    window_seconds = (quote_time - emission).total_seconds()
+    if window_seconds < 0.0 or window_seconds > FORECAST_S5_MAX_WINDOW_SECONDS:
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_S5_WINDOW_OUT_OF_RANGE",
+                "pair": intent.pair,
+                "forecast_emitted_at_utc": emission.isoformat(),
+                "quote_timestamp_utc": quote_time.isoformat(),
+                "window_seconds": window_seconds,
+                "maximum_window_seconds": FORECAST_S5_MAX_WINDOW_SECONDS,
+            }
+        )
+
+    def floor_s5(value: datetime) -> datetime:
+        epoch = value.timestamp()
+        return datetime.fromtimestamp(
+            math.floor(epoch / FORECAST_S5_SECONDS) * FORECAST_S5_SECONDS,
+            tz=timezone.utc,
+        )
+
+    first_start = floor_s5(emission)
+    last_start = floor_s5(quote_time)
+    query_to = last_start + timedelta(seconds=FORECAST_S5_SECONDS)
+    query = {
+        "granularity": "S5",
+        "from": first_start.isoformat().replace("+00:00", "Z"),
+        "to": query_to.isoformat().replace("+00:00", "Z"),
+        "price": "M",
+        "includeFirst": "true",
+        "smooth": "false",
+    }
+    get_json = getattr(client, "get_json", None)
+    if not callable(get_json):
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_S5_CLIENT_UNAVAILABLE",
+                "pair": intent.pair,
+                "query": query,
+            }
+        )
+    try:
+        payload = get_json(
+            f"/v3/instruments/{intent.pair}/candles",
+            query,
+        )
+    except Exception as exc:
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_S5_FETCH_FAILED",
+                "pair": intent.pair,
+                "query": query,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+    raw_candles = payload.get("candles") if isinstance(payload, dict) else None
+    if (
+        not isinstance(raw_candles, list)
+        or str(payload.get("instrument") or "") != intent.pair
+        or str(payload.get("granularity") or "").upper() != "S5"
+    ):
+        return finished(
+            {
+                "status": "BLOCKED",
+                "reason": "FORECAST_S5_PAYLOAD_INVALID",
+                "pair": intent.pair,
+                "query": query,
+            }
+        )
+    parsed: list[tuple[datetime, float, float, float, float, bool]] = []
+    malformed = False
+    for item in raw_candles:
+        if not isinstance(item, dict):
+            malformed = True
+            break
+        timestamp = _parse_utc_timestamp(item.get("time"))
+        mid = item.get("mid") if isinstance(item.get("mid"), dict) else None
+        try:
+            raw_values = tuple(mid[key] for key in ("o", "h", "l", "c"))
+            if any(isinstance(value, bool) for value in raw_values):
+                raise TypeError("boolean OHLC is not numeric broker price truth")
+            values = tuple(float(value) for value in raw_values)
+        except (KeyError, TypeError, ValueError):
+            malformed = True
+            break
+        complete = item.get("complete")
+        if (
+            timestamp is None
+            or not isinstance(complete, bool)
+            or any(not math.isfinite(value) or value <= 0.0 for value in values)
+            or values[2] > values[0]
+            or values[2] > values[3]
+            or values[1] < values[0]
+            or values[1] < values[3]
+            or values[2] > values[1]
+        ):
+            malformed = True
+            break
+        normalized_ts = timestamp.astimezone(timezone.utc)
+        if first_start <= normalized_ts <= last_start:
+            parsed.append(
+                (
+                    normalized_ts,
+                    values[0],
+                    values[1],
+                    values[2],
+                    values[3],
+                    complete,
+                )
+            )
+    parsed.sort(key=lambda row: row[0])
+    expected_count = int(
+        (last_start - first_start).total_seconds() / FORECAST_S5_SECONDS
+    ) + 1
+    timestamps = [row[0] for row in parsed]
+    coverage_ok = bool(
+        not malformed
+        and len(parsed) == expected_count
+        and len(set(timestamps)) == len(timestamps)
+        and timestamps
+        and timestamps[0] == first_start
+        and timestamps[-1] == last_start
+        and timestamps[0] <= emission
+        < timestamps[0] + timedelta(seconds=FORECAST_S5_SECONDS)
+        and timestamps[-1] <= quote_time
+        < timestamps[-1] + timedelta(seconds=FORECAST_S5_SECONDS)
+        and all(
+            (right - left).total_seconds() == FORECAST_S5_SECONDS
+            for left, right in zip(timestamps, timestamps[1:])
+        )
+        and all(row[5] is True for row in parsed[:-1])
+    )
+    forecast_target = _positive_float(metadata.get("forecast_target_price"))
+    forecast_invalidation = _positive_float(
+        metadata.get("forecast_invalidation_price")
+    )
+    barriers_valid = bool(
+        forecast_target is not None
+        and forecast_invalidation is not None
+        and intent.tp > 0.0
+    )
+    tp_touched = False
+    target_touched = False
+    invalidation_touched = False
+    same_candle_both_touched = False
+    first_tp_touch_utc: str | None = None
+    first_target_touch_utc: str | None = None
+    first_invalidation_touch_utc: str | None = None
+    if coverage_ok and barriers_valid:
+        for candle_ts, _, high, low, _, _ in parsed:
+            if intent.side == Side.LONG:
+                candle_tp = high >= intent.tp
+                candle_target = high >= forecast_target
+                candle_invalidation = low <= forecast_invalidation
+            else:
+                candle_tp = low <= intent.tp
+                candle_target = low <= forecast_target
+                candle_invalidation = high >= forecast_invalidation
+            tp_touched = tp_touched or candle_tp
+            target_touched = target_touched or candle_target
+            invalidation_touched = invalidation_touched or candle_invalidation
+            if candle_tp and first_tp_touch_utc is None:
+                first_tp_touch_utc = candle_ts.isoformat()
+            if candle_target and first_target_touch_utc is None:
+                first_target_touch_utc = candle_ts.isoformat()
+            if candle_invalidation and first_invalidation_touch_utc is None:
+                first_invalidation_touch_utc = candle_ts.isoformat()
+            same_candle_both_touched = same_candle_both_touched or (
+                (candle_tp or candle_target) and candle_invalidation
+            )
+    no_touch = bool(
+        coverage_ok
+        and barriers_valid
+        and not tp_touched
+        and not target_touched
+        and not invalidation_touched
+    )
+    reason = (
+        "FORECAST_S5_NO_TOUCH_PROVEN"
+        if no_touch
+        else "FORECAST_S5_CANDLE_INVALID"
+        if malformed
+        else "FORECAST_S5_COVERAGE_INCOMPLETE"
+        if not coverage_ok
+        else "FORECAST_S5_BARRIER_INVALID"
+        if not barriers_valid
+        else "FORECAST_S5_BOTH_BARRIERS_TOUCHED"
+        if same_candle_both_touched
+        else "FORECAST_S5_TP_OR_TARGET_TOUCHED"
+        if tp_touched or target_touched
+        else "FORECAST_S5_INVALIDATION_TOUCHED"
+    )
+    candle_rows = [
+        {
+            "time": row[0].isoformat(),
+            "o": row[1],
+            "h": row[2],
+            "l": row[3],
+            "c": row[4],
+            "complete": row[5],
+        }
+        for row in parsed
+    ]
+    material = {
+        "status": "PASSED" if no_touch else "BLOCKED",
+        "reason": reason,
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "forecast_cycle_id": cycle_id,
+        "forecast_emitted_at_utc": emission.isoformat(),
+        "quote_timestamp_utc": quote_time.isoformat(),
+        "window_seconds": window_seconds,
+        "from_floor_expansion_seconds": (
+            emission - first_start
+        ).total_seconds(),
+        "to_ceil_expansion_seconds": (
+            query_to - quote_time
+        ).total_seconds(),
+        "query": query,
+        "response_instrument": payload.get("instrument"),
+        "response_granularity": payload.get("granularity"),
+        "expected_candles": expected_count,
+        "observed_candles": len(parsed),
+        "first_candle_start_utc": (
+            timestamps[0].isoformat() if timestamps else None
+        ),
+        "last_candle_start_utc": (
+            timestamps[-1].isoformat() if timestamps else None
+        ),
+        "tail_complete": parsed[-1][5] if parsed else None,
+        # Keep the canonical rows in the proof. A digest alone cannot be
+        # semantically revalidated at the next boundary: any arbitrary 64-byte
+        # string could otherwise be wrapped in a newly valid outer hash.
+        "candle_rows": candle_rows,
+        "candle_rows_sha256": _canonical_json_sha256(candle_rows),
+        "max_high": max((row[2] for row in parsed), default=None),
+        "min_low": min((row[3] for row in parsed), default=None),
+        "coverage_ok": coverage_ok,
+        "malformed_candle": malformed,
+        "order_tp": intent.tp,
+        "forecast_target": forecast_target,
+        "forecast_invalidation": forecast_invalidation,
+        "tp_touched": tp_touched,
+        "target_touched": target_touched,
+        "invalidation_touched": invalidation_touched,
+        "same_candle_both_touched": same_candle_both_touched,
+        "first_tp_touch_utc": first_tp_touch_utc,
+        "first_target_touch_utc": first_target_touch_utc,
+        "first_invalidation_touch_utc": first_invalidation_touch_utc,
+        "no_touch": no_touch,
+    }
+    return finished(material)
+
+
+def _forecast_s5_path_proof_valid(
+    proof: Any,
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    bypass_reason: str | None,
+) -> bool:
+    if not isinstance(proof, dict):
+        return False
+    proof_sha256 = str(proof.get("proof_sha256") or "")
+    material = dict(proof)
+    material.pop("proof_sha256", None)
+    if proof_sha256 != _canonical_json_sha256(material):
+        return False
+    if str(proof.get("pair") or "") != intent.pair:
+        return False
+    if bypass_reason is not None:
+        return bool(
+            str(proof.get("status") or "").upper() == "BYPASSED"
+            and str(proof.get("reason") or "") == bypass_reason
+        )
+    metadata = dict(intent.metadata or {})
+    quote = snapshot.quotes.get(intent.pair)
+    if quote is None:
+        return False
+    expected_target = _positive_float(metadata.get("forecast_target_price"))
+    expected_invalidation = _positive_float(
+        metadata.get("forecast_invalidation_price")
+    )
+    if expected_target is None or expected_invalidation is None:
+        return False
+    cycle_id = str(metadata.get("forecast_cycle_id") or "").strip()
+    match = PRE_ENTRY_FORECAST_CYCLE_RE.match(cycle_id)
+    emission = _parse_utc_timestamp(match.group("ts")) if match else None
+    if emission is None:
+        return False
+    emission = emission.astimezone(timezone.utc)
+    quote_time = quote.timestamp_utc.astimezone(timezone.utc)
+    first_start = datetime.fromtimestamp(
+        math.floor(emission.timestamp() / FORECAST_S5_SECONDS)
+        * FORECAST_S5_SECONDS,
+        tz=timezone.utc,
+    )
+    last_start = datetime.fromtimestamp(
+        math.floor(quote_time.timestamp() / FORECAST_S5_SECONDS)
+        * FORECAST_S5_SECONDS,
+        tz=timezone.utc,
+    )
+    query_to = last_start + timedelta(seconds=FORECAST_S5_SECONDS)
+    expected_query = {
+        "granularity": "S5",
+        "from": first_start.isoformat().replace("+00:00", "Z"),
+        "to": query_to.isoformat().replace("+00:00", "Z"),
+        "price": "M",
+        "includeFirst": "true",
+        "smooth": "false",
+    }
+    window_seconds = (quote_time - emission).total_seconds()
+    expected_count = int(
+        (last_start - first_start).total_seconds() / FORECAST_S5_SECONDS
+    ) + 1
+    rows = proof.get("candle_rows")
+    if not isinstance(rows, list) or len(rows) != expected_count:
+        return False
+    parsed_rows: list[tuple[datetime, float, float, float, float, bool]] = []
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {
+            "time",
+            "o",
+            "h",
+            "l",
+            "c",
+            "complete",
+        }:
+            return False
+        timestamp = _parse_utc_timestamp(row.get("time"))
+        values = (row.get("o"), row.get("h"), row.get("l"), row.get("c"))
+        if (
+            timestamp is None
+            or not isinstance(row.get("complete"), bool)
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0.0
+                for value in values
+            )
+        ):
+            return False
+        open_price, high, low, close = (float(value) for value in values)
+        if (
+            low > open_price
+            or low > close
+            or high < open_price
+            or high < close
+            or low > high
+        ):
+            return False
+        parsed_rows.append(
+            (
+                timestamp.astimezone(timezone.utc),
+                open_price,
+                high,
+                low,
+                close,
+                row["complete"],
+            )
+        )
+    row_times = [row[0] for row in parsed_rows]
+    if not (
+        row_times[0] == first_start
+        and row_times[-1] == last_start
+        and len(set(row_times)) == len(row_times)
+        and all(
+            (right - left).total_seconds() == FORECAST_S5_SECONDS
+            for left, right in zip(row_times, row_times[1:])
+        )
+        and row_times[0] <= emission
+        < row_times[0] + timedelta(seconds=FORECAST_S5_SECONDS)
+        and row_times[-1] <= quote_time
+        < row_times[-1] + timedelta(seconds=FORECAST_S5_SECONDS)
+        and all(row[5] is True for row in parsed_rows[:-1])
+    ):
+        return False
+    recomputed_touch = {
+        "tp_touched": False,
+        "target_touched": False,
+        "invalidation_touched": False,
+        "same_candle_both_touched": False,
+        "first_tp_touch_utc": None,
+        "first_target_touch_utc": None,
+        "first_invalidation_touch_utc": None,
+    }
+    for candle_time, _, high, low, _, _ in parsed_rows:
+        if intent.side == Side.LONG:
+            candle_tp = high >= intent.tp
+            candle_target = high >= float(expected_target)
+            candle_invalidation = low <= float(expected_invalidation)
+        else:
+            candle_tp = low <= intent.tp
+            candle_target = low <= float(expected_target)
+            candle_invalidation = high >= float(expected_invalidation)
+        for key, touched in (
+            ("tp_touched", candle_tp),
+            ("target_touched", candle_target),
+            ("invalidation_touched", candle_invalidation),
+        ):
+            recomputed_touch[key] = recomputed_touch[key] or touched
+        if candle_tp and recomputed_touch["first_tp_touch_utc"] is None:
+            recomputed_touch["first_tp_touch_utc"] = candle_time.isoformat()
+        if (
+            candle_target
+            and recomputed_touch["first_target_touch_utc"] is None
+        ):
+            recomputed_touch["first_target_touch_utc"] = candle_time.isoformat()
+        if (
+            candle_invalidation
+            and recomputed_touch["first_invalidation_touch_utc"] is None
+        ):
+            recomputed_touch["first_invalidation_touch_utc"] = (
+                candle_time.isoformat()
+            )
+        recomputed_touch["same_candle_both_touched"] = bool(
+            recomputed_touch["same_candle_both_touched"]
+            or ((candle_tp or candle_target) and candle_invalidation)
+        )
+    if any(proof.get(key) != value for key, value in recomputed_touch.items()):
+        return False
+    rows_sha256 = _canonical_json_sha256(rows)
+    numeric_fields = (
+        (proof.get("order_tp"), intent.tp),
+        (proof.get("forecast_target"), expected_target),
+        (proof.get("forecast_invalidation"), expected_invalidation),
+    )
+    if any(
+        expected is None
+        or isinstance(actual, bool)
+        or not isinstance(actual, (int, float))
+        or not math.isfinite(float(actual))
+        or not math.isclose(
+            float(actual),
+            float(expected),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        for actual, expected in numeric_fields
+    ):
+        return False
+    return bool(
+        str(proof.get("status") or "").upper() == "PASSED"
+        and str(proof.get("reason") or "")
+        == "FORECAST_S5_NO_TOUCH_PROVEN"
+        and str(proof.get("side") or "").upper() == intent.side.value
+        and str(proof.get("forecast_cycle_id") or "")
+        == cycle_id
+        and str(proof.get("quote_timestamp_utc") or "")
+        == quote_time.isoformat()
+        and str(proof.get("forecast_emitted_at_utc") or "")
+        == emission.isoformat()
+        and isinstance(proof.get("window_seconds"), (int, float))
+        and not isinstance(proof.get("window_seconds"), bool)
+        and math.isclose(
+            float(proof["window_seconds"]),
+            window_seconds,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        and 0.0 <= window_seconds <= FORECAST_S5_MAX_WINDOW_SECONDS
+        and proof.get("query") == expected_query
+        and "count" not in proof.get("query", {})
+        and proof.get("expected_candles") == expected_count
+        and proof.get("observed_candles") == expected_count
+        and str(proof.get("first_candle_start_utc") or "")
+        == first_start.isoformat()
+        and str(proof.get("last_candle_start_utc") or "")
+        == last_start.isoformat()
+        and isinstance(proof.get("tail_complete"), bool)
+        and proof.get("candle_rows_sha256") == rows_sha256
+        and proof.get("tail_complete") is parsed_rows[-1][5]
+        and isinstance(proof.get("max_high"), (int, float))
+        and not isinstance(proof.get("max_high"), bool)
+        and math.isclose(
+            float(proof["max_high"]),
+            max(row[2] for row in parsed_rows),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        and isinstance(proof.get("min_low"), (int, float))
+        and not isinstance(proof.get("min_low"), bool)
+        and math.isclose(
+            float(proof["min_low"]),
+            min(row[3] for row in parsed_rows),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        and float(proof["min_low"]) <= float(proof["max_high"])
+        and proof.get("coverage_ok") is True
+        and proof.get("malformed_candle") is False
+        and proof.get("no_touch") is True
+        and proof.get("tp_touched") is False
+        and proof.get("target_touched") is False
+        and proof.get("invalidation_touched") is False
+        and proof.get("same_candle_both_touched") is False
+        and str(proof.get("response_instrument") or "") == intent.pair
+        and str(proof.get("response_granularity") or "").upper() == "S5"
+    )
+
+
+def _capital_allocation_market_price_bound(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    effective_max_loss_jpy: float,
+    reserved_price_bound: Any = None,
+    execution_cost_floor: dict[str, Any] | None = None,
+    portfolio_loss_remaining_jpy: float | None = None,
+) -> tuple[dict[str, Any], RiskIssue | None]:
+    """Derive/reprove the worst MARKET fill allowed by EV and risk truth.
+
+    OANDA MARKET orders otherwise have an unbounded fill price.  A signal can
+    pass at the observed ask/bid and still lose its Wilson EV, quarter-Kelly
+    budget, or current-NAV loss cap in a gap before FOK execution.  This proof
+    derives a side-aware, tick-rounded `priceBound`; when a reserved bound is
+    supplied it validates that exact immutable transport value.
+    """
+
+    def finished(material: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **material,
+            "proof_sha256": _canonical_json_sha256(material),
+        }
+
+    # Lazy for the same import-cycle reason as the numeric ceiling adapter.
+    # One shared constant prevents the order transport cap from drifting away
+    # from the overlay/gateway quarter-Kelly sizing contract.
+    from quant_rabbit.market_read_overlay import (
+        CAPITAL_ALLOCATION_KELLY_FRACTION,
+    )
+
+    kelly_fraction = float(CAPITAL_ALLOCATION_KELLY_FRACTION)
+    submitted_tp = intent.tp
+    submitted_sl = intent.sl
+    intent = _intent_with_broker_price_precision(intent)
+    metadata = dict(intent.metadata or {})
+    hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    scout = _numeric_predictive_scout_contract(intent)
+    if hedge or scout:
+        evidence = finished(
+            {
+                "status": "BYPASSED",
+                "reason": (
+                    "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
+                    if hedge
+                    else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
+                ),
+                "pair": intent.pair,
+                "side": intent.side.value,
+                "price_bound_text": None,
+            }
+        )
+        return evidence, None
+
+    quote = snapshot.quotes.get(intent.pair)
+    account = snapshot.account
+    quote_currency = (
+        intent.pair.split("_", 1)[1] if "_" in intent.pair else ""
+    )
+    quote_to_jpy = (
+        1.0
+        if quote_currency == "JPY"
+        else _positive_float(snapshot.home_conversions.get(quote_currency))
+    )
+    nav_jpy = (
+        _positive_float(account.nav_jpy) if account is not None else None
+    )
+    max_loss_cap = _positive_float(effective_max_loss_jpy)
+    cost_floor = (
+        dict(execution_cost_floor)
+        if isinstance(execution_cost_floor, dict)
+        else {}
+    )
+    claimed_cost_sha = str(cost_floor.get("proof_sha256") or "")
+    cost_material = dict(cost_floor)
+    cost_material.pop("proof_sha256", None)
+    cost_digest_valid = bool(
+        re.fullmatch(r"[0-9a-f]{64}", claimed_cost_sha)
+        and claimed_cost_sha == _canonical_json_sha256(cost_material)
+    )
+    entry_slippage_p95 = _nonnegative_float(
+        cost_floor.get("market_entry_adverse_p95_pips")
+    )
+    audited_exit_p95 = _nonnegative_float(
+        cost_floor.get("audited_protected_exit_adverse_p95_pips")
+    )
+    financing_per_unit = _nonnegative_float(
+        cost_floor.get("financing_adverse_stress_jpy_per_unit")
+    )
+    cost_method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else "UNKNOWN"
+    )
+    expected_cost_scope_key = "|".join(
+        (
+            intent.pair.upper(),
+            intent.side.value.upper(),
+            str(cost_method).upper(),
+            "MARKET",
+        )
+    )
+    cost_floor_valid = bool(
+        cost_floor.get("status") == "PASSED"
+        and cost_floor.get("contract") == EXECUTION_COST_FLOOR_CONTRACT
+        and str(cost_floor.get("scope_key") or "").upper()
+        == expected_cost_scope_key
+        and cost_floor.get("spread_double_count_forbidden") is True
+        and cost_digest_valid
+        and entry_slippage_p95 is not None
+        and audited_exit_p95 is not None
+        and financing_per_unit is not None
+    )
+    raw_hit_rate = metadata.get("forecast_directional_economic_hit_rate")
+    raw_samples = metadata.get("forecast_directional_economic_samples")
+    hit_rate = (
+        float(raw_hit_rate)
+        if isinstance(raw_hit_rate, (int, float))
+        and not isinstance(raw_hit_rate, bool)
+        and math.isfinite(float(raw_hit_rate))
+        and 0.0 <= float(raw_hit_rate) <= 1.0
+        else None
+    )
+    samples = (
+        raw_samples
+        if isinstance(raw_samples, int)
+        and not isinstance(raw_samples, bool)
+        and raw_samples > 0
+        else None
+    )
+    wilson_lower = hit_rate_wilson_lower(hit_rate, samples)
+    units = abs(int(intent.units))
+    current_entry = (
+        quote.ask
+        if quote is not None and intent.side == Side.LONG
+        else quote.bid
+        if quote is not None and intent.side == Side.SHORT
+        else None
+    )
+    spread = (
+        quote.ask - quote.bid
+        if quote is not None
+        and math.isfinite(float(quote.ask))
+        and math.isfinite(float(quote.bid))
+        and quote.ask > quote.bid > 0.0
+        else None
+    )
+    tick = _price_tick(intent.pair)
+    invalid_inputs = bool(
+        intent.order_type != OrderType.MARKET
+        or units <= 0
+        or quote is None
+        or current_entry is None
+        or not math.isfinite(float(current_entry))
+        or float(current_entry) <= 0.0
+        or spread is None
+        or quote_to_jpy is None
+        or nav_jpy is None
+        or max_loss_cap is None
+        or not cost_floor_valid
+        or wilson_lower is None
+        or not 0.0 < float(wilson_lower) < 1.0
+        or not math.isfinite(float(intent.tp))
+        or not math.isfinite(float(intent.sl))
+        or intent.tp <= 0.0
+        or intent.sl <= 0.0
+    )
+    if invalid_inputs:
+        evidence = finished(
+            {
+                "status": "BLOCKED",
+                "reason": "PRICE_BOUND_INPUTS_INVALID",
+                "pair": intent.pair,
+                "side": intent.side.value,
+                "order_type": intent.order_type.value,
+                "units": units,
+                "current_executable_entry": current_entry,
+                "spread": spread,
+                "quote_to_jpy": quote_to_jpy,
+                "nav_jpy": nav_jpy,
+                "effective_max_loss_jpy": max_loss_cap,
+                "economic_wilson95_lower": wilson_lower,
+                "price_bound_text": None,
+            }
+        )
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_INPUTS_INVALID",
+            "ordinary schema-v2 MARKET allocation cannot derive a finite "
+            "worst-fill priceBound from the fresh quote, conversion, NAV, "
+            "Wilson probability, TP/SL, units, and effective loss cap",
+        )
+
+    assert current_entry is not None
+    assert quote_to_jpy is not None
+    assert nav_jpy is not None
+    assert max_loss_cap is not None
+    assert wilson_lower is not None
+    monetary_per_price = units * quote_to_jpy
+    pip_factor = instrument_pip_factor(intent.pair)
+    current_spread_pips = spread * pip_factor
+    exit_stress_pips = max(
+        current_spread_pips,
+        float(audited_exit_p95),
+    )
+    exit_stress_jpy = (
+        exit_stress_pips * units / pip_factor * quote_to_jpy
+    )
+    financing_stress_jpy = float(financing_per_unit) * units
+    outcome_cost_jpy = exit_stress_jpy + financing_stress_jpy
+    total_range_price = (
+        intent.tp - intent.sl
+        if intent.side == Side.LONG
+        else intent.sl - intent.tp
+    )
+    total_range_jpy = total_range_price * monetary_per_price
+    nav_hard_cap_jpy = nav_jpy * (FRESH_ENTRY_MAX_RISK_PCT_NAV / 100.0)
+    quarter_kelly_nav_jpy = (
+        nav_jpy * kelly_fraction
+    )
+    discriminant = (
+        (total_range_jpy + quarter_kelly_nav_jpy) ** 2
+        - 4.0
+        * float(wilson_lower)
+        * quarter_kelly_nav_jpy
+        * total_range_jpy
+    )
+    kelly_risk_cap_jpy = (
+        (
+            2.0
+            * float(wilson_lower)
+            * quarter_kelly_nav_jpy
+            * total_range_jpy
+        )
+        / (
+            total_range_jpy
+            + quarter_kelly_nav_jpy
+            + math.sqrt(max(0.0, discriminant))
+        )
+        if total_range_jpy > 0.0
+        and quarter_kelly_nav_jpy > 0.0
+        and discriminant >= 0.0
+        else None
+    )
+    if kelly_risk_cap_jpy is None or kelly_risk_cap_jpy <= 0.0:
+        evidence = finished(
+            {
+                "status": "BLOCKED",
+                "reason": "PRICE_BOUND_QUARTER_KELLY_ROOT_INVALID",
+                "pair": intent.pair,
+                "side": intent.side.value,
+                "total_range_jpy": total_range_jpy,
+                "quarter_kelly_nav_jpy": quarter_kelly_nav_jpy,
+                "discriminant": discriminant,
+                "price_bound_text": None,
+            }
+        )
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_KELLY_INVALID",
+            "ordinary MARKET allocation has no positive quarter-Kelly "
+            "worst-fill root at the fresh NAV",
+        )
+
+    net_downside_caps = [
+        max_loss_cap,
+        nav_hard_cap_jpy,
+        kelly_risk_cap_jpy,
+        float(wilson_lower) * total_range_jpy,
+    ]
+    portfolio_remaining = _nonnegative_float(portfolio_loss_remaining_jpy)
+    if portfolio_remaining is not None:
+        net_downside_caps.append(portfolio_remaining)
+    risk_cap_jpy = min(net_downside_caps) - outcome_cost_jpy
+    if risk_cap_jpy <= 0.0:
+        evidence = finished(
+            {
+                "status": "BLOCKED",
+                "reason": "EXECUTION_COST_EXHAUSTS_PRICE_BOUND_RISK_CAP",
+                "pair": intent.pair,
+                "side": intent.side.value,
+                "outcome_cost_jpy": outcome_cost_jpy,
+                "net_downside_caps": net_downside_caps,
+                "execution_cost_floor": cost_floor,
+                "price_bound_text": None,
+            }
+        )
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_COST_EXHAUSTS_CAP",
+            "dynamic exit/financing cost exhausts the MARKET priceBound risk capacity",
+        )
+    risk_distance = risk_cap_jpy / monetary_per_price
+    ev_raw_risk_cap_jpy = (
+        float(wilson_lower) * total_range_jpy - outcome_cost_jpy
+    )
+    ev_zero_entry = (
+        intent.sl + ev_raw_risk_cap_jpy / monetary_per_price
+        if intent.side == Side.LONG
+        else intent.sl - ev_raw_risk_cap_jpy / monetary_per_price
+    )
+    if intent.side == Side.LONG:
+        cap_entry = intent.sl + risk_distance
+        raw_adverse_limit = min(cap_entry, ev_zero_entry, intent.tp)
+        # LONG upper bound rounds down; subtract an infinitesimal tick ratio so
+        # a root lying exactly on a tick moves one full tick inside strict EV.
+        derived_price_bound = (
+            math.floor(raw_adverse_limit / tick - 1e-9) * tick
+        )
+    else:
+        cap_entry = intent.sl - risk_distance
+        raw_adverse_limit = max(cap_entry, ev_zero_entry, intent.tp)
+        # SHORT lower bound rounds up for the symmetric strict boundary.
+        derived_price_bound = (
+            math.ceil(raw_adverse_limit / tick + 1e-9) * tick
+        )
+    derived_price_bound = round(
+        derived_price_bound,
+        _price_precision(intent.pair),
+    )
+    price_bound_text = _price(intent.pair, derived_price_bound)
+
+    supplied_bound = None
+    supplied_bound_valid = reserved_price_bound is None
+    if reserved_price_bound is not None:
+        try:
+            supplied_bound = float(str(reserved_price_bound).strip())
+        except (TypeError, ValueError):
+            supplied_bound = None
+        supplied_bound_valid = bool(
+            supplied_bound is not None
+            and math.isfinite(supplied_bound)
+            and supplied_bound > 0.0
+            and str(reserved_price_bound).strip()
+            == _price(intent.pair, supplied_bound)
+        )
+    worst_fill_entry = (
+        supplied_bound if supplied_bound is not None else derived_price_bound
+    )
+    bound_not_looser = bool(
+        supplied_bound_valid
+        and (
+            worst_fill_entry <= derived_price_bound + 1e-12
+            if intent.side == Side.LONG
+            else worst_fill_entry >= derived_price_bound - 1e-12
+        )
+    )
+    current_inside_bound = bool(
+        float(current_entry) <= worst_fill_entry + 1e-12
+        if intent.side == Side.LONG
+        else float(current_entry) >= worst_fill_entry - 1e-12
+    )
+    entry_slippage_allowance_pips = (
+        (worst_fill_entry - float(current_entry)) * pip_factor
+        if intent.side == Side.LONG
+        else (float(current_entry) - worst_fill_entry) * pip_factor
+    )
+    entry_slippage_allowance_passed = bool(
+        entry_slippage_allowance_pips + 1e-9 >= float(entry_slippage_p95)
+    )
+    geometry_passed = bool(
+        intent.sl < worst_fill_entry < intent.tp
+        if intent.side == Side.LONG
+        else intent.tp < worst_fill_entry < intent.sl
+    )
+    worst_risk_jpy = (
+        abs(worst_fill_entry - intent.sl) * monetary_per_price
+    )
+    worst_reward_jpy = (
+        abs(intent.tp - worst_fill_entry) * monetary_per_price
+    )
+    worst_net_risk_jpy = worst_risk_jpy + outcome_cost_jpy
+    worst_net_reward_jpy = worst_reward_jpy - outcome_cost_jpy
+    worst_reward_risk = (
+        worst_net_reward_jpy / worst_net_risk_jpy
+        if worst_net_risk_jpy > 0.0 and worst_net_reward_jpy > 0.0
+        else None
+    )
+    worst_ev_lower_jpy = (
+        float(wilson_lower) * worst_reward_jpy
+        - (1.0 - float(wilson_lower)) * worst_risk_jpy
+        - outcome_cost_jpy
+    )
+    full_kelly_fraction = (
+        float(wilson_lower)
+        - (1.0 - float(wilson_lower)) / worst_reward_risk
+        if worst_reward_risk is not None and worst_reward_risk > 0.0
+        else None
+    )
+    worst_quarter_kelly_budget_jpy = (
+        nav_jpy
+        * kelly_fraction
+        * full_kelly_fraction
+        if full_kelly_fraction is not None
+        else None
+    )
+    ev_passed = bool(
+        worst_ev_lower_jpy > 0.0
+        and not math.isclose(
+            worst_ev_lower_jpy,
+            0.0,
+            rel_tol=1e-12,
+            abs_tol=1e-9,
+        )
+    )
+    kelly_passed = bool(
+        worst_quarter_kelly_budget_jpy is not None
+        and worst_quarter_kelly_budget_jpy > 0.0
+        and worst_net_risk_jpy <= worst_quarter_kelly_budget_jpy + 1e-9
+    )
+    cap_passed = bool(
+        worst_net_risk_jpy <= max_loss_cap + 1e-9
+        and worst_net_risk_jpy <= nav_hard_cap_jpy + 1e-9
+        and (
+            portfolio_remaining is None
+            or worst_net_risk_jpy <= portfolio_remaining + 1e-9
+        )
+    )
+    next_adverse_entry = (
+        derived_price_bound + tick
+        if intent.side == Side.LONG
+        else derived_price_bound - tick
+    )
+    next_risk_jpy = abs(next_adverse_entry - intent.sl) * monetary_per_price
+    next_reward_jpy = abs(intent.tp - next_adverse_entry) * monetary_per_price
+    next_net_risk_jpy = next_risk_jpy + outcome_cost_jpy
+    next_net_reward_jpy = next_reward_jpy - outcome_cost_jpy
+    next_geometry = bool(
+        intent.sl < next_adverse_entry < intent.tp
+        if intent.side == Side.LONG
+        else intent.tp < next_adverse_entry < intent.sl
+    )
+    next_reward_risk = (
+        next_net_reward_jpy / next_net_risk_jpy
+        if next_geometry
+        and next_net_risk_jpy > 0.0
+        and next_net_reward_jpy > 0.0
+        else None
+    )
+    next_ev_jpy = (
+        float(wilson_lower) * next_reward_jpy
+        - (1.0 - float(wilson_lower)) * next_risk_jpy
+        - outcome_cost_jpy
+    )
+    next_full_kelly = (
+        float(wilson_lower)
+        - (1.0 - float(wilson_lower)) / next_reward_risk
+        if next_reward_risk is not None and next_reward_risk > 0.0
+        else None
+    )
+    next_kelly_budget_jpy = (
+        nav_jpy * kelly_fraction * next_full_kelly
+        if next_full_kelly is not None
+        else None
+    )
+    next_adverse_tick_passes = bool(
+        next_geometry
+        and next_ev_jpy > 0.0
+        and next_kelly_budget_jpy is not None
+        and next_kelly_budget_jpy > 0.0
+        and next_net_risk_jpy <= next_kelly_budget_jpy + 1e-9
+        and next_net_risk_jpy <= max_loss_cap + 1e-9
+        and next_net_risk_jpy <= nav_hard_cap_jpy + 1e-9
+        and (
+            portfolio_remaining is None
+            or next_net_risk_jpy <= portfolio_remaining + 1e-9
+        )
+    )
+    next_adverse_tick_fails = not next_adverse_tick_passes
+    passed = bool(
+        supplied_bound_valid
+        and bound_not_looser
+        and current_inside_bound
+        and entry_slippage_allowance_passed
+        and geometry_passed
+        and ev_passed
+        and kelly_passed
+        and cap_passed
+        and next_adverse_tick_fails
+    )
+    reason = (
+        "WORST_FILL_PRICE_BOUND_PROVEN"
+        if passed
+        else "RESERVED_PRICE_BOUND_INVALID"
+        if not supplied_bound_valid
+        else "RESERVED_PRICE_BOUND_LOOSER_THAN_FRESH_CEILING"
+        if not bound_not_looser
+        else "CURRENT_EXECUTABLE_PRICE_OUTSIDE_BOUND"
+        if not current_inside_bound
+        else "PRICE_BOUND_ENTRY_SLIPPAGE_ALLOWANCE_BELOW_P95"
+        if not entry_slippage_allowance_passed
+        else "WORST_FILL_TP_SL_GEOMETRY_INVALID"
+        if not geometry_passed
+        else "WORST_FILL_CONSERVATIVE_EV_NOT_POSITIVE"
+        if not ev_passed
+        else "WORST_FILL_QUARTER_KELLY_CAP_EXCEEDED"
+        if not kelly_passed
+        else "PRICE_BOUND_NOT_MAXIMAL_ON_TICK_GRID"
+        if not next_adverse_tick_fails
+        else "WORST_FILL_LOSS_CAP_EXCEEDED"
+    )
+    material = {
+        "status": "PASSED" if passed else "BLOCKED",
+        "reason": reason,
+        "contract": "QR_GPT_MARKET_WORST_FILL_PRICE_BOUND_V1",
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "method": cost_method,
+        "expected_execution_cost_scope_key": expected_cost_scope_key,
+        "units": units,
+        "current_executable_entry": float(current_entry),
+        "spread": spread,
+        "submitted_tp": submitted_tp,
+        "submitted_sl": submitted_sl,
+        "tp": intent.tp,
+        "sl": intent.sl,
+        "tp_transport_text": _price(intent.pair, intent.tp),
+        "sl_transport_text": _price(intent.pair, intent.sl),
+        "dependent_price_basis": "EXACT_OANDA_TRANSPORT_PRECISION",
+        "quote_to_jpy": quote_to_jpy,
+        "monetary_per_price": monetary_per_price,
+        "nav_jpy": nav_jpy,
+        "nav_hard_cap_pct": FRESH_ENTRY_MAX_RISK_PCT_NAV,
+        "nav_hard_cap_jpy": nav_hard_cap_jpy,
+        "effective_max_loss_jpy": max_loss_cap,
+        "portfolio_loss_remaining_jpy": portfolio_remaining,
+        "execution_cost_floor": cost_floor,
+        "execution_cost_floor_digest_valid": cost_digest_valid,
+        "market_entry_adverse_p95_pips": entry_slippage_p95,
+        "audited_protected_exit_adverse_p95_pips": audited_exit_p95,
+        "fresh_spread_pips": current_spread_pips,
+        "exit_execution_stress_pips": exit_stress_pips,
+        "exit_execution_stress_jpy": exit_stress_jpy,
+        "financing_adverse_stress_jpy_per_unit": financing_per_unit,
+        "financing_stress_jpy": financing_stress_jpy,
+        "outcome_cost_jpy": outcome_cost_jpy,
+        "economic_hit_rate": hit_rate,
+        "economic_samples": samples,
+        "economic_wilson95_lower": wilson_lower,
+        "kelly_fractional_multiplier": (
+            kelly_fraction
+        ),
+        "kelly_fraction_source": (
+            "quant_rabbit.market_read_overlay."
+            "CAPITAL_ALLOCATION_KELLY_FRACTION"
+        ),
+        "total_tp_sl_range_jpy": total_range_jpy,
+        "quarter_kelly_root_net_downside_cap_jpy": kelly_risk_cap_jpy,
+        "effective_worst_fill_raw_risk_cap_jpy": risk_cap_jpy,
+        "ev_zero_entry": ev_zero_entry,
+        "loss_cap_entry": cap_entry,
+        "raw_adverse_limit": raw_adverse_limit,
+        "tick": tick,
+        "rounding": (
+            "LONG_FLOOR_ONE_TICK_AT_EXACT_ROOT"
+            if intent.side == Side.LONG
+            else "SHORT_CEIL_ONE_TICK_AT_EXACT_ROOT"
+        ),
+        "derived_safe_price_bound": derived_price_bound,
+        "derived_safe_price_bound_text": price_bound_text,
+        "next_adverse_tick_entry": next_adverse_entry,
+        "next_adverse_tick_risk_jpy": next_risk_jpy,
+        "next_adverse_tick_reward_jpy": next_reward_jpy,
+        "next_adverse_tick_net_risk_jpy": next_net_risk_jpy,
+        "next_adverse_tick_net_reward_jpy": next_net_reward_jpy,
+        "next_adverse_tick_ev_lower_jpy": next_ev_jpy,
+        "next_adverse_tick_quarter_kelly_budget_jpy": (
+            next_kelly_budget_jpy
+        ),
+        "next_adverse_tick_passes": next_adverse_tick_passes,
+        "next_adverse_tick_fails": next_adverse_tick_fails,
+        "reserved_price_bound": supplied_bound,
+        "reserved_price_bound_text": (
+            str(reserved_price_bound).strip()
+            if reserved_price_bound is not None
+            else None
+        ),
+        "price_bound": worst_fill_entry,
+        "price_bound_text": _price(intent.pair, worst_fill_entry),
+        "bound_not_looser_than_fresh_ceiling": bound_not_looser,
+        "current_executable_price_inside_bound": current_inside_bound,
+        "entry_slippage_allowance_pips": entry_slippage_allowance_pips,
+        "entry_slippage_allowance_meets_p95": (
+            entry_slippage_allowance_passed
+        ),
+        "worst_fill_geometry_passed": geometry_passed,
+        "worst_fill_risk_jpy": worst_risk_jpy,
+        "worst_fill_reward_jpy": worst_reward_jpy,
+        "worst_fill_net_risk_jpy": worst_net_risk_jpy,
+        "worst_fill_net_reward_jpy": worst_net_reward_jpy,
+        "worst_fill_reward_risk": worst_reward_risk,
+        "worst_fill_ev_lower_jpy": worst_ev_lower_jpy,
+        "worst_fill_ev_strictly_positive": ev_passed,
+        "worst_fill_full_kelly_fraction": full_kelly_fraction,
+        "worst_fill_quarter_kelly_budget_jpy": (
+            worst_quarter_kelly_budget_jpy
+        ),
+        "worst_fill_quarter_kelly_passed": kelly_passed,
+        "worst_fill_loss_caps_passed": cap_passed,
+    }
+    evidence = finished(material)
+    if passed:
+        return evidence, None
+    return evidence, RiskIssue(
+        "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_REPROOF_FAILED",
+        "reserved ordinary MARKET priceBound does not preserve strict Wilson "
+        f"EV, quarter-Kelly risk, current-NAV/effective loss caps, and TP/SL "
+        f"geometry at the worst fill ({reason})",
+    )
+
+
+def _snapshot_at_market_price_bound(
+    snapshot: BrokerSnapshot,
+    *,
+    intent: OrderIntent,
+    price_bound: float,
+) -> BrokerSnapshot:
+    quote = snapshot.quotes[intent.pair]
+    spread = quote.ask - quote.bid
+    if intent.side == Side.LONG:
+        bound_quote = replace(
+            quote,
+            ask=price_bound,
+            bid=price_bound - spread,
+        )
+    else:
+        bound_quote = replace(
+            quote,
+            bid=price_bound,
+            ask=price_bound + spread,
+        )
+    return replace(
+        snapshot,
+        quotes={**snapshot.quotes, intent.pair: bound_quote},
+    )
+
+
+def _numeric_proof_with_market_price_bound(
+    numeric_proof: dict[str, Any],
+    price_bound_proof: dict[str, Any],
+) -> dict[str, Any]:
+    material = dict(numeric_proof)
+    material.pop("proof_sha256", None)
+    material["market_price_bound"] = price_bound_proof
+    return {
+        **material,
+        "proof_sha256": _canonical_json_sha256(material),
+    }
+
+
+def _capital_allocation_numeric_pre_post_recheck(
+    *,
+    verified_intent: OrderIntent,
+    final_intent: OrderIntent,
+    fresh_snapshot: BrokerSnapshot,
+    fresh_base_risk: Any,
+    required: bool,
+    forecast_s5_path_proof: dict[str, Any] | None = None,
+    execution_cost_floor: dict[str, Any] | None = None,
+    market_entry_slippage_embedded: bool = False,
+) -> tuple[dict[str, Any], RiskIssue | None]:
+    """Recompute GPT's numeric ceiling from fresh broker truth at base units."""
+
+    # Lazy by design: market_read_overlay imports risk policy but never this
+    # gateway module. Keeping the private pure-math reuse here avoids widening
+    # module initialization into a broker/execution dependency cycle.
+    from quant_rabbit.market_read_overlay import (
+        _capital_allocation_numeric_ceiling,
+    )
+
+    base_units = abs(int(verified_intent.units))
+    final_units = abs(int(final_intent.units))
+    final_effective_multiple = (
+        final_units / base_units if base_units > 0 else math.inf
+    )
+    if not required:
+        material = {
+            "status": "NOT_APPLICABLE",
+            "required": False,
+            "base_units": base_units,
+            "final_units": final_units,
+            "final_effective_multiple": final_effective_multiple,
+            "fresh_snapshot_fetched_at_utc": (
+                fresh_snapshot.fetched_at_utc.isoformat()
+            ),
+        }
+        return {
+            **material,
+            "proof_sha256": _canonical_json_sha256(material),
+        }, None
+
+    metadata = dict(verified_intent.metadata or {})
+    predictive_scout = _numeric_predictive_scout_contract(verified_intent)
+    hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    quote = fresh_snapshot.quotes.get(verified_intent.pair)
+    account = fresh_snapshot.account
+    quote_currency = (
+        verified_intent.pair.split("_", 1)[1]
+        if "_" in verified_intent.pair
+        else ""
+    )
+    quote_to_jpy = (
+        1.0
+        if quote_currency == "JPY"
+        else fresh_snapshot.home_conversions.get(quote_currency)
+    )
+    metrics = getattr(fresh_base_risk, "metrics", None)
+    risk_metrics = asdict(metrics) if isinstance(metrics, RiskMetrics) else {}
+    intent_payload = {
+        "pair": verified_intent.pair,
+        "side": verified_intent.side.value,
+        "order_type": verified_intent.order_type.value,
+        "units": verified_intent.units,
+        "entry": verified_intent.entry,
+        "tp": verified_intent.tp,
+        "sl": verified_intent.sl,
+        # The shared numeric helper binds the dynamic execution-cost proof to
+        # pair/side/method/MARKET.  Dropping the verified method here silently
+        # changed a valid TREND_CONTINUATION proof into UNKNOWN during the
+        # pre-POST reproof and blocked every ordinary MARKET order.
+        "market_context": (
+            {"method": verified_intent.market_context.method.value}
+            if verified_intent.market_context is not None
+            and isinstance(
+                verified_intent.market_context.method,
+                TradeMethod,
+            )
+            else {}
+        ),
+    }
+    numeric_ceiling, raw_fresh_max_multiple = _capital_allocation_numeric_ceiling(
+        intent=intent_payload,
+        metadata=metadata,
+        risk_metrics=risk_metrics,
+        account_nav_jpy=account.nav_jpy if account is not None else None,
+        broker_bid=quote.bid if quote is not None else None,
+        broker_ask=quote.ask if quote is not None else None,
+        broker_quote_to_jpy=quote_to_jpy,
+        predictive_scout=predictive_scout,
+        hedge=hedge,
+        forecast_current_binding_mode=(
+            "DIRECTIONAL_FRESH_MARKET_DRIFT"
+        ),
+        execution_cost_floor=execution_cost_floor,
+        market_entry_slippage_embedded=(
+            market_entry_slippage_embedded
+        ),
+    )
+    proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
+        "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
+        "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
+    }
+    path_proof = (
+        dict(forecast_s5_path_proof)
+        if isinstance(forecast_s5_path_proof, dict)
+        else {"status": "MISSING", "reason": "FORECAST_S5_PATH_PROOF_MISSING"}
+    )
+    bypass_reason = (
+        str(numeric_ceiling.get("reason") or "") if proof_is_bypass else None
+    )
+    path_proof_passed = _forecast_s5_path_proof_valid(
+        path_proof,
+        intent=final_intent,
+        snapshot=fresh_snapshot,
+        bypass_reason=bypass_reason,
+    )
+    fresh_max_multiple = (
+        float(raw_fresh_max_multiple)
+        if proof_is_bypass or path_proof_passed
+        else 0.0
+    )
+    numeric_inputs_passed = bool(
+        isinstance(raw_fresh_max_multiple, (int, float))
+        and not isinstance(raw_fresh_max_multiple, bool)
+        and math.isfinite(float(raw_fresh_max_multiple))
+        and float(raw_fresh_max_multiple) > 0.0
+        and path_proof_passed
+    )
+    fresh_unit_cap = (
+        math.floor(base_units * float(fresh_max_multiple) + 1e-12)
+        if numeric_inputs_passed and base_units > 0
+        else 0
+    )
+    final_ratio_passed = bool(
+        numeric_inputs_passed
+        and base_units > 0
+        and final_units > 0
+        and final_units <= base_units
+        and final_units <= fresh_unit_cap
+    )
+    status = (
+        "BYPASSED"
+        if proof_is_bypass and final_ratio_passed
+        else "PASSED"
+        if numeric_inputs_passed and final_ratio_passed
+        else "BLOCKED"
+    )
+    material = {
+        "status": status,
+        "required": True,
+        "risk_metrics_source": "FRESH_RISK_ENGINE_ORIGINAL_BASE_UNITS",
+        "fresh_snapshot_fetched_at_utc": (
+            fresh_snapshot.fetched_at_utc.isoformat()
+        ),
+        "fresh_quote_timestamp_utc": (
+            quote.timestamp_utc.isoformat() if quote is not None else None
+        ),
+        "base_units": base_units,
+        "final_units": final_units,
+        "final_effective_multiple": final_effective_multiple,
+        "fresh_max_multiple": float(fresh_max_multiple),
+        "raw_numeric_max_multiple": float(raw_fresh_max_multiple),
+        "fresh_unit_cap_floor": fresh_unit_cap,
+        "numeric_inputs_passed": numeric_inputs_passed,
+        "final_ratio_passed": final_ratio_passed,
+        "fresh_base_risk_metrics": risk_metrics,
+        "fresh_base_risk_issue_codes_context": [
+            str(getattr(issue, "code", ""))
+            for issue in getattr(fresh_base_risk, "issues", ())
+            if str(getattr(issue, "code", ""))
+        ],
+        "numeric_helper_binding": (
+            "LAZY_PURE_MATH_IMPORT:quant_rabbit.market_read_overlay."
+            "_capital_allocation_numeric_ceiling;NO_EXECUTION_IMPORT_IN_OVERLAY"
+        ),
+        "forecast_s5_path_proof": path_proof,
+        "forecast_s5_path_proof_passed": path_proof_passed,
+        "numeric_ceiling": numeric_ceiling,
+    }
+    evidence = {
+        **material,
+        "proof_sha256": _canonical_json_sha256(material),
+    }
+    if not numeric_inputs_passed:
+        if not path_proof_passed:
+            return evidence, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_FORECAST_S5_PATH_REPROOF_FAILED",
+                "fresh GPT allocation requires complete OANDA S5 mid-candle "
+                "no-touch coverage from forecast emission through the current "
+                f"quote ({path_proof.get('reason') or 'unknown'}); discard the "
+                "stale/consumed signal",
+            )
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_NUMERIC_REPROOF_FAILED",
+            "fresh broker NAV/quote/conversion, base-unit RiskMetrics, forecast "
+            "geometry, economic Wilson EV, or quarter-Kelly proof no longer "
+            f"authorizes risk ({numeric_ceiling.get('reason') or 'unknown'}); "
+            "discard the stale GPT allocation",
+        )
+    if not final_ratio_passed:
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_FRESH_CEILING_EXCEEDED",
+            f"final units {final_units} exceed floor(base units {base_units} * "
+            f"fresh maximum {float(fresh_max_multiple):.12f})={fresh_unit_cap}; reduce "
+            "units or obtain a fresh GPT allocation receipt",
+        )
+    return evidence, None
+
+
+def _capital_allocation_edge_pre_post_recheck(
+    intent: OrderIntent,
+    *,
+    ledger_path: Path,
+    expected_execution_cost_floor_sha256: str | None = None,
+    execution_cost_floor_required: bool = False,
+) -> tuple[dict[str, Any], RiskIssue | None]:
+    """Reprove the selected GPT allocation edge from the just-synced ledger.
+
+    The intent's embedded metrics identify which evidence basis the reviewed
+    allocation used. Fresh ledger data may preserve or revoke that same basis;
+    an all-exit proof is never allowed to fall back to a profitable TP subset.
+    """
+
+    metadata = dict(intent.metadata or {})
+    read_at_utc = datetime.now(timezone.utc).isoformat()
+    method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else "UNKNOWN"
+    )
+    vehicle = _tp_proven_vehicle(intent.order_type)
+    exact_key = (
+        intent.pair.upper(),
+        intent.side.value.upper(),
+        method.upper(),
+        vehicle,
+    )
+    scope_key = "|".join(exact_key)
+
+    if str(metadata.get("position_intent") or "").strip().upper() == "HEDGE":
+        return {
+            "status": "BYPASSED",
+            "basis": "HEDGE_RISK_REDUCTION",
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+        }, None
+    if (
+        predictive_scout_intent_claimed(intent)
+        and predictive_scout_metadata_supported(metadata)
+    ):
+        return {
+            "status": "BYPASSED",
+            "basis": "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+        }, None
+
+    claimed_net = {
+        "trades": metadata.get("capture_exact_vehicle_net_trades"),
+        "wins": metadata.get("capture_exact_vehicle_net_wins"),
+        "losses": metadata.get("capture_exact_vehicle_net_losses"),
+        "net_jpy": metadata.get("capture_exact_vehicle_net_jpy"),
+        "expectancy_jpy_per_trade": metadata.get(
+            "capture_exact_vehicle_net_expectancy_jpy"
+        ),
+        "avg_win_jpy": metadata.get("capture_exact_vehicle_net_avg_win_jpy"),
+        "avg_loss_jpy": metadata.get("capture_exact_vehicle_net_avg_loss_jpy"),
+        "unresolved_realized_trades": metadata.get(
+            "capture_exact_vehicle_net_unresolved_realized_trades"
+        ),
+        "unresolved_realized_net_jpy": metadata.get(
+            "capture_exact_vehicle_net_unresolved_realized_net_jpy"
+        ),
+    }
+    claimed_net_evaluation = evaluate_exact_vehicle_net_edge(claimed_net)
+    claimed_net_binding = bool(
+        method != "UNKNOWN"
+        and vehicle in {"LIMIT", "MARKET", "STOP"}
+        and str(metadata.get("capture_exact_vehicle_net_scope") or "").upper()
+        == "PAIR_SIDE_METHOD_VEHICLE"
+        and str(metadata.get("capture_exact_vehicle_net_scope_key") or "").upper()
+        == f"{scope_key}|ALL_AUDITED_EXITS"
+        and str(metadata.get("capture_exact_vehicle_net_vehicle") or "").upper()
+        == vehicle
+        and str(metadata.get("capture_exact_vehicle_net_metrics_source") or "")
+        == "data/execution_ledger.db:exact_vehicle_net"
+        and str(metadata.get("capture_exact_vehicle_net_exit_scope") or "").upper()
+        == "ALL_AUDITED_EXITS"
+    )
+    claimed_tp = {
+        "trades": metadata.get("capture_take_profit_trades"),
+        "wins": metadata.get("capture_take_profit_wins"),
+        "losses": metadata.get("capture_take_profit_losses"),
+        "net_jpy": metadata.get("capture_take_profit_net_jpy"),
+        "expectancy_jpy_per_trade": metadata.get(
+            "capture_take_profit_expectancy_jpy"
+        ),
+        "avg_win_jpy": metadata.get("capture_take_profit_avg_win_jpy"),
+        "avg_loss_jpy": metadata.get("capture_take_profit_avg_loss_jpy"),
+    }
+    claimed_tp_evaluation = evaluate_exact_vehicle_net_edge(claimed_tp)
+    claimed_tp_binding = bool(
+        method != "UNKNOWN"
+        and vehicle in {"LIMIT", "MARKET", "STOP"}
+        and metadata.get("attach_take_profit_on_fill") is True
+        and str(metadata.get("tp_execution_mode") or "").upper()
+        == "ATTACHED_TECHNICAL_TP"
+        and metadata.get("capture_take_profit_exact_vehicle_required") is True
+        and str(metadata.get("capture_take_profit_scope") or "").upper()
+        == "PAIR_SIDE_METHOD_VEHICLE"
+        and str(metadata.get("capture_take_profit_scope_key") or "").upper()
+        == f"{scope_key}|TAKE_PROFIT_ORDER"
+        and str(metadata.get("capture_take_profit_vehicle") or "").upper()
+        == vehicle
+        and str(metadata.get("capture_take_profit_metrics_source") or "")
+        == "data/execution_ledger.db:exact_vehicle_take_profit"
+        and claimed_tp_evaluation["arithmetic_consistent"] is True
+        and (claimed_tp_evaluation.get("trades") or 0)
+        >= CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES
+        and claimed_tp_evaluation.get("losses") == 0
+        and (claimed_tp_evaluation.get("net_jpy") or 0.0) > 0.0
+        and (claimed_tp_evaluation.get("expectancy_jpy") or 0.0) > 0.0
+        and (claimed_tp_evaluation.get("avg_win_jpy") or 0.0) > 0.0
+        and claimed_net_evaluation["blocks_tp_exception"] is not True
+    )
+    original_basis = (
+        "EXACT_VEHICLE_ALL_EXIT_NET"
+        if claimed_net_binding and claimed_net_evaluation["proven"] is True
+        else "EXACT_VEHICLE_TAKE_PROFIT"
+        if claimed_tp_binding
+        else None
+    )
+    if original_basis is None:
+        evidence = {
+            "status": "BLOCKED",
+            "issue_code": "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_UNPROVEN",
+            "basis": None,
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+            "claimed_all_exit": claimed_net_evaluation,
+            "claimed_tp": claimed_tp_evaluation,
+        }
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_UNPROVEN",
+            "the verified GPT allocation does not carry an arithmetically valid exact "
+            "all-exit or bounded exact-TP evidence basis for this pair/side/method/vehicle",
+        )
+
+    surface = read_exact_vehicle_allocation_surface(ledger_path)
+    net_metrics = exact_vehicle_metrics_from_surface(
+        surface,
+        field="exact_vehicle_net",
+    )
+    tp_metrics = exact_vehicle_metrics_from_surface(
+        surface,
+        field="exact_vehicle_take_profit",
+    )
+    if net_metrics is None or tp_metrics is None:
+        evidence = {
+            "status": "BLOCKED",
+            "issue_code": "PRE_POST_GPT_ALLOCATION_LEDGER_READ_FAILED",
+            "basis": original_basis,
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+            "ledger_parse_status": surface.get("parse_status"),
+        }
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_LEDGER_READ_FAILED",
+            "the post-sync execution ledger cannot produce a complete exact-vehicle "
+            "capital-allocation surface immediately before POST",
+        )
+
+    current_net = dict(net_metrics.get(exact_key) or {})
+    current_tp = dict(tp_metrics.get(exact_key) or {})
+    current_net_evaluation = evaluate_exact_vehicle_net_edge(current_net)
+    current_tp_evaluation = evaluate_exact_vehicle_net_edge(current_tp)
+    current_net_contract = bool(
+        str(current_net.get("source_scope") or "").upper()
+        == "PAIR_SIDE_METHOD_VEHICLE"
+        and str(current_net.get("exit_scope") or "").upper()
+        == "ALL_AUDITED_EXITS"
+    )
+    current_tp_contract = bool(
+        str(current_tp.get("source_scope") or "").upper()
+        == "PAIR_SIDE_METHOD_VEHICLE"
+        and str(current_tp.get("exit_scope") or "").upper()
+        == "PURE_TAKE_PROFIT_LIFECYCLE"
+    )
+    execution_cost_floor = execution_cost_floor_from_surface(
+        surface,
+        exact_key=exact_key,
+        as_of=datetime.now(timezone.utc),
+    )
+    current_cost_sha = str(
+        execution_cost_floor.get("proof_sha256") or ""
+    )
+    cost_floor_passed = bool(
+        not execution_cost_floor_required
+        or (
+            execution_cost_floor.get("status") == "PASSED"
+            and expected_execution_cost_floor_sha256 is not None
+            and current_cost_sha == expected_execution_cost_floor_sha256
+        )
+    )
+    if original_basis == "EXACT_VEHICLE_ALL_EXIT_NET":
+        passed = bool(
+            current_net_contract
+            and current_net_evaluation["proven"] is True
+            and cost_floor_passed
+        )
+        failed_checks = [] if passed else ["ALL_EXIT_EDGE_NO_LONGER_PROVEN"]
+    else:
+        current_tp_passed = bool(
+            current_tp_contract
+            and current_tp_evaluation["arithmetic_consistent"] is True
+            and (current_tp_evaluation.get("trades") or 0)
+            >= CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES
+            and current_tp_evaluation.get("losses") == 0
+            and (current_tp_evaluation.get("net_jpy") or 0.0) > 0.0
+            and (current_tp_evaluation.get("expectancy_jpy") or 0.0) > 0.0
+            and (current_tp_evaluation.get("avg_win_jpy") or 0.0) > 0.0
+        )
+        all_exit_allows_tp = bool(
+            current_net_contract
+            and current_net_evaluation["blocks_tp_exception"] is not True
+        )
+        passed = bool(
+            current_tp_passed and all_exit_allows_tp and cost_floor_passed
+        )
+        failed_checks = []
+        if not current_tp_passed:
+            failed_checks.append("EXACT_TP_EDGE_NO_LONGER_PROVEN")
+        if not all_exit_allows_tp:
+            failed_checks.append("ALL_EXIT_EVIDENCE_SUPPRESSES_TP_EXCEPTION")
+    if not cost_floor_passed:
+        failed_checks.append("EXECUTION_COST_FLOOR_STALE_OR_MISMATCHED")
+
+    evidence = {
+        "status": "PASSED" if passed else "BLOCKED",
+        "issue_code": None if passed else "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
+        "basis": original_basis,
+        "proof_key": list(exact_key),
+        "read_at_utc": read_at_utc,
+        "ledger_surface_sha256": surface.get("allocation_surface_sha256"),
+        "current_all_exit": current_net_evaluation,
+        "current_tp": current_tp_evaluation,
+        "execution_cost_floor": execution_cost_floor,
+        "expected_execution_cost_floor_sha256": (
+            expected_execution_cost_floor_sha256
+        ),
+        "failed_checks": failed_checks,
+    }
+    if passed:
+        return evidence, None
+    return evidence, RiskIssue(
+        "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
+        f"the post-sync {original_basis} evidence for {scope_key} no longer authorizes "
+        "the reviewed capital allocation; refresh GPT market-read and sizing before POST",
+    )
+
+
 def _tp_proven_pre_post_recheck(
     intent: OrderIntent,
     *,
@@ -4698,6 +8120,16 @@ def _positive_float(value: object) -> float | None:
     return parsed if parsed > 0 else None
 
 
+def _nonnegative_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed >= 0.0 else None
+
+
 def _attach_take_profit_on_fill(intent: OrderIntent) -> bool:
     if os.environ.get("QR_DISABLE_AUTO_TP", "").strip() in {"1", "true", "TRUE", "yes", "YES"}:
         return False
@@ -4838,6 +8270,426 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
     return [issue.__dict__ for issue in issues]
 
 
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None or not path.exists() or not path.is_file():
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _canonical_order_request_sha256(order_request: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            order_request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _canonical_json_sha256(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _capital_allocation_numeric_proof_is_frozen(
+    evidence: Any,
+    *,
+    order_request: dict[str, Any],
+    required: bool,
+    expected_intent: OrderIntent | None = None,
+) -> bool:
+    if not isinstance(evidence, dict):
+        return False
+    proof_sha256 = str(evidence.get("proof_sha256") or "")
+    material = dict(evidence)
+    material.pop("proof_sha256", None)
+    if proof_sha256 != _canonical_json_sha256(material):
+        return False
+    status = str(evidence.get("status") or "").strip().upper()
+    if required:
+        if status not in {"PASSED", "BYPASSED"}:
+            return False
+    elif status not in {"NOT_APPLICABLE", "PASSED", "BYPASSED"}:
+        return False
+    base_units = evidence.get("base_units")
+    final_units = evidence.get("final_units")
+    if (
+        isinstance(base_units, bool)
+        or not isinstance(base_units, int)
+        or base_units <= 0
+        or isinstance(final_units, bool)
+        or not isinstance(final_units, int)
+        or final_units <= 0
+    ):
+        return False
+    raw_order_units = order_request.get("units")
+    order_units_text = str(raw_order_units or "").strip()
+    if not order_units_text.lstrip("-").isdigit():
+        return False
+    if abs(int(order_units_text)) != final_units:
+        return False
+    expected_ratio = final_units / base_units
+    stored_ratio = evidence.get("final_effective_multiple")
+    if (
+        isinstance(stored_ratio, bool)
+        or not isinstance(stored_ratio, (int, float))
+        or not math.isfinite(float(stored_ratio))
+        or not math.isclose(
+            float(stored_ratio),
+            expected_ratio,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+    ):
+        return False
+    if not required:
+        return True
+    path_proof = evidence.get("forecast_s5_path_proof")
+    if not isinstance(path_proof, dict):
+        return False
+    path_sha256 = str(path_proof.get("proof_sha256") or "")
+    path_material = dict(path_proof)
+    path_material.pop("proof_sha256", None)
+    if path_sha256 != _canonical_json_sha256(path_material):
+        return False
+    price_bound = evidence.get("market_price_bound")
+    if not isinstance(price_bound, dict):
+        return False
+    price_bound_sha256 = str(price_bound.get("proof_sha256") or "")
+    price_bound_material = dict(price_bound)
+    price_bound_material.pop("proof_sha256", None)
+    if price_bound_sha256 != _canonical_json_sha256(price_bound_material):
+        return False
+    price_bound_status = str(price_bound.get("status") or "").upper()
+    if status == "BYPASSED":
+        if (
+            price_bound_status != "BYPASSED"
+            or "priceBound" in order_request
+        ):
+            return False
+    else:
+        bound_text = str(price_bound.get("price_bound_text") or "")
+        numeric_ceiling = (
+            evidence.get("numeric_ceiling")
+            if isinstance(evidence.get("numeric_ceiling"), dict)
+            else {}
+        )
+        numeric_cost = (
+            numeric_ceiling.get("execution_cost_floor")
+            if isinstance(
+                numeric_ceiling.get("execution_cost_floor"), dict
+            )
+            else {}
+        )
+        bound_cost = (
+            price_bound.get("execution_cost_floor")
+            if isinstance(price_bound.get("execution_cost_floor"), dict)
+            else {}
+        )
+        numeric_cost_sha = str(numeric_cost.get("proof_sha256") or "")
+        bound_cost_sha = str(bound_cost.get("proof_sha256") or "")
+        numeric_cost_material = dict(numeric_cost)
+        numeric_cost_material.pop("proof_sha256", None)
+        bound_cost_material = dict(bound_cost)
+        bound_cost_material.pop("proof_sha256", None)
+        bound_pair = str(price_bound.get("pair") or "").strip().upper()
+        bound_side = str(price_bound.get("side") or "").strip().upper()
+        bound_method = str(price_bound.get("method") or "").strip().upper()
+        proof_cost_scope = "|".join(
+            (bound_pair, bound_side, bound_method, "MARKET")
+        )
+        authoritative_method = (
+            expected_intent.market_context.method.value
+            if expected_intent is not None
+            and expected_intent.market_context is not None
+            and isinstance(
+                expected_intent.market_context.method,
+                TradeMethod,
+            )
+            else "UNKNOWN"
+        )
+        expected_cost_scope = (
+            "|".join(
+                (
+                    expected_intent.pair.upper(),
+                    expected_intent.side.value.upper(),
+                    authoritative_method.upper(),
+                    "MARKET",
+                )
+            )
+            if expected_intent is not None
+            else ""
+        )
+        cost_proofs_frozen = bool(
+            numeric_cost.get("status") == "PASSED"
+            and bound_cost.get("status") == "PASSED"
+            and numeric_cost.get("contract")
+            == EXECUTION_COST_FLOOR_CONTRACT
+            and bound_cost.get("contract")
+            == EXECUTION_COST_FLOOR_CONTRACT
+            and numeric_cost.get("spread_double_count_forbidden") is True
+            and bound_cost.get("spread_double_count_forbidden") is True
+            and bound_pair
+            and bound_side in {"LONG", "SHORT"}
+            and bound_method
+            and bound_method != "UNKNOWN"
+            and price_bound.get("expected_execution_cost_scope_key")
+            == proof_cost_scope
+            and proof_cost_scope == expected_cost_scope
+            and str(numeric_cost.get("scope_key") or "").upper()
+            == expected_cost_scope
+            and str(bound_cost.get("scope_key") or "").upper()
+            == expected_cost_scope
+            and numeric_cost_sha
+            and numeric_cost_sha == bound_cost_sha
+            and numeric_cost_sha
+            == _canonical_json_sha256(numeric_cost_material)
+            and bound_cost_sha
+            == _canonical_json_sha256(bound_cost_material)
+        )
+        numeric_entry = (
+            numeric_ceiling
+            .get("inputs", {})
+            .get("broker_executable_entry")
+            if isinstance(numeric_ceiling, dict)
+            else None
+        )
+        def finite_number(value: Any) -> float | None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else None
+
+        outcome_cost = finite_number(price_bound.get("outcome_cost_jpy"))
+        exit_execution_cost = finite_number(
+            price_bound.get("exit_execution_stress_jpy")
+        )
+        financing_cost = finite_number(
+            price_bound.get("financing_stress_jpy")
+        )
+        entry_p95 = finite_number(
+            price_bound.get("market_entry_adverse_p95_pips")
+        )
+        cost_entry_p95 = finite_number(
+            bound_cost.get("market_entry_adverse_p95_pips")
+        )
+        entry_allowance = finite_number(
+            price_bound.get("entry_slippage_allowance_pips")
+        )
+        worst_gross_risk = finite_number(
+            price_bound.get("worst_fill_risk_jpy")
+        )
+        worst_gross_reward = finite_number(
+            price_bound.get("worst_fill_reward_jpy")
+        )
+        worst_net_risk = finite_number(
+            price_bound.get("worst_fill_net_risk_jpy")
+        )
+        worst_net_reward = finite_number(
+            price_bound.get("worst_fill_net_reward_jpy")
+        )
+        next_gross_risk = finite_number(
+            price_bound.get("next_adverse_tick_risk_jpy")
+        )
+        next_gross_reward = finite_number(
+            price_bound.get("next_adverse_tick_reward_jpy")
+        )
+        next_net_risk = finite_number(
+            price_bound.get("next_adverse_tick_net_risk_jpy")
+        )
+        next_net_reward = finite_number(
+            price_bound.get("next_adverse_tick_net_reward_jpy")
+        )
+        portfolio_remaining = finite_number(
+            price_bound.get("portfolio_loss_remaining_jpy")
+        )
+        cost_identities_valid = bool(
+            outcome_cost is not None
+            and outcome_cost > 0.0
+            and exit_execution_cost is not None
+            and exit_execution_cost >= 0.0
+            and financing_cost is not None
+            and financing_cost >= 0.0
+            and math.isclose(
+                outcome_cost,
+                exit_execution_cost + financing_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and entry_p95 is not None
+            and cost_entry_p95 is not None
+            and math.isclose(
+                entry_p95,
+                cost_entry_p95,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and entry_allowance is not None
+            and entry_allowance + 1e-12 >= entry_p95
+            and None not in {
+                worst_gross_risk,
+                worst_gross_reward,
+                worst_net_risk,
+                worst_net_reward,
+                next_gross_risk,
+                next_gross_reward,
+                next_net_risk,
+                next_net_reward,
+            }
+            and math.isclose(
+                float(worst_net_risk),
+                float(worst_gross_risk) + outcome_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and math.isclose(
+                float(worst_net_reward),
+                float(worst_gross_reward) - outcome_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and math.isclose(
+                float(next_net_risk),
+                float(next_gross_risk) + outcome_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and math.isclose(
+                float(next_net_reward),
+                float(next_gross_reward) - outcome_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and (
+                portfolio_remaining is None
+                or float(worst_net_risk) <= portfolio_remaining + 1e-9
+            )
+        )
+        if (
+            price_bound_status != "PASSED"
+            or price_bound.get("bound_not_looser_than_fresh_ceiling") is not True
+            or price_bound.get("current_executable_price_inside_bound") is not True
+            or price_bound.get("worst_fill_geometry_passed") is not True
+            or price_bound.get("worst_fill_ev_strictly_positive") is not True
+            or price_bound.get("worst_fill_quarter_kelly_passed") is not True
+            or price_bound.get("worst_fill_loss_caps_passed") is not True
+            or price_bound.get("next_adverse_tick_fails") is not True
+            or price_bound.get("entry_slippage_allowance_meets_p95") is not True
+            or not cost_proofs_frozen
+            or numeric_ceiling.get("execution_cost_floor_valid") is not True
+            or numeric_ceiling.get("execution_cost_floor_digest_valid") is not True
+            or price_bound.get("execution_cost_floor_digest_valid") is not True
+            or not cost_identities_valid
+            or price_bound.get("risk_engine_status") != "PASSED"
+            or order_request.get("priceBound") != bound_text
+            or not isinstance(numeric_entry, (int, float))
+            or isinstance(numeric_entry, bool)
+            or not math.isclose(
+                float(numeric_entry),
+                float(price_bound.get("price_bound")),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            return False
+    fresh_max = evidence.get("fresh_max_multiple")
+    fresh_unit_cap = evidence.get("fresh_unit_cap_floor")
+    if (
+        isinstance(fresh_max, bool)
+        or not isinstance(fresh_max, (int, float))
+        or not math.isfinite(float(fresh_max))
+        or float(fresh_max) <= 0.0
+        or isinstance(fresh_unit_cap, bool)
+        or not isinstance(fresh_unit_cap, int)
+        or fresh_unit_cap != math.floor(base_units * float(fresh_max) + 1e-12)
+        or final_units > fresh_unit_cap
+        or evidence.get("numeric_inputs_passed") is not True
+        or evidence.get("final_ratio_passed") is not True
+    ):
+        return False
+    return True
+
+
+def _verified_decision_receipt_change_issue(
+    path: Path | None,
+    *,
+    expected_sha256: str | None,
+) -> dict[str, str] | None:
+    if path is None:
+        return None
+    if expected_sha256 is None:
+        return RiskIssue(
+            "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST",
+            "configured GPT decision receipt was not readable at gateway entry; refresh and reverify before broker POST",
+        ).__dict__
+    current_sha256 = _file_sha256(path)
+    if current_sha256 == expected_sha256:
+        return None
+    return RiskIssue(
+        "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST",
+        "verified GPT decision receipt changed or disappeared after gateway validation; refresh and reverify before broker POST",
+    ).__dict__
+
+
+def _gpt_capital_allocation_binding_validated(
+    path: Path | None,
+    *,
+    expected_sha256: str | None,
+    issues: list[dict[str, Any]],
+) -> bool:
+    """Report authorization only after the exact live receipt passed every GPT gate."""
+
+    if (
+        path is None
+        or expected_sha256 is None
+        or _file_sha256(path) != expected_sha256
+        or any(
+            str(issue.get("severity") or "BLOCK").upper() == "BLOCK"
+            for issue in issues
+            if isinstance(issue, dict)
+        )
+    ):
+        return False
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    return bool(
+        str(payload.get("status") or "").upper() == "ACCEPTED"
+        and str(decision.get("action") or "").upper() == "TRADE"
+        and provenance.get("author_kind") == "CODEX_MARKET_READ"
+        and provenance.get("schema_version") == 2
+        and isinstance(decision.get("capital_allocation"), dict)
+    )
+
+
+def _pre_post_capital_allocation_edge_validated(
+    evidence: dict[str, Any],
+) -> bool:
+    recheck = evidence.get("capital_allocation_edge_recheck")
+    return bool(
+        isinstance(recheck, dict)
+        and str(recheck.get("status") or "").upper()
+        in {"PASSED", "BYPASSED"}
+    )
+
+
 def _gpt_verified_decision_live_send_issues(
     verified_decision_path: Path | None,
     *,
@@ -4846,6 +8698,11 @@ def _gpt_verified_decision_live_send_issues(
     send: bool,
     require_receipt: bool = False,
     intent: OrderIntent | None = None,
+    base_units: int | None = None,
+    authorized_size_multiple: float | None = None,
+    authorized_units: int | None = None,
+    final_units: int | None = None,
+    order_request: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     if not send:
         return []
@@ -4915,6 +8772,25 @@ def _gpt_verified_decision_live_send_issues(
                 "GPT_SELECTED_LANE_MISMATCH_FOR_LIVE_SEND",
                 f"gateway selected lane {selected_lane_id} is not in GPT receipt lanes: "
                 f"{', '.join(selected_receipt_lanes)}",
+            )
+        )
+
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    if action == "TRADE":
+        issues.extend(
+            _codex_capital_allocation_live_send_issues(
+                decision=decision,
+                selected_lane_id=selected_lane_id,
+                base_units=base_units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                final_units=final_units,
+                order_request=order_request,
+                intent=intent,
             )
         )
 
@@ -5026,6 +8902,269 @@ def _gpt_verified_decision_live_send_issues(
                 )
 
     return [issue.__dict__ for issue in issues]
+
+
+def _codex_capital_allocation_live_send_issues(
+    *,
+    decision: dict[str, Any],
+    selected_lane_id: str | None,
+    base_units: int | None,
+    authorized_size_multiple: float | None,
+    authorized_units: int | None,
+    final_units: int | None,
+    order_request: dict[str, Any] | None,
+    intent: OrderIntent | None,
+) -> list[RiskIssue]:
+    issues: list[RiskIssue] = []
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    allocation = (
+        decision.get("capital_allocation")
+        if isinstance(decision.get("capital_allocation"), dict)
+        else None
+    )
+    if provenance.get("author_kind") != "CODEX_MARKET_READ":
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_AUTHOR_MISMATCH",
+                "accepted TRADE must be authored by the fresh CODEX_MARKET_READ allocation path",
+            )
+        )
+    if allocation is None:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_REQUIRED_FOR_LIVE_SEND",
+                "CODEX_MARKET_READ TRADE requires a verified bounded capital_allocation receipt",
+            )
+        )
+        return issues
+    expected_fields = {
+        "decision",
+        "lane_id",
+        "size_multiple",
+        "selected_units",
+        "allocation_board_sha256",
+        "rationale",
+    }
+    if set(allocation) != expected_fields:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SCHEMA_INVALID",
+                "capital_allocation fields do not match the exact v2 execution schema",
+            )
+        )
+    if provenance.get("schema_version") != 2:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SCHEMA_INVALID",
+                "CODEX market-read provenance must use schema_version 2",
+            )
+        )
+    if str(decision.get("action") or "").upper() != "TRADE" or str(
+        allocation.get("decision") or ""
+    ).upper() != "ALLOCATE":
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_ACTION_MISMATCH",
+                "live fresh entry requires TRADE plus capital_allocation.decision=ALLOCATE",
+            )
+        )
+    allocation_lane = str(allocation.get("lane_id") or "")
+    receipt_lanes = _gpt_receipt_selected_lane_ids(decision)
+    if (
+        not selected_lane_id
+        or allocation_lane != selected_lane_id
+        or receipt_lanes != (selected_lane_id,)
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_LANE_MISMATCH",
+                "capital allocation, the single verified receipt lane, and the gateway lane must match exactly",
+            )
+        )
+
+    raw_multiple = allocation.get("size_multiple")
+    allowed_ratios = {0.5: (1, 2), 0.75: (3, 4), 1.0: (1, 1)}
+    receipt_multiple = (
+        float(raw_multiple)
+        if isinstance(raw_multiple, (int, float))
+        and not isinstance(raw_multiple, bool)
+        and float(raw_multiple) in allowed_ratios
+        else None
+    )
+    if receipt_multiple is None:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_MULTIPLE_MISMATCH",
+                "capital allocation size_multiple must be exactly one of 0.5, 0.75, or 1.0",
+            )
+        )
+    raw_selected_units = allocation.get("selected_units")
+    selected_units = (
+        raw_selected_units
+        if isinstance(raw_selected_units, int) and not isinstance(raw_selected_units, bool)
+        else None
+    )
+    if selected_units is None or selected_units <= 0:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SELECTED_UNITS_MISMATCH",
+                "capital allocation selected_units must be a positive integer",
+            )
+        )
+    normalized_base_units = (
+        abs(base_units)
+        if isinstance(base_units, int) and not isinstance(base_units, bool)
+        else None
+    )
+    if receipt_multiple is not None and normalized_base_units is not None:
+        numerator, denominator = allowed_ratios[receipt_multiple]
+        expected_units = normalized_base_units * numerator // denominator
+        if expected_units <= 0 or selected_units != expected_units:
+            issues.append(
+                RiskIssue(
+                    "GPT_CAPITAL_ALLOCATION_SELECTED_UNITS_MISMATCH",
+                    f"verified allocation units must equal integer floor of current intent units: {expected_units}",
+                )
+            )
+    else:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SELECTED_UNITS_MISMATCH",
+                "gateway could not bind allocation to positive current intent base units",
+            )
+        )
+    if (
+        receipt_multiple is None
+        or not isinstance(authorized_size_multiple, (int, float))
+        or isinstance(authorized_size_multiple, bool)
+        or not math.isfinite(float(authorized_size_multiple))
+        or float(authorized_size_multiple) != receipt_multiple
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_MULTIPLE_MISMATCH",
+                "gateway caller size_multiple does not exactly match the verified GPT allocation",
+            )
+        )
+    if (
+        selected_units is None
+        or not isinstance(authorized_units, int)
+        or isinstance(authorized_units, bool)
+        or authorized_units != selected_units
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_PRECLIP_MISMATCH",
+                "gateway pre-risk scaled units do not exactly match the verified GPT allocation",
+            )
+        )
+
+    board_sha = str(allocation.get("allocation_board_sha256") or "")
+    provenance_board_sha = str(
+        provenance.get("capital_allocation_board_sha256") or ""
+    )
+    if (
+        len(board_sha) != 64
+        or any(char not in "0123456789abcdef" for char in board_sha)
+        or board_sha != provenance_board_sha
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_BOARD_MISMATCH",
+                "capital-allocation board digest does not match verified provenance",
+            )
+        )
+    canonical_allocation = json.dumps(
+        allocation,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    allocation_sha = hashlib.sha256(canonical_allocation).hexdigest()
+    if allocation_sha != str(provenance.get("capital_allocation_sha256") or ""):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_BOARD_MISMATCH",
+                "capital_allocation content digest does not match verified provenance",
+            )
+        )
+    provenance_multiple = provenance.get("authorized_size_multiple")
+    if (
+        receipt_multiple is not None
+        and (
+            not isinstance(provenance_multiple, (int, float))
+            or isinstance(provenance_multiple, bool)
+            or not math.isfinite(float(provenance_multiple))
+            or float(provenance_multiple) != receipt_multiple
+        )
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_MULTIPLE_MISMATCH",
+                "provenance authorized_size_multiple does not match the allocation",
+            )
+        )
+    provenance_units = provenance.get("authorized_units")
+    if selected_units is not None and (
+        not isinstance(provenance_units, int)
+        or isinstance(provenance_units, bool)
+        or provenance_units != selected_units
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SELECTED_UNITS_MISMATCH",
+                "provenance authorized_units does not match the allocation",
+            )
+        )
+    if not str(allocation.get("rationale") or "").strip():
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_SCHEMA_INVALID",
+                "capital allocation rationale must be non-empty",
+            )
+        )
+
+    normalized_final_units = (
+        abs(final_units)
+        if isinstance(final_units, int) and not isinstance(final_units, bool)
+        else None
+    )
+    if (
+        selected_units is not None
+        and (
+            normalized_final_units is None
+            or normalized_final_units <= 0
+            or normalized_final_units > selected_units
+        )
+    ):
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_FINAL_UNITS_EXCEEDED",
+                "risk-adjusted final intent units must remain positive and no greater than GPT-authorized units",
+            )
+        )
+    if order_request is not None and normalized_final_units is not None:
+        try:
+            order_units = int(order_request.get("units"))
+        except (TypeError, ValueError, OverflowError):
+            order_units = 0
+        expected_sign = 1 if intent is not None and intent.side == Side.LONG else -1
+        if (
+            abs(order_units) != normalized_final_units
+            or order_units * expected_sign <= 0
+            or (selected_units is not None and abs(order_units) > selected_units)
+        ):
+            issues.append(
+                RiskIssue(
+                    "GPT_CAPITAL_ALLOCATION_ORDER_UNITS_MISMATCH",
+                    "broker order units must match the final intent sign and stay within GPT-authorized units",
+                )
+            )
+    return issues
 
 
 def _market_read_supports_intent(
@@ -5934,9 +10073,57 @@ SELF_IMPROVEMENT_STALE_DECISION_PERSISTENT_STREAK = 2
 
 def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
     try:
-        return _oanda_order_request(intent), []
+        order_request = _oanda_order_request(intent)
     except ValueError as exc:
         return None, [RiskIssue("ORDER_REQUEST_INVALID", str(exc)).__dict__]
+    mismatches: list[str] = []
+
+    def require_grid(label: str, raw_value: Any) -> None:
+        try:
+            parsed = float(raw_value)
+        except (TypeError, ValueError):
+            mismatches.append(label)
+            return
+        if (
+            not math.isfinite(parsed)
+            or parsed <= 0.0
+            or not math.isclose(
+                parsed,
+                float(_price(intent.pair, parsed)),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            mismatches.append(label)
+
+    if "price" in order_request:
+        require_grid("entry", intent.entry)
+    if isinstance(order_request.get("takeProfitOnFill"), dict):
+        require_grid("take_profit", intent.tp)
+    if isinstance(order_request.get("stopLossOnFill"), dict):
+        initial_sl_on = os.environ.get(
+            "QR_NEW_ENTRY_INITIAL_SL",
+            "",
+        ).strip() in {"1", "true", "TRUE", "yes", "YES"}
+        if (
+            initial_sl_on
+            or not _trader_sl_repair_disabled()
+            or _requires_intent_stop_on_fill(intent)
+        ):
+            require_grid("stop_loss", intent.sl)
+        else:
+            require_grid("disaster_stop", (intent.metadata or {}).get("disaster_sl"))
+    issues = []
+    if mismatches:
+        issues.append(
+            RiskIssue(
+                "BROKER_PRICE_PRECISION_MISMATCH",
+                "broker-carried price field(s) are off the instrument tick "
+                f"grid ({', '.join(mismatches)}); regenerate the exact intent "
+                "instead of validating one float and POSTing its rounded value",
+            ).__dict__
+        )
+    return order_request, issues
 
 
 def _predictive_scout_built_order_issues(
@@ -6117,11 +10304,40 @@ def _sizing_evidence_from_intent(
     gateway_max_loss_jpy: float | None,
     requested_units: int | None,
     scaled_units: int | None,
+    authorized_size_multiple: float | None = None,
+    authorized_units: int | None = None,
+    capital_allocation_validated: bool = False,
 ) -> dict[str, Any]:
     metadata = dict(intent.metadata or {})
     out: dict[str, Any] = {
         "requested_units": requested_units,
         "scaled_units": scaled_units,
+        "base_units": abs(requested_units) if requested_units is not None else None,
+        "caller_size_multiple": authorized_size_multiple,
+        "caller_preclip_units": authorized_units,
+        "capital_allocation_validated": capital_allocation_validated,
+        "authorized_size_multiple": (
+            authorized_size_multiple if capital_allocation_validated else None
+        ),
+        "authorized_units": authorized_units if capital_allocation_validated else None,
+        "final_units": abs(scaled_units) if scaled_units is not None else None,
+        "final_effective_size_multiple": (
+            round(abs(scaled_units) / abs(requested_units), 8)
+            if scaled_units is not None and requested_units
+            else None
+        ),
+        "allocation_status": (
+            "RISK_DOWNSIZED"
+            if capital_allocation_validated
+            and authorized_units is not None
+            and scaled_units is not None
+            and abs(scaled_units) < authorized_units
+            else "AUTHORIZED_EXACT"
+            if capital_allocation_validated
+            and authorized_units is not None
+            and scaled_units is not None
+            else None
+        ),
     }
     if gateway_max_loss_jpy is not None:
         out["gateway_max_loss_jpy"] = round(float(gateway_max_loss_jpy), 4)
@@ -6304,6 +10520,14 @@ def _price(pair: str, value: float) -> str:
     return f"{value:.{_price_precision(pair)}f}"
 
 
+def _intent_with_broker_price_precision(intent: OrderIntent) -> OrderIntent:
+    return replace(
+        intent,
+        tp=float(_price(intent.pair, intent.tp)),
+        sl=float(_price(intent.pair, intent.sl)),
+    )
+
+
 def _price_precision(pair: str) -> int:
     return 3 if pair.endswith("_JPY") else 5
 
@@ -6444,6 +10668,59 @@ def _intent_from_json(payload: dict[str, Any]) -> OrderIntent:
         market_context=_market_context_from_json(payload.get("market_context")),
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _intent_from_reserved_order_request(
+    final_intent: OrderIntent,
+    *,
+    order_request: dict[str, Any],
+    expected_price_bound: str | None = None,
+) -> OrderIntent:
+    """Verify reserved transport semantics without replacing virtual rails."""
+
+    expected = _oanda_order_request(final_intent)
+    scalar_keys = (
+        "type",
+        "instrument",
+        "units",
+        "positionFill",
+        "timeInForce",
+        "price",
+        "gtdTime",
+    )
+    for key in scalar_keys:
+        expected_present = key in expected
+        actual_present = key in order_request
+        if expected_present != actual_present or (
+            expected_present and order_request.get(key) != expected.get(key)
+        ):
+            raise ValueError(
+                f"reserved order {key} does not match the final reconciled intent"
+            )
+    for key in ("takeProfitOnFill", "stopLossOnFill"):
+        expected_payload = expected.get(key)
+        actual_payload = order_request.get(key)
+        if (expected_payload is None) != (actual_payload is None):
+            raise ValueError(
+                f"reserved order {key} presence does not match attachment policy"
+            )
+        if expected_payload is not None:
+            if not isinstance(actual_payload, dict) or actual_payload.get(
+                "price"
+            ) != expected_payload.get("price"):
+                raise ValueError(
+                    f"reserved order {key}.price does not match final intent policy"
+                )
+    actual_price_bound = order_request.get("priceBound")
+    if (expected_price_bound is None) != (actual_price_bound is None) or (
+        expected_price_bound is not None
+        and actual_price_bound != expected_price_bound
+    ):
+        raise ValueError(
+            "reserved order priceBound does not match the frozen reconciled "
+            "worst-fill proof"
+        )
+    return final_intent
 
 
 def _market_context_from_json(payload: object) -> MarketContext | None:

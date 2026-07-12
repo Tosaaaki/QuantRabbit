@@ -96,6 +96,7 @@ from quant_rabbit.learning_audit import LearningAuditor
 from quant_rabbit.market_read_overlay import (
     DEFAULT_OVERLAY_MAX_AGE_SECONDS,
     CODEX_MARKET_READ_AUTHOR,
+    MARKET_READ_OVERLAY_SCHEMA_VERSION,
     revalidate_codex_market_read_artifacts,
 )
 from quant_rabbit.predictive_scout import predictive_scout_geometry_claimed
@@ -134,6 +135,7 @@ ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS = ACCEPTED_GPT_GATEWAY_ACTIONS | frozenset(
 )
 GPT_LIVE_ORDER_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING"})
 GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
+GPT_CAPITAL_ALLOCATION_SIZE_MULTIPLES = frozenset({0.5, 0.75, 1.0})
 
 # C-4 margin-aware basket truncation (2026-05-12, repaired 2026-05-15).
 # The basket builder stops adding fresh-entry lanes once cumulative
@@ -1264,7 +1266,37 @@ class GptHandoffSummary:
     selected_lane_ids: tuple[str, ...] = ()
     cancel_order_ids: tuple[str, ...] = ()
     close_trade_ids: tuple[str, ...] = ()
+    capital_allocation_size_multiple: float | None = None
     error: str | None = None
+
+
+def _enforce_gpt_trade_capital_allocation(
+    summary: GptHandoffSummary,
+) -> GptHandoffSummary:
+    """Fail closed at every handoff consumer, including test/subclass overrides."""
+
+    if not (
+        summary.status == "ACCEPTED"
+        and summary.allowed
+        and summary.action == "TRADE"
+    ):
+        return summary
+    raw_multiple = summary.capital_allocation_size_multiple
+    if (
+        not isinstance(raw_multiple, (int, float))
+        or isinstance(raw_multiple, bool)
+        or not math.isfinite(float(raw_multiple))
+        or float(raw_multiple) not in GPT_CAPITAL_ALLOCATION_SIZE_MULTIPLES
+    ):
+        return replace(
+            summary,
+            status="REJECTED",
+            allowed=False,
+            issues=max(1, summary.issues),
+            capital_allocation_size_multiple=None,
+            error="verified TRADE lacks a valid bounded capital allocation",
+        )
+    return replace(summary, capital_allocation_size_multiple=float(raw_multiple))
 
 
 class AutoTradeCycle:
@@ -1869,6 +1901,10 @@ class AutoTradeCycle:
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
+        # The flat/no-pending reuse path can reach the later GPT basket branch
+        # without entering either lifecycle block below. Keep the cycle-level
+        # cancellation accumulator defined on every control-flow path.
+        canceled_orders: list[str] = []
         if trader_positions:
             decision = self._brain().run(snapshot)
             managed_snapshot = _position_management_snapshot(snapshot)
@@ -1878,7 +1914,7 @@ class AutoTradeCycle:
                 snapshot=managed_snapshot,
                 send=send,
             )
-            canceled_orders: list[str] = []
+            canceled_orders = []
             canceled_status = "CANCELED_CONTAMINATED_PENDING"
             target_open = (
                 target_summary is not None
@@ -1960,7 +1996,7 @@ class AutoTradeCycle:
                 snapshot=managed_snapshot,
                 send=send and trader_positions > 0,
             )
-            canceled_orders: list[str] = []
+            canceled_orders = []
             status = "MONITOR_ONLY_EXPOSURE_OPEN"
             if position_execution.sent:
                 status = "POSITION_ACTION_SENT"
@@ -2001,7 +2037,9 @@ class AutoTradeCycle:
                     margin_room_jpy=_basket_margin_room_jpy(snapshot),
                 )
                 if not basket_lane_ids and self.use_gpt_trader:
-                    gpt_summary = self._run_gpt_handoff()
+                    gpt_summary = _enforce_gpt_trade_capital_allocation(
+                        self._run_gpt_handoff()
+                    )
                     gpt_lane_ids = (
                         gpt_summary.selected_lane_ids
                         or ((gpt_summary.selected_lane_id,) if gpt_summary.selected_lane_id else ())
@@ -2134,8 +2172,24 @@ class AutoTradeCycle:
                         basket_lane_ids = current_gpt_lane_ids
                         basket_size_multiples = {}
                         for lane_id in basket_lane_ids:
-                            _, size_multiple = self._selected_lane_meta(decision=decision, lane_id=lane_id)
+                            _, size_multiple = self._selected_lane_meta(
+                                decision=decision,
+                                lane_id=lane_id,
+                            )
+                            if lane_id == gpt_summary.selected_lane_id:
+                                size_multiple = (
+                                    gpt_summary.capital_allocation_size_multiple
+                                )
                             basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+                        basket_size_multiples, _ = _fixed_predictive_scout_size_plan(
+                            intents_path=self.intents_path,
+                            lane_ids=basket_lane_ids,
+                            size_multiples=basket_size_multiples,
+                            selected_lane_id=gpt_summary.selected_lane_id,
+                            selected_lane_size_multiple=(
+                                gpt_summary.capital_allocation_size_multiple
+                            ),
+                        )
                         order_gateway = LiveOrderGateway(
                             client=self.client,
                             strategy_profile=self.strategy_profile_path,
@@ -2170,6 +2224,10 @@ class AutoTradeCycle:
                             decision=decision,
                             lane_id=selected_lane_id,
                         )
+                        if selected_lane_id == gpt_summary.selected_lane_id:
+                            selected_lane_size_multiple = (
+                                gpt_summary.capital_allocation_size_multiple
+                            )
                         summary = AutoTradeCycleSummary(
                             status=order_summary.status,
                             report_path=self.report_path,
@@ -2220,7 +2278,9 @@ class AutoTradeCycle:
                         )
                     gpt_summary = None
                     if self.use_gpt_trader:
-                        gpt_summary = self._run_gpt_handoff()
+                        gpt_summary = _enforce_gpt_trade_capital_allocation(
+                            self._run_gpt_handoff()
+                        )
                         gpt_lane_ids = (
                             gpt_summary.selected_lane_ids
                             or ((gpt_summary.selected_lane_id,) if gpt_summary.selected_lane_id else ())
@@ -2366,8 +2426,20 @@ class AutoTradeCycle:
                             decision=decision,
                             gpt_lane_ids=gpt_lane_ids,
                             gpt_primary_lane_id=gpt_summary.selected_lane_id,
+                            gpt_primary_size_multiple=(
+                                gpt_summary.capital_allocation_size_multiple
+                            ),
                             allow_existing_pending=True,
                             margin_room_jpy=_basket_margin_room_jpy(snapshot),
+                        )
+                        basket_size_multiples, _ = _fixed_predictive_scout_size_plan(
+                            intents_path=self.intents_path,
+                            lane_ids=basket_lane_ids,
+                            size_multiples=basket_size_multiples,
+                            selected_lane_id=gpt_summary.selected_lane_id,
+                            selected_lane_size_multiple=(
+                                gpt_summary.capital_allocation_size_multiple
+                            ),
                         )
                         if not basket_lane_ids:
                             summary = AutoTradeCycleSummary(
@@ -2434,6 +2506,12 @@ class AutoTradeCycle:
                         decision=decision,
                         lane_id=selected_lane_id,
                     )
+                    if gpt_summary and selected_lane_id == gpt_summary.selected_lane_id:
+                        selected_lane_size_multiple = (
+                            basket_size_multiples.get(selected_lane_id)
+                            if selected_lane_id
+                            else selected_lane_size_multiple
+                        )
                     summary = AutoTradeCycleSummary(
                         status=order_summary.status,
                         report_path=self.report_path,
@@ -2575,7 +2653,9 @@ class AutoTradeCycle:
                 self._write_report(summary, generated_at)
                 return summary
 
-            gpt_summary = self._run_gpt_handoff()
+            gpt_summary = _enforce_gpt_trade_capital_allocation(
+                self._run_gpt_handoff()
+            )
             if gpt_summary.status == "ACCEPTED" and gpt_summary.allowed:
                 # Flat-with-positions GPT path must execute CLOSE / CANCEL_PENDING
                 # the same way the basket-with-pending path does upstream. Without
@@ -2638,6 +2718,9 @@ class AutoTradeCycle:
                         decision=decision,
                         lane_id=selected_lane_id,
                     )
+                    selected_lane_size_multiple = (
+                        gpt_summary.capital_allocation_size_multiple
+                    )
                 elif gpt_summary.action in {"WAIT", "REQUEST_EVIDENCE"}:
                     target_is_pursue = (
                         target_summary is not None
@@ -2684,7 +2767,9 @@ class AutoTradeCycle:
                                 break
                             if attempt == self.gpt_wait_retry_limit:
                                 break
-                            retry_summary = self._run_gpt_handoff()
+                            retry_summary = _enforce_gpt_trade_capital_allocation(
+                                self._run_gpt_handoff()
+                            )
                             gpt_summary = retry_summary
                             if (
                                 retry_summary.status == "ACCEPTED"
@@ -2700,6 +2785,9 @@ class AutoTradeCycle:
                                 selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                                     decision=decision,
                                     lane_id=selected_lane_id,
+                                )
+                                selected_lane_size_multiple = (
+                                    retry_summary.capital_allocation_size_multiple
                                 )
                                 gpt_recovery_source = f"GPT_RETRY_TRADE_ATTEMPT_{attempt}"
                                 break
@@ -2792,7 +2880,9 @@ class AutoTradeCycle:
                     item.lane_id for item in decision.scores if _passes_gpt_prefilter(item)
                 }
                 if gpt_summary is None:
-                    gpt_summary = self._run_gpt_handoff()
+                    gpt_summary = _enforce_gpt_trade_capital_allocation(
+                        self._run_gpt_handoff()
+                    )
                 if (
                     gpt_summary.status == "ACCEPTED"
                     and gpt_summary.allowed
@@ -3035,6 +3125,10 @@ class AutoTradeCycle:
                         selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                             decision=decision, lane_id=selected_lane_id
                         )
+                        if gpt_summary and selected_lane_id == gpt_summary.selected_lane_id:
+                            selected_lane_size_multiple = (
+                                gpt_summary.capital_allocation_size_multiple
+                            )
 
         target_open = (
             target_summary is not None
@@ -3046,6 +3140,11 @@ class AutoTradeCycle:
                 decision=decision,
                 gpt_lane_ids=gpt_selected_lane_ids,
                 gpt_primary_lane_id=gpt_summary.selected_lane_id if gpt_summary else None,
+                gpt_primary_size_multiple=(
+                    gpt_summary.capital_allocation_size_multiple
+                    if gpt_summary
+                    else None
+                ),
                 margin_room_jpy=_basket_margin_room_jpy(snapshot),
             )
             if not basket_lane_ids:
@@ -3086,6 +3185,11 @@ class AutoTradeCycle:
                 decision=decision,
                 lane_id=selected_lane_id,
             )
+            if selected_lane_id:
+                selected_lane_size_multiple = basket_size_multiples.get(
+                    selected_lane_id,
+                    selected_lane_size_multiple,
+                )
         else:
             basket_lane_ids = gpt_selected_lane_ids or ((selected_lane_id,) if selected_lane_id else ())
             basket_size_multiples = {
@@ -3980,10 +4084,19 @@ class AutoTradeCycle:
         decision: TraderDecision,
         gpt_lane_ids: tuple[str, ...],
         gpt_primary_lane_id: str | None = None,
+        gpt_primary_size_multiple: float | None = None,
         allow_existing_pending: bool = False,
         margin_room_jpy: float | None = None,
         margin_available_jpy: float | None = None,
     ) -> tuple[tuple[str, ...], dict[str, float]]:
+        if (
+            not isinstance(gpt_primary_size_multiple, (int, float))
+            or isinstance(gpt_primary_size_multiple, bool)
+            or not math.isfinite(float(gpt_primary_size_multiple))
+            or float(gpt_primary_size_multiple)
+            not in GPT_CAPITAL_ALLOCATION_SIZE_MULTIPLES
+        ):
+            return (), {}
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
         parent_lane_ids: set[str] = set()
@@ -4036,6 +4149,7 @@ class AutoTradeCycle:
         primary_lane_id = gpt_primary_lane_id or (selected_lane_ids[0] if selected_lane_ids else None)
         if primary_lane_id not in selected_lane_ids or not add(
             primary_lane_id,
+            gpt_primary_size_multiple,
             require_current_prefilter=True,
         ):
             # The primary lane is the receipt's execution thesis.  If it is
@@ -4078,6 +4192,22 @@ class AutoTradeCycle:
             self._run_learning_audit_for_gpt_handoff()
             self._run_verification_ledger_for_gpt_handoff()
             summary = self._gpt_brain().run(snapshot_path=self.snapshot_path)
+            if (
+                summary.status == "ACCEPTED"
+                and summary.allowed
+                and summary.action == "TRADE"
+                and summary.capital_allocation_size_multiple
+                not in GPT_CAPITAL_ALLOCATION_SIZE_MULTIPLES
+            ):
+                return GptHandoffSummary(
+                    status="REJECTED",
+                    action="TRADE",
+                    selected_lane_id=summary.selected_lane_id,
+                    allowed=False,
+                    issues=max(1, summary.issues),
+                    selected_lane_ids=summary.selected_lane_ids,
+                    error="verified TRADE lacks a valid bounded capital allocation",
+                )
             return GptHandoffSummary(
                 status=summary.status,
                 action=summary.action,
@@ -4087,6 +4217,9 @@ class AutoTradeCycle:
                 selected_lane_ids=summary.selected_lane_ids,
                 cancel_order_ids=summary.cancel_order_ids,
                 close_trade_ids=summary.close_trade_ids,
+                capital_allocation_size_multiple=(
+                    summary.capital_allocation_size_multiple
+                ),
             )
         except (RuntimeError, ValueError, OSError, sqlite3.Error, json.JSONDecodeError) as exc:
             return GptHandoffSummary(
@@ -4106,19 +4239,20 @@ class AutoTradeCycle:
         rerunning the verifier against a newer broker snapshot can reject the
         same receipt as stale even though the live gateway will fetch fresh
         broker truth before any staging/sending. Reuse is therefore allowed
-        only for the same external receipt. A TRADE or CLOSE receipt additionally
-        needs a fresh CODEX provenance timestamp and a full rebuild from the
-        current baseline, evidence packet, overlay, and named evidence sources. The
+        only for the same external receipt. A TRADE or CLOSE receipt, plus a
+        schema-v2 CODEX WAIT / REQUEST_EVIDENCE veto, additionally needs a
+        fresh CODEX provenance timestamp and a full rebuild from the current
+        baseline, evidence packet, overlay, and named evidence sources. The
         market-read prediction ledger binds only its resolved projection, so
         the verifier's own unresolved append does not stale an otherwise exact
         handoff. CLOSE still does not select order-intent lanes, but it carries
         execution authority and therefore cannot use the lighter non-entry
-        reuse check. CANCEL_PENDING / protection actions do not select
-        order-intent lanes. WAIT / REQUEST_EVIDENCE are not gateway
-        permissions at all; they are reusable only as one-shot verified cycle
-        outcomes so position maintenance still runs. Every reusable action
-        still needs the same source receipt and an unconsumed accepted verifier
-        output.
+        reuse check. A schema-v2 veto suppresses that same current campaign
+        pressure, so it must remain an exact consequence of current bytes too.
+        Legacy non-CODEX WAIT / REQUEST_EVIDENCE receipts retain the narrower
+        source-mtime guard. CANCEL_PENDING / protection actions do not select
+        order-intent lanes. Every reusable action still needs the same source
+        receipt and an unconsumed accepted verifier output.
         """
 
         if not self.reuse_market_artifacts or not self.use_gpt_trader:
@@ -4144,7 +4278,28 @@ class AutoTradeCycle:
         action = str(decision.get("action") or "").upper()
         if action not in ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS:
             return None
-        if action in {"TRADE", "CLOSE"}:
+        decision_provenance = (
+            decision.get("decision_provenance")
+            if isinstance(decision.get("decision_provenance"), dict)
+            else {}
+        )
+        source_provenance = (
+            source_payload.get("decision_provenance")
+            if isinstance(source_payload, dict)
+            and isinstance(source_payload.get("decision_provenance"), dict)
+            else {}
+        )
+        has_schema_v2_codex_provenance = any(
+            provenance.get("schema_version") == MARKET_READ_OVERLAY_SCHEMA_VERSION
+            and provenance.get("author_kind") == CODEX_MARKET_READ_AUTHOR
+            for provenance in (decision_provenance, source_provenance)
+        )
+        schema_v2_codex_veto = (
+            action in {"WAIT", "REQUEST_EVIDENCE"}
+            and has_schema_v2_codex_provenance
+        )
+        artifact_bound_action = action in {"TRADE", "CLOSE"} or schema_v2_codex_veto
+        if artifact_bound_action:
             if (
                 not self._verified_gpt_trade_decision_matches_source(decision, source_payload)
                 or not self._verified_gpt_trade_artifacts_still_current(source_payload)
@@ -4157,14 +4312,33 @@ class AutoTradeCycle:
                 return None
         elif not self._verified_gpt_decision_matches_source(decision, source_payload):
             return None
-        if action in {"WAIT", "REQUEST_EVIDENCE"} and not self._verified_gpt_non_entry_artifacts_still_current(
-            source_path
+        if (
+            action in {"WAIT", "REQUEST_EVIDENCE"}
+            and not schema_v2_codex_veto
+            and not self._verified_gpt_non_entry_artifacts_still_current(source_path)
         ):
             return None
         selected_lane_id = str(decision.get("selected_lane_id") or "") or None
         selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
         cancel_order_ids = self._string_tuple(decision.get("cancel_order_ids"))
         close_trade_ids = self._string_tuple(decision.get("close_trade_ids"))
+        capital_allocation = (
+            decision.get("capital_allocation")
+            if isinstance(decision.get("capital_allocation"), dict)
+            else {}
+        )
+        raw_allocation_multiple = capital_allocation.get("size_multiple")
+        capital_allocation_size_multiple = (
+            float(raw_allocation_multiple)
+            if isinstance(raw_allocation_multiple, (int, float))
+            and not isinstance(raw_allocation_multiple, bool)
+            and float(raw_allocation_multiple) in {0.5, 0.75, 1.0}
+            else None
+        )
+        if str(capital_allocation.get("decision") or "").upper() != "ALLOCATE":
+            capital_allocation_size_multiple = None
+        if action == "TRADE" and capital_allocation_size_multiple is None:
+            return None
         return GptHandoffSummary(
             status="ACCEPTED",
             action=action,
@@ -4174,6 +4348,7 @@ class AutoTradeCycle:
             selected_lane_ids=selected_lane_ids,
             cancel_order_ids=cancel_order_ids,
             close_trade_ids=close_trade_ids,
+            capital_allocation_size_multiple=capital_allocation_size_multiple,
         )
 
     @staticmethod
@@ -4235,7 +4410,7 @@ class AutoTradeCycle:
         return True
 
     def _verified_gpt_trade_artifacts_still_current(self, decision: dict[str, Any]) -> bool:
-        """Re-prove a cached TRADE or CLOSE against current artifact bytes.
+        """Re-prove a cached schema-v2 CODEX action against current bytes.
 
         The ACCEPTED wrapper is only a historical verifier result. Before it
         can be reused, require the original CODEX application to remain inside
@@ -5086,6 +5261,7 @@ class AutoTradeCycle:
             predictive_limits_path=self.gpt_predictive_limits_path,
             news_items_path=self.gpt_news_items_path,
             news_health_path=self.gpt_news_health_path,
+            execution_ledger_path=self.execution_ledger_db_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,
             max_lanes=self.gpt_max_lanes,
@@ -5266,6 +5442,10 @@ def _snapshot_to_json(snapshot) -> str:
                 "timestamp_utc": quote.timestamp_utc.isoformat(),
             }
             for pair, quote in snapshot.quotes.items()
+        },
+        "home_conversions": {
+            str(currency).upper(): float(rate)
+            for currency, rate in snapshot.home_conversions.items()
         },
     }
     if getattr(snapshot, "account", None) is not None:

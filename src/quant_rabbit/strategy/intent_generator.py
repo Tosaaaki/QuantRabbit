@@ -52,7 +52,10 @@ from quant_rabbit.paths import (
     effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
-from quant_rabbit.capture_economics import read_exact_vehicle_take_profit_metrics
+from quant_rabbit.capture_economics import (
+    read_exact_vehicle_net_metrics,
+    read_exact_vehicle_take_profit_metrics,
+)
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
     MARGIN_AWARE_BASKET_BUFFER,
@@ -4259,6 +4262,11 @@ def _forecast_directional_calibration_for_forecast(
         hit_rates=hit_rates,
         regime=regime,
     )
+    # Preserve which direction-specific bucket actually governed confidence
+    # even when its numeric sample floor is not yet sufficient for live use.
+    # Without this, UP/DOWN calibration was applied in the forecaster but the
+    # downstream evidence packet misleadingly reported a null alias.
+    payload["directional_calibration_name"] = calibration_name
     bucket = _projection_hit_rate_bucket(
         hit_rates,
         calibration_name,
@@ -5547,6 +5555,11 @@ class IntentGenerator:
             if snapshot is not None
             else None
         )
+        exact_vehicle_net_metrics = (
+            _exact_vehicle_net_metrics(self.data_root / "execution_ledger.db")
+            if snapshot is not None
+            else None
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -5574,6 +5587,7 @@ class IntentGenerator:
                         self_improvement_guardian_issue=self_improvement_guardian_issue,
                         loss_asymmetry_guard=loss_asymmetry_guard,
                         exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
+                        exact_vehicle_net_metrics=exact_vehicle_net_metrics,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -5613,6 +5627,7 @@ class IntentGenerator:
         self_improvement_guardian_issue: dict[str, str] | None = None,
         loss_asymmetry_guard: dict[str, Any] | None = None,
         exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
+        exact_vehicle_net_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -5695,6 +5710,7 @@ class IntentGenerator:
             data_root=data_root,
             loss_asymmetry_guard=loss_asymmetry_guard,
             exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
+            exact_vehicle_net_metrics=exact_vehicle_net_metrics,
         )
         risk_policy = RiskPolicy(
             block_new_entries_with_pending_entry_orders=False,
@@ -6675,6 +6691,52 @@ OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
 POSITIVE_ROTATION_CONFIDENCE_Z = 1.96
 
 
+def _exact_vehicle_net_allocation_metadata(
+    metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None,
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+) -> dict[str, Any]:
+    """Bind all audited exits for the exact entry vehicle into intent evidence."""
+
+    vehicle = _vehicle_for_order_type(order_type)
+    if metrics is None or vehicle not in {"LIMIT", "MARKET", "STOP"}:
+        return {}
+    key = (pair.upper(), side.value.upper(), method.value.upper(), vehicle)
+    row = metrics.get(key, {})
+    return {
+        "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_exact_vehicle_net_scope_key": (
+            f"{pair}|{side.value}|{method.value}|{vehicle}|ALL_AUDITED_EXITS"
+        ),
+        "capture_exact_vehicle_net_vehicle": vehicle,
+        "capture_exact_vehicle_net_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_net"
+        ),
+        "capture_exact_vehicle_net_exit_scope": row.get("exit_scope"),
+        "capture_exact_vehicle_net_trades": row.get("trades", 0),
+        "capture_exact_vehicle_net_wins": row.get("wins", 0),
+        "capture_exact_vehicle_net_losses": row.get("losses", 0),
+        "capture_exact_vehicle_net_jpy": row.get("net_jpy", 0.0),
+        "capture_exact_vehicle_net_expectancy_jpy": row.get(
+            "expectancy_jpy_per_trade", 0.0
+        ),
+        "capture_exact_vehicle_net_avg_win_jpy": row.get("avg_win_jpy", 0.0),
+        "capture_exact_vehicle_net_avg_loss_jpy": row.get("avg_loss_jpy", 0.0),
+        "capture_exact_vehicle_net_unresolved_realized_trades": row.get(
+            "unresolved_realized_trades", 0
+        ),
+        "capture_exact_vehicle_net_unresolved_realized_net_jpy": row.get(
+            "unresolved_realized_net_jpy", 0.0
+        ),
+        "capture_exact_vehicle_net_unresolved_trade_ids_sha256": row.get(
+            "unresolved_trade_ids_sha256"
+        ),
+    }
+
+
 def _loss_asymmetry_sizing_plan(
     guard: dict[str, Any] | None,
     *,
@@ -6686,6 +6748,7 @@ def _loss_asymmetry_sizing_plan(
     order_type: OrderType,
     tp_execution_metadata: dict[str, Any],
     exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
+    exact_vehicle_net_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Cap fresh-entry risk unless this exact exit shape has proved payoff.
 
@@ -6693,10 +6756,17 @@ def _loss_asymmetry_sizing_plan(
     is used. HEDGE intents are excluded because they manage existing exposure
     under the hedge timing contract instead of opening a fresh one-way bet.
     """
+    exact_net_metadata = _exact_vehicle_net_allocation_metadata(
+        exact_vehicle_net_metrics,
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+    )
     if not guard or not guard.get("active"):
-        return base_max_loss_jpy, {}
+        return base_max_loss_jpy, exact_net_metadata
     if str(position_metadata.get("position_intent") or "NEW").upper() == "HEDGE":
-        return base_max_loss_jpy, {}
+        return base_max_loss_jpy, exact_net_metadata
     if guard.get("stale"):
         metadata = {
             "loss_asymmetry_guard_active": True,
@@ -6721,11 +6791,12 @@ def _loss_asymmetry_sizing_plan(
             "capture_payoff_ratio": guard.get("payoff_ratio"),
             "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
             "capture_economics_source": guard.get("source"),
+            **exact_net_metadata,
         }
         return base_max_loss_jpy, metadata
     cap = _optional_float(guard.get("loss_cap_jpy"))
     if cap is None or cap <= 0:
-        return base_max_loss_jpy, {}
+        return base_max_loss_jpy, exact_net_metadata
     broad_metrics, broad_scope_name, broad_scope_key = _capture_scoped_exit_metrics(
         guard,
         pair=pair,
@@ -6787,11 +6858,13 @@ def _loss_asymmetry_sizing_plan(
         "capture_take_profit_expectancy_jpy": (
             0.0 if zero_exact_tp else scoped_tp.get("expectancy_jpy_per_trade")
         ),
+        "capture_take_profit_net_jpy": 0.0 if zero_exact_tp else scoped_tp.get("net_jpy"),
         "capture_take_profit_avg_win_jpy": 0.0 if zero_exact_tp else scoped_tp.get("avg_win_jpy"),
         "capture_take_profit_avg_loss_jpy": 0.0 if zero_exact_tp else scoped_tp.get("avg_loss_jpy"),
         "capture_take_profit_losses": 0 if zero_exact_tp else scoped_tp.get("losses"),
         "capture_market_close_expectancy_jpy": guard.get("market_close_expectancy_jpy"),
         "capture_economics_source": guard.get("source"),
+        **exact_net_metadata,
     }
     if exact_vehicle_required:
         metadata["capture_take_profit_exact_vehicle_required"] = True
@@ -7208,6 +7281,10 @@ def _capture_scoped_exit_metrics(
 
 def _exact_vehicle_take_profit_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
     return read_exact_vehicle_take_profit_metrics(path)
+
+
+def _exact_vehicle_net_metrics(path: Path) -> dict[tuple[str, str, str, str], dict[str, Any]] | None:
+    return read_exact_vehicle_net_metrics(path)
 
 
 def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
@@ -9056,6 +9133,7 @@ def _intent_from_lane(
     data_root: Path | None = None,
     loss_asymmetry_guard: dict[str, Any] | None = None,
     exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
+    exact_vehicle_net_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -9396,6 +9474,7 @@ def _intent_from_lane(
         order_type=order_type,
         tp_execution_metadata=tp_execution_metadata,
         exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
+        exact_vehicle_net_metrics=exact_vehicle_net_metrics,
     )
     proof_collection_loss_cap, proof_collection_metadata = _loss_asymmetry_tp_proof_collection_min_lot_plan(
         metadata={**loss_asymmetry_metadata, **tp_execution_metadata},

@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from copy import deepcopy
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -23,7 +24,7 @@ from quant_rabbit.forecast_precision import (
     canonical_bidask_replay_precision_rule,
 )
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
-from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.predictive_scout import predictive_scout_sizing_digest
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
@@ -35,6 +36,31 @@ PREDICTIVE_SCOUT_RULE_NAME = (
     "USD_CAD_DOWN_H31_60m_C0p50_0p65_FADE_TO_UP_"
     "S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7"
 )
+
+
+def _synthetic_execution_cost_floor(
+    exact_key: tuple[str, str, str, str] = (
+        "EUR_USD",
+        "LONG",
+        "TREND_CONTINUATION",
+        "MARKET",
+    ),
+) -> dict[str, Any]:
+    material = {
+        "contract": execution_module.EXECUTION_COST_FLOOR_CONTRACT,
+        "status": "PASSED",
+        "reason": "TEST_DYNAMIC_LEDGER_EXECUTION_COST_FLOOR",
+        "failed_checks": [],
+        "scope_key": "|".join(exact_key),
+        "market_entry_adverse_p95_pips": 0.2,
+        "audited_protected_exit_adverse_p95_pips": 0.4,
+        "financing_adverse_stress_jpy_per_unit": 0.0001,
+        "spread_double_count_forbidden": True,
+    }
+    return {
+        **material,
+        "proof_sha256": execution_module._canonical_json_sha256(material),
+    }
 
 
 def _bypass_pre_post_reconciliation(self, **kwargs):
@@ -53,6 +79,39 @@ def _bypass_pre_post_reconciliation(self, **kwargs):
     )
 
 
+def _bypass_final_pre_post_boundary(self, **kwargs):
+    issues = []
+    receipt_issue = execution_module._verified_decision_receipt_change_issue(
+        self.verified_decision_path,
+        expected_sha256=kwargs["expected_receipt_sha256"],
+    )
+    if receipt_issue is not None:
+        issues.append(
+            execution_module.RiskIssue(
+                receipt_issue["code"],
+                receipt_issue["message"],
+                receipt_issue.get("severity", "BLOCK"),
+            )
+        )
+    current_order_sha = execution_module._canonical_order_request_sha256(
+        kwargs["order_request"]
+    )
+    if current_order_sha != kwargs["expected_order_request_sha256"]:
+        issues.append(
+            execution_module.RiskIssue(
+                "FINAL_PRE_POST_ORDER_REQUEST_CHANGED_AFTER_RESERVATION",
+                "test boundary observed a changed broker order request",
+            )
+        )
+    return execution_module._FinalPrePostBoundaryResult(
+        evidence={
+            "status": "BLOCKED" if issues else "TEST_BYPASS",
+            "post_attempted": False,
+        },
+        issues=tuple(issues),
+    )
+
+
 class LiveOrderGatewayTest(unittest.TestCase):
     def setUp(self) -> None:
         self._guardian_tmp = tempfile.TemporaryDirectory()
@@ -60,12 +119,29 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
         self._original_target_trades_reader = execution_module._target_trades_per_day_from_state
         self._original_pre_post_reconcile = execution_module.LiveOrderGateway._pre_post_reconcile
+        self._original_final_pre_post_boundary = (
+            execution_module.LiveOrderGateway._final_pre_post_boundary
+        )
         self._pre_post_reconcile_patch = patch.object(
             execution_module.LiveOrderGateway,
             "_pre_post_reconcile",
             _bypass_pre_post_reconciliation,
         )
         self._pre_post_reconcile_patch.start()
+        self._final_pre_post_boundary_patch = patch.object(
+            execution_module.LiveOrderGateway,
+            "_final_pre_post_boundary",
+            _bypass_final_pre_post_boundary,
+        )
+        self._final_pre_post_boundary_patch.start()
+        self._execution_cost_floor_patch = patch.object(
+            execution_module,
+            "execution_cost_floor_from_surface",
+            side_effect=lambda _surface, *, exact_key, as_of: (
+                _synthetic_execution_cost_floor(exact_key)
+            ),
+        )
+        self._execution_cost_floor_patch.start()
         self._prior_guardian_watchdog = os.environ.get("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH")
         self._prior_guardian_consumption = os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH")
         self._prior_guardian_operator_review = os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH")
@@ -80,6 +156,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
         os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(guardian_paths["broker_snapshot"])
 
     def tearDown(self) -> None:
+        self._execution_cost_floor_patch.stop()
+        self._final_pre_post_boundary_patch.stop()
         self._pre_post_reconcile_patch.stop()
         execution_module._per_trade_risk_from_state = self._original_per_trade_reader
         execution_module._daily_risk_budget_from_state = self._original_daily_budget_reader
@@ -101,6 +179,1367 @@ class LiveOrderGatewayTest(unittest.TestCase):
         else:
             os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = self._prior_guardian_broker_snapshot
         self._guardian_tmp.cleanup()
+
+    def _run_real_numeric_gateway(
+        self,
+        *,
+        root: Path,
+        client: ReconciliationExecutionClient,
+        batch: bool,
+        metadata: dict[str, Any] | None = None,
+        tp: float | None = None,
+        sl: float | None = None,
+        mutate_price_bound_after_reservation: bool = False,
+    ) -> tuple[Any, dict[str, Any], Path]:
+        lane_id = "lane:EUR_USD:LONG"
+        target_state, target_report, ledger_path, ledger_report = (
+            _reconciliation_files(root, edge_vehicle="MARKET")
+        )
+        resolved_metadata = (
+            dict(metadata)
+            if metadata is not None
+            else _ordinary_claim_metadata(
+                vehicle="MARKET",
+                numeric_forecast=True,
+            )
+        )
+        if "forecast_directional_economic_hit_rate" in resolved_metadata:
+            quote_time = client.snapshot_value.quotes[
+                "EUR_USD"
+            ].timestamp_utc
+            emitted_at = (quote_time - timedelta(seconds=1)).isoformat()
+            resolved_metadata["forecast_cycle_id"] = (
+                f"pre-entry-forecast-refresh:{emitted_at}:{emitted_at}"
+            )
+        intents = _intents(
+            root,
+            lane_id=lane_id,
+            order_type="MARKET",
+            metadata=resolved_metadata,
+            tp=tp,
+            sl=sl,
+        )
+        gateway = LiveOrderGateway(
+            client=client,
+            strategy_profile=_profile(root),
+            output_path=root / "request.json",
+            report_path=root / "report.md",
+            target_state_path=target_state,
+            target_report_path=target_report,
+            execution_ledger_db_path=ledger_path,
+            execution_ledger_report_path=ledger_report,
+            verified_decision_path=_write_ordinary_verified_decision(
+                root,
+                lane_id=lane_id,
+            ),
+            live_enabled=True,
+        )
+        original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
+
+        def reserve_then_optionally_mutate(gateway_self, **kwargs):
+            result = original_reserve(gateway_self, **kwargs)
+            if (
+                mutate_price_bound_after_reservation
+                and result.issue is None
+                and kwargs["order_request"].get("priceBound")
+            ):
+                current = float(kwargs["order_request"]["priceBound"])
+                kwargs["order_request"]["priceBound"] = (
+                    execution_module._price(
+                        "EUR_USD",
+                        current + execution_module._price_tick("EUR_USD"),
+                    )
+                )
+            return result
+
+        with (
+            patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ),
+            patch.object(
+                LiveOrderGateway,
+                "_final_pre_post_boundary",
+                self._original_final_pre_post_boundary,
+            ),
+            patch.object(
+                LiveOrderGateway,
+                "_reserve_ordinary_entry_post",
+                reserve_then_optionally_mutate,
+            ),
+        ):
+            summary = (
+                gateway.run_batch(
+                    intents_path=intents,
+                    lane_ids=(lane_id,),
+                    send=True,
+                    confirm_live=True,
+                )
+                if batch
+                else gateway.run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+            )
+        payload = json.loads((root / "request.json").read_text())
+        order = payload["orders"][0] if batch else payload
+        return summary, order, ledger_path
+
+    def test_codex_capital_allocation_binds_preclip_units_and_allows_only_later_reduction(self) -> None:
+        lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
+        board_sha = "a" * 64
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": lane_id,
+            "size_multiple": 0.75,
+            "selected_units": 1500,
+            "allocation_board_sha256": board_sha,
+            "rationale": "Direction-specific forecast edge supports bounded exposure.",
+        }
+        allocation_sha = execution_module.hashlib.sha256(
+            json.dumps(
+                allocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        decision = {
+            "action": "TRADE",
+            "selected_lane_id": lane_id,
+            "selected_lane_ids": [lane_id],
+            "capital_allocation": allocation,
+            "decision_provenance": {
+                "schema_version": 2,
+                "author_kind": "CODEX_MARKET_READ",
+                "capital_allocation_sha256": allocation_sha,
+                "capital_allocation_board_sha256": board_sha,
+                "authorized_size_multiple": 0.75,
+                "authorized_units": 1500,
+            },
+        }
+        intent = SimpleNamespace(side=Side.LONG)
+
+        exact = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision,
+            selected_lane_id=lane_id,
+            base_units=2001,
+            authorized_size_multiple=0.75,
+            authorized_units=1500,
+            final_units=1500,
+            order_request={"units": "1500"},
+            intent=intent,
+        )
+        reduced = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision,
+            selected_lane_id=lane_id,
+            base_units=2001,
+            authorized_size_multiple=0.75,
+            authorized_units=1500,
+            final_units=1200,
+            order_request={"units": "1200"},
+            intent=intent,
+        )
+
+        self.assertEqual(exact, [])
+        self.assertEqual(reduced, [])
+
+    def test_codex_capital_allocation_rejects_caller_and_final_unit_mismatch(self) -> None:
+        lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": lane_id,
+            "size_multiple": 0.5,
+            "selected_units": 1000,
+            "allocation_board_sha256": "b" * 64,
+            "rationale": "Use half size.",
+        }
+        allocation_sha = execution_module.hashlib.sha256(
+            json.dumps(
+                allocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        decision = {
+            "action": "TRADE",
+            "selected_lane_id": lane_id,
+            "selected_lane_ids": [lane_id],
+            "capital_allocation": allocation,
+            "decision_provenance": {
+                "schema_version": 2,
+                "author_kind": "CODEX_MARKET_READ",
+                "capital_allocation_sha256": allocation_sha,
+                "capital_allocation_board_sha256": "b" * 64,
+                "authorized_size_multiple": 0.5,
+                "authorized_units": 1000,
+            },
+        }
+
+        issues = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision,
+            selected_lane_id=lane_id,
+            base_units=2000,
+            authorized_size_multiple=1.0,
+            authorized_units=2000,
+            final_units=1001,
+            order_request={"units": "1001"},
+            intent=SimpleNamespace(side=Side.LONG),
+        )
+        codes = {issue.code for issue in issues}
+
+        self.assertIn("GPT_CAPITAL_ALLOCATION_MULTIPLE_MISMATCH", codes)
+        self.assertIn("GPT_CAPITAL_ALLOCATION_PRECLIP_MISMATCH", codes)
+        self.assertIn("GPT_CAPITAL_ALLOCATION_FINAL_UNITS_EXCEEDED", codes)
+
+    def test_verified_allocation_receipt_change_is_blocked_before_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gpt_decision.json"
+            path.write_text('{"status":"ACCEPTED"}')
+            expected = execution_module._file_sha256(path)
+            path.write_text('{"status":"REPLACED"}')
+
+            issue = execution_module._verified_decision_receipt_change_issue(
+                path,
+                expected_sha256=expected,
+            )
+
+            self.assertIsNotNone(issue)
+            self.assertEqual(
+                issue["code"],
+                "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST",
+            )
+
+    def test_missing_verified_receipt_reports_single_change_issue_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                client = FakeExecutionClient()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=root / "missing_gpt_decision.json",
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                )
+
+                if batch:
+                    summary = gateway.run_batch(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_ids=(lane_id,),
+                        send=True,
+                        confirm_live=True,
+                    )
+                else:
+                    summary = gateway.run(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_id=lane_id,
+                        send=True,
+                        confirm_live=True,
+                    )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    payload["orders"][0]["risk_issues"]
+                    if batch
+                    else payload["risk_issues"]
+                )
+                self.assertEqual(
+                    sum(
+                        issue["code"]
+                        == "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST"
+                        for issue in risk_issues
+                    ),
+                    1,
+                )
+
+    def test_accepted_trade_without_codex_allocation_is_blocked_before_direct_and_batch_post(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                verified = _write_ordinary_verified_decision(root, lane_id=lane_id)
+                receipt = json.loads(verified.read_text())
+                receipt["decision"].pop("capital_allocation", None)
+                receipt["decision"].pop("decision_provenance", None)
+                receipt.pop("market_read_prediction", None)
+                verified.write_text(json.dumps(receipt) + "\n")
+                client = FakeExecutionClient()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=verified,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                )
+
+                if batch:
+                    summary = gateway.run_batch(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_ids=(lane_id,),
+                        send=True,
+                        confirm_live=True,
+                    )
+                else:
+                    summary = gateway.run(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_id=lane_id,
+                        send=True,
+                        confirm_live=True,
+                    )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    payload["orders"][0]["risk_issues"]
+                    if batch
+                    else payload["risk_issues"]
+                )
+                codes = {issue["code"] for issue in risk_issues}
+                self.assertIn("GPT_CAPITAL_ALLOCATION_AUTHOR_MISMATCH", codes)
+                self.assertIn("GPT_CAPITAL_ALLOCATION_REQUIRED_FOR_LIVE_SEND", codes)
+
+    def test_verified_receipt_mutation_during_ordinary_reservation_blocks_direct_and_batch_post(self) -> None:
+        original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                verified = _write_ordinary_verified_decision(root, lane_id=lane_id)
+                client = FakeExecutionClient()
+
+                def mutate_after_reservation(gateway_self, **kwargs):
+                    result = original_reserve(gateway_self, **kwargs)
+                    receipt = json.loads(verified.read_text())
+                    receipt["decision"]["capital_allocation"]["selected_units"] += 1
+                    verified.write_text(json.dumps(receipt) + "\n")
+                    return result
+
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=verified,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                )
+                with patch.object(
+                    LiveOrderGateway,
+                    "_reserve_ordinary_entry_post",
+                    mutate_after_reservation,
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=_intents(
+                                root,
+                                lane_id=lane_id,
+                                metadata=_ordinary_claim_metadata(),
+                            ),
+                            lane_ids=(lane_id,),
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=_intents(
+                                root,
+                                lane_id=lane_id,
+                                metadata=_ordinary_claim_metadata(),
+                            ),
+                            lane_id=lane_id,
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    payload["orders"][0]["risk_issues"]
+                    if batch
+                    else payload["risk_issues"]
+                )
+                self.assertIn(
+                    "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST",
+                    {issue["code"] for issue in risk_issues},
+                )
+
+    def test_transaction_advance_during_reservation_blocks_direct_and_batch_post(self) -> None:
+        original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                target_state, target_report, ledger_path, ledger_report = (
+                    _reconciliation_files(root, edge_vehicle="MARKET")
+                )
+                intents = _intents(
+                    root,
+                    lane_id=lane_id,
+                    order_type="MARKET",
+                    metadata=_ordinary_claim_metadata(
+                        vehicle="MARKET",
+                        numeric_forecast=True,
+                    ),
+                )
+                verified = _write_ordinary_verified_decision(
+                    root,
+                    lane_id=lane_id,
+                )
+                client = PostReservationTransactionAdvanceClient()
+
+                def reserve_then_advance(gateway_self, **kwargs):
+                    result = original_reserve(gateway_self, **kwargs)
+                    if result.issue is None:
+                        client.advance_after_reservation = True
+                    return result
+
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    verified_decision_path=verified,
+                    live_enabled=True,
+                )
+                with (
+                    patch.object(
+                        LiveOrderGateway,
+                        "_pre_post_reconcile",
+                        self._original_pre_post_reconcile,
+                    ),
+                    patch.object(
+                        LiveOrderGateway,
+                        "_final_pre_post_boundary",
+                        self._original_final_pre_post_boundary,
+                    ),
+                    patch.object(
+                        LiveOrderGateway,
+                        "_reserve_ordinary_entry_post",
+                        reserve_then_advance,
+                    ),
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=intents,
+                            lane_ids=(lane_id,),
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=intents,
+                            lane_id=lane_id,
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                order = payload["orders"][0] if batch else payload
+                codes = {issue["code"] for issue in order["risk_issues"]}
+                self.assertIn(
+                    "FINAL_PRE_POST_TRANSACTION_ID_CHANGED_AFTER_RESERVATION",
+                    codes,
+                )
+                boundary = order["pre_post_reconciliation"][
+                    "final_post_reservation_boundary"
+                ]
+                self.assertEqual(boundary["status"], "BLOCKED")
+                self.assertEqual(boundary["early_broker_last_transaction_id"], "100")
+                self.assertEqual(boundary["final_ledger_last_transaction_id"], "101")
+                self.assertEqual(boundary["final_broker_last_transaction_id"], "101")
+                self.assertFalse(boundary["transaction_id_unchanged"])
+                self.assertEqual(
+                    boundary["capital_allocation_edge_recheck"]["status"],
+                    "PASSED",
+                )
+                self.assertFalse(
+                    order["sizing_evidence"]["capital_allocation_validated"]
+                )
+                self.assertEqual(
+                    order["ordinary_entry_claim"]["status"],
+                    "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                )
+                with closing(sqlite3.connect(ledger_path)) as conn:
+                    claim_status = conn.execute(
+                        "SELECT status FROM ordinary_live_entry_signal_claims"
+                    ).fetchone()[0]
+                self.assertEqual(
+                    claim_status,
+                    "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                )
+
+    def test_unchanged_transaction_passes_final_boundary_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                target_state, target_report, ledger_path, ledger_report = (
+                    _reconciliation_files(root, edge_vehicle="MARKET")
+                )
+                intents = _intents(
+                    root,
+                    lane_id=lane_id,
+                    order_type="MARKET",
+                    metadata=_ordinary_claim_metadata(
+                        vehicle="MARKET",
+                        numeric_forecast=True,
+                    ),
+                )
+                client = ReconciliationExecutionClient()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    verified_decision_path=_write_ordinary_verified_decision(
+                        root,
+                        lane_id=lane_id,
+                    ),
+                    live_enabled=True,
+                )
+                with (
+                    patch.object(
+                        LiveOrderGateway,
+                        "_pre_post_reconcile",
+                        self._original_pre_post_reconcile,
+                    ),
+                    patch.object(
+                        LiveOrderGateway,
+                        "_final_pre_post_boundary",
+                        self._original_final_pre_post_boundary,
+                    ),
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=intents,
+                            lane_ids=(lane_id,),
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=intents,
+                            lane_id=lane_id,
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                payload = json.loads((root / "request.json").read_text())
+                order = payload["orders"][0] if batch else payload
+                boundary = order["pre_post_reconciliation"][
+                    "final_post_reservation_boundary"
+                ]
+                self.assertEqual(boundary["status"], "PASSED")
+                self.assertTrue(boundary["transaction_id_unchanged"])
+                self.assertTrue(boundary["verified_decision_sha_matches"])
+                self.assertTrue(boundary["order_request_sha_matches"])
+                self.assertTrue(
+                    order["sizing_evidence"]["capital_allocation_validated"]
+                )
+                self.assertEqual(
+                    order["ordinary_entry_claim"]["status"],
+                    "BROKER_RESPONSE_RECORDED",
+                )
+                early_bound = order["pre_post_reconciliation"][
+                    "capital_allocation_numeric_recheck"
+                ]["market_price_bound"]
+                self.assertEqual(
+                    order["order_request"]["priceBound"],
+                    early_bound["price_bound_text"],
+                )
+                self.assertEqual(
+                    client.orders[0]["priceBound"],
+                    early_bound["price_bound_text"],
+                )
+                final_bound = boundary[
+                    "capital_allocation_numeric_recheck"
+                ]["market_price_bound"]
+                self.assertEqual(
+                    final_bound["reserved_price_bound_text"],
+                    early_bound["price_bound_text"],
+                )
+                self.assertEqual(
+                    boundary["post_s5_account_fence"]["status"],
+                    "PASSED",
+                )
+
+    def test_frozen_numeric_proof_rejects_forged_net_cost_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary, order, _ = self._run_real_numeric_gateway(
+                root=Path(tmp),
+                client=ReconciliationExecutionClient(),
+                batch=False,
+            )
+        self.assertTrue(summary.sent)
+        proof = order["pre_post_reconciliation"][
+            "capital_allocation_numeric_recheck"
+        ]
+        order_request = order["order_request"]
+        expected_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.17306,
+            tp=1.17450,
+            sl=1.17253,
+            thesis="frozen cost proof",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="trend continuation pressure",
+                chart_story="trend staircase",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="technical invalidation",
+            ),
+        )
+
+        def rehash(candidate: dict[str, Any]) -> None:
+            bound = candidate["market_price_bound"]
+            bound_material = dict(bound)
+            bound_material.pop("proof_sha256", None)
+            bound["proof_sha256"] = (
+                execution_module._canonical_json_sha256(bound_material)
+            )
+            material = dict(candidate)
+            material.pop("proof_sha256", None)
+            candidate["proof_sha256"] = (
+                execution_module._canonical_json_sha256(material)
+            )
+
+        def frozen(candidate: dict[str, Any]) -> bool:
+            return execution_module._capital_allocation_numeric_proof_is_frozen(
+                candidate,
+                order_request=order_request,
+                required=True,
+                expected_intent=expected_intent,
+            )
+
+        self.assertTrue(frozen(proof))
+        bound = proof["market_price_bound"]
+        self.assertGreater(bound["outcome_cost_jpy"], 0.0)
+        self.assertAlmostEqual(
+            bound["outcome_cost_jpy"],
+            bound["exit_execution_stress_jpy"]
+            + bound["financing_stress_jpy"],
+        )
+        self.assertAlmostEqual(
+            bound["worst_fill_net_risk_jpy"],
+            bound["worst_fill_risk_jpy"] + bound["outcome_cost_jpy"],
+        )
+        self.assertAlmostEqual(
+            bound["worst_fill_net_reward_jpy"],
+            bound["worst_fill_reward_jpy"] - bound["outcome_cost_jpy"],
+        )
+
+        def cost_exact_once(candidate: dict[str, Any]) -> None:
+            forged = candidate["market_price_bound"]
+            forged["outcome_cost_jpy"] += 1.0
+            forged["worst_fill_net_risk_jpy"] += 1.0
+            forged["worst_fill_net_reward_jpy"] -= 1.0
+            forged["next_adverse_tick_net_risk_jpy"] += 1.0
+            forged["next_adverse_tick_net_reward_jpy"] -= 1.0
+
+        def wrong_cost_contract(candidate: dict[str, Any]) -> None:
+            cost = deepcopy(
+                candidate["numeric_ceiling"]["execution_cost_floor"]
+            )
+            cost["contract"] = "FORGED_COST_CONTRACT"
+            material = dict(cost)
+            material.pop("proof_sha256", None)
+            cost["proof_sha256"] = (
+                execution_module._canonical_json_sha256(material)
+            )
+            candidate["numeric_ceiling"]["execution_cost_floor"] = deepcopy(
+                cost
+            )
+            candidate["market_price_bound"]["execution_cost_floor"] = deepcopy(
+                cost
+            )
+
+        def wrong_cost_scope(candidate: dict[str, Any]) -> None:
+            cost = deepcopy(
+                candidate["numeric_ceiling"]["execution_cost_floor"]
+            )
+            wrong = "EUR_USD|LONG|BREAKOUT_FAILURE|MARKET"
+            cost["scope_key"] = wrong
+            material = dict(cost)
+            material.pop("proof_sha256", None)
+            cost["proof_sha256"] = (
+                execution_module._canonical_json_sha256(material)
+            )
+            candidate["numeric_ceiling"]["execution_cost_floor"] = deepcopy(
+                cost
+            )
+            forged_bound = candidate["market_price_bound"]
+            forged_bound["execution_cost_floor"] = deepcopy(cost)
+            forged_bound["method"] = "BREAKOUT_FAILURE"
+            forged_bound["expected_execution_cost_scope_key"] = wrong
+
+        mutations = {
+            "cost_counted_twice": cost_exact_once,
+            "worst_net_risk_identity": lambda candidate: candidate[
+                "market_price_bound"
+            ].__setitem__(
+                "worst_fill_net_risk_jpy",
+                candidate["market_price_bound"]["worst_fill_net_risk_jpy"]
+                + 1.0,
+            ),
+            "next_net_reward_identity": lambda candidate: candidate[
+                "market_price_bound"
+            ].__setitem__(
+                "next_adverse_tick_net_reward_jpy",
+                candidate["market_price_bound"][
+                    "next_adverse_tick_net_reward_jpy"
+                ]
+                - 1.0,
+            ),
+            "boolean_net_risk": lambda candidate: candidate[
+                "market_price_bound"
+            ].__setitem__("worst_fill_net_risk_jpy", True),
+            "nan_net_reward": lambda candidate: candidate[
+                "market_price_bound"
+            ].__setitem__("worst_fill_net_reward_jpy", float("nan")),
+            "portfolio_below_net_risk": lambda candidate: candidate[
+                "market_price_bound"
+            ].__setitem__(
+                "portfolio_loss_remaining_jpy",
+                candidate["market_price_bound"]["worst_fill_net_risk_jpy"]
+                - 0.01,
+            ),
+            "wrong_cost_contract": wrong_cost_contract,
+            "wrong_cost_scope": wrong_cost_scope,
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                forged = deepcopy(proof)
+                mutate(forged)
+                rehash(forged)
+                self.assertFalse(frozen(forged))
+
+    def test_price_bound_mutation_after_reservation_blocks_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                summary, order, ledger_path = self._run_real_numeric_gateway(
+                    root=Path(tmp),
+                    client=client,
+                    batch=batch,
+                    mutate_price_bound_after_reservation=True,
+                )
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                codes = {issue["code"] for issue in order["risk_issues"]}
+                self.assertIn(
+                    "FINAL_PRE_POST_ORDER_REQUEST_CHANGED_AFTER_RESERVATION",
+                    codes,
+                )
+                boundary = order["pre_post_reconciliation"][
+                    "final_post_reservation_boundary"
+                ]
+                self.assertFalse(boundary["order_request_sha_matches"])
+                self.assertFalse(boundary["post_attempted"])
+                self.assertEqual(
+                    order["ordinary_entry_claim"]["status"],
+                    "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                )
+                with closing(sqlite3.connect(ledger_path)) as conn:
+                    claim_status = conn.execute(
+                        "SELECT status FROM ordinary_live_entry_signal_claims"
+                    ).fetchone()[0]
+                self.assertEqual(
+                    claim_status,
+                    "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                )
+
+    def test_final_s5_path_corruption_retains_reservation_direct_and_batch(self) -> None:
+        expected_reasons = {
+            "target_touch": "FORECAST_S5_TP_OR_TARGET_TOUCHED",
+            "invalidation_touch": "FORECAST_S5_INVALIDATION_TOUCHED",
+            "both_touch": "FORECAST_S5_BOTH_BARRIERS_TOUCHED",
+            "gap": "FORECAST_S5_COVERAGE_INCOMPLETE",
+            "malformed": "FORECAST_S5_CANDLE_INVALID",
+            "fetch_failure": "FORECAST_S5_FETCH_FAILED",
+            "timeout": "FORECAST_S5_FETCH_FAILED",
+            "wrong_instrument": "FORECAST_S5_PAYLOAD_INVALID",
+        }
+        for batch in (False, True):
+            for scenario, expected_reason in expected_reasons.items():
+                with (
+                    self.subTest(batch=batch, scenario=scenario),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    client = FinalS5ScenarioExecutionClient(scenario)
+                    summary, order, ledger_path = self._run_real_numeric_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                    )
+                    self.assertFalse(summary.sent)
+                    self.assertEqual(client.orders, [])
+                    codes = {issue["code"] for issue in order["risk_issues"]}
+                    self.assertIn(
+                        "FINAL_PRE_POST_GPT_ALLOCATION_FORECAST_S5_PATH_REPROOF_FAILED",
+                        codes,
+                    )
+                    boundary = order["pre_post_reconciliation"][
+                        "final_post_reservation_boundary"
+                    ]
+                    path_proof = boundary[
+                        "capital_allocation_numeric_recheck"
+                    ]["forecast_s5_path_proof"]
+                    self.assertEqual(path_proof["reason"], expected_reason)
+                    self.assertEqual(boundary["status"], "BLOCKED")
+                    self.assertFalse(boundary["post_attempted"])
+                    self.assertEqual(
+                        order["ordinary_entry_claim"]["status"],
+                        "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                    )
+                    with closing(sqlite3.connect(ledger_path)) as conn:
+                        claim_status = conn.execute(
+                            "SELECT status FROM ordinary_live_entry_signal_claims"
+                        ).fetchone()[0]
+                    self.assertEqual(
+                        claim_status,
+                        "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                    )
+
+    def test_post_s5_account_deterioration_blocks_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            for scenario in ("nav", "margin_used", "margin_available"):
+                with (
+                    self.subTest(batch=batch, scenario=scenario),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    client = PostS5AccountDeteriorationClient(scenario)
+                    summary, order, _ = self._run_real_numeric_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                    )
+                    self.assertFalse(summary.sent)
+                    self.assertEqual(client.orders, [])
+                    self.assertEqual(client.s5_calls, 2)
+                    self.assertEqual(client.account_reads_after_final_s5, 1)
+                    codes = {issue["code"] for issue in order["risk_issues"]}
+                    self.assertIn("FINAL_PRE_POST_ACCOUNT_FENCE_FAILED", codes)
+                    boundary = order["pre_post_reconciliation"][
+                        "final_post_reservation_boundary"
+                    ]
+                    fence = boundary["post_s5_account_fence"]
+                    self.assertEqual(fence["status"], "BLOCKED")
+                    self.assertEqual(
+                        fence["read_order"],
+                        "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                    )
+                    self.assertTrue(
+                        fence[f"{scenario}_worsened"]
+                        if scenario != "margin_available"
+                        else fence["margin_available_worsened"]
+                    )
+                    self.assertEqual(
+                        order["ordinary_entry_claim"]["status"],
+                        "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                    )
+
+    def test_market_price_bound_rounding_and_next_adverse_tick_fail_closed(self) -> None:
+        snapshot = ReconciliationExecutionClient().snapshot_value
+        long_metadata = _ordinary_claim_metadata(
+            vehicle="MARKET",
+            numeric_forecast=True,
+        )
+        long_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.17306,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="long bound",
+            metadata=long_metadata,
+        )
+        long_proof, long_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=long_intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=2_000.0,
+                execution_cost_floor=_synthetic_execution_cost_floor(
+                    ("EUR_USD", "LONG", "UNKNOWN", "MARKET")
+                ),
+            )
+        )
+        self.assertIsNone(long_issue)
+        self.assertEqual(long_proof["status"], "PASSED")
+        self.assertTrue(long_proof["next_adverse_tick_fails"])
+        tick = execution_module._price_tick("EUR_USD")
+        self.assertAlmostEqual(
+            long_proof["price_bound"] / tick,
+            round(long_proof["price_bound"] / tick),
+        )
+        next_long, next_long_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=long_intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=2_000.0,
+                execution_cost_floor=_synthetic_execution_cost_floor(
+                    ("EUR_USD", "LONG", "UNKNOWN", "MARKET")
+                ),
+                reserved_price_bound=execution_module._price(
+                    "EUR_USD",
+                    long_proof["price_bound"] + tick,
+                ),
+            )
+        )
+        self.assertIsNotNone(next_long_issue)
+        self.assertEqual(next_long["status"], "BLOCKED")
+
+        short_metadata = dict(long_metadata)
+        short_metadata.update(
+            {
+                "forecast_direction": "DOWN",
+                "forecast_directional_calibration_name": (
+                    "directional_forecast_down"
+                ),
+                "forecast_target_price": 1.17142,
+                "forecast_invalidation_price": 1.17342,
+            }
+        )
+        short_intent = replace(
+            long_intent,
+            side=Side.SHORT,
+            entry=1.17298,
+            tp=1.17150,
+            sl=1.17350,
+            thesis="short bound",
+            metadata=short_metadata,
+        )
+        short_proof, short_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=short_intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=2_000.0,
+                execution_cost_floor=_synthetic_execution_cost_floor(
+                    ("EUR_USD", "SHORT", "UNKNOWN", "MARKET")
+                ),
+            )
+        )
+        self.assertIsNone(short_issue)
+        self.assertEqual(short_proof["status"], "PASSED")
+        self.assertTrue(short_proof["next_adverse_tick_fails"])
+        self.assertAlmostEqual(
+            short_proof["price_bound"] / tick,
+            round(short_proof["price_bound"] / tick),
+        )
+        next_short, next_short_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=short_intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=2_000.0,
+                execution_cost_floor=_synthetic_execution_cost_floor(
+                    ("EUR_USD", "SHORT", "UNKNOWN", "MARKET")
+                ),
+                reserved_price_bound=execution_module._price(
+                    "EUR_USD",
+                    short_proof["price_bound"] - tick,
+                ),
+            )
+        )
+        self.assertIsNotNone(next_short_issue)
+        self.assertEqual(next_short["status"], "BLOCKED")
+
+        # Regression for a concrete raw-float false positive: the old helper
+        # found +EV on unrounded rails while OANDA's 5dp TP/SL made the same
+        # bound negative. The helper must derive a different safe bound from
+        # the exact transport rails.
+        off_grid_metadata = dict(long_metadata)
+        off_grid_metadata.update(
+            {
+                "forecast_directional_economic_hit_rate": 0.70,
+                "forecast_directional_economic_samples": 100,
+            }
+        )
+        off_grid_intent = replace(
+            long_intent,
+            tp=1.1738024885932492,
+            sl=1.1724109430942786,
+            metadata=off_grid_metadata,
+        )
+        off_grid_proof, off_grid_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=off_grid_intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=2_000.0,
+                execution_cost_floor=_synthetic_execution_cost_floor(
+                    ("EUR_USD", "LONG", "UNKNOWN", "MARKET")
+                ),
+            )
+        )
+        self.assertIsNone(off_grid_issue)
+        self.assertEqual(off_grid_proof["tp"], 1.17380)
+        self.assertEqual(off_grid_proof["sl"], 1.17241)
+        self.assertEqual(
+            off_grid_proof["dependent_price_basis"],
+            "EXACT_OANDA_TRANSPORT_PRECISION",
+        )
+        self.assertTrue(off_grid_proof["worst_fill_ev_strictly_positive"])
+
+    def test_s5_validator_recomputes_rows_instead_of_trusting_forged_hashes(self) -> None:
+        client = ReconciliationExecutionClient()
+        snapshot = client.snapshot_value
+        metadata = _ordinary_claim_metadata(
+            vehicle="MARKET",
+            numeric_forecast=True,
+        )
+        emitted_at = (
+            snapshot.quotes["EUR_USD"].timestamp_utc
+            - timedelta(seconds=1)
+        ).isoformat()
+        metadata["forecast_cycle_id"] = (
+            f"pre-entry-forecast-refresh:{emitted_at}:{emitted_at}"
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.17306,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="S5 hash forgery regression",
+            metadata=metadata,
+        )
+        proof = execution_module._forecast_s5_no_touch_proof(
+            client,
+            intent=intent,
+            snapshot=snapshot,
+        )
+        self.assertEqual(proof["status"], "PASSED")
+        forged = json.loads(json.dumps(proof))
+        forged["candle_rows"][-1]["h"] = 1.17460
+        forged["max_high"] = 1.17460
+        forged["candle_rows_sha256"] = (
+            execution_module._canonical_json_sha256(
+                forged["candle_rows"]
+            )
+        )
+        forged_material = dict(forged)
+        forged_material.pop("proof_sha256", None)
+        forged["proof_sha256"] = execution_module._canonical_json_sha256(
+            forged_material
+        )
+        self.assertFalse(
+            execution_module._forecast_s5_path_proof_valid(
+                forged,
+                intent=intent,
+                snapshot=snapshot,
+                bypass_reason=None,
+            )
+        )
+        missing_rail_metadata = dict(metadata)
+        missing_rail_metadata.pop("forecast_target_price")
+        self.assertFalse(
+            execution_module._forecast_s5_path_proof_valid(
+                proof,
+                intent=replace(intent, metadata=missing_rail_metadata),
+                snapshot=snapshot,
+                bypass_reason=None,
+            )
+        )
+        original_get_json = client.get_json
+
+        def boolean_ohlc(path, query=None):
+            payload = original_get_json(path, query)
+            payload["candles"][-1]["mid"]["o"] = True
+            return payload
+
+        with patch.object(client, "get_json", side_effect=boolean_ohlc):
+            boolean_proof = execution_module._forecast_s5_no_touch_proof(
+                client,
+                intent=intent,
+                snapshot=snapshot,
+            )
+        self.assertEqual(boolean_proof["status"], "BLOCKED")
+        self.assertEqual(
+            boolean_proof["reason"],
+            "FORECAST_S5_CANDLE_INVALID",
+        )
+
+        multi_metadata = dict(metadata)
+        multi_emitted_at = (
+            snapshot.quotes["EUR_USD"].timestamp_utc
+            - timedelta(seconds=6)
+        ).isoformat()
+        multi_metadata["forecast_cycle_id"] = (
+            f"pre-entry-forecast-refresh:{multi_emitted_at}:{multi_emitted_at}"
+        )
+
+        def incomplete_interior(path, query=None):
+            payload = original_get_json(path, query)
+            self.assertGreaterEqual(len(payload["candles"]), 2)
+            payload["candles"][0]["complete"] = False
+            return payload
+
+        with patch.object(client, "get_json", side_effect=incomplete_interior):
+            incomplete_proof = execution_module._forecast_s5_no_touch_proof(
+                client,
+                intent=replace(intent, metadata=multi_metadata),
+                snapshot=snapshot,
+            )
+        self.assertEqual(incomplete_proof["status"], "BLOCKED")
+        self.assertEqual(
+            incomplete_proof["reason"],
+            "FORECAST_S5_COVERAGE_INCOMPLETE",
+        )
+        stale_metadata = dict(metadata)
+        stale_emitted_at = (
+            snapshot.quotes["EUR_USD"].timestamp_utc
+            - timedelta(seconds=901)
+        ).isoformat()
+        stale_metadata["forecast_cycle_id"] = (
+            f"pre-entry-forecast-refresh:{stale_emitted_at}:{stale_emitted_at}"
+        )
+        stale_proof = execution_module._forecast_s5_no_touch_proof(
+            client,
+            intent=replace(intent, metadata=stale_metadata),
+            snapshot=snapshot,
+        )
+        self.assertEqual(stale_proof["status"], "BLOCKED")
+        self.assertEqual(
+            stale_proof["reason"],
+            "FORECAST_S5_WINDOW_OUT_OF_RANGE",
+        )
+
+    def test_off_grid_dependent_rails_block_before_post_direct_and_batch(self) -> None:
+        metadata = _ordinary_claim_metadata(
+            vehicle="MARKET",
+            numeric_forecast=True,
+        )
+        raw_tp = 1.1739024885932492
+        raw_sl = 1.1724109430942786
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                summary, order, _ = self._run_real_numeric_gateway(
+                    root=Path(tmp),
+                    client=client,
+                    batch=batch,
+                    metadata=metadata,
+                    tp=raw_tp,
+                    sl=raw_sl,
+                )
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                self.assertIn(
+                    "BROKER_PRICE_PRECISION_MISMATCH",
+                    {issue["code"] for issue in order["risk_issues"]},
+                )
+                request = order["order_request"]
+                self.assertEqual(request["takeProfitOnFill"]["price"], "1.17390")
+                self.assertEqual(request["stopLossOnFill"]["price"], "1.17241")
+                self.assertEqual(
+                    order["pre_post_reconciliation"]["status"],
+                    "NOT_RUN",
+                )
+
+    def test_nonnumeric_off_grid_market_and_pending_prices_block_direct_and_batch(self) -> None:
+        cases = (
+            {
+                "name": "market_attached_tp",
+                "order_type": "MARKET",
+                "entry": None,
+                "tp": 1.1745001,
+                "metadata": {
+                    "desk": "trend_trader",
+                    "campaign_role": "NOW",
+                },
+            },
+            {
+                "name": "pending_entry",
+                "order_type": "STOP-ENTRY",
+                "entry": 1.1733001,
+                "tp": 1.17450,
+                "metadata": _ordinary_claim_metadata(),
+            },
+        )
+        for batch in (False, True):
+            for case in cases:
+                with (
+                    self.subTest(batch=batch, case=case["name"]),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp)
+                    lane_id = "lane:EUR_USD:LONG"
+                    intents = _intents(
+                        root,
+                        lane_id=lane_id,
+                        order_type=case["order_type"],
+                        entry=case["entry"],
+                        tp=case["tp"],
+                        metadata=case["metadata"],
+                    )
+                    client = FakeExecutionClient()
+                    gateway = LiveOrderGateway(
+                        client=client,
+                        strategy_profile=_profile(root),
+                        output_path=root / "request.json",
+                        report_path=root / "report.md",
+                        live_enabled=True,
+                    )
+                    summary = (
+                        gateway.run_batch(
+                            intents_path=intents,
+                            lane_ids=(lane_id,),
+                            send=True,
+                            confirm_live=True,
+                        )
+                        if batch
+                        else gateway.run(
+                            intents_path=intents,
+                            lane_id=lane_id,
+                            send=True,
+                            confirm_live=True,
+                        )
+                    )
+                    self.assertFalse(summary.sent)
+                    self.assertEqual(client.orders, [])
+                    payload = json.loads((root / "request.json").read_text())
+                    order = payload["orders"][0] if batch else payload
+                    self.assertIn(
+                        "BROKER_PRICE_PRECISION_MISMATCH",
+                        {issue["code"] for issue in order["risk_issues"]},
+                    )
+
+
+    def test_final_sync_failure_retains_reservation_without_direct_or_batch_post(self) -> None:
+        original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                target_state, target_report, ledger_path, ledger_report = (
+                    _reconciliation_files(root, edge_vehicle="MARKET")
+                )
+                intents = _intents(
+                    root,
+                    lane_id=lane_id,
+                    order_type="MARKET",
+                    metadata=_ordinary_claim_metadata(
+                        vehicle="MARKET",
+                        numeric_forecast=True,
+                    ),
+                )
+                client = PostReservationLedgerFailureClient()
+
+                def reserve_then_fail(gateway_self, **kwargs):
+                    result = original_reserve(gateway_self, **kwargs)
+                    if result.issue is None:
+                        client.fail_after_reservation = True
+                    return result
+
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    verified_decision_path=_write_ordinary_verified_decision(
+                        root,
+                        lane_id=lane_id,
+                    ),
+                    live_enabled=True,
+                )
+                with (
+                    patch.object(
+                        LiveOrderGateway,
+                        "_pre_post_reconcile",
+                        self._original_pre_post_reconcile,
+                    ),
+                    patch.object(
+                        LiveOrderGateway,
+                        "_final_pre_post_boundary",
+                        self._original_final_pre_post_boundary,
+                    ),
+                    patch.object(
+                        LiveOrderGateway,
+                        "_reserve_ordinary_entry_post",
+                        reserve_then_fail,
+                    ),
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=intents,
+                            lane_ids=(lane_id,),
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=intents,
+                            lane_id=lane_id,
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                order = payload["orders"][0] if batch else payload
+                self.assertIn(
+                    "FINAL_PRE_POST_LEDGER_SYNC_FAILED",
+                    {issue["code"] for issue in order["risk_issues"]},
+                )
+                self.assertEqual(
+                    order["ordinary_entry_claim"]["status"],
+                    "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                )
+
+    def test_staged_request_does_not_claim_gpt_authorization_without_verified_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = LiveOrderGateway(
+                client=FakeExecutionClient(),
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=_intents(root), send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            evidence = json.loads((root / "request.json").read_text())["sizing_evidence"]
+            self.assertEqual(evidence["caller_size_multiple"], 1.0)
+            self.assertEqual(evidence["caller_preclip_units"], 1000)
+            self.assertFalse(evidence["capital_allocation_validated"])
+            self.assertIsNone(evidence.get("authorized_size_multiple"))
+            self.assertIsNone(evidence.get("authorized_units"))
+            self.assertIsNone(evidence.get("allocation_status"))
 
     def test_stages_oanda_stop_order_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3462,6 +4901,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 last_transaction_id="100",
                 fetched_at_utc=now,
             ),
+            home_conversions={"USD": 157.0},
         )
         metrics = SimpleNamespace(risk_jpy=400.0, estimated_margin_jpy=29_465.0)
 
@@ -4409,6 +5849,122 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 "BLOCKED",
             )
 
+    def test_pre_post_reconciliation_revokes_same_vehicle_edge_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                target_state, target_report, ledger_path, ledger_report = (
+                    _reconciliation_files(root)
+                )
+                _insert_exact_stop_all_exit_outcomes(
+                    ledger_path,
+                    outcomes=[-5000.0],
+                    prefix="new-selected-loss",
+                    age_days=0,
+                )
+                client = ReconciliationExecutionClient()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                )
+
+                with patch.object(
+                    LiveOrderGateway,
+                    "_pre_post_reconcile",
+                    self._original_pre_post_reconcile,
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=_intents(root),
+                            lane_ids=("lane:EUR_USD:LONG",),
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=_intents(root),
+                            lane_id="lane:EUR_USD:LONG",
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                order = payload["orders"][0] if batch else payload
+                self.assertIn(
+                    "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
+                    {issue["code"] for issue in order["risk_issues"]},
+                )
+                recheck = order["pre_post_reconciliation"][
+                    "capital_allocation_edge_recheck"
+                ]
+                self.assertEqual(recheck["status"], "BLOCKED")
+                self.assertEqual(recheck["basis"], "EXACT_VEHICLE_ALL_EXIT_NET")
+                self.assertIn(
+                    "ALL_EXIT_EDGE_NO_LONGER_PROVEN",
+                    recheck["failed_checks"],
+                )
+
+    def test_pre_post_reconciliation_revokes_unresolved_selected_reduction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state, target_report, ledger_path, ledger_report = (
+                _reconciliation_files(root)
+            )
+            _insert_exact_stop_unresolved_reduction(ledger_path)
+            client = ReconciliationExecutionClient()
+
+            with patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    target_state_path=target_state,
+                    target_report_path=target_report,
+                    execution_ledger_db_path=ledger_path,
+                    execution_ledger_report_path=ledger_report,
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
+                {issue["code"] for issue in payload["risk_issues"]},
+            )
+            recheck = payload["pre_post_reconciliation"][
+                "capital_allocation_edge_recheck"
+            ]
+            self.assertEqual(recheck["status"], "BLOCKED")
+            self.assertEqual(recheck["basis"], "EXACT_VEHICLE_ALL_EXIT_NET")
+            self.assertEqual(
+                recheck["current_all_exit"]["unresolved_realized_trades"],
+                1,
+            )
+            self.assertIn(
+                "ALL_EXIT_EDGE_NO_LONGER_PROVEN",
+                recheck["failed_checks"],
+            )
+
     def test_pre_post_reconciliation_blocks_batch_fresh_duplicate_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4881,6 +6437,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             root = Path(tmp)
             target_state, target_report, ledger_path, ledger_report = _reconciliation_files(root)
             _write_macro_reconciliation_target_state(target_state)
+            _insert_exact_tp_outcomes(ledger_path, losses=0)
             client = FreshNavReconciliationExecutionClient(
                 initial_nav_jpy=100_000.0,
                 fresh_nav_jpy=100_000.0,
@@ -6337,11 +7894,44 @@ class FakeExecutionClient:
                 last_transaction_id="100",
                 fetched_at_utc=now,
             ),
+            home_conversions={"USD": 157.0},
         )
         self.orders: list[dict[str, Any]] = []
 
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
         return self.snapshot_value
+
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if not path.endswith("/candles") or not isinstance(query, dict):
+            raise AssertionError(f"unexpected read-only broker query: {path}")
+        start = datetime.fromisoformat(query["from"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(query["to"].replace("Z", "+00:00"))
+        candles = []
+        cursor = start
+        while cursor < end:
+            candles.append(
+                {
+                    "time": cursor.isoformat().replace("+00:00", "Z"),
+                    "complete": cursor + timedelta(seconds=5) < end,
+                    "mid": {
+                        "o": "1.17302",
+                        "h": "1.17304",
+                        "l": "1.17300",
+                        "c": "1.17302",
+                    },
+                }
+            )
+            cursor += timedelta(seconds=5)
+        instrument = path.split("/instruments/", 1)[1].split("/", 1)[0]
+        return {
+            "instrument": instrument,
+            "granularity": query.get("granularity"),
+            "candles": candles,
+        }
 
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
         self.orders.append(order_request)
@@ -6366,6 +7956,7 @@ class ReconciliationExecutionClient(FakeExecutionClient):
                 last_transaction_id=broker_transaction_id,
                 fetched_at_utc=account.fetched_at_utc,
             ),
+            home_conversions=self.snapshot_value.home_conversions,
         )
         self.transaction_id = "100"
 
@@ -6375,6 +7966,140 @@ class ReconciliationExecutionClient(FakeExecutionClient):
 
     def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
         return {"transactions": [], "lastTransactionID": self.transaction_id}
+
+
+class FinalS5ScenarioExecutionClient(ReconciliationExecutionClient):
+    """Keep the early path clean, then corrupt only the reserved final path."""
+
+    def __init__(self, scenario: str) -> None:
+        super().__init__()
+        self.scenario = scenario
+        self.s5_calls = 0
+
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.s5_calls += 1
+        if self.s5_calls < 2:
+            return super().get_json(path, query)
+        if self.scenario == "fetch_failure":
+            raise RuntimeError("simulated final S5 outage")
+        if self.scenario == "timeout":
+            raise TimeoutError("simulated final S5 timeout")
+        payload = super().get_json(path, query)
+        candles = payload["candles"]
+        if self.scenario == "target_touch":
+            candles[-1]["mid"]["h"] = "1.17460"
+            candles[-1]["mid"]["c"] = "1.17302"
+        elif self.scenario == "invalidation_touch":
+            candles[-1]["mid"]["l"] = "1.17250"
+            candles[-1]["mid"]["c"] = "1.17302"
+        elif self.scenario == "both_touch":
+            candles[-1]["mid"]["h"] = "1.17460"
+            candles[-1]["mid"]["l"] = "1.17250"
+        elif self.scenario == "gap":
+            payload["candles"] = []
+        elif self.scenario == "malformed":
+            candles[-1]["complete"] = "false"
+        elif self.scenario == "wrong_instrument":
+            payload["instrument"] = "GBP_USD"
+        else:
+            raise AssertionError(f"unsupported final S5 scenario: {self.scenario}")
+        return payload
+
+
+class PostS5AccountDeteriorationClient(ReconciliationExecutionClient):
+    def __init__(self, scenario: str) -> None:
+        super().__init__()
+        self.scenario = scenario
+        self.s5_calls = 0
+        self.account_reads_after_final_s5 = 0
+
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.s5_calls += 1
+        return super().get_json(path, query)
+
+    def account_summary(self, *, now_utc=None):
+        account = super().account_summary(now_utc=now_utc)
+        if self.s5_calls < 2:
+            return account
+        self.account_reads_after_final_s5 += 1
+        if self.scenario == "nav":
+            return replace(account, nav_jpy=account.nav_jpy - 1.0)
+        if self.scenario == "margin_used":
+            return replace(account, margin_used_jpy=account.margin_used_jpy + 1.0)
+        if self.scenario == "margin_available":
+            return replace(
+                account,
+                margin_available_jpy=account.margin_available_jpy - 1.0,
+            )
+        raise AssertionError(f"unsupported account scenario: {self.scenario}")
+
+
+class PostReservationTransactionAdvanceClient(ReconciliationExecutionClient):
+    """Advance broker truth only after the gateway's durable claim commits."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.advance_after_reservation = False
+
+    def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        snapshot = super().snapshot(pairs)
+        if not self.advance_after_reservation or snapshot.account is None:
+            return snapshot
+        return replace(
+            snapshot,
+            fetched_at_utc=datetime.now(timezone.utc),
+            account=replace(
+                snapshot.account,
+                last_transaction_id="101",
+                fetched_at_utc=datetime.now(timezone.utc),
+            ),
+        )
+
+    def account_summary(self, *, now_utc=None):
+        account = super().account_summary(now_utc=now_utc)
+        return replace(
+            account,
+            last_transaction_id=(
+                "101" if self.advance_after_reservation else "100"
+            ),
+            fetched_at_utc=now_utc or account.fetched_at_utc,
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
+        if not self.advance_after_reservation:
+            return {"transactions": [], "lastTransactionID": "100"}
+        now = datetime.now(timezone.utc).isoformat()
+        return {
+            "transactions": [
+                {
+                    "id": "101",
+                    "type": "ORDER_CANCEL",
+                    "time": now,
+                    "orderID": "unrelated-late-cancel",
+                    "reason": "CLIENT_REQUEST",
+                }
+            ],
+            "lastTransactionID": "101",
+        }
+
+
+class PostReservationLedgerFailureClient(ReconciliationExecutionClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_after_reservation = False
+
+    def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
+        if self.fail_after_reservation:
+            raise TimeoutError("final ledger sync timed out")
+        return super().transactions_since_id(transaction_id)
 
 
 class FreshPendingReconciliationExecutionClient(ReconciliationExecutionClient):
@@ -6467,6 +8192,7 @@ class LossAfterFirstPostExecutionClient(ReconciliationExecutionClient):
                     "instrument": "EUR_USD",
                     "units": "1000",
                     "price": "1.17330",
+                    "reason": "STOP_ORDER",
                     "clientExtensions": {"comment": "lane=lane:EUR_USD:LONG:first"},
                     "tradeOpened": {
                         "tradeID": "first-trade",
@@ -6692,6 +8418,7 @@ def _reconciliation_files(
     root: Path,
     *,
     gross_loss_jpy: float = 0.0,
+    edge_vehicle: str = "STOP",
 ) -> tuple[Path, Path, Path, Path]:
     data_root = root / "data"
     data_root.mkdir(exist_ok=True)
@@ -6716,19 +8443,34 @@ def _reconciliation_files(
             VALUES ('oanda_transaction_coverage_start_utc', ?, ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_utc=excluded.updated_at_utc
             """,
-            ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), now),
+            ((datetime.now(timezone.utc) - timedelta(days=30)).isoformat(), now),
         )
         if gross_loss_jpy > 0.0:
+            entry_raw = json.dumps(
+                {
+                    "type": "ORDER_FILL",
+                    "time": now,
+                    "instrument": "EUR_USD",
+                    "orderID": "entry-order",
+                    "units": "1000",
+                    "reason": "MARKET_ORDER",
+                    "tradeOpened": {
+                        "tradeID": "loss-trade",
+                        "units": "1000",
+                    },
+                }
+            )
             rows = (
                 (
                     "test:entry",
                     now,
                     "ORDER_FILLED",
-                    "lane:EUR_USD:LONG:loss",
+                    "loss_trader:EUR_USD:LONG:LOSS:MARKET",
                     "entry-order",
                     "loss-trade",
                     0.0,
-                    "{}",
+                    "MARKET_ORDER",
+                    entry_raw,
                 ),
                 (
                     "test:close",
@@ -6738,9 +8480,14 @@ def _reconciliation_files(
                     "close-order",
                     "loss-trade",
                     -gross_loss_jpy,
+                    "MARKET_ORDER_TRADE_CLOSE",
                     json.dumps(
                         {
                             "type": "ORDER_FILL",
+                            "time": now,
+                            "instrument": "EUR_USD",
+                            "orderID": "close-order",
+                            "reason": "MARKET_ORDER_TRADE_CLOSE",
                             "pl": str(-gross_loss_jpy),
                             "financing": "0.0",
                             "commission": "0.0",
@@ -6765,10 +8512,14 @@ def _reconciliation_files(
                     related_transaction_ids_json, raw_json, inserted_at_utc
                 )
                 VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
-                        1.1733, NULL, NULL, ?, 0.0, NULL, NULL, '[]', ?, ?)
+                        1.1733, NULL, NULL, ?, 0.0, ?, NULL, '[]', ?, ?)
                 """,
                 [(*row, now) for row in rows],
             )
+    _insert_exact_stop_all_exit_outcomes(
+        ledger_path,
+        vehicle=edge_vehicle,
+    )
     target_state.write_text(
         json.dumps(
             {
@@ -6785,6 +8536,177 @@ def _reconciliation_files(
     return target_state, target_report, ledger_path, ledger_report
 
 
+def _insert_exact_stop_all_exit_outcomes(
+    ledger_path: Path,
+    *,
+    outcomes: list[float] | None = None,
+    prefix: str = "allocation-edge",
+    age_days: int = 7,
+    vehicle: str = "STOP",
+) -> None:
+    normalized_vehicle = str(vehicle).strip().upper()
+    if normalized_vehicle not in {"MARKET", "STOP"}:
+        raise AssertionError(f"unsupported exact edge fixture vehicle: {vehicle}")
+    entry_reason = f"{normalized_vehicle}_ORDER"
+    lane_id = (
+        "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:"
+        f"{normalized_vehicle}"
+    )
+    now = datetime.now(timezone.utc)
+    rows: list[tuple[Any, ...]] = []
+    for index, realized in enumerate(outcomes or [100.0] * 20):
+        trade_id = f"{prefix}-trade-{index}"
+        order_id = f"{prefix}-order-{index}"
+        entry_ts = (now - timedelta(days=age_days, minutes=60 - index)).isoformat()
+        close_ts = (now - timedelta(days=age_days, minutes=30 - index)).isoformat()
+        exit_reason = (
+            "TAKE_PROFIT_ORDER"
+            if realized > 0
+            else "MARKET_ORDER_TRADE_CLOSE"
+        )
+        entry_raw = {
+            "type": "ORDER_FILL",
+            "time": entry_ts,
+            "instrument": "EUR_USD",
+            "orderID": order_id,
+            "units": "1000",
+            "reason": entry_reason,
+            "tradeOpened": {"tradeID": trade_id, "units": "1000"},
+        }
+        close_raw = {
+            "type": "ORDER_FILL",
+            "time": close_ts,
+            "instrument": "EUR_USD",
+            "orderID": f"{prefix}-close-{index}",
+            "reason": exit_reason,
+            "commission": "0.0",
+            "guaranteedExecutionFee": "0.0",
+            "tradesClosed": [
+                {
+                    "tradeID": trade_id,
+                    "realizedPL": str(realized),
+                    "financing": "0.0",
+                }
+            ],
+        }
+        rows.extend(
+            (
+                (
+                    f"{prefix}:gateway:{index}", entry_ts,
+                    "GATEWAY_ORDER_SENT", lane_id, order_id, trade_id, None,
+                    entry_reason, json.dumps({"type": entry_reason}),
+                ),
+                (
+                    f"{prefix}:fill:{index}", entry_ts, "ORDER_FILLED",
+                    lane_id, order_id, trade_id, None, entry_reason,
+                    json.dumps(entry_raw),
+                ),
+                (
+                    f"{prefix}:close:{index}", close_ts, "TRADE_CLOSED",
+                    lane_id, f"{prefix}-close-{index}", trade_id,
+                    realized, exit_reason, json.dumps(close_raw),
+                ),
+            )
+        )
+    inserted_at = now.isoformat()
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                client_order_id, pair, side, units, price, tp, sl,
+                realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                related_transaction_ids_json, raw_json, inserted_at_utc
+            )
+            VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
+                    1.1733, 1.1745, 1.1725, ?, 0.0, ?, NULL, '[]', ?, ?)
+            """,
+            [(*row, inserted_at) for row in rows],
+        )
+
+
+def _insert_exact_stop_unresolved_reduction(ledger_path: Path) -> None:
+    now = datetime.now(timezone.utc)
+    entry_ts = (now - timedelta(minutes=2)).isoformat()
+    reduction_ts = (now - timedelta(minutes=1)).isoformat()
+    trade_id = "allocation-unresolved-trade"
+    order_id = "allocation-unresolved-entry"
+    lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
+    entry_raw = {
+        "type": "ORDER_FILL",
+        "time": entry_ts,
+        "instrument": "EUR_USD",
+        "orderID": order_id,
+        "units": "1000",
+        "reason": "STOP_ORDER",
+        "tradeOpened": {"tradeID": trade_id, "units": "1000"},
+    }
+    reduction_raw = {
+        "type": "ORDER_FILL",
+        "time": reduction_ts,
+        "instrument": "EUR_USD",
+        "orderID": "allocation-unresolved-reduction",
+        "reason": "MARKET_ORDER_TRADE_CLOSE",
+        "commission": "0.0",
+        "guaranteedExecutionFee": "0.0",
+        "tradeReduced": {
+            "tradeID": trade_id,
+            "realizedPL": "50.0",
+            "financing": "0.0",
+        },
+    }
+    rows = (
+        (
+            "allocation-unresolved:gateway",
+            entry_ts,
+            "GATEWAY_ORDER_SENT",
+            lane_id,
+            order_id,
+            trade_id,
+            None,
+            "STOP_ORDER",
+            json.dumps({"type": "STOP_ORDER"}),
+        ),
+        (
+            "allocation-unresolved:fill",
+            entry_ts,
+            "ORDER_FILLED",
+            lane_id,
+            order_id,
+            trade_id,
+            None,
+            "STOP_ORDER",
+            json.dumps(entry_raw),
+        ),
+        (
+            "allocation-unresolved:reduction",
+            reduction_ts,
+            "TRADE_REDUCED",
+            lane_id,
+            "allocation-unresolved-reduction",
+            trade_id,
+            50.0,
+            "MARKET_ORDER_TRADE_CLOSE",
+            json.dumps(reduction_raw),
+        ),
+    )
+    inserted_at = now.isoformat()
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                client_order_id, pair, side, units, price, tp, sl,
+                realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                related_transaction_ids_json, raw_json, inserted_at_utc
+            )
+            VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
+                    1.1733, 1.1745, 1.1725, ?, 0.0, ?, NULL, '[]', ?, ?)
+            """,
+            [(*row, inserted_at) for row in rows],
+        )
+
+
 def _write_ordinary_verified_decision(
     root: Path,
     *,
@@ -6794,29 +8716,59 @@ def _write_ordinary_verified_decision(
 ) -> Path:
     generated_at = datetime.now(timezone.utc).isoformat()
     path = root / f"gpt_verified_ordinary{('-' + suffix) if suffix else ''}.json"
-    path.write_text(
-        json.dumps(
-            {
-                "generated_at_utc": generated_at,
-                "status": "ACCEPTED",
-                "decision": {
-                    "generated_at_utc": generated_at,
-                    "action": action,
-                    "selected_lane_id": lane_id,
-                    "selected_lane_ids": [lane_id],
-                    "market_read_first": {
-                        "next_30m_prediction": {
-                            "pair": "EUR_USD",
-                            "direction": "LONG",
-                        }
-                    },
-                },
-                "verification_issues": [],
+    decision: dict[str, Any] = {
+        "generated_at_utc": generated_at,
+        "action": action,
+        "selected_lane_id": lane_id,
+        "selected_lane_ids": [lane_id],
+        "market_read_first": {
+            "next_30m_prediction": {
+                "pair": "EUR_USD",
+                "direction": "LONG",
             }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+        },
+    }
+    if action == "TRADE":
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": lane_id,
+            "size_multiple": 1.0,
+            "selected_units": 1000,
+            "allocation_board_sha256": "c" * 64,
+            "rationale": "The verified lane supports the risk-capped baseline units.",
+        }
+        allocation_sha = execution_module.hashlib.sha256(
+            json.dumps(
+                allocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        decision["capital_allocation"] = allocation
+        decision["decision_provenance"] = {
+            "schema_version": 2,
+            "author_kind": "CODEX_MARKET_READ",
+            "capital_allocation_sha256": allocation_sha,
+            "capital_allocation_board_sha256": "c" * 64,
+            "authorized_size_multiple": 1.0,
+            "authorized_units": 1000,
+            "execution_cost_floor_sha256": (
+                _synthetic_execution_cost_floor()["proof_sha256"]
+            ),
+        }
+    payload = {
+        "generated_at_utc": generated_at,
+        "status": "ACCEPTED",
+        "decision": decision,
+        "verification_issues": [],
+        "input_packet": {
+            "broker_snapshot": {"fetched_at_utc": generated_at},
+        },
+    }
+    if action == "TRADE":
+        _attach_market_read_prediction_lineage(payload, prediction_hex="c")
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     return path
 
 
@@ -6827,10 +8779,35 @@ def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
         suffix="lineaged",
     )
     payload = json.loads(path.read_text())
+    allocation = {
+        "decision": "ALLOCATE",
+        "lane_id": lane_id,
+        "size_multiple": 1.0,
+        "selected_units": 1000,
+        "allocation_board_sha256": "d" * 64,
+        "rationale": "The verified lane supports the risk-capped baseline units.",
+    }
+    allocation_sha = execution_module.hashlib.sha256(
+        json.dumps(
+            allocation,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    payload["decision"]["capital_allocation"] = allocation
     payload["decision"]["decision_provenance"] = {
+        "schema_version": 2,
         "author_kind": "CODEX_MARKET_READ",
         "model": "gpt-5.5",
         "reasoning_effort": "high",
+        "capital_allocation_sha256": allocation_sha,
+        "capital_allocation_board_sha256": "d" * 64,
+        "authorized_size_multiple": 1.0,
+        "authorized_units": 1000,
+        "execution_cost_floor_sha256": (
+            _synthetic_execution_cost_floor()["proof_sha256"]
+        ),
     }
     payload["input_packet"] = {
         "broker_snapshot": {
@@ -6851,16 +8828,93 @@ def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
     return path
 
 
+def _attach_market_read_prediction_lineage(
+    payload: dict[str, Any],
+    *,
+    prediction_hex: str,
+) -> None:
+    decision_receipt_id = lineage_module._expected_decision_receipt_id(payload)
+    assert decision_receipt_id is not None
+    payload["market_read_prediction"] = {
+        "status": "RECORDED",
+        "schema_version": 2,
+        "prediction_id": "mr2:" + prediction_hex * 64,
+        "decision_receipt_id": decision_receipt_id,
+        "read_only": True,
+        "live_permission": False,
+    }
+
+
 def _ordinary_claim_metadata(
     *,
     parent_lane_id: str = "lane:EUR_USD:LONG",
     forecast_cycle_id: str = "forecast-cycle-1",
+    vehicle: str = "STOP",
+    numeric_forecast: bool = False,
 ) -> dict[str, Any]:
-    return {
+    metadata = {
         "desk": "trend_trader",
         "campaign_role": "NOW",
         "parent_lane_id": parent_lane_id,
         "forecast_cycle_id": forecast_cycle_id,
+        **_ordinary_exact_all_exit_edge_metadata(vehicle=vehicle),
+    }
+    if numeric_forecast:
+        emitted_at = datetime.now(timezone.utc).isoformat()
+        metadata.update(
+            {
+                "forecast_cycle_id": (
+                    f"pre-entry-forecast-refresh:{emitted_at}:{emitted_at}"
+                ),
+                "forecast_direction": "UP",
+                "forecast_confidence": 1.0,
+                "forecast_raw_confidence": 1.0,
+                "forecast_calibration_multiplier": 1.0,
+                "forecast_directional_calibration_name": (
+                    "directional_forecast_up"
+                ),
+                "forecast_directional_economic_hit_rate": 1.0,
+                "forecast_directional_economic_samples": 100,
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 100,
+                "forecast_directional_timeout_rate": 0.0,
+                "forecast_horizon_min": 120,
+                "forecast_current_price": 1.17302,
+                "forecast_target_price": 1.17458,
+                "forecast_invalidation_price": 1.17258,
+            }
+        )
+    return metadata
+
+
+def _ordinary_exact_all_exit_edge_metadata(
+    *,
+    vehicle: str = "STOP",
+) -> dict[str, Any]:
+    normalized_vehicle = str(vehicle).strip().upper()
+    return {
+        "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_exact_vehicle_net_scope_key": (
+            "EUR_USD|LONG|TREND_CONTINUATION|"
+            f"{normalized_vehicle}|ALL_AUDITED_EXITS"
+        ),
+        "capture_exact_vehicle_net_vehicle": normalized_vehicle,
+        "capture_exact_vehicle_net_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_net"
+        ),
+        "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+        "capture_exact_vehicle_net_trades": 20,
+        "capture_exact_vehicle_net_wins": 20,
+        "capture_exact_vehicle_net_losses": 0,
+        "capture_exact_vehicle_net_jpy": 2000.0,
+        "capture_exact_vehicle_net_expectancy_jpy": 100.0,
+        "capture_exact_vehicle_net_avg_win_jpy": 100.0,
+        "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+        "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+        "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+        "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+            execution_module.hashlib.sha256(b"[]").hexdigest()
+        ),
     }
 
 
@@ -6909,12 +8963,37 @@ def _tp_relaxed_limit_intents(
             ),
             "capture_take_profit_exact_vehicle_required": True,
             "capture_take_profit_vehicle": "LIMIT",
+            "capture_take_profit_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_take_profit"
+            ),
             "capture_take_profit_trades": 20,
             "capture_take_profit_wins": 20,
             "capture_take_profit_losses": 0,
+            "capture_take_profit_net_jpy": 2000.0,
             "capture_take_profit_expectancy_jpy": 100.0,
             "capture_take_profit_avg_win_jpy": 100.0,
             "capture_take_profit_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_exact_vehicle_net_scope_key": (
+                "EUR_USD|LONG|TREND_CONTINUATION|LIMIT|ALL_AUDITED_EXITS"
+            ),
+            "capture_exact_vehicle_net_vehicle": "LIMIT",
+            "capture_exact_vehicle_net_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_net"
+            ),
+            "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+            "capture_exact_vehicle_net_trades": 20,
+            "capture_exact_vehicle_net_wins": 20,
+            "capture_exact_vehicle_net_losses": 0,
+            "capture_exact_vehicle_net_jpy": 2000.0,
+            "capture_exact_vehicle_net_expectancy_jpy": 100.0,
+            "capture_exact_vehicle_net_avg_win_jpy": 100.0,
+            "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+            "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+                execution_module.hashlib.sha256(b"[]").hexdigest()
+            ),
         }
     )
     path = _intents(
@@ -7029,7 +9108,9 @@ def _insert_exact_tp_outcomes(
             [(*row, inserted_at) for row in rows],
         )
         if first_trade_daily_financing_jpy is not None:
+            financing_transaction_id = "9000"
             financing_raw = {
+                "id": financing_transaction_id,
                 "type": "DAILY_FINANCING",
                 "financing": str(first_trade_daily_financing_jpy),
                 "positionFinancings": [
@@ -7053,12 +9134,28 @@ def _insert_exact_tp_outcomes(
                 )
                 VALUES (?, ?, 'test', 'OANDA_TRANSACTION', NULL, NULL, NULL,
                         NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                        NULL, ?, NULL, NULL, '[]', ?, ?)
+                        NULL, ?, NULL, ?, '[]', ?, ?)
                 """,
                 (
                     "tp-proof:financing:0",
                     (now - timedelta(minutes=1)).isoformat(),
                     first_trade_daily_financing_jpy,
+                    financing_transaction_id,
+                    json.dumps(financing_raw),
+                    inserted_at,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO oanda_transactions(
+                    transaction_id, type, time_utc, batch_id, request_id,
+                    raw_json, inserted_at_utc
+                )
+                VALUES (?, 'DAILY_FINANCING', ?, NULL, NULL, ?, ?)
+                """,
+                (
+                    financing_transaction_id,
+                    (now - timedelta(minutes=1)).isoformat(),
                     json.dumps(financing_raw),
                     inserted_at,
                 ),
@@ -7106,6 +9203,10 @@ def _insert_reconciliation_profit_close(
     raw_close = json.dumps(
         {
             "type": "ORDER_FILL",
+            "time": ts_utc,
+            "instrument": "EUR_USD",
+            "orderID": "target-win-close-order",
+            "reason": "MARKET_ORDER_TRADE_CLOSE",
             "pl": str(realized_profit_jpy),
             "financing": "0.0",
             "commission": "0.0",
@@ -7119,6 +9220,20 @@ def _insert_reconciliation_profit_close(
             ],
         }
     )
+    raw_entry = json.dumps(
+        {
+            "type": "ORDER_FILL",
+            "time": ts_utc,
+            "instrument": "EUR_USD",
+            "orderID": "target-win-entry-order",
+            "units": "1000",
+            "reason": "MARKET_ORDER",
+            "tradeOpened": {
+                "tradeID": "target-win-trade",
+                "units": "1000",
+            },
+        }
+    )
     with closing(sqlite3.connect(ledger_path)) as conn, conn:
         conn.executemany(
             """
@@ -7129,18 +9244,19 @@ def _insert_reconciliation_profit_close(
                 related_transaction_ids_json, raw_json, inserted_at_utc
             )
             VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
-                    1.1733, NULL, NULL, ?, 0.0, NULL, NULL, '[]', ?, ?)
+                    1.1733, NULL, NULL, ?, 0.0, ?, NULL, '[]', ?, ?)
             """,
             (
                 (
                     "test:target-win-entry",
                     ts_utc,
                     "ORDER_FILLED",
-                    "lane:EUR_USD:LONG:target-win",
+                    "target_trader:EUR_USD:LONG:TARGET_WIN:MARKET",
                     "target-win-entry-order",
                     "target-win-trade",
                     0.0,
-                    "{}",
+                    "MARKET_ORDER",
+                    raw_entry,
                     ts_utc,
                 ),
                 (
@@ -7151,6 +9267,7 @@ def _insert_reconciliation_profit_close(
                     "target-win-close-order",
                     "target-win-trade",
                     realized_profit_jpy,
+                    "MARKET_ORDER_TRADE_CLOSE",
                     raw_close,
                     ts_utc,
                 ),
@@ -7306,6 +9423,7 @@ def _write_predictive_scout_verified_decision(
     intents_payload = json.loads(intents_path.read_text())
     intent = intents_payload["results"][0]["intent"]
     metadata = intent["metadata"]
+    selected_units = abs(int(intent["units"]))
     lane_packet = {
         "lane_id": PREDICTIVE_SCOUT_LANE_ID,
         "pair": intent["pair"],
@@ -7327,37 +9445,62 @@ def _write_predictive_scout_verified_decision(
             "expires_at_utc": metadata["predictive_scout_expires_at_utc"],
         },
     }
-    path.write_text(
-        json.dumps(
-            {
-                "generated_at_utc": generated_at_utc
-                or datetime.now(timezone.utc).isoformat(),
-                "status": "ACCEPTED",
-                "decision": {
-                    "action": action,
-                    "selected_lane_id": PREDICTIVE_SCOUT_LANE_ID,
-                    "market_read_first": {
-                        "next_30m_prediction": {
-                            "pair": market_pair,
-                            "direction": market_direction,
-                        },
-                        "next_2h_prediction": {
-                            "pair": market_pair,
-                            "direction": market_direction,
-                        },
-                        "best_trade_if_forced": {
-                            "pair": market_pair,
-                            "direction": market_direction,
-                        },
-                    },
-                },
-                "verification_issues": [],
-                "input_packet": {"lanes": [lane_packet]},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    decision: dict[str, Any] = {
+        "action": action,
+        "selected_lane_id": PREDICTIVE_SCOUT_LANE_ID,
+        "selected_lane_ids": [PREDICTIVE_SCOUT_LANE_ID],
+        "market_read_first": {
+            "next_30m_prediction": {
+                "pair": market_pair,
+                "direction": market_direction,
+            },
+            "next_2h_prediction": {
+                "pair": market_pair,
+                "direction": market_direction,
+            },
+            "best_trade_if_forced": {
+                "pair": market_pair,
+                "direction": market_direction,
+            },
+        },
+    }
+    if action == "TRADE":
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": PREDICTIVE_SCOUT_LANE_ID,
+            "size_multiple": 1.0,
+            "selected_units": selected_units,
+            "allocation_board_sha256": "e" * 64,
+            "rationale": "Predictive SCOUT remains fixed at its current-NAV risk-sized units.",
+        }
+        allocation_sha = execution_module.hashlib.sha256(
+            json.dumps(
+                allocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        decision["capital_allocation"] = allocation
+        decision["decision_provenance"] = {
+            "schema_version": 2,
+            "author_kind": "CODEX_MARKET_READ",
+            "capital_allocation_sha256": allocation_sha,
+            "capital_allocation_board_sha256": "e" * 64,
+            "authorized_size_multiple": 1.0,
+            "authorized_units": selected_units,
+        }
+    payload = {
+        "generated_at_utc": generated_at_utc
+        or datetime.now(timezone.utc).isoformat(),
+        "status": "ACCEPTED",
+        "decision": decision,
+        "verification_issues": [],
+        "input_packet": {"lanes": [lane_packet]},
+    }
+    if action == "TRADE":
+        _attach_market_read_prediction_lineage(payload, prediction_hex="e")
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     return path
 
 
@@ -7477,8 +9620,26 @@ def _intents(
     pair: str = "EUR_USD",
     side: str = "LONG",
     lane_id: str = "lane:EUR_USD:LONG",
+    entry: float | None = None,
+    tp: float | None = None,
+    sl: float | None = None,
 ) -> Path:
     path = root / "intents.json"
+    resolved_metadata = dict(
+        metadata
+        or {
+            "desk": "trend_trader",
+            "campaign_role": "NOW",
+        }
+    )
+    if (
+        pair == "EUR_USD"
+        and side == "LONG"
+        and order_type in {"STOP", "STOP-ENTRY", "STOP_ENTRY"}
+        and not resolved_metadata.get("predictive_scout")
+    ):
+        for key, value in _ordinary_exact_all_exit_edge_metadata().items():
+            resolved_metadata.setdefault(key, value)
     path.write_text(
         json.dumps(
             {
@@ -7492,9 +9653,37 @@ def _intents(
                             "side": side,
                             "order_type": order_type,
                             "units": units,
-                            "entry": 1.17306 if order_type == "MARKET" else (0.66240 if pair == "AUD_USD" else 1.17330),
-                            "tp": 0.66360 if pair == "AUD_USD" else 1.17450,
-                            "sl": 0.66160 if pair == "AUD_USD" else 1.17250,
+                            "entry": (
+                                entry
+                                if entry is not None
+                                else 1.17306
+                                if order_type == "MARKET"
+                                else 0.66240
+                                if pair == "AUD_USD"
+                                else 1.17330
+                            ),
+                            "tp": (
+                                tp
+                                if tp is not None
+                                else 0.66360
+                                if pair == "AUD_USD"
+                                else 1.17450
+                            ),
+                            "sl": (
+                                sl
+                                if sl is not None
+                                else 0.66160
+                                if pair == "AUD_USD"
+                                # The ordinary MARKET numeric fixture must
+                                # leave room for the independently audited
+                                # exit/financing floor plus the entry-p95
+                                # priceBound allowance under its 100 JPY cap.
+                                else 1.17253
+                                if order_type == "MARKET"
+                                and "forecast_directional_economic_hit_rate"
+                                in resolved_metadata
+                                else 1.17250
+                            ),
                             "thesis": "trend continuation",
                             "owner": "trader",
                             "market_context": {
@@ -7504,11 +9693,7 @@ def _intents(
                                 "method": "TREND_CONTINUATION",
                                 "invalidation": "SL trades",
                             },
-                            "metadata": metadata
-                            or {
-                                "desk": "trend_trader",
-                                "campaign_role": "NOW",
-                            },
+                            "metadata": resolved_metadata,
                         },
                     }
                 ]

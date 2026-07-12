@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import io
 import os
+import hashlib
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -41,6 +43,18 @@ LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
 
 
 class GPTTraderBrainTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # These verifier tests exercise decision/artifact semantics with tiny
+        # exact-lane ledgers. Keep the independent 20-sample transport/carry
+        # calibration fixed and content-addressed instead of making every
+        # fixture manufacture broker request/create/fill/protection cohorts.
+        cost_patch = patch(
+            "quant_rabbit.capture_economics.read_execution_cost_surface",
+            return_value=_synthetic_execution_cost_surface(),
+        )
+        cost_patch.start()
+        self.addCleanup(cost_patch.stop)
+
     def test_trade_revalidates_real_market_read_artifacts_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -355,7 +369,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             market_read = _market_read_first(pair="EUR_USD", direction="LONG")
             market_read["best_trade_if_forced"].update(
                 {
-                    "vehicle": "MARKET",
+                    "vehicle": "STOP",
                     "entry": "1.1726",
                     "tp": "1.1740",
                     "sl": "1.1716",
@@ -466,6 +480,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertTrue(summary.allowed)
             self.assertEqual(summary.action, "TRADE")
             self.assertEqual(summary.selected_lane_id, LANE_ID)
+            self.assertEqual(summary.capital_allocation_size_multiple, 1.0)
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
@@ -565,8 +580,11 @@ class GPTTraderBrainTest(unittest.TestCase):
             packet = brain._input_packet(files["snapshot"])
 
             contract = packet["market_read_artifact_contract"]
-            self.assertEqual(contract["required_for_action"], "TRADE_OR_CLOSE")
-            self.assertEqual(contract["required_for_actions"], ["TRADE", "CLOSE"])
+            self.assertEqual(contract["required_for_action"], "TRADE_CLOSE_OR_VETO")
+            self.assertEqual(
+                contract["required_for_actions"],
+                ["TRADE", "CLOSE", "WAIT", "REQUEST_EVIDENCE"],
+            )
             self.assertEqual(
                 contract["baseline_path"],
                 str(root / "trader_decision_baseline.json"),
@@ -589,6 +607,24 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             self.assertFalse(contract["live_permission"])
             self.assertFalse(contract["may_grant_gateway_permission"])
+
+    def test_input_packet_keeps_broker_quote_when_no_lane_or_position_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(json.dumps({"results": []}))
+            files["campaign"].write_text(json.dumps({"lanes": []}))
+            brain = _brain(root, files, _wait_decision())
+
+            packet = brain._input_packet(files["snapshot"])
+
+            self.assertEqual(packet["lanes"], [])
+            self.assertEqual(packet["broker_snapshot"]["positions"], 0)
+            self.assertEqual(
+                packet["broker_snapshot"]["quotes"]["EUR_USD"]["bid"],
+                1.172,
+            )
+            self.assertIn("EUR_USD", packet["market_context"]["pairs"])
 
     def test_rejects_decision_without_market_read_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3891,6 +3927,8 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["snapshot"]),
                         "--intents",
                         str(files["intents"]),
+                        "--execution-ledger-db",
+                        str(files["execution_ledger"]),
                         "--campaign-plan",
                         str(files["campaign"]),
                         "--strategy-profile",
@@ -5600,6 +5638,7 @@ def _brain(
         active_opportunity_board_path=files["active_opportunity_board"],
         non_eurusd_live_grade_frontier_path=files["non_eurusd_frontier"],
         range_rail_geometry_repair_path=files["range_rail_geometry_repair"],
+        execution_ledger_path=files["execution_ledger"],
         market_read_artifact_validation_required=market_read_artifact_validation_required,
         **(
             {
@@ -5618,6 +5657,7 @@ def _local_cli_brain_factory(root: Path, files: dict[str, Path]):
     """Bind CLI-only verifier coverage to temporary runtime artifacts."""
 
     def factory(**kwargs: object) -> GPTTraderBrain:
+        kwargs.setdefault("execution_ledger_path", files["execution_ledger"])
         return GPTTraderBrain(
             pair_charts_path=files["pair_charts"],
             context_asset_charts_path=files["context_asset_charts"],
@@ -5639,7 +5679,6 @@ def _local_cli_brain_factory(root: Path, files: dict[str, Path]):
             predictive_limits_path=files["predictive_limits"],
             news_items_path=files["news_items"],
             news_health_path=files["news_health"],
-            execution_ledger_path=root / "execution_ledger.db",
             **kwargs,
         )
 
@@ -5694,7 +5733,50 @@ def _market_read_artifact_sources(
         "active_opportunity_board": files["active_opportunity_board"],
         "non_eurusd_live_grade_frontier": files["non_eurusd_frontier"],
         "range_rail_geometry_repair": files["range_rail_geometry_repair"],
+        "execution_ledger": files["execution_ledger"],
         "market_read_predictions": predictions,
+    }
+
+
+def _synthetic_execution_cost_surface() -> dict:
+    observed_at = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+
+    def transport_section(label: str) -> dict:
+        return {
+            "samples": 20,
+            "adverse_p95_pips": 0.0,
+            "adverse_max_pips": 0.0,
+            "oldest_fill_utc": observed_at,
+            "latest_fill_utc": observed_at,
+            "rows_sha256": hashlib.sha256(
+                f"gpt-trader-{label}-cost-cohort".encode()
+            ).hexdigest(),
+        }
+
+    material = {
+        "contract": "QR_NET_EXECUTION_COST_FLOOR_V1",
+        "parse_status": "VALID",
+        "scope": "SYSTEM_GATEWAY_ATTRIBUTED_ALL_PAIRS_SIDES_METHODS",
+        "minimum_samples": 20,
+        "maximum_sample_age_seconds": 90 * 24 * 60 * 60,
+        "market_entry": transport_section("market-entry"),
+        "take_profit_exit": transport_section("take-profit-exit"),
+        "stop_loss_exit": transport_section("stop-loss-exit"),
+        "global_financing": {
+            "observation_trades": 20,
+            "adverse_trades": 1,
+            "entry_units_total": 20_000.0,
+            "adverse_total_jpy": 0.002,
+            "adverse_mean_jpy_per_unit": 0.000002,
+            "adverse_occurrence_wilson95_upper": 0.236131193,
+            "adverse_stress_jpy_per_unit": 0.000000472262,
+            "oldest_observation_utc": observed_at,
+            "latest_observation_utc": observed_at,
+        },
+    }
+    return {
+        **material,
+        "execution_cost_surface_sha256": canonical_json_sha256(material),
     }
 
 
@@ -5721,9 +5803,38 @@ def _apply_real_market_read_artifacts(
         "market_read_disposition",
         "market_read_veto_reason",
         "market_read_vetoed_lane_ids",
+        "capital_allocation",
     ):
         baseline.pop(key, None)
     paths["baseline"].write_text(json.dumps(baseline), encoding="utf-8")
+    if str(baseline.get("action") or "").upper() == "TRADE":
+        _ensure_real_artifact_exact_vehicle_edge(
+            files["intents"],
+            ledger_path=files["execution_ledger"],
+            selected_lane_id=str(baseline.get("selected_lane_id") or ""),
+            snapshot_path=(broker_snapshot_source_path or files["snapshot"]),
+        )
+        refreshed_intents = json.loads(files["intents"].read_text(encoding="utf-8"))
+        selected_intent = next(
+            item["intent"]
+            for item in refreshed_intents.get("results", [])
+            if isinstance(item, dict)
+            and str(item.get("lane_id") or "")
+            == str(baseline.get("selected_lane_id") or "")
+        )
+        forced = (baseline.get("market_read_first") or {}).get(
+            "best_trade_if_forced"
+        )
+        if isinstance(forced, dict):
+            forced.update(
+                {
+                    "vehicle": "MARKET",
+                    "entry": str(selected_intent["entry"]),
+                    "tp": str(selected_intent["tp"]),
+                    "sl": str(selected_intent["sl"]),
+                }
+            )
+        paths["baseline"].write_text(json.dumps(baseline), encoding="utf-8")
     sources = _market_read_artifact_sources(root, files)
     if broker_snapshot_source_path is not None:
         sources["broker_snapshot"] = broker_snapshot_source_path
@@ -5736,8 +5847,12 @@ def _apply_real_market_read_artifacts(
     )
     stamped = json.loads(paths["baseline"].read_text(encoding="utf-8"))
     packet = json.loads(paths["packet"].read_text(encoding="utf-8"))
+    selected_lane = (
+        (packet.get("capital_allocation_board") or {}).get("selected_lane") or {}
+    )
+    allocate = str(baseline.get("action") or "").upper() == "TRADE"
     overlay = {
-        "schema_version": 1,
+        "schema_version": packet["schema_version"],
         "author_kind": CODEX_MARKET_READ_AUTHOR,
         "model": "gpt-5.5",
         "reasoning_effort": "high",
@@ -5755,6 +5870,18 @@ def _apply_real_market_read_artifacts(
         "market_read_counterargument": "The forecast can fail before reaching its target.",
         "market_read_change_summary": "Rebuilt the forecast from current broker truth.",
         "market_read_veto_reason": "",
+        "capital_allocation": {
+            "decision": "ALLOCATE" if allocate else "NO_TRADE",
+            "lane_id": baseline.get("selected_lane_id") if allocate else None,
+            "size_multiple": 1.0 if allocate else 0.0,
+            "selected_units": int(selected_lane.get("base_units") or 0) if allocate else 0,
+            "allocation_board_sha256": packet["capital_allocation_board_sha256"],
+            "rationale": (
+                "The content-addressed lane edge supports the risk-capped baseline units."
+                if allocate
+                else "No fresh entry capital is authorized by this receipt."
+            ),
+        },
     }
     paths["overlay"].write_text(json.dumps(overlay), encoding="utf-8")
     apply_codex_market_read_overlay(
@@ -5766,6 +5893,271 @@ def _apply_real_market_read_artifacts(
         now=applied_at,
     )
     return json.loads(paths["output"].read_text(encoding="utf-8")), paths
+
+
+def _ensure_real_artifact_exact_vehicle_edge(
+    intents_path: Path,
+    *,
+    ledger_path: Path,
+    selected_lane_id: str,
+    snapshot_path: Path,
+) -> None:
+    payload = json.loads(intents_path.read_text(encoding="utf-8"))
+    result = next(
+        (
+            item
+            for item in payload.get("results", []) or []
+            if isinstance(item, dict)
+            and str(item.get("lane_id") or "") == selected_lane_id
+        ),
+        None,
+    )
+    if not isinstance(result, dict):
+        raise AssertionError(
+            f"real artifact fixture lacks selected order intent {selected_lane_id}"
+        )
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    metadata = intent.setdefault("metadata", {})
+    market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), dict)
+        else {}
+    )
+    pair = str(intent.get("pair") or "").upper()
+    side = str(intent.get("side") or "").upper()
+    method = str(metadata.get("method") or market_context.get("method") or "").upper()
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    quote = (snapshot.get("quotes") or {}).get(pair) or {}
+    bid = float(quote["bid"])
+    ask = float(quote["ask"])
+    entry = ask if side == "LONG" else bid
+    intent["order_type"] = "MARKET"
+    intent["entry"] = entry
+    raw_order_type = str(intent.get("order_type") or "").upper()
+    vehicle = {
+        "STOP_ENTRY": "STOP",
+        "STOP-ENTRY": "STOP",
+        "STOP_ORDER": "STOP",
+        "LIMIT_ORDER": "LIMIT",
+        "MARKET_ORDER": "MARKET",
+    }.get(raw_order_type, raw_order_type)
+    pip_factor = 100 if pair.endswith("_JPY") else 10_000
+    loss_pips = (
+        (entry - float(intent["sl"])) * pip_factor
+        if side == "LONG"
+        else (float(intent["sl"]) - entry) * pip_factor
+    )
+    reward_pips = (
+        (float(intent["tp"]) - entry) * pip_factor
+        if side == "LONG"
+        else (entry - float(intent["tp"])) * pip_factor
+    )
+    quote_currency = pair.split("_", 1)[1]
+    quote_to_jpy = (
+        1.0
+        if quote_currency == "JPY"
+        else float((snapshot.get("home_conversions") or {})[quote_currency])
+    )
+    jpy_per_pip = abs(int(intent["units"])) / pip_factor * quote_to_jpy
+    result["risk_metrics"] = {
+        "entry_price": entry,
+        "loss_pips": loss_pips,
+        "reward_pips": reward_pips,
+        "risk_jpy": loss_pips * jpy_per_pip,
+        "reward_jpy": reward_pips * jpy_per_pip,
+        "reward_risk": reward_pips / loss_pips,
+        "spread_pips": (ask - bid) * pip_factor,
+        "jpy_per_pip": jpy_per_pip,
+        "estimated_margin_jpy": 1000.0,
+    }
+    half_spread = (ask - bid) / 2.0
+    if side == "LONG":
+        forecast_target = float(intent["tp"]) + half_spread * 2.0
+        forecast_invalidation = float(intent["sl"]) + half_spread * 2.0
+        forecast_direction = "UP"
+    else:
+        forecast_target = float(intent["tp"]) - half_spread * 2.0
+        forecast_invalidation = float(intent["sl"]) - half_spread * 2.0
+        forecast_direction = "DOWN"
+    metadata.update(
+        {
+            "attach_take_profit_on_fill": True,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            "capture_take_profit_exact_vehicle_required": True,
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_take_profit_scope_key": (
+                f"{pair}|{side}|{method}|{vehicle}|TAKE_PROFIT_ORDER"
+            ),
+            "capture_take_profit_vehicle": vehicle,
+            "capture_take_profit_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_take_profit"
+            ),
+            "capture_take_profit_expectancy_jpy": 250.0,
+            "capture_take_profit_net_jpy": 2000.0,
+            "capture_take_profit_trades": 8,
+            "capture_take_profit_wins": 8,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_avg_win_jpy": 250.0,
+            "capture_take_profit_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_exact_vehicle_net_scope_key": (
+                f"{pair}|{side}|{method}|{vehicle}|ALL_AUDITED_EXITS"
+            ),
+            "capture_exact_vehicle_net_vehicle": vehicle,
+            "capture_exact_vehicle_net_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_net"
+            ),
+            "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+            "capture_exact_vehicle_net_trades": 8,
+            "capture_exact_vehicle_net_wins": 8,
+            "capture_exact_vehicle_net_losses": 0,
+            "capture_exact_vehicle_net_jpy": 2000.0,
+            "capture_exact_vehicle_net_expectancy_jpy": 250.0,
+            "capture_exact_vehicle_net_avg_win_jpy": 250.0,
+            "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+            "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+                hashlib.sha256(b"[]").hexdigest()
+            ),
+            "capture_market_close_expectancy_jpy": -100.0,
+            "forecast_direction": forecast_direction,
+            "forecast_current_price": (bid + ask) / 2.0,
+            "forecast_target_price": forecast_target,
+            "forecast_invalidation_price": forecast_invalidation,
+            "forecast_directional_calibration_name": (
+                f"directional_forecast_{forecast_direction.lower()}"
+            ),
+            "forecast_directional_hit_rate": 0.75,
+            "forecast_directional_samples": 100,
+            "forecast_directional_economic_hit_rate": 0.70,
+            "forecast_directional_economic_samples": 100,
+            "forecast_directional_timeout_rate": 0.05,
+        }
+    )
+    intents_path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_exact_vehicle_ledger(
+        ledger_path,
+        pair=pair,
+        side=side,
+        method=method,
+        vehicle=vehicle,
+        outcomes=[250.0] * 8,
+    )
+
+
+def _write_exact_vehicle_ledger(
+    path: Path,
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    vehicle: str,
+    outcomes: list[float],
+) -> None:
+    if path.exists():
+        path.unlink()
+    entry_reason = {
+        "LIMIT": "LIMIT_ORDER",
+        "STOP": "STOP_ORDER",
+        "MARKET": "MARKET_ORDER",
+    }[vehicle]
+    signed_units = 1000 if side == "LONG" else -1000
+    lane = f"fixture_trader:{pair}:{side}:{method}:{vehicle}"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT,
+                event_type TEXT,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                financing_jpy REAL,
+                exit_reason TEXT,
+                raw_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO sync_state VALUES (?, ?, ?)",
+            (
+                "oanda_transaction_coverage_start_utc",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+        for index, realized in enumerate(outcomes):
+            trade_id = f"artifact-trade-{index}"
+            order_id = f"artifact-entry-{index}"
+            entry_ts = f"2026-07-01T00:{index:02d}:00Z"
+            close_ts = f"2026-07-01T01:{index:02d}:00Z"
+            entry_raw = {
+                "id": f"artifact-fill-{index}",
+                "time": entry_ts,
+                "type": "ORDER_FILL",
+                "orderID": order_id,
+                "instrument": pair,
+                "units": str(signed_units),
+                "reason": entry_reason,
+                "tradeOpened": {
+                    "tradeID": trade_id,
+                    "units": str(signed_units),
+                },
+            }
+            exit_reason = (
+                "TAKE_PROFIT_ORDER"
+                if realized > 0
+                else "MARKET_ORDER_TRADE_CLOSE"
+            )
+            close_raw = {
+                "id": f"artifact-close-{index}",
+                "time": close_ts,
+                "type": "ORDER_FILL",
+                "instrument": pair,
+                "orderID": f"artifact-close-{index}",
+                "reason": exit_reason,
+                "commission": "0.0",
+                "guaranteedExecutionFee": "0.0",
+                "tradesClosed": [
+                    {
+                        "tradeID": trade_id,
+                        "realizedPL": str(realized),
+                        "financing": "0.0",
+                    }
+                ],
+            }
+            rows = [
+                (
+                    f"artifact-gateway-{index}", entry_ts, "GATEWAY_ORDER_SENT",
+                    lane, order_id, trade_id, pair, side, signed_units, None,
+                    0.0, entry_reason, json.dumps({"type": entry_reason}),
+                ),
+                (
+                    f"artifact-fill-{index}", entry_ts, "ORDER_FILLED", lane,
+                    order_id, trade_id, pair, side, signed_units, None, 0.0,
+                    entry_reason, json.dumps(entry_raw),
+                ),
+                (
+                    f"artifact-close-{index}", close_ts, "TRADE_CLOSED", None,
+                    f"artifact-close-{index}", trade_id, pair,
+                    "SHORT" if side == "LONG" else "LONG", abs(signed_units),
+                    realized, 0.0, exit_reason, json.dumps(close_raw),
+                ),
+            ]
+            conn.executemany(
+                "INSERT INTO execution_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
 
 
 def _draft(root: Path, files: dict[str, Path]):
@@ -5813,6 +6205,7 @@ def _draft(root: Path, files: dict[str, Path]):
         active_opportunity_board_path=files["active_opportunity_board"],
         non_eurusd_live_grade_frontier_path=files["non_eurusd_frontier"],
         range_rail_geometry_repair_path=files["range_rail_geometry_repair"],
+        execution_ledger_path=files["execution_ledger"],
     )
 
 
@@ -5915,12 +6308,15 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "active_opportunity_board": root / "active_opportunity_board.json",
         "non_eurusd_frontier": root / "non_eurusd_live_grade_frontier.json",
         "range_rail_geometry_repair": root / "range_rail_geometry_repair.json",
+        "execution_ledger": root / "execution_ledger.db",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
         json.dumps(
             {
                 "fetched_at_utc": now,
+                "account": {"nav_jpy": 100_000.0, "fetched_at_utc": now},
+                "home_conversions": {"USD": 100.0, "JPY": 1.0},
                 "positions": positions or [],
                 "orders": orders or [],
                 "quotes": {"EUR_USD": {"bid": 1.172, "ask": 1.1721, "timestamp_utc": now}},
@@ -6238,6 +6634,14 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["active_opportunity_board"].write_text(json.dumps({}))
     files["non_eurusd_frontier"].write_text(json.dumps({}))
     files["range_rail_geometry_repair"].write_text(json.dumps({}))
+    _write_exact_vehicle_ledger(
+        files["execution_ledger"],
+        pair="EUR_USD",
+        side="LONG",
+        method="TREND_CONTINUATION",
+        vehicle="MARKET",
+        outcomes=[],
+    )
     return files
 
 
@@ -6796,9 +7200,9 @@ def _result(
         "intent": {
             "pair": pair,
             "side": side,
-            "order_type": "STOP-ENTRY",
+            "order_type": "MARKET",
             "units": 1000,
-            "entry": 1.1725,
+            "entry": 1.1721,
             "tp": 1.1737,
             "sl": 1.1717,
             "thesis": f"{pair} continuation can pay before daily target window closes.",
@@ -6819,7 +7223,31 @@ def _result(
                 "tp_execution_mode": "RUNNER_NO_BROKER_TP",
                 "tp_target_intent": "EXTEND",
                 "tp_target_source": "STRUCTURAL_EXTEND",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_take_profit_expectancy_jpy": 250.0,
+                "capture_take_profit_trades": 4,
+                "capture_take_profit_wins": 4,
+                "capture_take_profit_losses": 0,
+                "forecast_direction": "UP",
+                "forecast_current_price": 1.17205,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.75,
+                "forecast_directional_samples": 100,
+                "forecast_directional_economic_hit_rate": 0.70,
+                "forecast_directional_economic_samples": 100,
+                "forecast_directional_timeout_rate": 0.05,
             },
+        },
+        "risk_metrics": {
+            "entry_price": 1.1721,
+            "loss_pips": 4.0,
+            "reward_pips": 16.0,
+            "risk_jpy": 40.0,
+            "reward_jpy": 160.0,
+            "reward_risk": 4.0,
+            "spread_pips": 1.0,
+            "jpy_per_pip": 10.0,
+            "estimated_margin_jpy": 1000.0,
         },
     }
 
@@ -6889,9 +7317,26 @@ def _stamp_codex_market_read(
         "The current forecast contradicts the deterministic entry trigger." if veto else ""
     )
     decision["market_read_vetoed_lane_ids"] = list(lane_ids) if veto else []
+    allocate = (
+        str(decision.get("action") or "").upper() == "TRADE"
+        and disposition == "ACCEPT_BASELINE"
+    )
+    capital_allocation = {
+        "decision": "ALLOCATE" if allocate else "NO_TRADE",
+        "lane_id": lane_ids[0] if allocate and len(lane_ids) == 1 else None,
+        "size_multiple": 1.0 if allocate else 0.0,
+        "selected_units": 1000 if allocate else 0,
+        "allocation_board_sha256": "e" * 64,
+        "rationale": (
+            "The verified direction-specific edge supports the risk-capped baseline units."
+            if allocate
+            else "No fresh entry capital is authorized by this receipt."
+        ),
+    }
+    decision["capital_allocation"] = capital_allocation
     execution_sha = canonical_json_sha256(execution_envelope_payload(decision))
     decision["decision_provenance"] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "author_kind": CODEX_MARKET_READ_AUTHOR,
         "model": "gpt-5.5",
         "reasoning_effort": "high",
@@ -6909,6 +7354,11 @@ def _stamp_codex_market_read(
         "baseline_selected_lane_ids": list(lane_ids),
         "baseline_disposition": disposition,
         "action_downgrade_only": veto,
+        "capital_allocation_sha256": canonical_json_sha256(capital_allocation),
+        "capital_allocation_board_sha256": "e" * 64,
+        "execution_cost_floor_sha256": "f" * 64,
+        "authorized_size_multiple": capital_allocation["size_multiple"],
+        "authorized_units": capital_allocation["selected_units"],
         "execution_fields_preserved": True,
         "risk_envelope_not_expanded": True,
         "live_permission_granted": False,
@@ -6950,8 +7400,8 @@ def _market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dic
         "best_trade_if_forced": {
             "pair": pair,
             "direction": direction,
-            "vehicle": "STOP",
-            "entry": "1.1725",
+            "vehicle": "MARKET",
+            "entry": "1.1721",
             "tp": "1.1737",
             "sl": "1.1717",
             "why_this_pays": "The forced trade only pays if the naked read reaches target before invalidation.",

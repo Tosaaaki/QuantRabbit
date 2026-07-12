@@ -40,6 +40,7 @@ from quant_rabbit.strategy.intent_generator import (
     _annotate_oanda_campaign_current_risk_firepower,
     _append_current_range_phase_lanes,
     _append_forecast_seed_lanes,
+    _exact_vehicle_net_metrics,
     _exact_vehicle_take_profit_metrics,
     _forecast_context_payload,
     _forecast_seed_lane,
@@ -8256,6 +8257,10 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertIsNone(support["directional_hit_rate"])
         self.assertEqual(support["directional_samples"], 0)
+        self.assertEqual(
+            support["directional_calibration_name"],
+            "directional_forecast_up",
+        )
 
     def test_forecast_directional_calibration_uses_broad_directional_global_bucket(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
@@ -10366,6 +10371,158 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(row["net_jpy"], -100.0)
             self.assertEqual(row["expectancy_jpy_per_trade"], -100.0)
             self.assertEqual(row["avg_loss_jpy"], 100.0)
+
+    def test_intent_persists_exact_nondivisible_tp_net_before_rounded_averages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 30,
+                            "avg_win_jpy": 100.0,
+                            "avg_loss_jpy": 500.0,
+                            "payoff_ratio": 0.2,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            _write_exact_vehicle_take_profit_closes(
+                root,
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:STOP",
+                pair="EUR_USD",
+                side="LONG",
+                entry_reason="STOP_ORDER",
+                count=6,
+                realized_pl_jpy=[100.0] * 5 + [100.0001],
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.70,
+                    short_score=0.30,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            metrics = _exact_vehicle_take_profit_metrics(
+                root / "execution_ledger.db"
+            )
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            exact = metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "STOP")]
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item.get("intent", {}).get("order_type") == "STOP-ENTRY"
+            )
+            metadata = result["intent"]["metadata"]
+
+            self.assertEqual(exact["net_jpy"], 600.0001)
+            self.assertEqual(exact["expectancy_jpy_per_trade"], 100.0)
+            self.assertEqual(metadata["capture_take_profit_net_jpy"], 600.0001)
+            self.assertEqual(
+                metadata["capture_take_profit_net_jpy"],
+                exact["net_jpy"],
+            )
+
+    def test_exact_vehicle_net_metrics_include_non_tp_exit_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_exact_vehicle_metric_trade(
+                root,
+                trade_id="mixed-exits",
+                fill_lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                realized_pl_jpy=200.0,
+                partial_realized_pl_jpy=-50.0,
+                partial_exit_reason="MARKET_ORDER_TRADE_CLOSE",
+            )
+
+            metrics = _exact_vehicle_net_metrics(root / "execution_ledger.db")
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            row = metrics[("EUR_USD", "LONG", "BREAKOUT_FAILURE", "LIMIT")]
+            self.assertEqual(row["exit_scope"], "ALL_AUDITED_EXITS")
+            self.assertEqual(row["trades"], 1)
+            self.assertEqual(row["wins"], 1)
+            self.assertEqual(row["net_jpy"], 150.0)
+            self.assertEqual(row["expectancy_jpy_per_trade"], 150.0)
+
+    def test_positive_capture_still_attaches_exact_vehicle_all_exit_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "POSITIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 20,
+                            "avg_win_jpy": 100.0,
+                            "avg_loss_jpy": 0.0,
+                        },
+                    }
+                )
+            )
+            _write_exact_vehicle_take_profit_closes(
+                root,
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:STOP",
+                pair="EUR_USD",
+                side="LONG",
+                entry_reason="STOP_ORDER",
+                count=20,
+                realized_pl_jpy=100.0,
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.70,
+                    short_score=0.30,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item.get("intent", {}).get("order_type") == "STOP-ENTRY"
+            )
+            metadata = result["intent"]["metadata"]
+            self.assertEqual(
+                metadata["capture_exact_vehicle_net_scope_key"],
+                "EUR_USD|LONG|BREAKOUT_FAILURE|STOP|ALL_AUDITED_EXITS",
+            )
+            self.assertEqual(metadata["capture_exact_vehicle_net_trades"], 20)
+            self.assertEqual(metadata["capture_exact_vehicle_net_wins"], 20)
+            self.assertEqual(metadata["capture_exact_vehicle_net_jpy"], 2000.0)
+            self.assertEqual(
+                metadata["capture_exact_vehicle_net_metrics_source"],
+                "data/execution_ledger.db:exact_vehicle_net",
+            )
 
     def test_exact_vehicle_tp_metrics_never_use_close_lane_for_manual_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -13656,9 +13813,16 @@ def _write_exact_vehicle_take_profit_closes(
     side: str,
     entry_reason: str,
     count: int,
-    realized_pl_jpy: float,
+    realized_pl_jpy: float | list[float],
     start_day: str = "2026-07-01",
 ) -> None:
+    outcomes = (
+        [float(realized_pl_jpy)] * count
+        if isinstance(realized_pl_jpy, (int, float))
+        else [float(value) for value in realized_pl_jpy]
+    )
+    if len(outcomes) != count:
+        raise AssertionError("exact-vehicle fixture outcome count mismatch")
     db = data_root / "execution_ledger.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
@@ -13681,6 +13845,7 @@ def _write_exact_vehicle_take_profit_closes(
         )
         _ensure_execution_coverage(conn)
         for index in range(count):
+            realized = outcomes[index]
             trade_id = f"exact-vehicle-{index}"
             order_id = f"entry-{index}"
             entry_ts = f"{start_day}T00:{index % 60:02d}:00+00:00"
@@ -13739,7 +13904,7 @@ def _write_exact_vehicle_take_profit_closes(
                     f"tp-{index}",
                     trade_id,
                     "TAKE_PROFIT_ORDER",
-                    realized_pl_jpy,
+                    realized,
                     0.0,
                     json.dumps(
                         {
@@ -13751,7 +13916,7 @@ def _write_exact_vehicle_take_profit_closes(
                             "tradesClosed": [
                                 {
                                     "tradeID": trade_id,
-                                    "realizedPL": str(realized_pl_jpy),
+                                    "realizedPL": str(realized),
                                     "financing": "0.0",
                                 }
                             ],

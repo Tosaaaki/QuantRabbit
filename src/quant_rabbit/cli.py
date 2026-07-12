@@ -4891,6 +4891,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_draft.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_draft.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_draft.add_argument(
+        "--execution-ledger-db",
+        type=Path,
+        default=DEFAULT_EXECUTION_LEDGER_DB,
+    )
     p_draft.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_draft.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_draft.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
@@ -4978,6 +4983,11 @@ def main(argv: list[str] | None = None) -> int:
     p_market_read.add_argument("--max-overlay-age-seconds", type=int, default=15 * 60)
     p_market_read.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_market_read.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_market_read.add_argument(
+        "--execution-ledger-db",
+        type=Path,
+        default=DEFAULT_EXECUTION_LEDGER_DB,
+    )
     p_market_read.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_market_read.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_market_read.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
@@ -5061,6 +5071,11 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt = sub.add_parser("gpt-trader-decision", help="Verify a Codex-written trader decision against broker truth.")
     p_gpt.add_argument("--snapshot", type=Path, required=True)
     p_gpt.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_gpt.add_argument(
+        "--execution-ledger-db",
+        type=Path,
+        default=DEFAULT_EXECUTION_LEDGER_DB,
+    )
     p_gpt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_gpt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_gpt.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
@@ -9351,6 +9366,7 @@ def main(argv: list[str] | None = None) -> int:
                 active_opportunity_board_path=args.active_opportunity_board,
                 non_eurusd_live_grade_frontier_path=args.non_eurusd_live_grade_frontier,
                 range_rail_geometry_repair_path=args.range_rail_geometry_repair,
+                execution_ledger_path=args.execution_ledger_db,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,
@@ -9487,6 +9503,7 @@ def main(argv: list[str] | None = None) -> int:
                 market_read_evidence_source_overrides=_market_read_evidence_sources(args),
                 market_read_predictions_path=args.market_read_predictions,
                 market_read_score_report_path=args.market_read_score_report,
+                execution_ledger_path=args.execution_ledger_db,
                 max_lanes=args.max_lanes,
             ).run(snapshot_path=args.snapshot)
         except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
@@ -9790,6 +9807,7 @@ def _market_read_evidence_sources(args: argparse.Namespace) -> dict[str, Path]:
         "active_opportunity_board": "active_opportunity_board",
         "non_eurusd_live_grade_frontier": "non_eurusd_live_grade_frontier",
         "range_rail_geometry_repair": "range_rail_geometry_repair",
+        "execution_ledger": "execution_ledger_db",
         "market_read_predictions": "market_read_predictions",
     }
     sources: dict[str, Path] = {}

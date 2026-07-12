@@ -49,7 +49,7 @@ the merged response. Final authority remains `gpt-trader-decision` plus
     }
   },
   "decision_provenance": {
-    "schema_version": 1,
+    "schema_version": 2,
     "author_kind": "CODEX_MARKET_READ",
     "model": "gpt-5.5",
     "reasoning_effort": "high",
@@ -67,6 +67,10 @@ the merged response. Final authority remains `gpt-trader-decision` plus
     "baseline_selected_lane_ids": ["desk:PAIR:SIDE:METHOD"],
     "baseline_disposition": "ACCEPT_BASELINE",
     "action_downgrade_only": false,
+    "capital_allocation_sha256": "<64hex>",
+    "capital_allocation_board_sha256": "<64hex>",
+    "authorized_size_multiple": 0.75,
+    "authorized_units": 750,
     "execution_fields_preserved": true,
     "risk_envelope_not_expanded": true,
     "live_permission_granted": false
@@ -82,6 +86,14 @@ the merged response. Final authority remains `gpt-trader-decision` plus
   "market_read_disposition": "ACCEPT_BASELINE",
   "market_read_veto_reason": "",
   "market_read_vetoed_lane_ids": [],
+  "capital_allocation": {
+    "decision": "ALLOCATE",
+    "lane_id": "desk:PAIR:SIDE:METHOD",
+    "size_multiple": 0.75,
+    "selected_units": 750,
+    "allocation_board_sha256": "<64hex>",
+    "rationale": "Direction-specific economic hit rate, timeout rate, exact-vehicle expectancy, reward/risk, and maximum loss support 75% of the already risk-capped 1000-unit baseline."
+  },
   "action": "TRADE",
   "selected_lane_id": "desk:PAIR:SIDE:METHOD",
   "selected_lane_ids": ["desk:PAIR:SIDE:METHOD"],
@@ -174,7 +186,10 @@ the merged response. Final authority remains `gpt-trader-decision` plus
 - `strategy_reviews[].verdict` and `specialist_reviews[].verdict`: `SUPPORTS`, `REJECTS`, `BLOCKED`, `WATCH`. Do not encode gate reasons in the verdict string; put gate details such as `CLOSE_OPERATOR_AUTH_REQUIRED` or `NO_LIVE_READY_LANES` in `hard_gate_codes`.
 - `market_read_first.naked_read.thesis_state`: `ALIVE`, `WOUNDED`, `INVALIDATED`, `EMERGENCY`, or `UNKNOWN`.
 - `market_read_disposition`: `ACCEPT_BASELINE`, `VETO_WAIT`, or `VETO_REQUEST_EVIDENCE`. A veto is valid only when the deterministic baseline action was `TRADE`; it clears final selected lanes while preserving their ids in `market_read_vetoed_lane_ids`.
-- `decision_provenance.author_kind=CODEX_MARKET_READ` is mandatory for final `TRADE`. Its model, age, market-read digest, final execution-envelope digest, transition, and no-permission/no-risk-expansion flags must validate.
+- `capital_allocation.decision`: `ALLOCATE` only for final `TRADE`; `NO_TRADE` for every veto, non-entry action, and `CLOSE`. `ALLOCATE` must bind the one baseline lane, use only an exact advertised `0.5`, `0.75`, or `1.0`, and set `selected_units=floor(base_units × size_multiple)`; choices that floor to zero units are not advertised. Predictive SCOUT and `HEDGE` allow only `1.0`. Broad/global positive expectancy does not prove a lane. Negative or unknown edge is non-trade unless the board proves exact pair/side/method/vehicle all-exit net evidence with at least 20 financing-adjusted outcomes and positive net/expectancy/Wilson-stressed expectancy, validated bounded SCOUT evidence, `HEDGE` risk reduction, or the narrower attached technical-TP repair exception with exact source scope, at least five trades, zero losses, positive expectancy, and positive average win. `NO_TRADE` requires `lane_id=null`, `size_multiple=0`, and `selected_units=0`.
+- For an ordinary schema-v2 `ALLOCATE`, the receipt's numeric forecast fields are live hypotheses only. The gateway accepts MARKET, then recomputes the economic Wilson lower bound, strict EV, quarter-Kelly unit ceiling, fresh NAV/conversions/RiskEngine geometry, and the OANDA S5 no-touch path. It fixes the maximum adverse fill as `priceBound` and repeats the exact proof after reservation; any consumed barrier, adverse drift, incomplete/malformed path, worse NAV/margin, changed transaction id, off-grid broker price, or looser/tampered bound blocks without POST and retains the reservation. The receipt must not pre-author a bound or assert that these final broker checks passed.
+- Ordinary `ALLOCATE` provenance must also carry `execution_cost_floor_sha256` from allocation-surface v2. The proof has no static or zero-cost fallback: MARKET entry p95 is joined from gateway RiskMetrics to official OANDA fill truth; TP/SL exit p95 is joined by the close's exact protection order id and trade id to the authoritative OANDA transaction; financing is adverse-only, unit-scaled, and the maximum global/exact Wilson-95 upper stress, with no credit offset. Latest-anchored 90-day cohorts, a latest-age limit of 90 days, applicable 20-sample floors, exact scope, and all digests must pass. Fresh numeric EV uses entry + exit + financing cost; worst-fill EV embeds the adverse entry move once and retains exit + financing cost once, with at least entry-p95 bound allowance and cost-adjusted Kelly/NAV/portfolio/basket/attached-stop caps. The allocation board, merged receipt, early pre-POST proof, reserved `priceBound`, and final pre-POST proof must retain the same cost SHA and exact pair/side/authoritative `market_context.method`/MARKET scope; optional `metadata.method` must agree. A globally calibrated entry/exit/financing row can invalidate this receipt even when it belongs to another exact edge lane. V1 packets/receipts and missing, thin, stale, mismatched, malformed, bool/non-finite, or tampered cost evidence are rejection triggers and require a fresh packet/overlay/receipt.
+- `decision_provenance.author_kind=CODEX_MARKET_READ` is mandatory for final `TRADE`. Its schema version, model, age, market-read/allocation/final-envelope digests, transition, and no-permission/no-risk-expansion flags must validate. Schema-v2 `TRADE`, `CLOSE`, `WAIT`, and `REQUEST_EVIDENCE` must each exactly rebuild from the current baseline, stored packet/body, overlay, and material evidence; veto receipts receive no weaker provenance treatment.
 - A current market-read receipt binds one primary pair, side, and lane. For `TRADE`, `selected_lane_ids` must contain exactly one item equal to `selected_lane_id`. A different or additional lane requires a fresh broker/evidence snapshot, GPT wake, overlay, verification, and receipt; downstream expansion, substitution, or deterministic recovery is forbidden.
 - `twenty_minute_plan.horizon_minutes`: `60` for `TRADE`, `WAIT`, and `REQUEST_EVIDENCE`; the field name is retained for compatibility, and this is the scheduled hourly decision cadence, not a market-derived holding target.
 - `cancel_order_ids` on `TRADE` or `CANCEL_PENDING` is allowed only for current trader-owned pending entry ids from the broker snapshot. For `TRADE`, the gateway cancels those ids before validating the exact single selected lane, so use it only when replacing stale or lower-priority pending exposure with that current lane. For `CANCEL_PENDING`, the gateway cycle cancels the verified ids and sends no fresh entry in that same cycle.
@@ -182,7 +197,7 @@ the merged response. Final authority remains `gpt-trader-decision` plus
 
 Measurement output keeps two lineages separate. A schema-v2 prediction row's top-level `originating_decision_receipt_id`, `direct_execution_attribution`, and `direct_realized_outcome` describe that same row's originating `gptd:` receipt and exact `(gptd, mr2)` execution/P&L. Its `reaction_chain.first_subsequent_decision`, reaction execution attribution, and reaction realized outcome describe the next recorded decision after the prior prediction. Neither path may join by pair/time proximity, and reaction evidence must never be presented as the originating prediction's own execution or P/L. A pending LIMIT/STOP order may later extend from its exact gateway order id to an execution-ledger trade id only through exact `ORDER_FILLED.order_id` equality.
 
-## Verifier Rejection Triggers
+## Verifier and Gateway Rejection Triggers
 
 - Unknown evidence refs.
 - Missing or unparseable `generated_at_utc`.
@@ -190,6 +205,8 @@ Measurement output keeps two lineages separate. A schema-v2 prediction row's top
 - Deterministic `TRADE` without fresh valid `CODEX_MARKET_READ` provenance (`AI_MARKET_READ_REQUIRED`).
 - Codex read with missing/non-numeric/wrong-side target, invalidation, forced entry/TP/SL, or invalid `RANGE` rails.
 - Missing latest truly resolved score-eligible prior prediction review, missing counterargument/change summary, stale baseline/evidence SHA, changed execution envelope, or invalid accept/veto transition.
+- Missing/stale or body-tampered packet/allocation board, missing/invalid allocation rationale, alternate lane, non-allowlisted/approximate multiplier, non-finite or bool numeric fields, wrong integer-floor units, negative/unknown edge without the exact permitted positive-edge proof, `TRADE+NO_TRADE`, or non-entry/`CLOSE+ALLOCATE`.
+- A selected exact-vehicle close/reduction or non-zero audited `DAILY_FINANCING` on a still-open attributed trade that changes the WAL-aware semantic ledger surface after authoring, or failure of the same-basis all-exit/TP edge or execution-cost reproof after final ledger/broker reconciliation. Exact-zero and manual financing components do not become system edge, while account-total zero still preserves non-zero system components. A WAL checkpoint alone is non-material; an unrelated edge-only row is non-material only if it changes neither the selected exact rows nor a global execution-cost cohort/digest. A cost-cohort change stales the receipt even when the row belongs to another exact lane. Missing raw financing transactions, broken gateway-fill identity, unreadable/arithmetic-inconsistent evidence, or any unresolved selected cash is blocking.
 - `market_read_first.naked_read` omits cleanest theme expression, 24h location,
   H1/H4 alignment, known winning trade-shape match, proposed building-style
   allowance, thesis state, or tape state.

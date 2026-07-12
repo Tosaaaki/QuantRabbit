@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import quant_rabbit.capture_economics as capture_module
 from quant_rabbit.capture_economics import (
+    RealizedOutcome,
     build_capture_economics,
+    evaluate_exact_vehicle_net_edge,
     read_attributed_net_outcomes,
     read_attributed_system_entries,
+    read_exact_vehicle_allocation_surface,
+    read_exact_vehicle_net_metrics,
 )
 
 
@@ -140,6 +146,120 @@ def _make_db(path: Path, closes: list[dict]) -> None:
 
 
 class CaptureEconomicsTest(unittest.TestCase):
+    def test_unresolved_partial_cash_blocks_exact_vehicle_edge_without_increasing_n(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            closes = [
+                {
+                    "ts_utc": f"2026-07-01T00:{index:02d}:00Z",
+                    "pair": "EUR_USD",
+                    "pl": 100.0,
+                }
+                for index in range(20)
+            ]
+            closes.append(
+                {
+                    "ts_utc": "2026-07-01T00:30:00Z",
+                    "pair": "EUR_USD",
+                    "pl": -5000.0,
+                    "event_type": "TRADE_REDUCED",
+                    "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                }
+            )
+            _make_db(db, closes)
+            financing = {
+                "type": "DAILY_FINANCING",
+                "financing": "-25.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "t20", "financing": "-25.0"}
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "partial-daily-financing",
+                        "2026-07-01T00:31:00Z",
+                        -25.0,
+                        json.dumps(financing),
+                    ),
+                )
+
+            metrics = read_exact_vehicle_net_metrics(db)
+
+            self.assertIsNotNone(metrics)
+            row = (metrics or {})[
+                ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+            ]
+            self.assertEqual(row["trades"], 20)
+            self.assertEqual(row["net_jpy"], 2000.0)
+            self.assertEqual(row["unresolved_realized_trades"], 1)
+            self.assertEqual(row["unresolved_realized_net_jpy"], -5025.0)
+            evidence = evaluate_exact_vehicle_net_edge(row)
+            self.assertFalse(evidence["proven"])
+            self.assertTrue(evidence["blocks_tp_exception"])
+
+    def test_exact_vehicle_edge_requires_arithmetic_identity(self) -> None:
+        evidence = evaluate_exact_vehicle_net_edge(
+            {
+                "trades": 20,
+                "wins": 18,
+                "losses": 2,
+                "net_jpy": 1.0,
+                "expectancy_jpy_per_trade": 999.0,
+                "avg_win_jpy": 100.0,
+                "avg_loss_jpy": 10.0,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+
+        self.assertFalse(evidence["arithmetic_consistent"])
+        self.assertFalse(evidence["proven"])
+        self.assertTrue(evidence["blocks_tp_exception"])
+
+    def test_thin_tp_exception_never_hides_a_known_all_exit_loss(self) -> None:
+        losing_trade = evaluate_exact_vehicle_net_edge(
+            {
+                "trades": 8,
+                "wins": 7,
+                "losses": 1,
+                "net_jpy": 690.0,
+                "expectancy_jpy_per_trade": 86.25,
+                "avg_win_jpy": 100.0,
+                "avg_loss_jpy": 10.0,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+        zero_loss = evaluate_exact_vehicle_net_edge(
+            {
+                "trades": 8,
+                "wins": 8,
+                "losses": 0,
+                "net_jpy": 800.0,
+                "expectancy_jpy_per_trade": 100.0,
+                "avg_win_jpy": 100.0,
+                "avg_loss_jpy": 0.0,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+
+        self.assertTrue(losing_trade["blocks_tp_exception"])
+        self.assertFalse(zero_loss["blocks_tp_exception"])
+
     def test_oanda_nanosecond_timestamps_are_audited_on_python_39(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -825,6 +945,458 @@ class CaptureEconomicsTest(unittest.TestCase):
 
             self.assertEqual(summary.trades, 0)
 
+    def test_open_trade_financing_is_unresolved_and_changes_allocation_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            closes = [
+                {
+                    "ts_utc": f"2026-07-01T00:{index:02d}:00Z",
+                    "pair": "EUR_USD",
+                    "pl": 100.0,
+                }
+                for index in range(20)
+            ]
+            closes.append(
+                {
+                    "ts_utc": "2026-07-01T01:00:00Z",
+                    "pair": "EUR_USD",
+                    "pl": 0.0,
+                    "trade_id": "financed-open",
+                }
+            )
+            _make_db(db, closes)
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM execution_events WHERE event_type='TRADE_CLOSED' AND trade_id=?",
+                    ("financed-open",),
+                )
+            before = read_exact_vehicle_allocation_surface(db)
+            self.assertTrue(
+                evaluate_exact_vehicle_net_edge(
+                    (read_exact_vehicle_net_metrics(db) or {})[
+                        ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+                    ]
+                )["proven"]
+            )
+            financing = {
+                "type": "DAILY_FINANCING",
+                "financing": "-5000.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "financed-open", "financing": "-5000.0"}
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "open-daily-financing",
+                        "2026-07-01T02:00:00Z",
+                        -5000.0,
+                        json.dumps(financing),
+                    ),
+                )
+
+            metrics = read_exact_vehicle_net_metrics(db)
+            after = read_exact_vehicle_allocation_surface(db)
+
+            self.assertIsNotNone(metrics)
+            row = (metrics or {})[
+                ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+            ]
+            self.assertEqual(row["trades"], 20)
+            self.assertEqual(row["net_jpy"], 2000.0)
+            self.assertEqual(row["unresolved_realized_trades"], 1)
+            self.assertEqual(row["unresolved_realized_net_jpy"], -5000.0)
+            self.assertEqual(
+                row["unresolved_trade_ids_sha256"],
+                hashlib.sha256(b'["financed-open"]').hexdigest(),
+            )
+            self.assertNotEqual(
+                before["allocation_surface_sha256"],
+                after["allocation_surface_sha256"],
+            )
+            evidence = evaluate_exact_vehicle_net_edge(row)
+            self.assertFalse(evidence["proven"])
+            self.assertTrue(evidence["blocks_tp_exception"])
+
+    def test_open_system_financing_with_corrupt_normalized_trade_id_is_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": "2026-07-01T01:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 0.0,
+                        "trade_id": "broken-open",
+                    }
+                ],
+            )
+            financing = {
+                "id": "broken-financing",
+                "type": "DAILY_FINANCING",
+                "financing": "-25.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "broken-open", "financing": "-25.0"}
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM execution_events WHERE event_type='TRADE_CLOSED'"
+                )
+                conn.execute(
+                    "UPDATE execution_events SET trade_id='' WHERE event_type='ORDER_FILLED'"
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "broken-financing-event",
+                        "2026-07-01T02:00:00Z",
+                        -25.0,
+                        json.dumps(financing),
+                    ),
+                )
+
+            self.assertIsNone(read_attributed_net_outcomes(db))
+            self.assertIsNone(read_exact_vehicle_net_metrics(db))
+            self.assertEqual(
+                read_exact_vehicle_allocation_surface(db)["parse_status"],
+                "INVALID",
+            )
+
+    def test_authoritative_daily_financing_cannot_disappear_entirely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": "2026-07-01T01:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 0.0,
+                        "trade_id": "authoritative-open",
+                    }
+                ],
+            )
+            financing = {
+                "id": "authoritative-financing",
+                "type": "DAILY_FINANCING",
+                "financing": "-25.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {
+                                "tradeID": "authoritative-open",
+                                "financing": "-25.0",
+                            }
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM execution_events WHERE event_type='TRADE_CLOSED'"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        raw_json TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO oanda_transactions VALUES (?, 'DAILY_FINANCING', ?)",
+                    ("authoritative-financing", json.dumps(financing)),
+                )
+
+            self.assertIsNone(read_attributed_net_outcomes(db))
+            self.assertEqual(
+                read_exact_vehicle_allocation_surface(db)["parse_status"],
+                "INVALID",
+            )
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "authoritative-financing-event",
+                        "2026-07-01T02:00:00Z",
+                        -25.0,
+                        json.dumps(financing),
+                    ),
+                )
+
+            metrics = read_exact_vehicle_net_metrics(db)
+            self.assertIsNotNone(metrics)
+            row = (metrics or {})[
+                ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+            ]
+            self.assertEqual(row["unresolved_realized_trades"], 1)
+            self.assertEqual(row["unresolved_realized_net_jpy"], -25.0)
+
+    def test_idless_financing_cannot_offset_authoritative_broker_cash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": f"2026-07-01T00:{index:02d}:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 100.0,
+                    }
+                    for index in range(20)
+                ],
+            )
+            authoritative = {
+                "id": "authoritative-financing-loss",
+                "type": "DAILY_FINANCING",
+                "financing": "-5000.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "t0", "financing": "-5000.0"}
+                        ]
+                    }
+                ],
+            }
+            idless_offset = {
+                "type": "DAILY_FINANCING",
+                "financing": "5000.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "t0", "financing": "5000.0"}
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        raw_json TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO oanda_transactions VALUES (?, 'DAILY_FINANCING', ?)",
+                    (
+                        "authoritative-financing-loss",
+                        json.dumps(authoritative),
+                    ),
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        (
+                            "authoritative-financing-loss-event",
+                            "2026-07-01T01:00:00Z",
+                            -5000.0,
+                            json.dumps(authoritative),
+                        ),
+                        (
+                            "idless-financing-offset-event",
+                            "2026-07-01T01:01:00Z",
+                            5000.0,
+                            json.dumps(idless_offset),
+                        ),
+                    ),
+                )
+
+            self.assertIsNone(read_attributed_net_outcomes(db))
+            self.assertIsNone(read_exact_vehicle_net_metrics(db))
+            self.assertEqual(
+                read_exact_vehicle_allocation_surface(db)["parse_status"],
+                "INVALID",
+            )
+
+    def test_idless_financing_rejected_when_authoritative_table_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": f"2026-07-01T00:{index:02d}:00Z",
+                        "pair": "EUR_USD",
+                        "pl": -100.0,
+                        "exit_reason": "STOP_LOSS_ORDER",
+                    }
+                    for index in range(20)
+                ],
+            )
+            idless_profit = {
+                "type": "DAILY_FINANCING",
+                "financing": "5000.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "t0", "financing": "5000.0"}
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        raw_json TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "idless-financing-profit-event",
+                        "2026-07-01T01:00:00Z",
+                        5000.0,
+                        json.dumps(idless_profit),
+                    ),
+                )
+
+            self.assertIsNone(read_attributed_net_outcomes(db))
+            self.assertIsNone(read_exact_vehicle_net_metrics(db))
+            self.assertEqual(
+                read_exact_vehicle_allocation_surface(db)["parse_status"],
+                "INVALID",
+            )
+
+    def test_zero_system_and_manual_open_financing_do_not_change_exact_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            closes = [
+                {
+                    "ts_utc": f"2026-07-01T00:{index:02d}:00Z",
+                    "pair": "EUR_USD",
+                    "pl": 100.0,
+                }
+                for index in range(20)
+            ]
+            closes.extend(
+                [
+                    {
+                        "ts_utc": "2026-07-01T01:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 0.0,
+                        "trade_id": "zero-system-open",
+                    },
+                    {
+                        "ts_utc": "2026-07-01T01:01:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 0.0,
+                        "trade_id": "manual-open",
+                        "lane_id": (
+                            "operator_manual:EUR_USD:LONG:RANGE_ROTATION:LIMIT"
+                        ),
+                    },
+                ]
+            )
+            _make_db(db, closes)
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM execution_events WHERE event_type='TRADE_CLOSED' "
+                    "AND trade_id IN ('zero-system-open', 'manual-open')"
+                )
+            before = read_exact_vehicle_allocation_surface(db)
+            financing = {
+                "type": "DAILY_FINANCING",
+                "financing": "-25.0",
+                "positionFinancings": [
+                    {
+                        "openTradeFinancings": [
+                            {"tradeID": "zero-system-open", "financing": "0.0"},
+                            {"tradeID": "manual-open", "financing": "-25.0"},
+                        ]
+                    }
+                ],
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json
+                    ) VALUES (?, ?, 'OANDA_TRANSACTION', NULL, NULL,
+                              NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)
+                    """,
+                    (
+                        "zero-manual-financing",
+                        "2026-07-01T02:00:00Z",
+                        -25.0,
+                        json.dumps(financing),
+                    ),
+                )
+
+            metrics = read_exact_vehicle_net_metrics(db)
+            after = read_exact_vehicle_allocation_surface(db)
+
+            self.assertIsNotNone(metrics)
+            row = (metrics or {})[
+                ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+            ]
+            self.assertEqual(row["trades"], 20)
+            self.assertEqual(row["unresolved_realized_trades"], 0)
+            self.assertEqual(row["unresolved_realized_net_jpy"], 0.0)
+            self.assertEqual(
+                row["unresolved_trade_ids_sha256"],
+                hashlib.sha256(b"[]").hexdigest(),
+            )
+            self.assertEqual(
+                before["allocation_surface_sha256"],
+                after["allocation_surface_sha256"],
+            )
+
     def test_close_and_daily_financing_are_included_in_net_outcome(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1287,6 +1859,313 @@ class CaptureEconomicsTest(unittest.TestCase):
             self.assertEqual(summary.trades, 21)
             self.assertIsNone(summary.payoff_ratio)
             self.assertEqual(summary.status, "POSITIVE_EXPECTANCY")
+
+    def test_execution_cost_financing_stress_never_nets_adverse_with_credit(self) -> None:
+        outcomes = [
+            RealizedOutcome(
+                ts_utc=f"2026-07-01T00:{index:02d}:00Z",
+                trade_id=f"t{index}",
+                pair="EUR_USD",
+                side="LONG",
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                method="TREND_CONTINUATION",
+                exit_reason="TAKE_PROFIT_ORDER",
+                realized_pl_jpy=100.0,
+                entry_vehicle="MARKET",
+                entry_truth_consistent=True,
+                broker_close_ts_utc=f"2026-07-01T00:{index:02d}:00Z",
+                broker_time_consistent=True,
+                entry_units=1000.0,
+                # Signed financing is net zero, but the audited component
+                # stream contained a 100 JPY debit and a 100 JPY credit.
+                audited_financing_jpy=0.0,
+                adverse_financing_jpy=100.0 if index == 0 else 0.0,
+            )
+            for index in range(20)
+        ]
+
+        metrics = capture_module._execution_cost_financing_metrics(outcomes)
+
+        self.assertEqual(metrics["adverse_trades"], 1)
+        self.assertEqual(metrics["adverse_total_jpy"], 100.0)
+        self.assertGreater(metrics["adverse_stress_jpy_per_unit"], 0.0)
+
+    def test_exit_slippage_joins_authoritative_replacement_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ledger.db"
+            close_raw = {
+                "time": "2026-07-01T00:10:00Z",
+                "type": "ORDER_FILL",
+                "instrument": "EUR_USD",
+                "orderID": "501",
+                "reason": "TAKE_PROFIT_ORDER",
+                "price": "1.10000",
+                "fullVWAP": "1.10000",
+                "commission": "0.0",
+                "guaranteedExecutionFee": "0.0",
+                "tradesClosed": [
+                    {
+                        "tradeID": "t0",
+                        "realizedPL": "100.0",
+                        "financing": "0.0",
+                        "price": "1.10000",
+                    }
+                ],
+            }
+            _make_db(
+                db,
+                [
+                    {
+                        "ts_utc": "2026-07-01T00:10:00Z",
+                        "entry_ts_utc": "2026-07-01T00:00:00Z",
+                        "pair": "EUR_USD",
+                        "pl": 100.0,
+                        "entry_reason": "LIMIT_ORDER",
+                        "exit_reason": "TAKE_PROFIT_ORDER",
+                        "raw_json": close_raw,
+                    }
+                ],
+            )
+            replaced = {
+                "id": "500",
+                "type": "TAKE_PROFIT_ORDER",
+                "tradeID": "t0",
+                "price": "1.09900",
+            }
+            authoritative = {
+                "id": "501",
+                "type": "TAKE_PROFIT_ORDER",
+                "tradeID": "t0",
+                "price": "1.10020",
+            }
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "ALTER TABLE execution_events ADD COLUMN price REAL"
+                )
+                conn.execute(
+                    """
+                    UPDATE execution_events
+                    SET order_id = '501', price = 1.10000
+                    WHERE event_uid = 'c0'
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id,
+                        trade_id, pair, side, units, realized_pl_jpy,
+                        financing_jpy, exit_reason, raw_json, price
+                    ) VALUES (?, ?, 'PROTECTION_CREATED', NULL, ?, ?, ?, ?,
+                              NULL, NULL, 0.0, NULL, ?, NULL)
+                    """,
+                    (
+                        "old-protection",
+                        "2026-07-01T00:01:00Z",
+                        "500",
+                        "t0",
+                        "EUR_USD",
+                        "LONG",
+                        json.dumps(replaced),
+                    ),
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        raw_json TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO oanda_transactions VALUES (?, ?, ?)",
+                    (
+                        (
+                            "500",
+                            "TAKE_PROFIT_ORDER",
+                            json.dumps(replaced),
+                        ),
+                        (
+                            "501",
+                            "TAKE_PROFIT_ORDER",
+                            json.dumps(authoritative),
+                        ),
+                    ),
+                )
+
+            surface = capture_module._read_audited_execution_slippage(db)
+            self.assertIsNotNone(surface)
+            assert surface is not None
+            self.assertEqual(surface["take_profit_exit"]["samples"], 1)
+            self.assertAlmostEqual(
+                surface["take_profit_exit"]["adverse_p95_pips"],
+                2.0,
+            )
+
+            # The normalized row references the superseded order.  Removing
+            # the authoritative replacement must fail closed instead of using
+            # that stale trigger or joining merely by trade id.
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM oanda_transactions WHERE transaction_id='501'"
+                )
+            self.assertIsNone(
+                capture_module._read_audited_execution_slippage(db)
+            )
+
+    def test_exact_financing_cost_uses_key_local_rolling_cohort(self) -> None:
+        def outcome(
+            index: int,
+            closed_at: datetime,
+            *,
+            adverse_jpy: float = 0.0,
+        ) -> RealizedOutcome:
+            timestamp = closed_at.isoformat().replace("+00:00", "Z")
+            return RealizedOutcome(
+                ts_utc=timestamp,
+                trade_id=f"rolling-{index}",
+                pair="EUR_USD",
+                side="LONG",
+                lane_id=(
+                    "trend_trader:EUR_USD:LONG:"
+                    "TREND_CONTINUATION:MARKET"
+                ),
+                method="TREND_CONTINUATION",
+                exit_reason="TAKE_PROFIT_ORDER",
+                realized_pl_jpy=100.0,
+                entry_vehicle="MARKET",
+                entry_truth_consistent=True,
+                broker_close_ts_utc=timestamp,
+                broker_time_consistent=True,
+                entry_units=1000.0,
+                audited_financing_jpy=-adverse_jpy,
+                adverse_financing_jpy=adverse_jpy,
+            )
+
+        latest = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        rows = [
+            # These lifetime edge rows are outside the exact key's rolling
+            # financing cohort and must not dilute the current occurrence
+            # rate.  The boundary row exactly 90 days old remains included.
+            *[
+                outcome(index, latest - timedelta(days=120))
+                for index in range(100)
+            ],
+            outcome(100, latest - timedelta(days=90), adverse_jpy=100.0),
+            *[
+                outcome(101 + index, latest - timedelta(days=index))
+                for index in range(20)
+            ],
+        ]
+
+        exact = capture_module._aggregate_exact_vehicle_outcomes(
+            rows,
+            pure_take_profit_only=False,
+        )[("EUR_USD", "LONG", "TREND_CONTINUATION", "MARKET")]
+
+        self.assertEqual(exact["trades"], 121)
+        self.assertEqual(exact["financing_observation_trades"], 21)
+        self.assertEqual(exact["financing_adverse_trades"], 1)
+        self.assertEqual(
+            exact["financing_oldest_observation_utc"],
+            "2026-04-02T00:00:00Z",
+        )
+        self.assertEqual(
+            exact["financing_latest_observation_utc"],
+            "2026-07-01T00:00:00Z",
+        )
+        self.assertGreater(
+            exact["financing_adverse_stress_jpy_per_unit"],
+            0.0,
+        )
+
+    def test_execution_cost_floor_binds_global_and_exact_financing_digest(self) -> None:
+        cost_material = {
+            "contract": capture_module.EXECUTION_COST_FLOOR_CONTRACT,
+            "parse_status": "VALID",
+            "scope": "SYSTEM_GATEWAY_ATTRIBUTED_ALL_PAIRS_SIDES_METHODS",
+            "minimum_samples": capture_module.EXECUTION_COST_MIN_SAMPLES,
+            "maximum_sample_age_seconds": (
+                capture_module.EXECUTION_COST_MAX_SAMPLE_AGE_SECONDS
+            ),
+            "market_entry": {
+                "samples": 20,
+                "adverse_p95_pips": 0.2,
+                "latest_fill_utc": "2026-07-01T00:00:00Z",
+                "oldest_fill_utc": "2026-06-01T00:00:00Z",
+                "rows_sha256": "1" * 64,
+            },
+            "take_profit_exit": {
+                "samples": 20,
+                "adverse_p95_pips": 0.1,
+                "latest_fill_utc": "2026-07-01T00:00:00Z",
+                "oldest_fill_utc": "2026-06-01T00:00:00Z",
+                "rows_sha256": "2" * 64,
+            },
+            "stop_loss_exit": {
+                "samples": 20,
+                "adverse_p95_pips": 0.4,
+                "latest_fill_utc": "2026-07-01T00:00:00Z",
+                "oldest_fill_utc": "2026-06-01T00:00:00Z",
+                "rows_sha256": "3" * 64,
+            },
+            "global_financing": {
+                "observation_trades": 20,
+                "adverse_trades": 1,
+                "adverse_mean_jpy_per_unit": 0.5,
+                "adverse_stress_jpy_per_unit": 0.1,
+                "latest_observation_utc": "2026-07-01T00:00:00Z",
+                "oldest_observation_utc": "2026-06-01T00:00:00Z",
+            },
+        }
+        cost = {
+            **cost_material,
+            "execution_cost_surface_sha256": (
+                capture_module._canonical_json_sha256(cost_material)
+            ),
+        }
+        surface = {
+            "parse_status": "VALID",
+            "execution_cost": cost,
+            "exact_vehicle_net": [
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "method": "TREND_CONTINUATION",
+                    "vehicle": "MARKET",
+                    "trades": 20,
+                    "financing_observation_trades": 20,
+                    "financing_adverse_stress_jpy_per_unit": 0.2,
+                    "financing_latest_observation_utc": (
+                        "2026-07-01T00:00:00Z"
+                    ),
+                    "financing_oldest_observation_utc": (
+                        "2026-06-01T00:00:00Z"
+                    ),
+                    "latest_broker_close_ts_utc": "2026-07-01T00:00:00Z",
+                    "oldest_broker_close_ts_utc": "2026-06-01T00:00:00Z",
+                }
+            ],
+        }
+        proof = capture_module.execution_cost_floor_from_surface(
+            surface,
+            exact_key=("EUR_USD", "LONG", "TREND_CONTINUATION", "MARKET"),
+            as_of=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        )
+        self.assertEqual(proof["status"], "PASSED")
+        self.assertEqual(proof["financing_adverse_stress_jpy_per_unit"], 0.2)
+        tampered = json.loads(json.dumps(surface))
+        tampered["execution_cost"]["market_entry"]["adverse_p95_pips"] = 0.0
+        blocked = capture_module.execution_cost_floor_from_surface(
+            tampered,
+            exact_key=("EUR_USD", "LONG", "TREND_CONTINUATION", "MARKET"),
+            as_of=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        )
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertIn(
+            "EXECUTION_COST_SURFACE_DIGEST_MISMATCH",
+            blocked["failed_checks"],
+        )
 
     def test_positive_expectancy_and_manual_exclusion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

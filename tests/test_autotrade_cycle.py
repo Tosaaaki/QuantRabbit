@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -18,6 +19,7 @@ from quant_rabbit.automation import (
     AutoTradeCycleSummary,
     GptHandoffSummary,
     _close_gate_evidence_status,
+    _enforce_gpt_trade_capital_allocation,
     _gpt_lanes_pass_prefilter_or_recovery,
     _cycle_perspective_alignment_parts,
     _filtered_gpt_trade_cancel_order_ids,
@@ -34,6 +36,7 @@ from quant_rabbit.gpt_trader import (
     _decision_from_payload,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
     apply_codex_market_read_overlay,
@@ -55,10 +58,22 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
     dedicated overlay/verifier tests cover forged and stale artifacts.
     """
 
+    def __init__(
+        self,
+        response: dict[str, Any],
+        *,
+        capital_allocation_size_multiple: float = 1.0,
+        test_base_units_override: int | None = None,
+        source_path: Path | None = None,
+    ) -> None:
+        super().__init__(response, source_path=source_path)
+        self.capital_allocation_size_multiple = capital_allocation_size_multiple
+        self.test_base_units_override = test_base_units_override
+
     def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         decision = super().decide(input_packet, schema)
         action = str(decision.get("action") or "").upper()
-        if action not in {"TRADE", "CLOSE"}:
+        if action not in {"TRADE", "CLOSE", "WAIT", "REQUEST_EVIDENCE"}:
             return decision
         if isinstance(decision.get("decision_provenance"), dict):
             return decision
@@ -73,18 +88,78 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
             str(name): Path(str(path))
             for name, path in (artifact_contract.get("evidence_source_paths") or {}).items()
         }
-        if action == "TRADE":
-            primary_lane = _test_primary_lane(input_packet, decision)
+        if action in {"TRADE", "WAIT", "REQUEST_EVIDENCE"}:
+            primary_lane = (
+                _test_primary_lane(input_packet, decision)
+                if action == "TRADE"
+                else _test_first_lane(input_packet)
+            )
             primary_lane_id = str(primary_lane.get("lane_id") or "")
-            decision["selected_lane_id"] = primary_lane_id
-            decision["selected_lane_ids"] = [primary_lane_id]
-            market_read = _test_artifact_bound_market_read(input_packet, primary_lane)
+            if action == "TRADE":
+                decision["selected_lane_id"] = primary_lane_id
+                decision["selected_lane_ids"] = [primary_lane_id]
+                enriched_result = _ensure_test_exact_vehicle_edge(
+                    evidence_sources.get("order_intents"),
+                    ledger_path=evidence_sources.get("execution_ledger"),
+                    snapshot_path=evidence_sources.get("broker_snapshot"),
+                    primary_lane_id=primary_lane_id,
+                    base_units_override=self.test_base_units_override,
+                )
+                enriched_intent = enriched_result.get("intent")
+                if not isinstance(enriched_intent, dict):
+                    raise AssertionError("enriched test lane is missing its intent")
+                enriched_metadata = (
+                    enriched_intent.get("metadata")
+                    if isinstance(enriched_intent.get("metadata"), dict)
+                    else {}
+                )
+                enriched_lane_fields = {
+                    "pair": enriched_intent.get("pair"),
+                    "direction": enriched_intent.get("side"),
+                    "order_type": enriched_intent.get("order_type"),
+                    "entry": enriched_intent.get("entry"),
+                    "tp": enriched_intent.get("tp"),
+                    "sl": enriched_intent.get("sl"),
+                    "units": enriched_intent.get("units"),
+                    "risk_metrics": enriched_result.get("risk_metrics"),
+                }
+                primary_lane = {**primary_lane, **enriched_lane_fields}
+                for packet_lane in input_packet.get("lanes", []) or []:
+                    if (
+                        isinstance(packet_lane, dict)
+                        and str(packet_lane.get("lane_id") or "") == primary_lane_id
+                    ):
+                        packet_lane.update(enriched_lane_fields)
+                        forecast = (
+                            packet_lane.get("forecast")
+                            if isinstance(packet_lane.get("forecast"), dict)
+                            else {}
+                        )
+                        forecast.update(
+                            {
+                                "forecast_direction": enriched_metadata.get("forecast_direction"),
+                                "forecast_target_price": enriched_metadata.get("forecast_target_price"),
+                                "forecast_invalidation_price": enriched_metadata.get(
+                                    "forecast_invalidation_price"
+                                ),
+                            }
+                        )
+                        packet_lane["forecast"] = forecast
+                        break
+            if primary_lane_id:
+                market_read = _test_artifact_bound_market_read(input_packet, primary_lane)
+            else:
+                market_read = decision.get("market_read_first")
+                if not isinstance(market_read, dict):
+                    raise AssertionError("test non-entry fixture is missing market_read_first")
         else:
             market_read = decision.get("market_read_first")
             if not isinstance(market_read, dict):
                 raise AssertionError("test CLOSE fixture is missing market_read_first")
         authored_at = datetime.now(timezone.utc)
-        decision["generated_at_utc"] = authored_at.isoformat()
+        decision["generated_at_utc"] = (
+            decision.get("generated_at_utc") or authored_at.isoformat()
+        )
         decision["market_read_first"] = market_read
         decision.update(
             {
@@ -105,9 +180,14 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
                 "market_read_vetoed_lane_ids": [],
             }
         )
+        baseline_decision = json.loads(json.dumps(decision))
+        if action in {"WAIT", "REQUEST_EVIDENCE"} and primary_lane_id:
+            baseline_decision["action"] = "TRADE"
+            baseline_decision["selected_lane_id"] = primary_lane_id
+            baseline_decision["selected_lane_ids"] = [primary_lane_id]
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
         baseline_path.write_text(
-            json.dumps(decision, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(baseline_decision, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         )
         prepared = prepare_market_read_baseline(
             baseline_path=baseline_path,
@@ -127,20 +207,64 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
             "adjustment": "Bind the fixture read to the current selected intent geometry.",
             "no_change_reason": "No resolved prior prediction is present in this isolated fixture." if not prior_ids else "",
         }
+        allocation_lane = (
+            (packet_payload.get("capital_allocation_board") or {}).get(
+                "selected_lane"
+            )
+            or {}
+        )
+        allocate = action == "TRADE"
+        disposition = (
+            "VETO_WAIT"
+            if action == "WAIT" and primary_lane_id
+            else "VETO_REQUEST_EVIDENCE"
+            if action == "REQUEST_EVIDENCE" and primary_lane_id
+            else "ACCEPT_BASELINE"
+        )
+        size_multiple = self.capital_allocation_size_multiple
+        size_ratio = {0.5: (1, 2), 0.75: (3, 4), 1.0: (1, 1)}.get(
+            size_multiple
+        )
+        if allocate and size_ratio is None:
+            raise AssertionError("test allocation multiple must be 0.5, 0.75, or 1.0")
+        base_units = int(allocation_lane.get("base_units") or 0)
+        selected_units = (
+            base_units * size_ratio[0] // size_ratio[1]
+            if allocate and size_ratio is not None
+            else 0
+        )
         overlay = {
-            "schema_version": 1,
+            "schema_version": packet_payload["schema_version"],
             "author_kind": CODEX_MARKET_READ_AUTHOR,
             "model": "gpt-5.5",
             "reasoning_effort": "high",
             "authored_at_utc": authored_at.isoformat(),
             "baseline_sha256": prepared.baseline_sha256,
             "evidence_packet_sha256": prepared.evidence_packet_sha256,
-            "baseline_disposition": "ACCEPT_BASELINE",
+            "baseline_disposition": disposition,
             "market_read_first": market_read,
             "market_read_review": review,
             "market_read_counterargument": "The cited shelf can fail before the numeric target is reached.",
             "market_read_change_summary": "Bound the fixture read to the current selected intent and evidence packet.",
-            "market_read_veto_reason": "",
+            "market_read_veto_reason": (
+                "The GPT numeric read vetoes the deterministic entry."
+                if disposition.startswith("VETO_")
+                else ""
+            ),
+            "capital_allocation": {
+                "decision": "ALLOCATE" if allocate else "NO_TRADE",
+                "lane_id": decision.get("selected_lane_id") if allocate else None,
+                "size_multiple": size_multiple if allocate else 0.0,
+                "selected_units": selected_units,
+                "allocation_board_sha256": packet_payload[
+                    "capital_allocation_board_sha256"
+                ],
+                "rationale": (
+                    "The content-addressed direction and exact-vehicle edge support the baseline units."
+                    if allocate
+                    else "No fresh entry capital is authorized for a close receipt."
+                ),
+            },
         }
         overlay_path.write_text(
             json.dumps(overlay, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -175,6 +299,515 @@ def _test_primary_lane(input_packet: dict[str, Any], decision: dict[str, Any]) -
     if lane is None:
         raise AssertionError(f"test GPT primary lane is absent from the verifier packet: {primary_lane_id}")
     return lane
+
+
+def _test_first_lane(input_packet: dict[str, Any]) -> dict[str, Any]:
+    lane = next(
+        (
+            dict(item)
+            for item in input_packet.get("lanes", []) or []
+            if isinstance(item, dict) and item.get("lane_id")
+        ),
+        None,
+    )
+    return lane or {}
+
+
+def _synthetic_execution_cost_surface(observed_at: datetime) -> dict[str, Any]:
+    """Return one stable, internally content-addressed v2 cost fixture."""
+
+    latest = observed_at.astimezone(timezone.utc).isoformat()
+    oldest = (observed_at - timedelta(days=1)).astimezone(
+        timezone.utc
+    ).isoformat()
+
+    def digest(value: Any) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def transport(label: str, p95: float) -> dict[str, Any]:
+        return {
+            "samples": 20,
+            "adverse_p95_pips": p95,
+            "adverse_max_pips": p95,
+            "latest_fill_utc": latest,
+            "oldest_fill_utc": oldest,
+            "rows_sha256": digest([label, oldest, latest, p95]),
+        }
+
+    material = {
+        "contract": "QR_NET_EXECUTION_COST_FLOOR_V1",
+        "parse_status": "VALID",
+        "scope": "SYSTEM_GATEWAY_ATTRIBUTED_ALL_PAIRS_SIDES_METHODS",
+        "minimum_samples": 20,
+        "maximum_sample_age_seconds": 90 * 24 * 60 * 60,
+        "market_entry": transport("market-entry", 0.2),
+        "take_profit_exit": transport("take-profit-exit", 0.2),
+        "stop_loss_exit": transport("stop-loss-exit", 0.4),
+        "global_financing": {
+            "observation_trades": 20,
+            "adverse_trades": 1,
+            "entry_units_total": 20_000.0,
+            "adverse_total_jpy": 2.0,
+            "adverse_mean_jpy_per_unit": 0.002,
+            "adverse_occurrence_wilson95_upper": 0.236131193,
+            "adverse_stress_jpy_per_unit": 0.000472262386,
+            "latest_observation_utc": latest,
+            "oldest_observation_utc": oldest,
+        },
+    }
+    return {
+        **material,
+        "execution_cost_surface_sha256": digest(material),
+    }
+
+
+def _ensure_test_exact_vehicle_edge(
+    intents_path: Path | None,
+    *,
+    ledger_path: Path | None,
+    snapshot_path: Path | None,
+    primary_lane_id: str,
+    base_units_override: int | None = None,
+) -> dict[str, Any]:
+    if intents_path is None or not intents_path.exists():
+        raise AssertionError("test TRADE fixture has no order-intents evidence source")
+    payload = json.loads(intents_path.read_text())
+    before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    result = next(
+        (
+            item
+            for item in payload.get("results", []) or []
+            if isinstance(item, dict)
+            and str(item.get("lane_id") or "") == primary_lane_id
+        ),
+        None,
+    )
+    if not isinstance(result, dict):
+        raise AssertionError(f"test TRADE lane is absent from order intents: {primary_lane_id}")
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    if base_units_override is not None:
+        if (
+            isinstance(base_units_override, bool)
+            or not isinstance(base_units_override, int)
+            or base_units_override <= 0
+        ):
+            raise AssertionError("test base-unit override must be a positive int")
+        intent["units"] = base_units_override
+    metadata = intent.setdefault("metadata", {})
+    market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), dict)
+        else {}
+    )
+    pair = str(intent.get("pair") or "").upper()
+    side = str(intent.get("side") or "").upper()
+    method = str(metadata.get("method") or market_context.get("method") or "").upper()
+    preserve_entry_vehicle = metadata.pop(
+        "test_preserve_entry_vehicle_for_gateway_coverage",
+        False,
+    ) is True
+    if preserve_entry_vehicle:
+        # These isolated cases cover pending-order reconciliation below the
+        # allocation layer. HEDGE is the production-supported fixed-1.0 path
+        # that lets the original pending vehicle reach that boundary.
+        metadata["position_intent"] = "HEDGE"
+    hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    if not hedge:
+        if snapshot_path is None or not snapshot_path.exists():
+            raise AssertionError("test TRADE fixture has no broker-snapshot evidence source")
+        snapshot = json.loads(snapshot_path.read_text())
+        quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+        quote = quotes.get(pair) if isinstance(quotes, dict) else None
+        if not isinstance(quote, dict):
+            raise AssertionError(f"test TRADE fixture has no broker quote for {pair}")
+        bid = float(quote["bid"])
+        ask = float(quote["ask"])
+        if not (bid > 0.0 and ask > bid):
+            raise AssertionError(f"test TRADE fixture has invalid broker quote for {pair}")
+        quote_currency = pair.split("_", 1)[1]
+        conversions = (
+            snapshot.get("home_conversions")
+            if isinstance(snapshot.get("home_conversions"), dict)
+            else {}
+        )
+        quote_to_jpy = 1.0 if quote_currency == "JPY" else float(conversions.get(quote_currency, 0.0))
+        if quote_to_jpy <= 0.0 and quote_currency != "JPY":
+            conversion_quote = quotes.get(f"{quote_currency}_JPY")
+            if isinstance(conversion_quote, dict):
+                quote_to_jpy = max(
+                    float(conversion_quote["bid"]),
+                    float(conversion_quote["ask"]),
+                )
+            elif quote_currency == "USD":
+                # Most isolated cycle fixtures intentionally omit the account
+                # conversion surface even though FakeCycleClient supplies it.
+                # Materialize that broker-test value in the hashed artifact.
+                quote_to_jpy = 100.0
+            else:
+                # Non-USD cross fixtures exercise verifier/prefilter behavior,
+                # not conversion discovery. Give the hashed broker fixture a
+                # deterministic positive home-conversion surface.
+                quote_to_jpy = 100.0
+        if quote_to_jpy <= 0.0:
+            raise AssertionError(
+                f"test TRADE fixture has no positive broker home conversion for {quote_currency}"
+            )
+        snapshot["home_conversions"] = {
+            **conversions,
+            **({quote_currency: quote_to_jpy} if quote_currency != "JPY" else {}),
+        }
+        account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+        nav_jpy = float(account.get("nav_jpy") or 200_000.0)
+        snapshot["account"] = {
+            "balance_jpy": nav_jpy,
+            "unrealized_pl_jpy": 0.0,
+            "margin_used_jpy": 0.0,
+            "margin_available_jpy": nav_jpy,
+            "pl_jpy": 0.0,
+            "financing_jpy": 0.0,
+            "last_transaction_id": "",
+            "hedging_enabled": False,
+            "fetched_at_utc": snapshot.get("fetched_at_utc"),
+            **account,
+            "nav_jpy": nav_jpy,
+        }
+        snapshot_path.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        entry = ask if side == "LONG" else bid
+        original_tp = float(intent.get("tp"))
+        original_sl = float(intent.get("sl"))
+        pip_factor = instrument_pip_factor(pair)
+        units = abs(int(intent.get("units") or 0))
+        spread_price = ask - bid
+        if side == "LONG":
+            loss_distance = max(entry - original_sl, 7.0 * spread_price)
+            reward_distance = max(original_tp - entry, 2.0 * loss_distance)
+            sl = entry - loss_distance
+            tp = entry + reward_distance
+            loss_pips = loss_distance * pip_factor
+            reward_pips = reward_distance * pip_factor
+        elif side == "SHORT":
+            loss_distance = max(original_sl - entry, 7.0 * spread_price)
+            reward_distance = max(entry - original_tp, 2.0 * loss_distance)
+            sl = entry + loss_distance
+            tp = entry - reward_distance
+            loss_pips = loss_distance * pip_factor
+            reward_pips = reward_distance * pip_factor
+        else:
+            raise AssertionError(f"test TRADE fixture has invalid side: {side}")
+        if units <= 0 or loss_pips <= 0.0 or reward_pips <= 0.0:
+            raise AssertionError("test TRADE fixture has invalid executable risk geometry")
+        jpy_per_pip = units / float(pip_factor) * quote_to_jpy
+        risk_jpy = loss_pips * jpy_per_pip
+        reward_jpy = reward_pips * jpy_per_pip
+        half_spread = (ask - bid) / 2.0
+        broker_mid = (bid + ask) / 2.0
+        intent.update({"order_type": "MARKET", "entry": entry, "tp": tp, "sl": sl})
+        result["risk_metrics"] = {
+            "entry_price": entry,
+            "loss_pips": loss_pips,
+            "reward_pips": reward_pips,
+            "risk_jpy": risk_jpy,
+            "reward_jpy": reward_jpy,
+            "reward_risk": reward_jpy / risk_jpy,
+            "spread_pips": (ask - bid) * pip_factor,
+            "jpy_per_pip": jpy_per_pip,
+            "estimated_margin_jpy": max(
+                1.0,
+                float((result.get("risk_metrics") or {}).get("estimated_margin_jpy") or 1_000.0),
+            ),
+        }
+        metadata.update(
+            {
+                "forecast_direction": "UP" if side == "LONG" else "DOWN",
+                "forecast_confidence": 0.8,
+                "forecast_raw_confidence": 0.8,
+                "forecast_calibration_multiplier": 1.0,
+                "forecast_horizon_min": 120,
+                "forecast_cycle_id": (
+                    "pre-entry-forecast-refresh:"
+                    f"{snapshot.get('fetched_at_utc')}:"
+                    f"{snapshot.get('fetched_at_utc')}"
+                ),
+                "forecast_directional_calibration_name": (
+                    "directional_forecast_up" if side == "LONG" else "directional_forecast_down"
+                ),
+                "forecast_directional_economic_hit_rate": 1.0,
+                "forecast_directional_economic_samples": 100,
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 100,
+                "forecast_directional_timeout_rate": 0.1,
+                "forecast_current_price": broker_mid,
+                "forecast_target_price": (
+                    tp + 2.0 * half_spread if side == "LONG" else tp - 2.0 * half_spread
+                ),
+                "forecast_invalidation_price": (
+                    sl + 2.0 * half_spread if side == "LONG" else sl - 2.0 * half_spread
+                ),
+            }
+        )
+    order_type = str(intent.get("order_type") or "").upper()
+    vehicle = {
+        "STOP_ENTRY": "STOP",
+        "STOP-ENTRY": "STOP",
+        "STOP_ORDER": "STOP",
+        "LIMIT_ORDER": "LIMIT",
+        "MARKET_ORDER": "MARKET",
+    }.get(order_type, order_type)
+    metadata.update(
+        {
+            "attach_take_profit_on_fill": True,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            "capture_take_profit_exact_vehicle_required": True,
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_take_profit_scope_key": (
+                f"{pair}|{side}|{method}|{vehicle}|TAKE_PROFIT_ORDER"
+            ),
+            "capture_take_profit_vehicle": vehicle,
+            "capture_take_profit_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_take_profit"
+            ),
+            "capture_take_profit_expectancy_jpy": 250.0,
+            "capture_take_profit_net_jpy": 2000.0,
+            "capture_take_profit_trades": 8,
+            "capture_take_profit_wins": 8,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_avg_win_jpy": 250.0,
+            "capture_take_profit_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "capture_exact_vehicle_net_scope_key": (
+                f"{pair}|{side}|{method}|{vehicle}|ALL_AUDITED_EXITS"
+            ),
+            "capture_exact_vehicle_net_vehicle": vehicle,
+            "capture_exact_vehicle_net_metrics_source": (
+                "data/execution_ledger.db:exact_vehicle_net"
+            ),
+            "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+            "capture_exact_vehicle_net_trades": 8,
+            "capture_exact_vehicle_net_wins": 8,
+            "capture_exact_vehicle_net_losses": 0,
+            "capture_exact_vehicle_net_jpy": 2000.0,
+            "capture_exact_vehicle_net_expectancy_jpy": 250.0,
+            "capture_exact_vehicle_net_avg_win_jpy": 250.0,
+            "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+            "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+            "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+                hashlib.sha256(b"[]").hexdigest()
+            ),
+            "capture_market_close_expectancy_jpy": -100.0,
+        }
+    )
+    if json.dumps(payload, ensure_ascii=False, sort_keys=True) != before:
+        intents_path.write_text(json.dumps(payload) + "\n")
+    if ledger_path is None:
+        raise AssertionError("test TRADE fixture has no execution-ledger evidence source")
+    if ledger_path.resolve().parent != intents_path.resolve().parent:
+        raise AssertionError(
+            "test GPT evidence must use an isolated execution ledger next to its intents"
+        )
+    _ensure_test_exact_vehicle_ledger(
+        ledger_path,
+        pair=pair,
+        side=side,
+        method=method,
+        vehicle=vehicle,
+    )
+    return result
+
+
+def _ensure_test_exact_vehicle_ledger(
+    ledger_path: Path | None,
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    vehicle: str,
+) -> None:
+    """Seed broker-shaped exact-vehicle proof without replacing existing state."""
+
+    if ledger_path is None:
+        raise AssertionError("test TRADE fixture has no execution-ledger evidence source")
+    ExecutionLedger(
+        db_path=ledger_path,
+        report_path=ledger_path.with_suffix(".md"),
+    )._init_db()
+    entry_reason = {
+        "LIMIT": "LIMIT_ORDER",
+        "STOP": "STOP_ORDER",
+        "MARKET": "MARKET_ORDER",
+    }.get(vehicle)
+    if entry_reason is None:
+        raise AssertionError(f"test TRADE fixture has unsupported entry vehicle: {vehicle}")
+    signed_units = 1000 if side == "LONG" else -1000
+    lane = f"fixture_trader:{pair}:{side}:{method}:{vehicle}"
+    scope_digest = hashlib.sha256(
+        f"{pair}|{side}|{method}|{vehicle}".encode("utf-8")
+    ).hexdigest()[:16]
+    now = datetime.now(timezone.utc)
+    fixture_time = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        minutes=1
+    )
+    stamp = fixture_time.isoformat()
+    coverage_start = (fixture_time - timedelta(days=1)).isoformat()
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value=excluded.value,
+                updated_at_utc=excluded.updated_at_utc
+            """,
+            (
+                "oanda_transaction_coverage_start_utc",
+                coverage_start,
+                stamp,
+            ),
+        )
+        for index in range(8):
+            trade_id = f"fixture-{scope_digest}-trade-{index}"
+            order_id = f"fixture-{scope_digest}-entry-{index}"
+            entry_raw = {
+                "time": stamp,
+                "type": "ORDER_FILL",
+                "orderID": order_id,
+                "instrument": pair,
+                "units": str(signed_units),
+                "reason": entry_reason,
+                "tradeOpened": {
+                    "tradeID": trade_id,
+                    "units": str(signed_units),
+                },
+            }
+            close_raw = {
+                "time": stamp,
+                "type": "ORDER_FILL",
+                "instrument": pair,
+                "orderID": f"fixture-{scope_digest}-close-{index}",
+                "reason": "TAKE_PROFIT_ORDER",
+                "commission": "0.0",
+                "guaranteedExecutionFee": "0.0",
+                "tradesClosed": [
+                    {
+                        "tradeID": trade_id,
+                        "realizedPL": "250.0",
+                        "financing": "0.0",
+                    }
+                ],
+            }
+            rows = (
+                (
+                    f"fixture-{scope_digest}-gateway-{index}",
+                    "TEST_FIXTURE",
+                    "GATEWAY_ORDER_SENT",
+                    lane,
+                    order_id,
+                    trade_id,
+                    pair,
+                    side,
+                    signed_units,
+                    None,
+                    0.0,
+                    entry_reason,
+                    json.dumps({"type": entry_reason}),
+                ),
+                (
+                    f"fixture-{scope_digest}-fill-{index}",
+                    "TEST_FIXTURE",
+                    "ORDER_FILLED",
+                    lane,
+                    order_id,
+                    trade_id,
+                    pair,
+                    side,
+                    signed_units,
+                    None,
+                    0.0,
+                    entry_reason,
+                    json.dumps(entry_raw),
+                ),
+                (
+                    f"fixture-{scope_digest}-close-{index}",
+                    "TEST_FIXTURE",
+                    "TRADE_CLOSED",
+                    None,
+                    f"fixture-{scope_digest}-close-{index}",
+                    trade_id,
+                    pair,
+                    "SHORT" if side == "LONG" else "LONG",
+                    abs(signed_units),
+                    250.0,
+                    0.0,
+                    "TAKE_PROFIT_ORDER",
+                    json.dumps(close_raw),
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO execution_events(
+                    event_uid,
+                    ts_utc,
+                    source,
+                    event_type,
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    pair,
+                    side,
+                    units,
+                    realized_pl_jpy,
+                    financing_jpy,
+                    exit_reason,
+                    related_transaction_ids_json,
+                    raw_json,
+                    inserted_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
+                """,
+                [
+                    (
+                        event_uid,
+                        stamp,
+                        source,
+                        event_type,
+                        lane_id,
+                        event_order_id,
+                        event_trade_id,
+                        event_pair,
+                        event_side,
+                        units,
+                        realized_pl_jpy,
+                        financing_jpy,
+                        exit_reason,
+                        raw_json,
+                        stamp,
+                    )
+                    for (
+                        event_uid,
+                        source,
+                        event_type,
+                        lane_id,
+                        event_order_id,
+                        event_trade_id,
+                        event_pair,
+                        event_side,
+                        units,
+                        realized_pl_jpy,
+                        financing_jpy,
+                        exit_reason,
+                        raw_json,
+                    ) in rows
+                ],
+            )
 
 
 def _test_artifact_bound_market_read(
@@ -274,6 +907,13 @@ def _bypass_pre_post_reconciliation(self, **kwargs):
     )
 
 
+def _bypass_final_pre_post_boundary(self, **kwargs):
+    return execution_module._FinalPrePostBoundaryResult(
+        evidence={"status": "TEST_BYPASS", "post_attempted": False},
+        issues=(),
+    )
+
+
 def _accepted_gpt_close_receipt(
     trade_id: str = "471232",
     *,
@@ -361,6 +1001,22 @@ def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_accepted_trade_without_capital_allocation_is_rejected_at_consumer_boundary(self) -> None:
+        guarded = _enforce_gpt_trade_capital_allocation(
+            GptHandoffSummary(
+                status="ACCEPTED",
+                action="TRADE",
+                selected_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                allowed=True,
+                issues=0,
+            )
+        )
+
+        self.assertEqual(guarded.status, "REJECTED")
+        self.assertFalse(guarded.allowed)
+        self.assertIsNone(guarded.capital_allocation_size_multiple)
+        self.assertIn("capital allocation", guarded.error or "")
+
     def setUp(self) -> None:
         self._default_settings_tmp = tempfile.TemporaryDirectory()
         tmp_root = Path(self._default_settings_tmp.name)
@@ -377,13 +1033,32 @@ class AutoTradeCycleTest(unittest.TestCase):
         )
         self._default_settings_patch.start()
         self._default_target_state_patch.start()
+        self._execution_cost_surface = _synthetic_execution_cost_surface(
+            datetime.now(timezone.utc)
+        )
+        self._execution_cost_surface_patch = mock.patch(
+            "quant_rabbit.capture_economics.read_execution_cost_surface",
+            side_effect=lambda _path: json.loads(
+                json.dumps(self._execution_cost_surface)
+            ),
+        )
+        self._execution_cost_surface_patch.start()
         self._original_pre_post_reconcile = execution_module.LiveOrderGateway._pre_post_reconcile
+        self._original_final_pre_post_boundary = (
+            execution_module.LiveOrderGateway._final_pre_post_boundary
+        )
         self._pre_post_reconcile_patch = mock.patch.object(
             execution_module.LiveOrderGateway,
             "_pre_post_reconcile",
             _bypass_pre_post_reconciliation,
         )
         self._pre_post_reconcile_patch.start()
+        self._final_pre_post_boundary_patch = mock.patch.object(
+            execution_module.LiveOrderGateway,
+            "_final_pre_post_boundary",
+            _bypass_final_pre_post_boundary,
+        )
+        self._final_pre_post_boundary_patch.start()
         self._oanda_rules_env_prior = os.environ.get(forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV)
         os.environ[forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV] = str(
             tmp_root / "missing_oanda_universal_rotation_rules.json"
@@ -394,6 +1069,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         forecast_precision._load_bidask_replay_rule_sets.cache_clear()
 
     def tearDown(self) -> None:
+        self._final_pre_post_boundary_patch.stop()
         self._pre_post_reconcile_patch.stop()
         if self._bidask_rules_env_prior is None:
             os.environ.pop(forecast_precision.BIDASK_REPLAY_RULES_ENV, None)
@@ -405,6 +1081,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         else:
             os.environ[forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV] = self._oanda_rules_env_prior
         forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
+        self._execution_cost_surface_patch.stop()
         self._default_target_state_patch.stop()
         self._default_settings_patch.stop()
         self._default_settings_tmp.cleanup()
@@ -416,6 +1093,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 client=object(),
                 gpt_decision_path=root / "gpt_decision.json",
                 gpt_decision_report_path=root / "gpt_decision.md",
+                execution_ledger_db_path=root / "canonical" / "execution_ledger.db",
             )
             brain = cycle._gpt_brain()
 
@@ -445,6 +1123,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 "predictive_limits_path": "predictive_limit_orders.json",
                 "news_items_path": "news_items.json",
                 "news_health_path": "news_health.json",
+                "execution_ledger_path": "canonical/execution_ledger.db",
             }
             for attr, filename in expected_brain_paths.items():
                 self.assertEqual(getattr(brain, attr), root / filename, attr)
@@ -917,6 +1596,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
                     reuse_market_artifacts=True,
@@ -1000,6 +1681,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
                 reuse_market_artifacts=True,
@@ -1088,8 +1771,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(gpt_decision),
+                gpt_provider=StaticTraderProvider(
+                    gpt_decision,
+                    capital_allocation_size_multiple=0.75,
+                ),
                 reuse_market_artifacts=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -1099,10 +1787,12 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(summary.status, "SENT")
         self.assertEqual(summary.decision_source, "gpt_trader")
         self.assertEqual(summary.gpt_action, "TRADE")
+        self.assertEqual(summary.selected_lane_size_multiple, 0.75)
         self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
         self.assertEqual(summary.canceled_orders, ("stale-pending",))
         self.assertEqual(client.orders_canceled, ["stale-pending"])
         self.assertEqual(len(client.orders_sent), 1)
+        self.assertEqual(client.orders_sent[0]["units"], "7500")
 
     def test_report_summarizes_harvest_and_runner_opportunity_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1978,6 +2668,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             decision=decision,
             gpt_lane_ids=(stale_gpt_lane.lane_id, current_lane.lane_id),
             gpt_primary_lane_id=stale_gpt_lane.lane_id,
+            gpt_primary_size_multiple=1.0,
             margin_room_jpy=10_000.0,
         )
 
@@ -2028,6 +2719,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             decision=decision,
             gpt_lane_ids=(stale_market_lane.lane_id, current_stop_lane.lane_id),
             gpt_primary_lane_id=stale_market_lane.lane_id,
+            gpt_primary_size_multiple=1.0,
             margin_room_jpy=10_000.0,
         )
 
@@ -2049,7 +2741,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             action=ACTION_SEND_ENTRY,
             blockers=(),
             rationale=(),
-            size_multiple=0.75,
+            size_multiple=0.70,
             estimated_margin_jpy=7_400.0,
         )
         unselected_lane = replace(
@@ -2076,6 +2768,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             decision=decision,
             gpt_lane_ids=(selected_lane.lane_id,),
             gpt_primary_lane_id=selected_lane.lane_id,
+            gpt_primary_size_multiple=0.75,
             margin_room_jpy=10_000.0,
         )
 
@@ -2234,6 +2927,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
                 reuse_market_artifacts=True,
@@ -2309,6 +3004,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["anchored-pending"])),
                 reuse_market_artifacts=True,
@@ -2401,6 +3098,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
                 gpt_self_improvement_audit_path=self_improvement_path,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["audit-forced-pending"])),
                 reuse_market_artifacts=True,
@@ -2689,6 +3388,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
                     _gpt_batch_trade_decision(
@@ -2766,8 +3467,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                gpt_provider=StaticTraderProvider(
+                    _gpt_trade_decision(),
+                    capital_allocation_size_multiple=0.75,
+                ),
                 reuse_market_artifacts=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -2840,6 +3546,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(
                         _gpt_batch_trade_decision(
@@ -2902,6 +3610,11 @@ class AutoTradeCycleTest(unittest.TestCase):
             snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
             intents_path = root / "intents.json"
             _write_live_ready_intents(intents_path)
+            intents_payload = json.loads(intents_path.read_text())
+            intents_payload["results"][0]["intent"]["metadata"][
+                "test_preserve_entry_vehicle_for_gateway_coverage"
+            ] = True
+            intents_path.write_text(json.dumps(intents_payload) + "\n")
             decision = _gpt_trade_decision(lane_id=lane_id)
             decision["cancel_order_ids"] = [pending.order_id]
             client = FakeCycleClient(snapshot)
@@ -2931,6 +3644,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision),
                 reuse_market_artifacts=True,
@@ -3077,6 +3792,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 allowed=True,
                 issues=0,
                 cancel_order_ids=(pending.order_id,),
+                capital_allocation_size_multiple=1.0,
             )
 
             summary, canceled = cycle._run_order_batch_with_deferred_gpt_trade_cancels(
@@ -3225,6 +3941,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 allowed=True,
                 issues=0,
                 cancel_order_ids=(pending.order_id,),
+                capital_allocation_size_multiple=1.0,
             )
 
             summary, canceled = cycle._run_order_batch_with_deferred_gpt_trade_cancels(
@@ -3629,6 +4346,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(gpt_decision),
                 reuse_market_artifacts=True,
@@ -3698,7 +4417,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                         "event_risk": "none",
                         "session": "test",
                     },
-                    "metadata": {"max_loss_jpy": 1_500, "desk": "range_trader", "campaign_role": "NOW"},
+                    "metadata": {
+                        "max_loss_jpy": 1_500,
+                        "desk": "range_trader",
+                        "campaign_role": "NOW",
+                        "test_preserve_entry_vehicle_for_gateway_coverage": True,
+                    },
                 }
             )
             item["risk_metrics"] = {
@@ -3783,6 +4507,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(gpt_decision),
                 reuse_market_artifacts=True,
@@ -3928,6 +4654,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(gpt_decision),
                 reuse_market_artifacts=True,
@@ -4023,6 +4751,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(gpt_decision),
                 reuse_market_artifacts=True,
@@ -4115,6 +4845,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(gpt_decision),
                     reuse_market_artifacts=True,
@@ -4728,8 +5460,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                gpt_provider=StaticTraderProvider(
+                    _gpt_trade_decision(),
+                    capital_allocation_size_multiple=0.75,
+                ),
                 refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
@@ -4738,12 +5475,19 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.selected_lane_size_multiple, 0.75)
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
             self.assertTrue((root / "trader_decision_baseline.json").exists())
             self.assertTrue((root / "market_read_evidence_packet.json").exists())
             self.assertTrue((root / "codex_market_read_overlay.json").exists())
+            staged = json.loads((root / "live_order.json").read_text())
+            self.assertEqual(staged["size_multiple"], 0.75)
+            self.assertEqual(
+                abs(staged["scaled_units"]),
+                abs(staged["requested_units"]) * 3 // 4,
+            )
 
     def test_gpt_close_defers_fresh_trade_until_next_cycle(self) -> None:
         prior_override = os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
@@ -4840,6 +5584,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=SequenceTraderProvider(
                         close_decision,
@@ -5145,6 +5891,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision),
                 refresh_market_story=False,
@@ -5233,6 +5981,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     strategy_profile_path=_candidate_profile(root),
                     market_story_profile_path=_stories(root),
                     pair_charts_path=_pair_charts(root),
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(decision),
                     refresh_market_story=False,
@@ -5293,8 +6043,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                gpt_provider=StaticTraderProvider(
+                    _gpt_trade_decision(),
+                    capital_allocation_size_multiple=0.75,
+                ),
                 reuse_market_artifacts=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -5307,7 +6062,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                 summary.selected_lane_ids,
                 ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
             )
+            self.assertEqual(summary.selected_lane_size_multiple, 0.75)
             self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent[0]["units"], "7500")
 
     def test_gpt_batch_trade_dedupes_same_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5352,6 +6109,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
                     _gpt_batch_trade_decision(
@@ -5430,6 +6189,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
                     _gpt_batch_trade_decision(
@@ -5537,10 +6298,17 @@ class AutoTradeCycleTest(unittest.TestCase):
                     ],
                 )
 
-            with mock.patch.object(
-                execution_module.LiveOrderGateway,
-                "_pre_post_reconcile",
-                self._original_pre_post_reconcile,
+            with (
+                mock.patch.object(
+                    execution_module.LiveOrderGateway,
+                    "_pre_post_reconcile",
+                    self._original_pre_post_reconcile,
+                ),
+                mock.patch.object(
+                    execution_module.LiveOrderGateway,
+                    "_final_pre_post_boundary",
+                    self._original_final_pre_post_boundary,
+                ),
             ):
                 summary = AutoTradeCycle(
                     client=client,
@@ -5570,17 +6338,31 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
                     use_gpt_trader=True,
-                    gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                    # This case exercises real pre/final ledger sync, not
+                    # gross-cap clipping. Leave room below the 200 JPY cap for
+                    # the dynamic cost floor and entry-p95 bound allowance.
+                    gpt_provider=StaticTraderProvider(
+                        _gpt_trade_decision(),
+                        test_base_units_override=3_000,
+                    ),
                     reuse_market_artifacts=True,
                     refresh_market_story=False,
                     live_enabled=True,
                     max_loss_jpy=1_500,
                 ).run(send=True)
 
-            self.assertEqual(summary.status, "SENT")
-            # Gateway performs its own final sync before POST, then the cycle
-            # syncs once more after recording the send receipt.
-            self.assertEqual(client.transaction_sync_calls, ["100", "100", "100"])
+            self.assertEqual(
+                summary.status,
+                "SENT",
+                msg=(summary, (root / "live_order.json").read_text()),
+            )
+            # Gateway performs its risk reconciliation sync and a second
+            # post-reservation boundary sync before POST, then the cycle syncs
+            # once more after recording the send receipt.
+            self.assertEqual(
+                client.transaction_sync_calls,
+                ["100", "100", "100", "100"],
+            )
             live_order = json.loads((root / "live_order.json").read_text())
             self.assertEqual(live_order["pre_post_reconciliation"]["status"], "PASSED")
             with closing(sqlite3.connect(ledger_path)) as conn, conn:
@@ -5681,6 +6463,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision),
                 refresh_market_story=False,
@@ -5735,6 +6519,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_wait_decision()),
                 refresh_market_story=False,
@@ -5800,6 +6586,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -5866,6 +6654,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -6011,6 +6801,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -6077,6 +6869,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 refresh_market_story=False,
                 live_enabled=True,
@@ -6174,6 +6968,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     refresh_market_story=False,
                     live_enabled=True,
@@ -6244,6 +7040,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(wait_decision),
                 reuse_market_artifacts=True,
@@ -6358,6 +7156,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                             target_state_path=target_state,
                             target_report_path=root / "target.md",
                             gpt_target_state_path=target_state,
+                            execution_ledger_db_path=root / "execution_ledger.db",
+                            execution_ledger_report_path=root / "execution_ledger.md",
                             use_gpt_trader=True,
                             gpt_provider=StaticTraderProvider(decision, source_path=response_path),
                             reuse_market_artifacts=True,
@@ -6462,6 +7262,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(wait_decision, source_path=response_path),
                 refresh_market_story=False,
@@ -6647,6 +7449,143 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(client.trades_closed, [("close-me", "ALL")])
         self.assertEqual(client.orders_sent, [])
 
+    def test_reused_schema_v2_codex_veto_revalidates_material_sources(self) -> None:
+        for action in ("WAIT", "REQUEST_EVIDENCE"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote(
+                            "EUR_USD",
+                            1.17298,
+                            1.17306,
+                            timestamp_utc=now,
+                        ),
+                        "USD_JPY": Quote(
+                            "USD_JPY",
+                            157.000,
+                            157.004,
+                            timestamp_utc=now,
+                        ),
+                    },
+                )
+                snapshot_path = root / "snapshot.json"
+                snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+                intents_path = root / "intents.json"
+                _write_live_ready_intents(intents_path)
+                pair_charts_path = root / "pair_charts.json"
+                pair_charts_path.write_text(json.dumps({"charts": []}) + "\n")
+                target_state = _open_target_state(root)
+                response_path = root / "codex_trader_decision_response.json"
+                gpt_decision_path = root / "gpt_decision.json"
+                decision = _gpt_wait_decision()
+                decision["action"] = action
+                provider = StaticTraderProvider(decision, source_path=response_path)
+                cycle = AutoTradeCycle(
+                    client=FakeCycleClient(snapshot),
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=gpt_decision_path,
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    pair_charts_path=pair_charts_path,
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=provider,
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                )
+                brain = cycle._gpt_brain()
+                bound_veto = provider.decide(
+                    brain._input_packet(snapshot_path),
+                    {},
+                )
+                response_path.write_text(
+                    json.dumps(bound_veto, ensure_ascii=False, indent=2, sort_keys=True)
+                    + "\n"
+                )
+                normalized_veto = json.loads(
+                    json.dumps(asdict(_decision_from_payload(bound_veto)))
+                )
+                gpt_decision_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": now.isoformat(),
+                            "status": "ACCEPTED",
+                            "decision": normalized_veto,
+                            "verification_issues": [],
+                        }
+                    )
+                    + "\n"
+                )
+                os.utime(snapshot_path, (100.0, 100.0))
+                os.utime(intents_path, (100.0, 100.0))
+                os.utime(response_path, (101.0, 101.0))
+                os.utime(gpt_decision_path, (102.0, 102.0))
+
+                reusable = cycle._load_reusable_verified_gpt_handoff()
+                self.assertIsNotNone(reusable)
+                self.assertEqual(reusable.action, action)
+
+                baseline_bytes = brain.market_read_baseline_path.read_bytes()
+                mutated_baseline = json.loads(baseline_bytes)
+                mutated_baseline["risk_notes"] = [
+                    f"material source changed after accepted {action}"
+                ]
+                brain.market_read_baseline_path.write_text(
+                    json.dumps(mutated_baseline) + "\n"
+                )
+                self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
+
+                # Pre-schema-v2 non-CODEX outcomes keep their narrower
+                # source-mtime contract and are not retroactively made
+                # dependent on overlay artifacts.
+                legacy_decision = _gpt_wait_decision()
+                legacy_decision["action"] = action
+                legacy_source_path = root / "legacy_decision.json"
+                legacy_source_path.write_text(json.dumps(legacy_decision) + "\n")
+                gpt_decision_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": now.isoformat(),
+                            "status": "ACCEPTED",
+                            "decision": legacy_decision,
+                            "verification_issues": [],
+                        }
+                    )
+                    + "\n"
+                )
+                os.utime(legacy_source_path, (103.0, 103.0))
+                os.utime(gpt_decision_path, (104.0, 104.0))
+                cycle.gpt_provider = _ProductionStaticTraderProvider(
+                    legacy_decision,
+                    source_path=legacy_source_path,
+                )
+                legacy_reusable = cycle._load_reusable_verified_gpt_handoff()
+                self.assertIsNotNone(legacy_reusable)
+                self.assertEqual(legacy_reusable.action, action)
+
     def test_gpt_decision_response_older_than_snapshot_requires_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6708,6 +7647,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(wait_decision, source_path=response_path),
                 reuse_market_artifacts=True,
@@ -6765,6 +7706,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision),
                 refresh_market_story=False,
@@ -6842,6 +7785,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_trade_decision(lane_id=lane_id), source_path=response_path),
                 refresh_market_story=False,
@@ -6897,6 +7842,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_two_lane_profile(root),
                 market_story_profile_path=_two_lane_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
                     _gpt_trade_decision(
@@ -6989,6 +7936,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(
                         _gpt_trade_decision(
@@ -7059,8 +8008,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                gpt_provider=StaticTraderProvider(
+                    _gpt_trade_decision(),
+                    capital_allocation_size_multiple=0.75,
+                ),
                 reuse_market_artifacts=True,
                 live_enabled=True,
                 max_loss_jpy=1_500,
@@ -7070,6 +8024,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.selected_lane_size_multiple, 0.75)
             self.assertEqual(len(client.snapshot_calls), 1)
             self.assertIn("reuse_existing", (root / "report.md").read_text())
 
@@ -7090,6 +8045,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             reusable = cycle._load_reusable_verified_gpt_handoff()
             self.assertIsNotNone(reusable)
             self.assertEqual(reusable.action, "TRADE")
+            self.assertEqual(reusable.capital_allocation_size_multiple, 0.75)
 
             original_verified = verified_path.read_bytes()
             original_source = source_path.read_bytes()
@@ -7256,6 +8212,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision, source_path=response_path),
                 reuse_market_artifacts=True,
@@ -7385,6 +8343,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision, source_path=response_path),
                 reuse_market_artifacts=True,
@@ -7457,6 +8417,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     target_state_path=target_state,
                     target_report_path=root / "target.md",
                     gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     use_gpt_trader=True,
                     gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
                     reuse_market_artifacts=True,
@@ -7495,6 +8457,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             intents_path = root / "intents.json"
             _write_live_ready_intents(intents_path)
+            _ensure_test_exact_vehicle_edge(
+                intents_path,
+                ledger_path=root / "execution_ledger.db",
+                snapshot_path=snapshot_path,
+                primary_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            )
             pinned_intents = intents_path.read_text()
             profile = _repair_then_candidate_profile(root)
             target_state = _open_target_state(root)
@@ -7532,6 +8500,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
                 gpt_target_state_path=target_state,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
                 reuse_market_artifacts=True,
@@ -7692,6 +8662,38 @@ class FakeCycleClient:
         self.snapshot_calls.append(pairs)
         return self.snapshot_value
 
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if not path.endswith("/candles") or not isinstance(query, dict):
+            raise AssertionError(f"unexpected read-only broker query: {path}")
+        start = datetime.fromisoformat(query["from"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(query["to"].replace("Z", "+00:00"))
+        candles = []
+        cursor = start
+        while cursor < end:
+            candles.append(
+                {
+                    "time": cursor.isoformat().replace("+00:00", "Z"),
+                    "complete": cursor + timedelta(seconds=5) < end,
+                    "mid": {
+                        "o": "1.17302",
+                        "h": "1.17304",
+                        "l": "1.17300",
+                        "c": "1.17302",
+                    },
+                }
+            )
+            cursor += timedelta(seconds=5)
+        instrument = path.split("/instruments/", 1)[1].split("/", 1)[0]
+        return {
+            "instrument": instrument,
+            "granularity": query.get("granularity"),
+            "candles": candles,
+        }
+
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
         self.orders_sent.append(order_request)
         return {"orderCreateTransaction": {"id": "1"}}
@@ -7788,18 +8790,23 @@ class LedgerCycleClient(FakeCycleClient):
 
 
 def _with_account(snapshot: BrokerSnapshot) -> BrokerSnapshot:
-    if snapshot.account is not None:
+    if snapshot.account is not None and snapshot.home_conversions:
         return snapshot
     now = snapshot.fetched_at_utc
     return replace(
         snapshot,
-        account=AccountSummary(
-            nav_jpy=200_000.0,
-            balance_jpy=200_000.0,
-            margin_used_jpy=0.0,
-            margin_available_jpy=200_000.0,
-            fetched_at_utc=now,
+        account=(
+            snapshot.account
+            if snapshot.account is not None
+            else AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=now,
+            )
         ),
+        home_conversions=(snapshot.home_conversions or {"USD": 100.0}),
     )
 
 
@@ -8319,6 +9326,8 @@ def _write_live_ready_intents(path: Path) -> None:
                     {
                         "lane_id": lane_id,
                         "status": "LIVE_READY",
+                        "risk_allowed": True,
+                        "live_blocker_codes": [],
                         "intent": {
                             "pair": "EUR_USD",
                             "side": "LONG",
@@ -8343,6 +9352,24 @@ def _write_live_ready_intents(path: Path) -> None:
                                 "max_loss_jpy": 1_500,
                                 "parent_lane_id": lane_id,
                                 "forecast_cycle_id": forecast_cycle_id,
+                                "attach_take_profit_on_fill": True,
+                                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                                "capture_take_profit_exact_vehicle_required": True,
+                                "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                                "capture_take_profit_scope_key": (
+                                    "EUR_USD|LONG|TREND_CONTINUATION|STOP|TAKE_PROFIT_ORDER"
+                                ),
+                                "capture_take_profit_vehicle": "STOP",
+                                "capture_take_profit_metrics_source": (
+                                    "data/execution_ledger.db:exact_vehicle_take_profit"
+                                ),
+                                "capture_take_profit_expectancy_jpy": 250.0,
+                                "capture_take_profit_trades": 8,
+                                "capture_take_profit_wins": 8,
+                                "capture_take_profit_losses": 0,
+                                "capture_take_profit_avg_win_jpy": 250.0,
+                                "capture_market_close_expectancy_jpy": -100.0,
                             },
                         },
                         "risk_metrics": {
@@ -8472,6 +9499,7 @@ def _write_recovery_hedge_intents(path: Path, lane_id: str) -> None:
                         "lane_id": lane_id,
                         "status": "LIVE_READY",
                         "risk_allowed": True,
+                        "live_blocker_codes": [],
                         "intent": {
                             "pair": "EUR_USD",
                             "side": "SHORT",
@@ -8505,6 +9533,8 @@ def _write_recovery_hedge_intents(path: Path, lane_id: str) -> None:
                                 "hedge_recovery_size_scale": 1.0,
                                 "estimated_margin_jpy": 0.0,
                                 "max_loss_jpy": 10_000,
+                                "capture_economics_status": "POSITIVE_EXPECTANCY",
+                                "capture_expectancy_jpy": 180.0,
                             },
                         },
                         "risk_metrics": {
@@ -8916,6 +9946,8 @@ class MarginAwareBasketTest(unittest.TestCase):
         lane_ids, _ = AutoTradeCycle._expanded_gpt_basket_plan(
             decision=decision,
             gpt_lane_ids=(scores[0].lane_id, scores[1].lane_id),
+            gpt_primary_lane_id=scores[0].lane_id,
+            gpt_primary_size_multiple=1.0,
             margin_room_jpy=9300.0,
             margin_available_jpy=24600.0,
         )
@@ -8937,6 +9969,8 @@ class MarginAwareBasketTest(unittest.TestCase):
         lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
             decision=decision,
             gpt_lane_ids=(scores[0].lane_id,),
+            gpt_primary_lane_id=scores[0].lane_id,
+            gpt_primary_size_multiple=1.0,
             margin_available_jpy=40000.0,
         )
 

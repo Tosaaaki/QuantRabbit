@@ -1942,6 +1942,9 @@ FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS = (
     "per_trade_risk_budget_jpy",
     "max_loss_jpy",
     "size_multiple",
+    "capital_allocation",
+    "selected_units",
+    "allocation_board_sha256",
     "stage_order",
     "send_order",
     "confirm_live",
@@ -2027,9 +2030,12 @@ class GPTTraderDecision:
     twenty_minute_plan: dict[str, Any] | None = None
     # The scheduled Codex model may replace MARKET_READ_FIRST through the
     # content-addressed overlay tool. It may also veto a deterministic TRADE
-    # to WAIT / REQUEST_EVIDENCE. It cannot upgrade a non-trade receipt, select
-    # another lane, resize units, expand risk, or grant live permission.
+    # to WAIT / REQUEST_EVIDENCE or reduce the deterministic lane to a bounded
+    # capital-allocation multiple. It cannot upgrade a non-trade receipt,
+    # select another lane, exceed the baseline units, expand risk, or grant
+    # live permission.
     decision_provenance: dict[str, Any] | None = None
+    capital_allocation: dict[str, Any] | None = None
     market_read_review: dict[str, Any] | None = None
     market_read_counterargument: str = ""
     market_read_change_summary: str = ""
@@ -2103,6 +2109,7 @@ class GPTTraderSummary:
     allowed: bool
     issues: int
     close_trade_ids: tuple[str, ...] = ()
+    capital_allocation_size_multiple: float | None = None
 
 
 @dataclass(frozen=True)
@@ -2435,6 +2442,8 @@ class GPTTraderBrain:
         if self.market_read_artifact_validation_required and decision.action in {
             "TRADE",
             "CLOSE",
+            "WAIT",
+            "REQUEST_EVIDENCE",
         }:
             artifact_issues = revalidate_codex_market_read_artifacts(
                 final_payload=raw_decision,
@@ -2481,6 +2490,9 @@ class GPTTraderBrain:
             allowed=verification.allowed,
             issues=len(verification.issues),
             close_trade_ids=decision.close_trade_ids,
+            capital_allocation_size_multiple=_capital_allocation_size_multiple(
+                decision.capital_allocation
+            ),
         )
 
     def _market_read_evidence_sources(self, snapshot_path: Path) -> dict[str, Path]:
@@ -2527,6 +2539,7 @@ class GPTTraderBrain:
             "active_opportunity_board": self.active_opportunity_board_path,
             "non_eurusd_live_grade_frontier": self.non_eurusd_live_grade_frontier_path,
             "range_rail_geometry_repair": self.range_rail_geometry_repair_path,
+            "execution_ledger": self.execution_ledger_path,
             "market_read_predictions": self.market_read_predictions_path,
         }
         # The evidence packet records the complete source surface used by the
@@ -2565,8 +2578,8 @@ class GPTTraderBrain:
         sources = self._market_read_evidence_sources(snapshot_path)
         return {
             "contract": "CODEX_MARKET_READ_ARTIFACT_BINDING_V1",
-            "required_for_action": "TRADE_OR_CLOSE",
-            "required_for_actions": ["TRADE", "CLOSE"],
+            "required_for_action": "TRADE_CLOSE_OR_VETO",
+            "required_for_actions": ["TRADE", "CLOSE", "WAIT", "REQUEST_EVIDENCE"],
             "validation_required": self.market_read_artifact_validation_required,
             "baseline_path": str(self.market_read_baseline_path),
             "evidence_packet_path": str(self.market_read_evidence_packet_path),
@@ -2632,6 +2645,17 @@ class GPTTraderBrain:
             load_guardian_receipt_operator_review(self.guardian_receipt_operator_review_path)
         )
         pair_set = set(_pairs_from_lanes_and_positions(lanes, snapshot))
+        # A no-entry cycle still needs quote-relative 30m/2h forecasts. Do not
+        # erase all quote bases merely because no lane or position survived the
+        # deterministic filter; retain the broker snapshot's observed pairs for
+        # the read-only market analysis and veto artifact.
+        raw_quotes = snapshot.get("quotes") if isinstance(snapshot, dict) else {}
+        if isinstance(raw_quotes, dict):
+            pair_set.update(
+                str(pair).strip()
+                for pair in raw_quotes
+                if isinstance(pair, str) and str(pair).strip()
+            )
         for active_lane in _active_path_candidate_lanes(active_path):
             active_pair = str(active_lane.get("pair") or "").strip()
             if active_pair:
@@ -2673,7 +2697,7 @@ class GPTTraderBrain:
                 "allowed_actions": list(ALLOWED_ACTIONS),
                 "entry_decision_actions": list(ENTRY_DECISION_HORIZON_ACTIONS + ("CANCEL_PENDING",)),
                 "trade_requires_live_ready_lane": True,
-                "trade_may_select_multiple_live_ready_lanes": True,
+                "trade_may_select_multiple_live_ready_lanes": False,
                 "entry_decisions_require_twenty_minute_plan": True,
                 "decision_horizon_minutes": TRADER_DECISION_HORIZON_MINUTES,
                 "pending_entries_are_basket_counted_by_gateway": True,
@@ -2844,7 +2868,7 @@ class GPTTraderBrain:
                 "## Decision Contract",
                 "",
                 "- `decision_provenance.author_kind` identifies the decision author; deterministic verification remains the execution gate.",
-                "- A fresh `CODEX_MARKET_READ` overlay may accept a deterministic baseline or veto only a baseline `TRADE` to `WAIT` / `REQUEST_EVIDENCE`. It cannot upgrade a non-trade baseline, choose another lane, resize units, expand risk, or grant live permission.",
+                "- A fresh schema-v2 `CODEX_MARKET_READ` overlay may accept the deterministic lane at 0.5/0.75/1.0 of its risk-capped units, or veto a baseline `TRADE` to `WAIT` / `REQUEST_EVIDENCE`. It cannot upgrade a non-trade baseline, choose another lane, exceed baseline units, expand risk, or grant live permission.",
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
@@ -2902,6 +2926,7 @@ def _codex_market_read_veto_active(decision: GPTTraderDecision) -> bool:
         disposition=decision.market_read_disposition,
         veto_reason=decision.market_read_veto_reason,
         vetoed_lane_ids=decision.market_read_vetoed_lane_ids,
+        capital_allocation=decision.capital_allocation,
         execution_envelope_sha256=_decision_execution_envelope_sha256(decision),
     )
     return not provenance_issues
@@ -3483,6 +3508,7 @@ class DecisionVerifier:
             disposition=decision.market_read_disposition,
             veto_reason=decision.market_read_veto_reason,
             vetoed_lane_ids=decision.market_read_vetoed_lane_ids,
+            capital_allocation=decision.capital_allocation,
             execution_envelope_sha256=execution_sha,
         ):
             issues.append(VerificationIssue(code, message))
@@ -4723,7 +4749,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
             "type": ["object", "null"],
             "additionalProperties": False,
             "properties": {
-                "schema_version": {"type": "number"},
+                "schema_version": {"type": "integer", "const": 2},
                 "author_kind": {
                     "type": "string",
                     "enum": ["DETERMINISTIC_BASELINE", CODEX_MARKET_READ_AUTHOR],
@@ -4749,9 +4775,36 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                 },
                 "baseline_disposition": {"type": "string"},
                 "action_downgrade_only": {"type": "boolean"},
+                "capital_allocation_sha256": {"type": "string"},
+                "capital_allocation_board_sha256": {"type": "string"},
+                "execution_cost_floor_sha256": {
+                    "type": ["string", "null"]
+                },
+                "authorized_size_multiple": {"type": "number"},
+                "authorized_units": {"type": "integer"},
                 "execution_fields_preserved": {"type": "boolean"},
                 "risk_envelope_not_expanded": {"type": "boolean"},
                 "live_permission_granted": {"type": "boolean"},
+            },
+        },
+        "capital_allocation": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": [
+                "decision",
+                "lane_id",
+                "size_multiple",
+                "selected_units",
+                "allocation_board_sha256",
+                "rationale",
+            ],
+            "properties": {
+                "decision": {"type": "string", "enum": ["ALLOCATE", "NO_TRADE"]},
+                "lane_id": {"type": ["string", "null"]},
+                "size_multiple": {"type": "number", "enum": [0.0, 0.5, 0.75, 1.0]},
+                "selected_units": {"type": "integer"},
+                "allocation_board_sha256": {"type": "string"},
+                "rationale": {"type": "string"},
             },
         },
         "market_read_review": {
@@ -4901,6 +4954,11 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
             if isinstance(payload.get("decision_provenance"), dict)
             else None
         ),
+        capital_allocation=(
+            dict(payload.get("capital_allocation"))
+            if isinstance(payload.get("capital_allocation"), dict)
+            else None
+        ),
         market_read_review=(
             dict(payload.get("market_read_review"))
             if isinstance(payload.get("market_read_review"), dict)
@@ -4931,6 +4989,20 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
             if isinstance(item, dict)
         ),
     )
+
+
+def _capital_allocation_size_multiple(value: Any) -> float | None:
+    if not isinstance(value, Mapping):
+        return None
+    if str(value.get("decision") or "").strip().upper() != "ALLOCATE":
+        return None
+    raw_multiple = value.get("size_multiple")
+    if isinstance(raw_multiple, bool) or not isinstance(raw_multiple, (int, float)):
+        return None
+    multiple = _optional_float(raw_multiple)
+    if multiple not in {0.5, 0.75, 1.0}:
+        return None
+    return multiple
 
 
 def _market_read_longish(direction: str) -> bool:
@@ -5073,6 +5145,7 @@ def draft_trader_decision(
     active_opportunity_board_path: Path = DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
     non_eurusd_live_grade_frontier_path: Path = DEFAULT_NON_EURUSD_LIVE_GRADE_FRONTIER,
     range_rail_geometry_repair_path: Path = DEFAULT_RANGE_RAIL_GEOMETRY_REPAIR,
+    execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
     output_path: Path = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     report_path: Path = DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -5132,6 +5205,7 @@ def draft_trader_decision(
         active_opportunity_board_path=active_opportunity_board_path,
         non_eurusd_live_grade_frontier_path=non_eurusd_live_grade_frontier_path,
         range_rail_geometry_repair_path=range_rail_geometry_repair_path,
+        execution_ledger_path=execution_ledger_path,
         max_lanes=max_lanes,
     )
     packet = brain._input_packet(snapshot_path)
