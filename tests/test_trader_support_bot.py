@@ -1771,6 +1771,15 @@ class TraderSupportBotTest(unittest.TestCase):
                 "vehicle": "LIMIT",
                 "status": "EVIDENCE_ACQUISITION",
                 "expected_edge_jpy": 658.9,
+                "local_tp_proof": {
+                    "capture_take_profit_scope_key": (
+                        "USD_CAD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER"
+                    ),
+                    "capture_take_profit_trades": 3,
+                    "capture_take_profit_wins": 3,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_proof_floor": 20,
+                },
                 "blockers": [
                     "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
                     "SPREAD_TOO_WIDE",
@@ -1837,6 +1846,10 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(shortest["status"], "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE")
             self.assertEqual(shortest["lane_id"], active_lane["lane_id"])
             self.assertEqual(shortest["selection_basis"], "active_trader_contract")
+            self.assertEqual(
+                shortest["active_path"]["local_tp_proof"]["capture_take_profit_trades"],
+                3,
+            )
             self.assertEqual(payload["metrics"]["active_path_lane_id"], active_lane["lane_id"])
             report = files["report"].read_text()
             self.assertIn("USD_CAD", report)

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from quant_rabbit.trader_goal_loop_orchestrator import TraderGoalLoopOrchestrator
 
@@ -451,6 +453,536 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
         )
         self.assertNotIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_pending_active_lane_dispatch_is_preserved_with_exact_commands(self) -> None:
+        now = datetime(2026, 7, 10, 0, 55, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            dispatch_id = "a" * 64
+            commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                (
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator "
+                    f"--ack-active-lane-dispatch {dispatch_id}"
+                ),
+            ]
+            command_steps = [
+                {"command": commands[0], "required": True, "ok_rcs": [0, 2]},
+                {"command": commands[1], "required": True, "ok_rcs": [0]},
+            ]
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NO_REPAIR_REQUESTS",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 0,
+                    "codex_work_order": {
+                        "status": "READ_ONLY_EVIDENCE_WORK",
+                        "action_code": "EXACT_TP_PROOF_COLLECTION",
+                        "material_digest": dispatch_id,
+                        "pending_material_digest": dispatch_id,
+                        "pending_dispatch_id": dispatch_id,
+                        "dispatch_allowed": True,
+                        "execution_pending": True,
+                        "new_dispatch_issued": True,
+                        "suggested_commands": commands,
+                        "suggested_command_steps": command_steps,
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=5)).isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "next_prompt": "Do not replace the pending repair dispatch.",
+                    "next_trade_enabling_action": "Collect exact local TP proof; do not send.",
+                    "current_state": {},
+                    "remaining_blockers": [],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "ACTIVE_LANE_EVIDENCE_DISPATCH")
+        self.assertTrue(payload["repair_loop_state"]["active_lane_execution_pending"])
+        self.assertEqual(payload["next_allowed_commands"], commands)
+        self.assertEqual(payload["next_allowed_command_steps"], command_steps)
+        self.assertIn(dispatch_id, payload["selected_next_prompt"])
+        self.assertIn("末尾の exact-digest acknowledgement", payload["selected_next_prompt"])
+        self.assertEqual(payload["success_condition_evaluation"]["status"], "NOT_MET")
+        self.assertIn(
+            f"ACTIVE_LANE_EVIDENCE_DISPATCH:{dispatch_id}",
+            payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
+        )
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_concurrent_stale_goal_writer_cannot_overwrite_fresh_repair_wait(self) -> None:
+        now = datetime(2026, 7, 10, 0, 57, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            dispatch_id = "b" * 64
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NO_REPAIR_REQUESTS",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 0,
+                    "codex_work_order": {
+                        "status": "READ_ONLY_EVIDENCE_WORK",
+                        "action_code": "EXACT_TP_PROOF_COLLECTION",
+                        "material_digest": dispatch_id,
+                        "pending_material_digest": dispatch_id,
+                        "pending_dispatch_id": dispatch_id,
+                        "dispatch_allowed": True,
+                        "execution_pending": True,
+                        "suggested_commands": ["read-only-command-a"],
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+            kwargs = {
+                "trader_repair_orchestrator_path": paths["repair"],
+                "active_trader_contract_path": paths["active_contract"],
+                "payoff_shape_diagnosis_path": paths["payoff"],
+                "harvest_live_grade_path": paths["harvest"],
+                "scout_plan_path": paths["scout"],
+                "as_proof_pack_queue_path": paths["proof"],
+                "as_lane_candidate_board_path": paths["board"],
+                "portfolio_4x_path_planner_path": paths["portfolio"],
+                "guardian_receipt_consumption_path": paths["guardian_consumption"],
+                "guardian_receipt_operator_review_path": paths["guardian_review"],
+                "live_order_request_path": paths["live_order"],
+                "broker_snapshot_path": paths["broker"],
+                "output_path": paths["output"],
+                "report_path": paths["report"],
+                "now_utc": now,
+            }
+
+            import quant_rabbit.trader_goal_loop_orchestrator as goal_module
+
+            original_load = goal_module._load_artifact
+            stale_repair_loaded = threading.Event()
+            release_stale_writer = threading.Event()
+            errors: list[BaseException] = []
+
+            def controlled_load(path: Path):
+                payload = original_load(path)
+                if (
+                    threading.current_thread().name == "stale-goal-run"
+                    and path == paths["repair"]
+                ):
+                    stale_repair_loaded.set()
+                    if not release_stale_writer.wait(timeout=3):
+                        raise TimeoutError("test did not release stale goal writer")
+                return payload
+
+            def execute() -> None:
+                try:
+                    TraderGoalLoopOrchestrator(**kwargs).run()
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    errors.append(exc)
+
+            stale_thread = threading.Thread(name="stale-goal-run", target=execute)
+            fresh_thread = threading.Thread(name="fresh-goal-run", target=execute)
+            with patch(
+                "quant_rabbit.trader_goal_loop_orchestrator._load_artifact",
+                side_effect=controlled_load,
+            ):
+                stale_thread.start()
+                self.assertTrue(stale_repair_loaded.wait(timeout=2))
+                _write_json(
+                    paths["repair"],
+                    {
+                        "generated_at_utc": (now + timedelta(seconds=1)).isoformat(),
+                        "status": "NO_REPAIR_REQUESTS",
+                        "selected_request_code": None,
+                        "actionable_request_count": 0,
+                        "approval_required_request_count": 0,
+                        "waiting_request_count": 0,
+                        "repair_request_count": 0,
+                        "codex_work_order": {
+                            "status": "WAITING_FOR_MATERIAL_EVIDENCE",
+                            "reason_code": "MATERIAL_EVIDENCE_UNCHANGED",
+                            "action_code": "EXACT_TP_PROOF_COLLECTION",
+                            "material_digest": dispatch_id,
+                            "dispatch_allowed": False,
+                            "repeat_suppressed": True,
+                            "suggested_commands": [],
+                        },
+                        "read_only": True,
+                        "live_side_effects": [],
+                    },
+                )
+                fresh_thread.start()
+                release_stale_writer.set()
+                stale_thread.join(timeout=3)
+                fresh_thread.join(timeout=3)
+
+            final_payload = json.loads(paths["output"].read_text())
+
+        self.assertFalse(stale_thread.is_alive())
+        self.assertFalse(fresh_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(final_payload["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertTrue(final_payload["repair_loop_state"]["material_evidence_wait"])
+        self.assertNotIn("read-only-command-a", final_payload["next_allowed_commands"])
+
+    def test_goal_report_publish_failure_preserves_last_valid_json(self) -> None:
+        now = datetime(2026, 7, 10, 0, 58, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            kwargs = {
+                "trader_repair_orchestrator_path": paths["repair"],
+                "active_trader_contract_path": paths["active_contract"],
+                "payoff_shape_diagnosis_path": paths["payoff"],
+                "harvest_live_grade_path": paths["harvest"],
+                "scout_plan_path": paths["scout"],
+                "as_proof_pack_queue_path": paths["proof"],
+                "as_lane_candidate_board_path": paths["board"],
+                "portfolio_4x_path_planner_path": paths["portfolio"],
+                "guardian_receipt_consumption_path": paths["guardian_consumption"],
+                "guardian_receipt_operator_review_path": paths["guardian_review"],
+                "live_order_request_path": paths["live_order"],
+                "broker_snapshot_path": paths["broker"],
+                "output_path": paths["output"],
+                "report_path": paths["report"],
+                "now_utc": now,
+            }
+            TraderGoalLoopOrchestrator(**kwargs).run()
+            previous_json = paths["output"].read_bytes()
+            dispatch_id = "c" * 64
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=1)).isoformat(),
+                    "status": "NO_REPAIR_REQUESTS",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 0,
+                    "codex_work_order": {
+                        "status": "READ_ONLY_EVIDENCE_WORK",
+                        "action_code": "EXACT_TP_PROOF_COLLECTION",
+                        "material_digest": dispatch_id,
+                        "pending_material_digest": dispatch_id,
+                        "pending_dispatch_id": dispatch_id,
+                        "dispatch_allowed": True,
+                        "execution_pending": True,
+                        "suggested_commands": ["read-only-command-c"],
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+
+            import quant_rabbit.trader_goal_loop_orchestrator as goal_module
+
+            original_replace = goal_module._replace_prepared_text
+
+            def fail_report_replace(temp_path: Path, destination: Path) -> None:
+                if destination == paths["report"]:
+                    raise OSError("simulated goal report ENOSPC")
+                original_replace(temp_path, destination)
+
+            with patch(
+                "quant_rabbit.trader_goal_loop_orchestrator._replace_prepared_text",
+                side_effect=fail_report_replace,
+            ):
+                with self.assertRaisesRegex(OSError, "simulated goal report ENOSPC"):
+                    TraderGoalLoopOrchestrator(**kwargs).run()
+
+            self.assertEqual(paths["output"].read_bytes(), previous_json)
+            TraderGoalLoopOrchestrator(**kwargs).run()
+            recovered = json.loads(paths["output"].read_text())
+
+        self.assertEqual(recovered["selected_next_work_type"], "ACTIVE_LANE_EVIDENCE_DISPATCH")
+        self.assertEqual(
+            recovered["repair_loop_state"]["active_lane_pending_dispatch_id"],
+            dispatch_id,
+        )
+
+    def test_material_evidence_wait_blocks_goal_loop_redispatch_of_same_active_prompt(self) -> None:
+        now = datetime(2026, 7, 10, 1, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NO_REPAIR_REQUESTS",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 0,
+                    "codex_work_order": {
+                        "status": "WAITING_FOR_MATERIAL_EVIDENCE",
+                        "reason_code": "MATERIAL_EVIDENCE_UNCHANGED",
+                        "action_code": "EXACT_TP_PROOF_COLLECTION",
+                        "material_digest": "material-digest-1",
+                        "dispatch_allowed": False,
+                        "repeat_suppressed": True,
+                        "suggested_commands": [],
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+            # A timestamp-only refresh must not bypass the material watermark.
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=5)).isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "target_shape": "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT",
+                    "next_prompt": "Collect the same exact local TP proof again.",
+                    "next_trade_enabling_action": "Collect exact local TP proof; do not send.",
+                    "current_state": {
+                        "active_opportunity_board": {
+                            "top_lane": {
+                                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "strategy_family": "BREAKOUT_FAILURE",
+                                "vehicle": "LIMIT",
+                                "status": "EVIDENCE_ACQUISITION",
+                            }
+                        }
+                    },
+                    "remaining_blockers": [
+                        {"code": "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"}
+                    ],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "NO_ACTION_WAIT")
+        self.assertEqual(payload["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertTrue(payload["repair_loop_state"]["waiting_for_evidence"])
+        self.assertTrue(payload["repair_loop_state"]["material_evidence_wait"])
+        self.assertFalse(payload["repair_loop_state"]["queued_evidence_wait"])
+        self.assertIn("suppressed an unchanged active-lane", payload["selection_reason"])
+        self.assertIn(
+            "REPAIR_MATERIAL_EVIDENCE_WAIT:EXACT_TP_PROOF_COLLECTION:material-digest-1",
+            payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
+        )
+        self.assertNotIn(
+            "active-trader-contract",
+            "\n".join(payload["next_allowed_commands"]),
+        )
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_unmapped_active_lane_action_routes_to_code_repair_not_prompt_redispatch(self) -> None:
+        now = datetime(2026, 7, 10, 1, 10, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NO_REPAIR_REQUESTS",
+                    "selected_request_code": None,
+                    "actionable_request_count": 0,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 0,
+                    "codex_work_order": {
+                        "status": "ACTIVE_LANE_ACTION_MAPPING_REQUIRED",
+                        "reason_code": "ACTION_STAGE_MAPPING_REQUIRED",
+                        "action_code": "METHOD_SCOPED_PROFILE_PROMOTION",
+                        "material_digest": "mapping-gap-digest",
+                        "dispatch_allowed": False,
+                        "suggested_commands": [],
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=5)).isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "next_prompt": "Repeat METHOD_SCOPED_PROFILE_PROMOTION.",
+                    "next_trade_enabling_action": (
+                        "The next safe tuning action is METHOD_SCOPED_PROFILE_PROMOTION."
+                    ),
+                    "current_state": {},
+                    "remaining_blockers": [],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "CODE_REPAIR")
+        self.assertTrue(payload["repair_loop_state"]["action_mapping_required"])
+        self.assertTrue(payload["schema_state"]["active_lane_action_mapping_required"])
+        self.assertEqual(payload["success_condition_evaluation"]["status"], "NOT_MET")
+        self.assertIn("no approved command mapping", payload["selection_reason"])
+        self.assertIn(
+            "ACTIVE_LANE_ACTION_MAPPING_REQUIRED:METHOD_SCOPED_PROFILE_PROMOTION",
+            payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
+        )
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_selected_actionable_repair_outranks_newer_active_contract_prompt(self) -> None:
+        now = datetime(2026, 7, 10, 1, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(root, now=now, scout_status="SCOUT_DIAGNOSIS_COMPLETE")
+            selected_code = "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            targeted = "PYTHONPATH=src python3 -m unittest tests.test_profit_capture_bot -v"
+            verification = "python3 -m json.tool data/profit_capture_bot.json >/dev/null"
+            _write_json(
+                paths["repair"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "READY_FOR_CODEX_REPAIR",
+                    "selected_request_code": selected_code,
+                    "actionable_request_count": 1,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 1,
+                    "codex_work_order": {
+                        "status": "READY_FOR_CODEX_IMPLEMENTATION",
+                        "selected_request_code": selected_code,
+                        "objective": "Repair the TP-progress profit-capture replay gap.",
+                        "automation_prompt": "Implement the selected repair and preserve every live gate.",
+                        "suggested_files": ["src/quant_rabbit/profit_capture_bot.py"],
+                        "required_tests": ["loss leak remains blocked until replay proves it"],
+                        "targeted_test_commands": [targeted],
+                        "verification_commands": [verification],
+                        "final_verification_commands": [targeted, verification],
+                    },
+                    "read_only": True,
+                    "live_side_effects": [],
+                },
+            )
+            _write_json(
+                paths["active_contract"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=5)).isoformat(),
+                    "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "selected_active_path": "EVIDENCE_ACQUISITION",
+                    "next_prompt": "This newer active-contract prompt must not hide the selected repair.",
+                    "next_trade_enabling_action": "Collect exact local TP proof; do not send.",
+                    "current_state": {},
+                    "remaining_blockers": [],
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                },
+            )
+
+            summary = TraderGoalLoopOrchestrator(
+                trader_repair_orchestrator_path=paths["repair"],
+                active_trader_contract_path=paths["active_contract"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                as_proof_pack_queue_path=paths["proof"],
+                as_lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_review"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(summary.selected_next_work_type, "CODE_REPAIR")
+        self.assertTrue(payload["repair_loop_state"]["actionable_repair_selected"])
+        self.assertEqual(payload["repair_loop_state"]["selected_request_code"], selected_code)
+        self.assertEqual(payload["next_allowed_commands"], [targeted, verification])
+        self.assertIn(selected_code, payload["current_phase"])
+        self.assertIn(selected_code, payload["selected_next_prompt"])
+        self.assertIn("Repair the TP-progress profit-capture replay gap", payload["selected_next_prompt"])
+        self.assertIn("src/quant_rabbit/profit_capture_bot.py", payload["selected_next_prompt"])
+        self.assertIn(
+            f"TRADER_REPAIR_REQUEST:{selected_code}",
+            payload["repeat_loop_guard"]["current_fingerprint"]["key_blocker"],
+        )
+        self.assertEqual(payload["success_condition_evaluation"]["status"], "NOT_MET")
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_repair_orchestrator_waiting_evidence_refreshes_stale_artifacts_once(self) -> None:

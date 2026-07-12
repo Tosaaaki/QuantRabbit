@@ -6802,6 +6802,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_refresh_goal_loop = max(
             index for index, step in enumerate(refresh) if step == "trader-goal-loop-orchestrator"
         )
+        last_refresh_support = max(
+            index for index, step in enumerate(refresh) if step == "trader-support-bot"
+        )
+        last_refresh_repair = max(
+            index for index, step in enumerate(refresh) if step == "trader-repair-orchestrator"
+        )
         self.assertLess(refresh.index("trader-goal-loop-orchestrator"), first_refresh_contract)
         self.assertLess(first_refresh_contract, refresh_board)
         self.assertLess(refresh_board, refresh_mapper)
@@ -6812,7 +6818,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(last_refresh_contract, last_refresh_guardian_contract)
         self.assertLess(last_refresh_guardian_contract, last_refresh_guardian_router)
         self.assertLess(last_refresh_guardian_router, refresh_operator_review)
-        self.assertLess(refresh_operator_review, last_refresh_goal_loop)
+        self.assertLess(refresh_operator_review, last_refresh_support)
+        self.assertLess(last_refresh_support, last_refresh_repair)
+        self.assertLess(last_refresh_repair, last_refresh_goal_loop)
         self.assertEqual(refresh[-1], "trader-goal-loop-orchestrator")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertEqual(refresh_by_step[month_scale_timing_step]["timeout_seconds"], 180.0)
@@ -6941,6 +6949,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_sidecar_goal_loop = max(
             index for index, step in enumerate(sidecars) if step == "trader-goal-loop-orchestrator"
         )
+        last_sidecar_support = max(
+            index for index, step in enumerate(sidecars) if step == "trader-support-bot"
+        )
+        last_sidecar_repair = max(
+            index for index, step in enumerate(sidecars) if step == "trader-repair-orchestrator"
+        )
         self.assertLess(sidecars.index("trader-goal-loop-orchestrator"), first_sidecar_contract)
         self.assertLess(first_sidecar_contract, sidecar_board)
         self.assertLess(sidecar_board, sidecar_mapper)
@@ -6951,7 +6965,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(last_sidecar_contract, last_sidecar_guardian_contract)
         self.assertLess(last_sidecar_guardian_contract, last_sidecar_guardian_router)
         self.assertLess(last_sidecar_guardian_router, sidecar_operator_review)
-        self.assertLess(sidecar_operator_review, last_sidecar_goal_loop)
+        self.assertLess(sidecar_operator_review, last_sidecar_support)
+        self.assertLess(last_sidecar_support, last_sidecar_repair)
+        self.assertLess(last_sidecar_repair, last_sidecar_goal_loop)
         self.assertEqual(sidecars[-1], "trader-goal-loop-orchestrator")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step[intent_step]["required"])
@@ -7083,6 +7099,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_direct_goal_loop = max(
             index for index, step in enumerate(direct_sidecars) if step == "trader-goal-loop-orchestrator"
         )
+        last_direct_support = max(
+            index for index, step in enumerate(direct_sidecars) if step == "trader-support-bot"
+        )
+        last_direct_repair = max(
+            index for index, step in enumerate(direct_sidecars) if step == "trader-repair-orchestrator"
+        )
         self.assertLess(
             direct_sidecars.index("trader-goal-loop-orchestrator"),
             first_direct_contract,
@@ -7092,7 +7114,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(direct_mapper, direct_frontier)
         self.assertLess(direct_frontier, last_direct_contract)
         self.assertLess(last_direct_contract, direct_operator_review)
-        self.assertLess(direct_operator_review, last_direct_goal_loop)
+        self.assertLess(direct_operator_review, last_direct_support)
+        self.assertLess(last_direct_support, last_direct_repair)
+        self.assertLess(last_direct_repair, last_direct_goal_loop)
         self.assertEqual(direct_sidecars[-1], "trader-goal-loop-orchestrator")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])

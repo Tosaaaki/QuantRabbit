@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +36,7 @@ WORK_TYPES = {
     "LIVE_PERMISSION_READY_CHECK",
     "EDGE_IMPROVEMENT_EXPERIMENT",
     "ACTIVE_TRADER_CONTRACT_EVIDENCE",
+    "ACTIVE_LANE_EVIDENCE_DISPATCH",
 }
 INPUT_ARTIFACT_NAMES = (
     "trader_repair_orchestrator",
@@ -57,6 +62,8 @@ DEFAULT_PORTFOLIO_4X_PATH_PLANNER = DEFAULT_PAYOFF_SHAPE_DIAGNOSIS.parent / "por
 PAYOFF_STALE_AFTER_SECONDS = 24 * 60 * 60
 BROKER_TRUTH_FRESH_SECONDS = 10 * 60
 SUCCESS_CONDITION_SCHEMA_VERSION = "success_condition_v1"
+REPAIR_MATERIAL_EVIDENCE_WAIT_STATUS = "WAITING_FOR_MATERIAL_EVIDENCE"
+REPAIR_ACTION_MAPPING_REQUIRED_STATUS = "ACTIVE_LANE_ACTION_MAPPING_REQUIRED"
 
 
 @dataclass(frozen=True)
@@ -110,11 +117,25 @@ class TraderGoalLoopOrchestrator:
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
     def run(self) -> TraderGoalLoopOrchestratorSummary:
-        payload = self.build_payload()
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
-        self.report_path.write_text(_render_report(payload), encoding="utf-8")
+        # Serialize goal writers and hold the repair artifact's shared sibling
+        # lock from read through publish. An ACK/refresh writer therefore cannot
+        # change the authoritative repair state midway through this handoff,
+        # while a newer queued goal run will rebuild after this one releases.
+        with _artifact_state_lock(self.output_path, exclusive=True):
+            with _artifact_state_lock(
+                self.paths["trader_repair_orchestrator"],
+                exclusive=False,
+            ):
+                payload = self.build_payload()
+                _atomic_publish_goal_outputs(
+                    output_path=self.output_path,
+                    output_content=(
+                        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+                        + "\n"
+                    ),
+                    report_path=self.report_path,
+                    report_content=_render_report(payload),
+                )
         return TraderGoalLoopOrchestratorSummary(
             status=str(payload["status"]),
             output_path=self.output_path,
@@ -211,7 +232,10 @@ class TraderGoalLoopOrchestrator:
             repair_loop_state=repair_loop_state,
         )
         success_condition_evaluation = _evaluate_success_condition(success_condition, current_state)
-        next_allowed_commands = _next_allowed_commands(selected_next_work_type)
+        next_allowed_commands = _next_allowed_commands(
+            selected_next_work_type,
+            repair_loop_state=repair_loop_state,
+        )
         four_x_progress_hypothesis = _four_x_progress_hypothesis(
             edge_improvement_state,
             scout_state,
@@ -237,6 +261,7 @@ class TraderGoalLoopOrchestrator:
             success_condition=success_condition,
             next_allowed_commands=next_allowed_commands,
             active_contract_state=active_contract_state,
+            repair_loop_state=repair_loop_state,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -274,9 +299,77 @@ class TraderGoalLoopOrchestrator:
             "artifact_index": artifact_index,
             "safety_contract": _safety_contract(),
         }
+        if selected_next_work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+            payload["next_allowed_command_steps"] = list(
+                repair_loop_state.get("active_lane_dispatch_command_steps") or []
+            )
         if selected_next_work_type not in WORK_TYPES:
             raise ValueError(f"unknown selected_next_work_type: {selected_next_work_type}")
         return payload
+
+
+def _prepare_atomic_text(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return temp_path
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _replace_prepared_text(temp_path: Path, path: Path) -> None:
+    os.replace(temp_path, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def _atomic_publish_goal_outputs(
+    *,
+    output_path: Path,
+    output_content: str,
+    report_path: Path,
+    report_content: str,
+) -> None:
+    """Stage both files, then commit derivative report and JSON state last."""
+
+    output_temp = _prepare_atomic_text(output_path, output_content)
+    try:
+        report_temp = _prepare_atomic_text(report_path, report_content)
+    except BaseException:
+        output_temp.unlink(missing_ok=True)
+        raise
+    try:
+        _replace_prepared_text(report_temp, report_path)
+        _replace_prepared_text(output_temp, output_path)
+    finally:
+        report_temp.unlink(missing_ok=True)
+        output_temp.unlink(missing_ok=True)
+
+
+@contextmanager
+def _artifact_state_lock(path: Path, *, exclusive: bool):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(handle.fileno(), mode)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _load_artifact(path: Path) -> dict[str, Any]:
@@ -626,13 +719,29 @@ def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "selected_request_code": None,
             "next_evidence_action_count": 0,
             "waiting_for_evidence": False,
+            "actionable_repair_selected": False,
         }
     actions = repair.get("next_evidence_actions") if isinstance(repair.get("next_evidence_actions"), list) else []
     waiting_count = _first_int(repair.get("waiting_request_count"))
     actionable_count = _first_int(repair.get("actionable_request_count"))
     approval_count = _first_int(repair.get("approval_required_request_count"))
     selected_code = repair.get("selected_request_code") if isinstance(repair.get("selected_request_code"), str) else None
-    waiting_for_evidence = bool(
+    work_order = repair.get("codex_work_order") if isinstance(repair.get("codex_work_order"), dict) else {}
+    material_evidence_wait = bool(
+        work_order.get("status") == REPAIR_MATERIAL_EVIDENCE_WAIT_STATUS
+        and work_order.get("dispatch_allowed") is False
+    )
+    action_mapping_required = bool(
+        work_order.get("status") == REPAIR_ACTION_MAPPING_REQUIRED_STATUS
+        and work_order.get("dispatch_allowed") is False
+    )
+    active_lane_execution_pending = bool(
+        work_order.get("status") == "READ_ONLY_EVIDENCE_WORK"
+        and work_order.get("execution_pending") is True
+        and work_order.get("pending_dispatch_id")
+    )
+    actionable_repair_selected = bool(actionable_count > 0 and selected_code)
+    queued_evidence_wait = bool(
         str(repair.get("status") or "") == "ORCHESTRATOR_BLOCKED"
         and actionable_count == 0
         and approval_count == 0
@@ -640,6 +749,7 @@ def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         and not selected_code
         and actions
     )
+    waiting_for_evidence = queued_evidence_wait or material_evidence_wait
     return {
         "artifact_status": "present",
         "status": repair.get("status"),
@@ -651,6 +761,39 @@ def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "selected_request_code": selected_code,
         "next_evidence_action_count": len(actions),
         "waiting_for_evidence": waiting_for_evidence,
+        "queued_evidence_wait": queued_evidence_wait,
+        "material_evidence_wait": material_evidence_wait,
+        "action_mapping_required": action_mapping_required,
+        "actionable_repair_selected": actionable_repair_selected,
+        "active_lane_execution_pending": active_lane_execution_pending,
+        "codex_work_order_status": work_order.get("status"),
+        "codex_work_order_objective": work_order.get("objective"),
+        "codex_work_order_automation_prompt": work_order.get("automation_prompt"),
+        "codex_work_order_suggested_files": _string_list(
+            work_order.get("suggested_files")
+        ),
+        "codex_work_order_required_tests": _string_list(
+            work_order.get("required_tests")
+        ),
+        "codex_work_order_targeted_test_commands": _string_list(
+            work_order.get("targeted_test_commands")
+        ),
+        "codex_work_order_verification_commands": _string_list(
+            work_order.get("verification_commands")
+        ),
+        "codex_work_order_final_verification_commands": _string_list(
+            work_order.get("final_verification_commands")
+        ),
+        "codex_work_order_reason_code": work_order.get("reason_code"),
+        "active_lane_action_code": work_order.get("action_code"),
+        "active_lane_material_digest": work_order.get("material_digest"),
+        "active_lane_pending_dispatch_id": work_order.get("pending_dispatch_id"),
+        "active_lane_dispatch_commands": _string_list(work_order.get("suggested_commands")),
+        "active_lane_dispatch_command_steps": [
+            dict(step)
+            for step in work_order.get("suggested_command_steps") or []
+            if isinstance(step, dict)
+        ],
         "waiting_request_codes": _string_list(repair.get("waiting_request_codes")),
         "next_evidence_action_ids": [
             str(action.get("action_id"))
@@ -871,13 +1014,23 @@ def _schema_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
         for field in fields:
             if field not in artifact:
                 missing_fields.append({"artifact": name, "field": field})
-    success_condition_issues = _success_condition_schema_issues(artifacts["trader_repair_orchestrator"])
+    repair = artifacts["trader_repair_orchestrator"]
+    success_condition_issues = _success_condition_schema_issues(repair)
+    work_order = repair.get("codex_work_order") if isinstance(repair.get("codex_work_order"), dict) else {}
+    active_lane_action_mapping_required = bool(
+        work_order.get("status") == REPAIR_ACTION_MAPPING_REQUIRED_STATUS
+    )
     return {
         "required_field_missing": bool(missing_fields),
         "missing_fields": missing_fields,
         "success_condition_schema_ok": not success_condition_issues,
         "success_condition_schema_issues": success_condition_issues,
-        "code_repair_required": bool(missing_fields or success_condition_issues),
+        "active_lane_action_mapping_required": active_lane_action_mapping_required,
+        "code_repair_required": bool(
+            missing_fields
+            or success_condition_issues
+            or active_lane_action_mapping_required
+        ),
     }
 
 
@@ -946,6 +1099,33 @@ def _select_work_type(
     active_contract_state: dict[str, Any],
     repair_loop_state: dict[str, Any],
 ) -> tuple[str, str]:
+    if repair_loop_state.get("action_mapping_required"):
+        return (
+            "CODE_REPAIR",
+            "trader_repair_orchestrator found an active-lane action with no approved command "
+            "mapping; repair and test that explicit mapping before redispatching the active-contract prompt.",
+        )
+    if repair_loop_state.get("actionable_repair_selected"):
+        return (
+            "CODE_REPAIR",
+            "trader_repair_orchestrator selected actionable repair "
+            f"{repair_loop_state.get('selected_request_code')}; preserve its objective, files, tests, "
+            "and verification contract ahead of active-lane or active-contract evidence work.",
+        )
+    if repair_loop_state.get("active_lane_execution_pending"):
+        return (
+            "ACTIVE_LANE_EVIDENCE_DISPATCH",
+            "trader_repair_orchestrator has one stable active-lane evidence dispatch pending "
+            "completion acknowledgement; preserve that dispatch id and command plan instead of "
+            "replacing it with another active-contract prompt.",
+        )
+    if repair_loop_state.get("material_evidence_wait"):
+        return (
+            "NO_ACTION_WAIT",
+            "trader_repair_orchestrator suppressed an unchanged active-lane evidence dispatch; "
+            "wait until its material digest or current action stage changes instead of redispatching "
+            "the same active_trader_contract prompt.",
+        )
     if (
         repair_loop_state.get("waiting_for_evidence")
         and active_contract_state.get("active_prompt_available")
@@ -1045,6 +1225,30 @@ def _key_blocker(
     active_contract_state: dict[str, Any],
     repair_loop_state: dict[str, Any],
 ) -> str:
+    if selected_next_work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+        return (
+            "ACTIVE_LANE_EVIDENCE_DISPATCH:"
+            f"{repair_loop_state.get('active_lane_pending_dispatch_id')}"
+        )
+    if selected_next_work_type == "CODE_REPAIR" and repair_loop_state.get(
+        "action_mapping_required"
+    ):
+        return (
+            "ACTIVE_LANE_ACTION_MAPPING_REQUIRED:"
+            f"{repair_loop_state.get('active_lane_action_code')}"
+        )
+    if selected_next_work_type == "CODE_REPAIR" and repair_loop_state.get(
+        "actionable_repair_selected"
+    ):
+        return f"TRADER_REPAIR_REQUEST:{repair_loop_state.get('selected_request_code')}"
+    if selected_next_work_type == "NO_ACTION_WAIT" and repair_loop_state.get(
+        "material_evidence_wait"
+    ):
+        return (
+            "REPAIR_MATERIAL_EVIDENCE_WAIT:"
+            f"{repair_loop_state.get('active_lane_action_code')}:"
+            f"{repair_loop_state.get('active_lane_material_digest')}"
+        )
     if selected_next_work_type == "READ_ONLY_EVIDENCE_REFRESH" and repair_loop_state.get("waiting_for_evidence"):
         ids = ",".join(_string_list(repair_loop_state.get("next_evidence_action_ids")))
         return f"REPAIR_ORCHESTRATOR_WAITING_FOR_EVIDENCE:{ids or 'NO_ACTION_IDS'}"
@@ -1138,6 +1342,8 @@ def _current_phase(
     active_contract_state: dict[str, Any],
     repair_loop_state: dict[str, Any],
 ) -> str:
+    if selected_next_work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+        return "ACTIVE_LANE_EVIDENCE_DISPATCH_PENDING_ACK"
     if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE":
         return f"ACTIVE_CONTRACT_{active_contract_state.get('selected_active_path') or 'EVIDENCE'}"
     if selected_next_work_type == "PAYOFF_SHAPE_DIAGNOSIS":
@@ -1151,6 +1357,11 @@ def _current_phase(
     if selected_next_work_type == "READ_ONLY_EVIDENCE_REFRESH":
         return "ARTIFACT_EVIDENCE_REFRESH_REQUIRED"
     if selected_next_work_type == "CODE_REPAIR":
+        if repair_loop_state.get("actionable_repair_selected"):
+            return (
+                "TRADER_REPAIR_"
+                f"{repair_loop_state.get('selected_request_code') or 'SELECTED'}_REQUIRED"
+            )
         return "GOAL_LOOP_SCHEMA_REPAIR_REQUIRED"
     if selected_next_work_type == "LIVE_PERMISSION_READY_CHECK":
         return "LIVE_PERMISSION_READY_CHECK_ONLY"
@@ -1217,10 +1428,12 @@ def _success_condition(work_type: str) -> dict[str, Any]:
         ),
         "CODE_REPAIR": (
             "all",
-            "schema and success_condition checks are repaired.",
+            "schema, success_condition, and active-lane action mappings are repaired.",
             [
+                {"field": "repair_orchestrator_actionable_request_count", "operator": "eq", "value": 0},
                 {"field": "required_field_missing", "operator": "eq", "value": False},
                 {"field": "success_condition_schema_ok", "operator": "eq", "value": True},
+                {"field": "active_lane_action_mapping_required", "operator": "eq", "value": False},
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
             ],
         ),
@@ -1255,11 +1468,19 @@ def _success_condition(work_type: str) -> dict[str, Any]:
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
             ],
         ),
+        "ACTIVE_LANE_EVIDENCE_DISPATCH": (
+            "all",
+            "the stable active-lane dispatch is acknowledged or superseded by material evidence.",
+            [
+                {"field": "active_lane_execution_pending", "operator": "eq", "value": False},
+                {"field": "live_permission_allowed", "operator": "eq", "value": False},
+            ],
+        ),
         "NO_ACTION_WAIT": (
             "all",
-            "no repeated work is requested until input artifacts or key blocker change.",
+            "the repair orchestrator remains in an explicit evidence wait without live permission.",
             [
-                {"field": "repeat_allowed", "operator": "eq", "value": True},
+                {"field": "repair_orchestrator_waiting_for_evidence", "operator": "eq", "value": True},
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
             ],
         ),
@@ -1308,6 +1529,9 @@ def _current_state_for_evaluation(
         "has_stale_or_contradicted_artifact": artifact_health.get("has_stale_or_contradicted_artifact"),
         "required_field_missing": schema_state.get("required_field_missing"),
         "success_condition_schema_ok": schema_state.get("success_condition_schema_ok"),
+        "active_lane_action_mapping_required": schema_state.get(
+            "active_lane_action_mapping_required"
+        ),
         "proof_queue_count": proof_state.get("proof_queue_count"),
         "can_create_live_permission_count": proof_state.get("can_create_live_permission_count"),
         "broker_truth_fresh": (live_ready_state.get("checks") or {}).get("broker_truth_fresh"),
@@ -1318,7 +1542,9 @@ def _current_state_for_evaluation(
         "repair_orchestrator_actionable_request_count": repair_loop_state.get("actionable_request_count"),
         "repair_orchestrator_waiting_request_count": repair_loop_state.get("waiting_request_count"),
         "repair_orchestrator_next_evidence_action_count": repair_loop_state.get("next_evidence_action_count"),
-        "repeat_allowed": True,
+        "active_lane_execution_pending": repair_loop_state.get(
+            "active_lane_execution_pending"
+        ),
         "live_permission_allowed": False,
     }
 
@@ -1350,7 +1576,23 @@ def _evaluate_success_condition(condition: dict[str, Any], state: dict[str, Any]
     }
 
 
-def _next_allowed_commands(work_type: str) -> list[str]:
+def _next_allowed_commands(
+    work_type: str,
+    *,
+    repair_loop_state: dict[str, Any] | None = None,
+) -> list[str]:
+    if work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+        return _string_list((repair_loop_state or {}).get("active_lane_dispatch_commands"))
+    if work_type == "CODE_REPAIR" and (repair_loop_state or {}).get(
+        "actionable_repair_selected"
+    ):
+        selected_commands = _unique(
+            _string_list((repair_loop_state or {}).get("codex_work_order_targeted_test_commands"))
+            + _string_list((repair_loop_state or {}).get("codex_work_order_verification_commands"))
+            + _string_list((repair_loop_state or {}).get("codex_work_order_final_verification_commands"))
+        )
+        if selected_commands:
+            return selected_commands
     commands = {
         "PAYOFF_SHAPE_DIAGNOSIS": [
             "PYTHONPATH=src python3 -m quant_rabbit.cli payoff-shape-diagnosis",
@@ -1409,10 +1651,85 @@ def _selected_next_prompt(
     success_condition: dict[str, Any],
     next_allowed_commands: list[str],
     active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
 ) -> str:
     input_artifacts = "\n".join(f"- data/{_artifact_filename(name)}" for name in INPUT_ARTIFACT_NAMES)
     commands = "\n".join(f"- `{command}`" for command in next_allowed_commands)
     success = json.dumps(success_condition, ensure_ascii=False, indent=2, sort_keys=True)
+    if selected_next_work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+        command_steps = json.dumps(
+            repair_loop_state.get("active_lane_dispatch_command_steps") or [],
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        return f"""QuantRabbit の active-lane evidence dispatch を完了してください。
+
+dispatch id:
+{repair_loop_state.get('active_lane_pending_dispatch_id')}
+
+current action:
+{repair_loop_state.get('active_lane_action_code')}
+
+この同一 dispatch id を新しい作業として複製しないでください。以下の固定 read-only command plan を順番どおり実行し、末尾の exact-digest acknowledgement が成功した時だけ完了です。途中失敗時はackせず、同じpending dispatchを保持してください。
+
+commands:
+{commands or '- (missing command plan; stop and repair the contract)'}
+
+machine-readable command steps (`ok_rcs` は成功扱いする終了コード):
+```json
+{command_steps}
+```
+
+success_condition:
+```json
+{success}
+```
+
+発注、cancel、close、launchd変更、gate緩和、live permission生成は禁止です。"""
+    if selected_next_work_type == "CODE_REPAIR" and repair_loop_state.get(
+        "actionable_repair_selected"
+    ):
+        suggested_files = "\n".join(
+            f"- `{path}`"
+            for path in _string_list(
+                repair_loop_state.get("codex_work_order_suggested_files")
+            )
+        )
+        required_tests = "\n".join(
+            f"- {test}"
+            for test in _string_list(
+                repair_loop_state.get("codex_work_order_required_tests")
+            )
+        )
+        return f"""QuantRabbit の選択済み修理案件を実施してください。
+
+selected repair request:
+{repair_loop_state.get('selected_request_code')}
+
+objective:
+{repair_loop_state.get('codex_work_order_objective') or '(missing; inspect trader_repair_orchestrator.json and fail closed)'}
+
+automation contract:
+{repair_loop_state.get('codex_work_order_automation_prompt') or '(missing)'}
+
+suggested files:
+{suggested_files or '- (none provided)'}
+
+required tests:
+{required_tests or '- (none provided)'}
+
+この修理案件は terminal trader-support-bot → trader-repair-orchestrator で選ばれた現在の最優先作業です。active_trader_contract の通常evidence promptへ置き換えず、修理後に同じartifactを再評価してください。
+
+success_condition:
+```json
+{success}
+```
+
+verification commands:
+{commands or '- (none provided; inspect the selected work order)'}
+
+発注、cancel、close、launchd変更、gate緩和、live permission生成は禁止です。"""
     if selected_next_work_type == "ACTIVE_TRADER_CONTRACT_EVIDENCE" and active_contract_state.get("next_prompt"):
         active_prompt = str(active_contract_state.get("next_prompt"))
         action = str(active_contract_state.get("next_trade_enabling_action") or "")

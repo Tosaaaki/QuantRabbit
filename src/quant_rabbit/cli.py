@@ -2519,8 +2519,10 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
     # board, concrete drought-recovery queue, and the next range/trigger proof
     # action. Then package operator-review material from the terminal
     # contract/top board lane, refresh support-bot visibility from that active
-    # path, and rebuild the goal-loop work order from the terminal contract so
-    # the next Codex run does not fall back to stale generic payoff work.
+    # path, refresh the repair dispatch from that terminal support packet, and
+    # rebuild the goal-loop work order so the next Codex run does not fall back
+    # to stale generic payoff work. An unacknowledged stable dispatch remains
+    # pending; this second repair pass does not mark issuance as completion.
     return [
         _active_trader_contract_step(),
         _active_opportunity_board_step(),
@@ -2537,6 +2539,7 @@ def _active_board_contract_sync_steps() -> list[dict[str, Any]]:
         {"argv": ["guardian-event-router"], "required": True},
         _operator_review_report_step(),
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
         _trader_goal_loop_orchestrator_step(),
     ]
 
@@ -4249,6 +4252,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional trader request text used to prioritize the repair queue.",
     )
     p_repair_orchestrator.add_argument("--broker-snapshot", type=Path, default=None)
+    p_repair_orchestrator.add_argument(
+        "--ack-active-lane-dispatch",
+        default=None,
+        help=(
+            "Acknowledge the exact pending read-only active-lane material digest after its "
+            "command chain completes. A mismatch fails closed."
+        ),
+    )
     p_repair_orchestrator.add_argument("--output", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
     p_repair_orchestrator.add_argument("--report", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT)
 
@@ -7782,6 +7793,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "as-4x-proof-path":
         return _run_repository_tool("tools/build_as_4x_proof_path.py")
     if args.command == "trader-repair-orchestrator":
+        raw_ack_active_lane_dispatch = args.ack_active_lane_dispatch
+        ack_active_lane_dispatch = str(raw_ack_active_lane_dispatch or "").strip()
+        if raw_ack_active_lane_dispatch is not None and not ack_active_lane_dispatch:
+            print(
+                json.dumps(
+                    {"error": "--ack-active-lane-dispatch requires a non-empty exact digest"},
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 3
         try:
             from quant_rabbit.trader_repair_orchestrator import (
                 STATUS_READY,
@@ -7794,6 +7817,7 @@ def main(argv: list[str] | None = None) -> int:
                 report_path=args.report,
                 broker_snapshot_path=args.broker_snapshot,
                 trader_request=args.request,
+                ack_active_lane_dispatch=ack_active_lane_dispatch,
             ).run()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
@@ -7809,13 +7833,14 @@ def main(argv: list[str] | None = None) -> int:
                     "actionable_request_count": summary.actionable_request_count,
                     "approval_required_request_count": summary.approval_required_request_count,
                     "waiting_request_count": summary.waiting_request_count,
+                    "acknowledged_active_lane_dispatch": ack_active_lane_dispatch or None,
                 },
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
             )
         )
-        return 0 if summary.status == STATUS_READY else 2
+        return 0 if summary.status == STATUS_READY or ack_active_lane_dispatch else 2
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}

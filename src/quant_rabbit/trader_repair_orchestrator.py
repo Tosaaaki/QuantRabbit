@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
+import os
 import re
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +47,10 @@ STATUS_APPROVAL_REQUIRED = "OPERATOR_APPROVAL_REQUIRED"
 STATUS_NO_REQUESTS = "NO_REPAIR_REQUESTS"
 STATUS_BLOCKED = "ORCHESTRATOR_BLOCKED"
 AUTOMATION_READY = "READY_FOR_CODEX_IMPLEMENTATION"
+READ_ONLY_EVIDENCE_WORK_STATUS = "READ_ONLY_EVIDENCE_WORK"
+READ_ONLY_EVIDENCE_WAIT_STATUS = "WAITING_FOR_MATERIAL_EVIDENCE"
+READ_ONLY_EVIDENCE_MAPPING_REQUIRED_STATUS = "ACTIVE_LANE_ACTION_MAPPING_REQUIRED"
+ACTIVE_LANE_EVIDENCE_CANDIDATE_STATUS = "ACTIVE_LANE_EVIDENCE_CANDIDATE"
 AUTOMATION_OPERATOR_APPROVAL = "WAITING_FOR_OPERATOR_APPROVAL"
 AUTOMATION_LIVE_EVIDENCE_WINDOW = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 AUTOMATION_EVIDENCE = "WAITING_FOR_EVIDENCE"
@@ -147,6 +156,26 @@ FRESHNESS_PRIMARY_PRIORITY = {
     "CONTRADICTED": 99,
 }
 
+ACTIVE_LANE_WAIT_ACTION = "WAIT_FOR_RANGE_RAIL_RECHECK"
+ACTIVE_LANE_VERIFY_PROJECTIONS_ACTION = "VERIFY_TRIGGER_PROJECTIONS"
+ACTIVE_LANE_ENTRY_DROUGHT_ACTION = "ENTRY_DROUGHT_RECOVERY_REQUIRES_PATTERN_REFRESH"
+ACTIVE_LANE_FORECAST_PATTERN_ACTION = "FORECAST_PATTERN_REFRESH"
+ACTIVE_LANE_RANGE_RAIL_ACTION = "RANGE_RAIL_GEOMETRY_REPAIR"
+ACTIVE_LANE_EXACT_TP_PROOF_ACTION = "EXACT_TP_PROOF_COLLECTION"
+ACTIVE_LANE_REPRICE_RANGE_ACTION = "REPRICE_RANGE_ROTATION_COUNTERPART"
+ACTIVE_LANE_TRIGGER_PROOF_ACTION = "TRIGGER_PROJECTION_TO_LIMIT_PROOF"
+ACTIVE_LANE_RANGE_READY_PROOF_ACTION = "RANGE_ROTATION_GEOMETRY_READY_PROOF_BLOCKED"
+ACTIVE_LANE_CURRENT_INTENT_REGEN_ACTION = "CURRENT_INTENT_REGEN_REQUIRED"
+ACTIVE_LANE_NON_MARKET_PROOF_ROUTE_ACTION = "NON_MARKET_TP_PROOF_ROUTE_REQUIRED"
+ACTIVE_LANE_KEEP_BLOCKED_ACTION = "KEEP_BLOCKED_WITH_CAUSE"
+ACTIVE_LANE_PRESERVE_BLOCKERS_ACTION = "PRESERVE_SPREAD_AND_EXPECTANCY_BLOCKERS"
+ACTIVE_LANE_UNRESOLVED_ACTION = "UNRESOLVED_ACTIVE_LANE_ACTION"
+ACTIVE_LANE_DISPATCH_HISTORY_LIMIT = 512
+ACTIVE_LANE_ACK_COMMAND_TEMPLATE = (
+    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator "
+    "--ack-active-lane-dispatch {material_digest}"
+)
+
 
 @dataclass(frozen=True)
 class TraderRepairOrchestratorSummary:
@@ -182,6 +211,7 @@ class TraderRepairOrchestrator:
         live_order_request_path: Path | None = None,
         broker_snapshot_path: Path | None = None,
         trader_request: str | None = None,
+        ack_active_lane_dispatch: str | None = None,
         now_utc: datetime | None = None,
     ) -> None:
         self.support_bot_path = support_bot_path
@@ -206,14 +236,20 @@ class TraderRepairOrchestrator:
         else:
             self.broker_snapshot_path = artifact_root / "broker_snapshot.json"
         self.trader_request = trader_request or ""
+        self.ack_active_lane_dispatch = str(ack_active_lane_dispatch or "").strip()
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
     def run(self) -> TraderRepairOrchestratorSummary:
-        payload = self.build_payload()
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
-        self.report_path.write_text(_render_report(payload), encoding="utf-8")
+        with _exclusive_orchestrator_state_lock(self.output_path):
+            payload = self.build_payload()
+            _atomic_publish_orchestrator_outputs(
+                output_path=self.output_path,
+                output_content=(
+                    json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+                ),
+                report_path=self.report_path,
+                report_content=_render_report(payload),
+            )
         selected = payload.get("selected_request") if isinstance(payload.get("selected_request"), dict) else {}
         metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
         return TraderRepairOrchestratorSummary(
@@ -228,6 +264,14 @@ class TraderRepairOrchestrator:
         )
 
     def build_payload(self) -> dict[str, Any]:
+        previous_payload, previous_output_recovery = _read_previous_orchestrator_output(
+            self.output_path
+        )
+        previous_work_order = (
+            previous_payload.get("codex_work_order")
+            if isinstance(previous_payload.get("codex_work_order"), dict)
+            else {}
+        )
         support = _read_json(self.support_bot_path)
         proof_queue = _read_optional_json(self.proof_queue_path)
         as_board = _read_optional_json(self.as_lane_board_path)
@@ -321,6 +365,7 @@ class TraderRepairOrchestrator:
                 "support_status": support.get("status"),
                 "repair_request_source": request_source,
                 "recovered_from_embedded_support": recovered_from_embedded_support,
+                "previous_output_recovery": previous_output_recovery,
             },
             "execution_contract": execution_contract,
             "approval_boundary": approval_boundary,
@@ -334,6 +379,8 @@ class TraderRepairOrchestrator:
                 output_path=self.output_path,
                 report_path=self.report_path,
                 loop_prompt=loop_prompt,
+                previous_work_order=previous_work_order,
+                ack_active_lane_dispatch=self.ack_active_lane_dispatch,
             ),
             "read_only": True,
             "live_side_effects": [],
@@ -363,6 +410,91 @@ def _read_optional_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def _read_previous_orchestrator_output(path: Path) -> tuple[dict[str, Any], str]:
+    if not path.exists():
+        return {}, "NO_PREVIOUS_OUTPUT"
+    try:
+        return _read_optional_json(path), "PREVIOUS_OUTPUT_VALID"
+    except (OSError, json.JSONDecodeError, ValueError):
+        # The previous output is only the anti-loop watermark. A truncated
+        # self-artifact must not permanently brick this read-only command; the
+        # next atomic publish establishes a new valid baseline.
+        return {}, "CORRUPT_PREVIOUS_OUTPUT_IGNORED"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temp_path = _prepare_atomic_text(path, content)
+    try:
+        _replace_prepared_text(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _prepare_atomic_text(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return temp_path
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _replace_prepared_text(temp_path: Path, path: Path) -> None:
+    os.replace(temp_path, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def _atomic_publish_orchestrator_outputs(
+    *,
+    output_path: Path,
+    output_content: str,
+    report_path: Path,
+    report_content: str,
+) -> None:
+    """Publish the derivative report first and authoritative ACK state last."""
+
+    output_temp = _prepare_atomic_text(output_path, output_content)
+    try:
+        report_temp = _prepare_atomic_text(report_path, report_content)
+    except BaseException:
+        output_temp.unlink(missing_ok=True)
+        raise
+    try:
+        _replace_prepared_text(report_temp, report_path)
+        _replace_prepared_text(output_temp, output_path)
+    finally:
+        report_temp.unlink(missing_ok=True)
+        output_temp.unlink(missing_ok=True)
+
+
+@contextmanager
+def _exclusive_orchestrator_state_lock(output_path: Path):
+    """Serialize read/build/publish so a stale refresh cannot undo an ACK."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = output_path.with_name(f".{output_path.name}.lock")
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _execution_contract() -> dict[str, Any]:
@@ -519,6 +651,14 @@ def _loop_engineering_prompt(
         entry=entry,
         queue=queue,
     )
+    current_state["active_lane_evidence_work"] = _active_lane_evidence_work(entry)
+    if current_state["active_lane_evidence_work"]:
+        current_state["active_lane_action_code"] = current_state[
+            "active_lane_evidence_work"
+        ].get("action_code")
+        current_state["active_lane_evidence_material_digest"] = current_state[
+            "active_lane_evidence_work"
+        ].get("material_digest")
     current_state["profitability_rca_summary"] = _profitability_rca_summary(
         acceptance=acceptance,
         target_firepower=target_firepower,
@@ -724,6 +864,376 @@ def _execution_frontier_summary(
     if unknown_owner:
         summary["unknown_owner_context"] = unknown_owner
     return summary
+
+
+def _active_lane_evidence_work(entry: dict[str, Any]) -> dict[str, Any]:
+    shortest = (
+        entry.get("shortest_live_ready_path")
+        if isinstance(entry.get("shortest_live_ready_path"), dict)
+        else {}
+    )
+    active_path = (
+        shortest.get("active_path")
+        if isinstance(shortest.get("active_path"), dict)
+        else {}
+    )
+    next_action = str(
+        active_path.get("next_action")
+        or shortest.get("first_next_step")
+        or shortest.get("next_action")
+        or ""
+    ).strip()
+    lane_id = str(active_path.get("lane_id") or shortest.get("lane_id") or "").strip()
+    if not lane_id or not next_action:
+        return {}
+    if active_path.get("live_permission") is True or shortest.get("live_permission") is True:
+        return {}
+
+    blocker_codes = _dedupe_strings(
+        list(active_path.get("blocker_codes") or [])
+        + list(shortest.get("blocker_codes") or [])
+    )
+    action_code = _active_lane_action_code(next_action)
+    suggested_commands = _active_lane_evidence_commands(action_code)
+    suggested_command_steps = _active_lane_command_steps(suggested_commands)
+    material_state = _active_lane_material_state(
+        shortest=shortest,
+        active_path=active_path,
+        action_code=action_code,
+        blocker_codes=blocker_codes,
+        suggested_command_steps=suggested_command_steps,
+    )
+    material_digest = _canonical_sha256(material_state)
+    work = {
+        "status": ACTIVE_LANE_EVIDENCE_CANDIDATE_STATUS,
+        "schema_version": "active_lane_evidence_work_v2",
+        "source": "trader_support_bot.entry_readiness.shortest_live_ready_path",
+        "lane_id": lane_id,
+        "pair": active_path.get("pair") or shortest.get("pair"),
+        "side": active_path.get("side") or shortest.get("side"),
+        "method": active_path.get("method") or shortest.get("method"),
+        "order_type": active_path.get("order_type") or shortest.get("order_type"),
+        "current_status": shortest.get("status") or active_path.get("status"),
+        "active_path_status": active_path.get("status"),
+        "selection_basis": shortest.get("selection_basis"),
+        "next_action": next_action,
+        "action_code": action_code,
+        "blocker_codes": blocker_codes[:24],
+        "command_plan_available": bool(suggested_commands),
+        "material_state": material_state,
+        "material_digest": material_digest,
+        "read_only": True,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+    }
+    return {key: value for key, value in work.items() if value not in (None, [], {})}
+
+
+def _active_lane_action_code(next_action: str) -> str:
+    """Return one current stage; future/follow-up tokens never become current work."""
+
+    normalized = " ".join(str(next_action or "").split())
+    upper = normalized.upper()
+
+    # active_trader_contract can append a supplemental/parallel frontier lane
+    # after the board-primary action. A concrete secondary action, including a
+    # fired guardian trigger, must never hide the selected board-lane action.
+    parallel_boundaries = [
+        index
+        for marker in (
+            " PAIR THIS WITH FRONTIER EVIDENCE",
+            " PAIR THIS WITH NON_EURUSD_LIVE_GRADE_FRONTIER EVIDENCE",
+            " PARALLEL NON_EURUSD_LIVE_GRADE_FRONTIER EVIDENCE",
+        )
+        if (index := upper.find(marker)) >= 0
+    ]
+    if parallel_boundaries:
+        primary_end = min(parallel_boundaries)
+        normalized = normalized[:primary_end].rstrip()
+        upper = upper[:primary_end].rstrip()
+
+    # A fired guardian event explicitly invalidates the old wait token, which
+    # remains in the prose only as a "do not repeat" warning.
+    if (
+        "CONTRACT_ADD_TRIGGER FIRED" in upper
+        or "DO NOT REPEAT WAIT_FOR_RANGE_RAIL_RECHECK" in upper
+    ) and (
+        ACTIVE_LANE_REPRICE_RANGE_ACTION in upper
+        or "REPRICE THE RANGE_ROTATION COUNTERPART" in upper
+        or "REPRICE RANGE_ROTATION COUNTERPART" in upper
+    ):
+        return ACTIVE_LANE_REPRICE_RANGE_ACTION
+
+    safe_match = re.search(
+        r"\bNEXT\s+SAFE\s+(?:TUNING\s+)?ACTION\s+(?:IS|=|:)\s*([A-Z][A-Z0-9_-]*)",
+        upper,
+    )
+    if safe_match is not None:
+        prefix = upper[max(0, safe_match.start() - 32) : safe_match.start()]
+        if "FOLLOW-UP" in prefix or "FOLLOW UP" in prefix or "LATER" in prefix:
+            safe_match = None
+    wait_index = upper.find(ACTIVE_LANE_WAIT_ACTION)
+    if wait_index >= 0 and (safe_match is None or wait_index < safe_match.start()):
+        return ACTIVE_LANE_WAIT_ACTION
+    if safe_match is not None:
+        return _normalize_active_lane_action_code(safe_match.group(1))
+    generic_matches = [
+        match
+        for pattern in (
+            r"\bNEXT\s+(?:TRADE[-_\s]+ENABLING\s+)?ACTION\s+(?:IS|=|:)\s*([A-Z][A-Z0-9_-]*)",
+            r"\bACTION\s+IS\s+([A-Z][A-Z0-9_-]*)",
+        )
+        if (match := re.search(pattern, upper)) is not None
+    ]
+    if generic_matches:
+        explicit_match = min(generic_matches, key=lambda item: item.start())
+        return _normalize_active_lane_action_code(explicit_match.group(1))
+    if (
+        ACTIVE_LANE_REPRICE_RANGE_ACTION in upper
+        or "REPRICE THE RANGE_ROTATION COUNTERPART" in upper
+        or "REPRICE RANGE_ROTATION COUNTERPART" in upper
+    ):
+        return ACTIVE_LANE_REPRICE_RANGE_ACTION
+    if ACTIVE_LANE_RANGE_READY_PROOF_ACTION in upper:
+        return ACTIVE_LANE_RANGE_READY_PROOF_ACTION
+    if (
+        ACTIVE_LANE_EXACT_TP_PROOF_ACTION in upper
+        or "TP_PROOF_COLLECTION" in upper
+        or "COLLECT EXACT LOCAL TAKE_PROFIT_ORDER PROOF" in upper
+        or "COLLECT EXACT TAKE_PROFIT_ORDER PROOF" in upper
+    ):
+        return ACTIVE_LANE_EXACT_TP_PROOF_ACTION
+    if ACTIVE_LANE_TRIGGER_PROOF_ACTION in upper:
+        return ACTIVE_LANE_TRIGGER_PROOF_ACTION
+    if ACTIVE_LANE_RANGE_RAIL_ACTION in upper or "RANGE RAIL GEOMETRY REPAIR" in upper:
+        return ACTIVE_LANE_RANGE_RAIL_ACTION
+    if (
+        ACTIVE_LANE_FORECAST_PATTERN_ACTION in upper
+        or "FORECAST-PATTERN REFRESH" in upper
+        or "REFRESH_FORECAST_RANGE_BOX" in upper
+    ):
+        return ACTIVE_LANE_FORECAST_PATTERN_ACTION
+    if (
+        "ENTRY_FREQUENCY_RECOVERY" in upper
+        or "ENTRY-FREQUENCY" in upper
+        or "ENTRY DROUGHT" in upper
+    ):
+        return ACTIVE_LANE_ENTRY_DROUGHT_ACTION
+    if ACTIVE_LANE_VERIFY_PROJECTIONS_ACTION in upper:
+        return ACTIVE_LANE_VERIFY_PROJECTIONS_ACTION
+    return ACTIVE_LANE_UNRESOLVED_ACTION
+
+
+def _normalize_active_lane_action_code(action_code: str) -> str:
+    normalized = str(action_code or "").strip().upper().replace("-", "_")
+    aliases = {
+        "REFRESH_FORECAST_RANGE_BOX": ACTIVE_LANE_FORECAST_PATTERN_ACTION,
+    }
+    return aliases.get(normalized, normalized or ACTIVE_LANE_UNRESOLVED_ACTION)
+
+
+def _active_lane_evidence_commands(action_code: str) -> list[str]:
+    stage_commands = {
+        ACTIVE_LANE_VERIFY_PROJECTIONS_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_TRIGGER_PROOF_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_ENTRY_DROUGHT_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli entry-frequency-recovery",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_FORECAST_PATTERN_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_RANGE_RAIL_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-trigger-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli guardian-event-router",
+        ],
+        ACTIVE_LANE_EXACT_TP_PROOF_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-proof-lane-mapper",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_RANGE_READY_PROOF_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-proof-lane-mapper",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_REPRICE_RANGE_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-proof-lane-mapper",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli entry-frequency-recovery",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_CURRENT_INTENT_REGEN_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-proof-lane-mapper",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+        ACTIVE_LANE_NON_MARKET_PROOF_ROUTE_ACTION: [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-proof-lane-mapper",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract",
+        ],
+    }
+    commands = list(stage_commands.get(action_code, []))
+    if not commands:
+        return []
+    commands.extend(
+        [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            ACTIVE_LANE_ACK_COMMAND_TEMPLATE,
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator",
+        ]
+    )
+    # The initial support refresh in proof-collection stages feeds A/S. The
+    # common trailing support refresh is intentionally repeated after board /
+    # contract updates so repair and goal-loop consume the terminal state.
+    return commands
+
+
+def _active_lane_command_steps(commands: list[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "command": command,
+            "required": True,
+            "ok_rcs": [0, 2] if "quant_rabbit.cli trader-support-bot" in command else [0],
+        }
+        for command in commands
+    ]
+
+
+def _active_lane_material_state(
+    *,
+    shortest: dict[str, Any],
+    active_path: dict[str, Any],
+    action_code: str,
+    blocker_codes: list[str],
+    suggested_command_steps: list[dict[str, Any]],
+) -> dict[str, Any]:
+    material_scalars = [
+        "status",
+        "current_status",
+        "lane_id",
+        "pair",
+        "side",
+        "method",
+        "order_type",
+        "target_shape",
+        "selection_basis",
+        "contract_status",
+        "board_status",
+        "frontier_status",
+        "expected_edge_jpy",
+        "spread_status",
+        "forecast_status",
+        "forecast_box_status",
+        "loss_budget_status",
+        "proof_status",
+        "replay_status",
+        "risk_status",
+        "rail_status",
+        "counterpart_geometry_status",
+        "trigger_projection_status",
+        "guardian_trigger_status",
+    ]
+    state: dict[str, Any] = {
+        "schema_version": "active_lane_material_state_v1",
+        "action_code": action_code,
+        "blocker_codes": sorted(set(blocker_codes)),
+        "blocker_groups": sorted(
+            set(_dedupe_strings(shortest.get("blocker_groups")))
+        ),
+        "command_plan_digest": _canonical_sha256(suggested_command_steps),
+        "shortest_path": {
+            key: shortest.get(key)
+            for key in material_scalars
+            if shortest.get(key) is not None
+        },
+        "active_path": {
+            key: active_path.get(key)
+            for key in material_scalars
+            if active_path.get(key) is not None
+        },
+    }
+    for key in ("local_tp_proof", "tp_proof", "success_condition", "evidence_watermark"):
+        value = active_path.get(key)
+        if value not in (None, [], {}):
+            state["active_path"][key] = _stable_material_value(value)
+    return state
+
+
+def _stable_material_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_material_value(item)
+            for key, item in sorted(value.items(), key=lambda row: str(row[0]))
+            if str(key).lower()
+            not in {
+                "generated_at_utc",
+                "fetched_at_utc",
+                "updated_at_utc",
+                "created_at_utc",
+                "age_seconds",
+                "path",
+                "sha256",
+            }
+        }
+    if isinstance(value, list):
+        normalized = [_stable_material_value(item) for item in value]
+        if all(not isinstance(item, (dict, list)) for item in normalized):
+            return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+        return normalized
+    if isinstance(value, str):
+        return " ".join(value.split())
+    return value
+
+
+def _canonical_sha256(value: Any) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _compact_frontier_lane(item: dict[str, Any]) -> dict[str, Any]:
@@ -2335,9 +2845,56 @@ def _codex_work_order(
     output_path: Path,
     report_path: Path,
     loop_prompt: dict[str, Any] | None = None,
+    previous_work_order: dict[str, Any] | None = None,
+    ack_active_lane_dispatch: str = "",
 ) -> dict[str, Any]:
     proof_state = _work_order_proof_state(loop_prompt)
+    dispatched_material_digests = _previous_dispatched_active_lane_material_digests(
+        previous_work_order
+    )
+    pending_material_digest = _previous_pending_active_lane_material_digest(
+        previous_work_order
+    )
+    acknowledged_material_digest = str(ack_active_lane_dispatch or "").strip()
+    acknowledgement_replayed = False
+    if acknowledged_material_digest:
+        if acknowledged_material_digest == pending_material_digest:
+            dispatched_material_digests = _bounded_digest_history(
+                [*dispatched_material_digests, acknowledged_material_digest]
+            )
+            pending_material_digest = ""
+        elif acknowledged_material_digest in dispatched_material_digests:
+            # A report/fsync failure can occur after the authoritative JSON ACK
+            # state commits, including a commit that already opened a newer
+            # material dispatch. Retrying the completed digest is idempotent and
+            # must preserve any newer pending work.
+            acknowledgement_replayed = True
+        elif pending_material_digest:
+            raise ValueError(
+                "--ack-active-lane-dispatch does not match the pending material digest"
+            )
+        else:
+            raise ValueError(
+                "--ack-active-lane-dispatch requires an existing pending or previously completed exact digest"
+            )
+    last_dispatched_material_digest = (
+        dispatched_material_digests[-1] if dispatched_material_digests else ""
+    )
     if not selected:
+        if status == STATUS_NO_REQUESTS:
+            read_only_work = _read_only_evidence_work_order(
+                proof_state=proof_state,
+                status=status,
+                trader_request=trader_request,
+                approval_boundary=approval_boundary,
+                loop_prompt=loop_prompt,
+                dispatched_material_digests=dispatched_material_digests,
+                pending_material_digest=pending_material_digest,
+                acknowledged_material_digest=acknowledged_material_digest,
+                acknowledgement_replayed=acknowledgement_replayed,
+            )
+            if read_only_work:
+                return read_only_work
         return {
             "status": "NO_ACTIONABLE_CODEX_WORK",
             "orchestrator_status": status,
@@ -2345,6 +2902,11 @@ def _codex_work_order(
             "reason": "No selected READY_FOR_CODEX_IMPLEMENTATION request is available.",
             "proof_state": proof_state,
             "approval_boundary": approval_boundary,
+            "last_dispatched_material_digest": last_dispatched_material_digest or None,
+            "dispatched_material_digests": dispatched_material_digests,
+            "pending_material_digest": pending_material_digest or None,
+            "acknowledged_material_digest": acknowledged_material_digest or None,
+            "acknowledgement_replayed": acknowledgement_replayed,
         }
     return {
         "status": selected.get("automation_status"),
@@ -2387,6 +2949,11 @@ def _codex_work_order(
         ),
         "quant_rabbit_code_may_call_model_api": False,
         "approval_boundary": approval_boundary,
+        "last_dispatched_material_digest": last_dispatched_material_digest or None,
+        "dispatched_material_digests": dispatched_material_digests,
+        "pending_material_digest": pending_material_digest or None,
+        "acknowledged_material_digest": acknowledged_material_digest or None,
+        "acknowledgement_replayed": acknowledgement_replayed,
         "automation_prompt": (
             "Implement the selected QuantRabbit repair using the suggested files and tests. "
             "Do not send orders, cancel orders, close positions, mutate launchd, or add model API calls "
@@ -2417,12 +2984,313 @@ def _work_order_proof_state(loop_prompt: dict[str, Any] | None) -> dict[str, Any
         "gateway_issue_codes",
         "proof_queue_empty_reason",
         "next_evidence_actions",
+        "active_lane_evidence_work",
+        "active_lane_action_code",
+        "active_lane_evidence_material_digest",
     ]
     return {
         key: current_state.get(key)
         for key in keys
         if current_state.get(key) not in (None, [], {})
     }
+
+
+def _read_only_evidence_work_order(
+    *,
+    proof_state: dict[str, Any],
+    status: str,
+    trader_request: str,
+    approval_boundary: dict[str, Any],
+    loop_prompt: dict[str, Any] | None,
+    dispatched_material_digests: list[str],
+    pending_material_digest: str,
+    acknowledged_material_digest: str,
+    acknowledgement_replayed: bool,
+) -> dict[str, Any]:
+    active_work = proof_state.get("active_lane_evidence_work")
+    if not isinstance(active_work, dict) or not active_work.get("lane_id"):
+        return {}
+    material_digest = str(active_work.get("material_digest") or "")
+    action_code = str(active_work.get("action_code") or ACTIVE_LANE_UNRESOLVED_ACTION)
+    command_template = _active_lane_evidence_commands(action_code)
+    commands = [
+        command.format(material_digest=material_digest)
+        if "{material_digest}" in command
+        else command
+        for command in command_template
+    ]
+    command_steps = [
+        {
+            **step,
+            "command": (
+                str(step.get("command") or "").format(material_digest=material_digest)
+                if "{material_digest}" in str(step.get("command") or "")
+                else str(step.get("command") or "")
+            ),
+        }
+        for step in _active_lane_command_steps(command_template)
+    ]
+    previous_history = _bounded_digest_history(dispatched_material_digests)
+    previous_digest = previous_history[-1] if previous_history else ""
+    repeated_unchanged = bool(material_digest and material_digest in previous_history)
+    dispatchable_stage = bool(command_template)
+    wait_only_stage = _active_lane_wait_only_action(action_code)
+    unsupported_stage = not dispatchable_stage and not wait_only_stage
+    execution_pending = dispatchable_stage and not repeated_unchanged
+    new_dispatch_issued = bool(
+        execution_pending and material_digest != pending_material_digest
+    )
+    superseded_pending_material_digest = (
+        pending_material_digest
+        if pending_material_digest and pending_material_digest != material_digest
+        else ""
+    )
+    current_pending_material_digest = material_digest if execution_pending else ""
+    dispatch_allowed = execution_pending
+    last_dispatched_material_digest = (
+        previous_history[-1] if previous_history else ""
+    )
+    work_status = (
+        READ_ONLY_EVIDENCE_WORK_STATUS
+        if execution_pending
+        else (
+            READ_ONLY_EVIDENCE_MAPPING_REQUIRED_STATUS
+            if unsupported_stage
+            else READ_ONLY_EVIDENCE_WAIT_STATUS
+        )
+    )
+    current_state = (
+        loop_prompt.get("current_state")
+        if isinstance(loop_prompt, dict)
+        and isinstance(loop_prompt.get("current_state"), dict)
+        else {}
+    )
+    material_change_condition = _success_condition(
+        "any",
+        [
+            _condition_check(
+                "active_lane_evidence_material_digest",
+                "neq",
+                material_digest,
+            ),
+            _condition_check("active_lane_action_code", "neq", action_code),
+        ],
+        description=(
+            "Reopen this lane only after its material evidence watermark or current action stage changes."
+        ),
+    )
+    condition_evaluation = _evaluate_success_condition(
+        material_change_condition,
+        current_state,
+    )
+    if repeated_unchanged:
+        reason_code = "MATERIAL_EVIDENCE_UNCHANGED"
+        selection_reason = (
+            "The same lane action and material evidence watermark were acknowledged as completed; "
+            "wait for proof, blocker, lane, or action-stage change instead of repeating it."
+        )
+    elif wait_only_stage:
+        reason_code = "ACTION_STAGE_WAIT"
+        selection_reason = (
+            f"The current lane stage {action_code} is explicitly wait-only; future follow-up "
+            "actions must not run before its material condition changes."
+        )
+    elif unsupported_stage:
+        reason_code = "ACTION_STAGE_MAPPING_REQUIRED"
+        selection_reason = (
+            f"The current lane stage {action_code} has no approved command mapping. Surface "
+            "the contract gap for code repair instead of silently waiting or guessing a command."
+        )
+    elif not new_dispatch_issued:
+        reason_code = "DISPATCH_PENDING_ACK"
+        selection_reason = (
+            "The same stable active-lane dispatch is still pending completion acknowledgement. "
+            "Preserve its dispatch id and command plan; do not create a second dispatch."
+        )
+    else:
+        reason_code = "NEW_OR_CHANGED_MATERIAL_EVIDENCE"
+        selection_reason = (
+            "No repair request is queued, and the active lane exposes one current, "
+            "blocker-preserving read-only evidence stage that has not been dispatched for "
+            "this material watermark."
+        )
+    suggested_files = (
+        [
+            "src/quant_rabbit/trader_repair_orchestrator.py",
+            "tests/test_trader_repair_orchestrator.py",
+            "docs/AGENT_CONTRACT.md",
+        ]
+        if unsupported_stage
+        else []
+    )
+    targeted_test_commands = (
+        ["PYTHONPATH=src python3 -m unittest tests.test_trader_repair_orchestrator -v"]
+        if unsupported_stage
+        else []
+    )
+    deliverables = (
+        [
+            "explicit_action_code_to_read_only_command_mapping_or_documented_wait_classification",
+            "regression_test_for_the_producer_action_text",
+            "updated_runtime_contract_docs",
+            "passing_targeted_and_full_tests",
+            "git_commit_with_codex_attribution",
+            "verified_live_runtime_sync",
+        ]
+        if unsupported_stage
+        else [
+            "read_only_artifact_refresh_or_documented_wait_condition",
+            "no_live_side_effects",
+            "updated_support_goal_loop_orchestrator_artifacts",
+        ]
+    )
+    return {
+        "status": work_status,
+        "orchestrator_status": status,
+        "trader_request": trader_request,
+        "objective": (
+            f"Advance or wait for material read-only lane evidence for {active_work.get('lane_id')} "
+            "without repeating an unchanged stage."
+        ),
+        "selection_reason": selection_reason,
+        "reason_code": reason_code,
+        "active_lane_evidence_work": {
+            **active_work,
+            "status": work_status,
+            "command_plan_available": dispatch_allowed,
+        },
+        "action_code": action_code,
+        "material_digest": material_digest,
+        "previous_material_digest": previous_digest or None,
+        "last_dispatched_material_digest": last_dispatched_material_digest or None,
+        "dispatched_material_digests": previous_history,
+        "pending_material_digest": current_pending_material_digest or None,
+        "pending_dispatch_id": current_pending_material_digest or None,
+        "acknowledged_material_digest": acknowledged_material_digest or None,
+        "acknowledgement_replayed": acknowledgement_replayed,
+        "superseded_pending_material_digest": superseded_pending_material_digest or None,
+        "dispatch_allowed": dispatch_allowed,
+        "new_dispatch_issued": new_dispatch_issued,
+        "execution_pending": execution_pending,
+        "repeat_suppressed": repeated_unchanged,
+        "suggested_commands": commands if dispatch_allowed else [],
+        "suggested_command_steps": command_steps if dispatch_allowed else [],
+        "suggested_files": suggested_files,
+        "required_tests": (
+            ["unknown action stays fail-closed", "mapped action advances exactly one stage"]
+            if unsupported_stage
+            else []
+        ),
+        "targeted_test_commands": targeted_test_commands,
+        "verification_commands": [
+            "python3 -m json.tool data/trader_support_bot.json >/dev/null",
+            "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
+        ],
+        "final_verification_commands": [
+            "python3 -m json.tool data/trader_repair_orchestrator.json >/dev/null",
+        ],
+        "deliverables": deliverables,
+        "proof_state": {
+            **proof_state,
+            "active_lane_evidence_work": {
+                **active_work,
+                "status": work_status,
+                "command_plan_available": dispatch_allowed,
+            },
+        },
+        "material_change_condition": material_change_condition,
+        "material_change_condition_evaluation": condition_evaluation,
+        "commit_and_live_sync_required": unsupported_stage,
+        "quant_rabbit_code_may_call_model_api": False,
+        "approval_boundary": approval_boundary,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+        "automation_prompt": (
+            (
+                f"Implement an explicit fail-closed mapping or wait classification for {action_code}, "
+                "add regression tests, update the runtime contract, commit, and sync live. "
+                "Do not guess from prose or add live side effects."
+            )
+            if unsupported_stage
+            else (
+                "Execute only the suggested read-only evidence commands when useful, then inspect the "
+                "refreshed support/goal-loop state. Do not send orders, cancel orders, close positions, "
+                "mutate launchd, relax gates, or treat this work order as live permission."
+            )
+        ),
+        "loop_prompt_version": (
+            loop_prompt.get("version") if isinstance(loop_prompt, dict) else None
+        ),
+    }
+
+
+def _active_lane_wait_only_action(action_code: str) -> bool:
+    return action_code in {
+        ACTIVE_LANE_WAIT_ACTION,
+        ACTIVE_LANE_KEEP_BLOCKED_ACTION,
+        ACTIVE_LANE_PRESERVE_BLOCKERS_ACTION,
+    }
+
+
+def _previous_dispatched_active_lane_material_digests(
+    previous_work_order: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(previous_work_order, dict):
+        return []
+    history = _dedupe_strings(previous_work_order.get("dispatched_material_digests"))
+    last = str(previous_work_order.get("last_dispatched_material_digest") or "").strip()
+    if last:
+        history.append(last)
+    has_dispatch_lifecycle = any(
+        key in previous_work_order
+        for key in (
+            "pending_material_digest",
+            "pending_dispatch_id",
+            "execution_pending",
+            "new_dispatch_issued",
+        )
+    )
+    if (
+        previous_work_order.get("status") == READ_ONLY_EVIDENCE_WORK_STATUS
+        and not has_dispatch_lifecycle
+    ):
+        direct = str(previous_work_order.get("material_digest") or "").strip()
+        if direct:
+            history.append(direct)
+        active_work = previous_work_order.get("active_lane_evidence_work")
+        if isinstance(active_work, dict):
+            nested = str(active_work.get("material_digest") or "").strip()
+            if nested:
+                history.append(nested)
+    return _bounded_digest_history(history)
+
+
+def _previous_pending_active_lane_material_digest(
+    previous_work_order: dict[str, Any] | None,
+) -> str:
+    if not isinstance(previous_work_order, dict):
+        return ""
+    direct = str(previous_work_order.get("pending_material_digest") or "").strip()
+    if direct:
+        return direct
+    if (
+        previous_work_order.get("status") == READ_ONLY_EVIDENCE_WORK_STATUS
+        and previous_work_order.get("dispatch_allowed") is True
+    ):
+        return str(previous_work_order.get("material_digest") or "").strip()
+    return ""
+
+
+def _bounded_digest_history(values: list[str]) -> list[str]:
+    recent: list[str] = []
+    for value in values:
+        digest = str(value or "").strip()
+        if not digest:
+            continue
+        if digest in recent:
+            recent.remove(digest)
+        recent.append(digest)
+    return recent[-ACTIVE_LANE_DISPATCH_HISTORY_LIMIT:]
 
 
 def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, Any]:
@@ -2797,6 +3665,15 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Status: `{work_order.get('status')}`",
         f"- Selection reason: {work_order.get('selection_reason')}",
         f"- Objective: {work_order.get('objective')}",
+        f"- Reason code: `{work_order.get('reason_code')}`",
+        f"- Active lane action: `{work_order.get('action_code')}`",
+        f"- Material digest: `{work_order.get('material_digest')}`",
+        f"- Pending dispatch id: `{work_order.get('pending_dispatch_id')}`",
+        f"- Execution pending: `{work_order.get('execution_pending')}`",
+        f"- Acknowledged digest: `{work_order.get('acknowledged_material_digest')}`",
+        f"- Dispatch allowed: `{work_order.get('dispatch_allowed')}`",
+        f"- Repeat suppressed: `{work_order.get('repeat_suppressed')}`",
+        f"- Suggested commands: `{', '.join(work_order.get('suggested_commands') or [])}`",
         f"- Evidence summary keys: `{', '.join(sorted((work_order.get('evidence_summary') or {}).keys()))}`",
         f"- Deliverables: `{', '.join(work_order.get('deliverables') or [])}`",
         f"- Final verification: `{', '.join(work_order.get('final_verification_commands') or [])}`",

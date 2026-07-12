@@ -357,7 +357,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # range-rail-geometry-repair → active-trader-contract →
 # guardian-trigger-contract → guardian-event-router →
 # operator-review-report → trader-support-bot →
-# trader-goal-loop-orchestrator) in one
+# trader-repair-orchestrator → trader-goal-loop-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -651,7 +651,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `active-trader-contract` → `range-rail-geometry-repair` →
 # `active-trader-contract` → `guardian-trigger-contract` →
 # `guardian-event-router` → `operator-review-report` →
-# `trader-support-bot` → `trader-goal-loop-orchestrator`. It preserves the original
+# `trader-support-bot` → `trader-repair-orchestrator` →
+# `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -685,7 +686,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → active-trader-contract → range-rail-geometry-repair
 #   → active-trader-contract → guardian-trigger-contract
 #   → guardian-event-router → operator-review-report
-#   → trader-support-bot → trader-goal-loop-orchestrator
+#   → trader-support-bot → trader-repair-orchestrator
+#   → trader-goal-loop-orchestrator
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:

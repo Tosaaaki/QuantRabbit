@@ -3,14 +3,18 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND
 from quant_rabbit.trader_repair_orchestrator import (
+    READ_ONLY_EVIDENCE_WORK_STATUS,
+    READ_ONLY_EVIDENCE_WAIT_STATUS,
     STATUS_APPROVAL_REQUIRED,
     STATUS_BLOCKED,
     STATUS_READY,
@@ -36,6 +40,1102 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderRepairOrchestratorTest(unittest.TestCase):
+    def test_wait_stage_does_not_dispatch_follow_up_evidence_work_early(self) -> None:
+        now = datetime(2026, 7, 10, 0, 20, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            support.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "SUPPORT_BLOCKED",
+                        "repair_requests": [],
+                        "entry_readiness": {
+                            "live_ready_lanes": 0,
+                            "shortest_live_ready_path": {
+                                "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "LIMIT",
+                                "status": "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE",
+                                "selection_basis": "active_trader_contract",
+                                "blocker_codes": [
+                                    "LIMIT_ENTRY_NOT_BELOW_MARKET",
+                                    "FORECAST_WATCH_ONLY",
+                                ],
+                                "first_next_step": (
+                                    "Consume range_rail_geometry_repair artifact: "
+                                    "WAIT_FOR_RANGE_RAIL_RECHECK. Follow-up evidence actions: "
+                                    "VERIFY_TRIGGER_PROJECTIONS, EXACT_TP_PROOF_COLLECTION. "
+                                    "Do not send."
+                                ),
+                                "active_path": {
+                                    "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                                    "pair": "GBP_USD",
+                                    "side": "LONG",
+                                    "method": "RANGE_ROTATION",
+                                    "order_type": "LIMIT",
+                                    "status": "EVIDENCE_ACQUISITION",
+                                    "live_permission": False,
+                                    "blocker_codes": [
+                                        "LIMIT_ENTRY_NOT_BELOW_MARKET",
+                                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                                    ],
+                                    "next_action": (
+                                        "Consume data/range_rail_geometry_repair.json for "
+                                        "range_trader:GBP_USD:LONG:RANGE_ROTATION: next safe action "
+                                        "is WAIT_FOR_RANGE_RAIL_RECHECK; Follow-up evidence actions: "
+                                        "VERIFY_TRIGGER_PROJECTIONS, EXACT_TP_PROOF_COLLECTION. "
+                                        "Do not send, cancel, close, or relax gates."
+                                    ),
+                                },
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now,
+            ).run()
+
+            self.assertEqual(summary.status, "NO_REPAIR_REQUESTS")
+            payload = json.loads(output.read_text())
+            work_order = payload["codex_work_order"]
+            self.assertEqual(work_order["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertFalse(work_order["live_permission_allowed"])
+            self.assertEqual(work_order["live_side_effects"], [])
+            self.assertFalse(work_order["commit_and_live_sync_required"])
+            self.assertFalse(work_order["dispatch_allowed"])
+            self.assertFalse(work_order["repeat_suppressed"])
+            self.assertEqual(work_order["action_code"], "WAIT_FOR_RANGE_RAIL_RECHECK")
+            self.assertEqual(
+                work_order["active_lane_evidence_work"]["lane_id"],
+                "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+            )
+            self.assertEqual(work_order["suggested_commands"], [])
+            self.assertEqual(
+                work_order["material_change_condition_evaluation"]["status"],
+                "NOT_MET",
+            )
+            self.assertIn(
+                "active_lane_evidence_work",
+                work_order["proof_state"],
+            )
+            report_text = report.read_text()
+            self.assertIn(READ_ONLY_EVIDENCE_WAIT_STATUS, report_text)
+            self.assertNotIn("verify-projections", work_order["suggested_commands"])
+            self.assertNotIn("range-rail-geometry-repair", work_order["suggested_commands"])
+            self.assertNotIn("as-live-ready-evidence-loop", work_order["suggested_commands"])
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "WAIT_FOR_RANGE_RAIL_RECHECK. Later, the next action is "
+                    "VERIFY_TRIGGER_PROJECTIONS; do not run it before the rail wake."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=1),
+            ).run()
+            later_follow_up = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(later_follow_up["action_code"], "WAIT_FOR_RANGE_RAIL_RECHECK")
+            self.assertEqual(later_follow_up["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertEqual(later_follow_up["suggested_commands"], [])
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Follow-up next safe action is EXACT_TP_PROOF_COLLECTION; "
+                    "the current action is WAIT_FOR_RANGE_RAIL_RECHECK."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=2),
+            ).run()
+            prefixed_follow_up = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(prefixed_follow_up["action_code"], "WAIT_FOR_RANGE_RAIL_RECHECK")
+            self.assertEqual(prefixed_follow_up["suggested_commands"], [])
+
+    def test_active_lane_evidence_dispatches_once_then_waits_until_material_change(self) -> None:
+        now = datetime(2026, 7, 10, 0, 20, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                generated_at_utc=now.isoformat(),
+                local_tp_trades=2,
+            )
+
+            first_orchestrator = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now,
+            )
+            first_orchestrator.run()
+            first = json.loads(output.read_text())
+            first_work = first["codex_work_order"]
+            first_digest = first_work["material_digest"]
+            first_condition = first_work["material_change_condition"]
+            self.assertEqual(first_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertEqual(first_work["action_code"], "EXACT_TP_PROOF_COLLECTION")
+            self.assertTrue(first_work["dispatch_allowed"])
+            self.assertFalse(first_work["repeat_suppressed"])
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                first_work["suggested_commands"],
+            )
+            self.assertNotIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+                first_work["suggested_commands"],
+            )
+            commands = first_work["suggested_commands"]
+            support_indexes = [
+                index
+                for index, command in enumerate(commands)
+                if command == "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot"
+            ]
+            self.assertEqual(len(support_indexes), 2)
+            self.assertLess(
+                support_indexes[0],
+                commands.index("PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop"),
+            )
+            self.assertLess(
+                commands.index("PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop"),
+                commands.index("PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path"),
+            )
+            self.assertLess(
+                commands.index("PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract"),
+                support_indexes[-1],
+            )
+            self.assertLess(
+                support_indexes[-1],
+                next(
+                    index
+                    for index, command in enumerate(commands)
+                    if "trader-repair-orchestrator --ack-active-lane-dispatch" in command
+                ),
+            )
+            self.assertLess(
+                next(
+                    index
+                    for index, command in enumerate(commands)
+                    if "trader-repair-orchestrator --ack-active-lane-dispatch" in command
+                ),
+                commands.index("PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator"),
+            )
+            self.assertTrue(
+                any(first_digest in command for command in commands if "--ack-active-lane-dispatch" in command)
+            )
+            support_steps = [
+                step
+                for step in first_work["suggested_command_steps"]
+                if "trader-support-bot" in step["command"]
+            ]
+            self.assertEqual(len(support_steps), 2)
+            self.assertTrue(all(step["ok_rcs"] == [0, 2] for step in support_steps))
+            ack_step = next(
+                step
+                for step in first_work["suggested_command_steps"]
+                if "--ack-active-lane-dispatch" in step["command"]
+            )
+            self.assertEqual(ack_step["ok_rcs"], [0])
+
+            # A normal refresh preserves the stable pending dispatch; it does
+            # not mistake issuance for successful execution.
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=1),
+            ).run()
+            pending_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(pending_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertTrue(pending_work["execution_pending"])
+            self.assertFalse(pending_work["new_dispatch_issued"])
+            self.assertEqual(pending_work["reason_code"], "DISPATCH_PENDING_ACK")
+            self.assertEqual(pending_work["pending_dispatch_id"], first_digest)
+            self.assertEqual(pending_work["suggested_commands"], commands)
+
+            # Only the exact completion acknowledgement moves the digest into
+            # history and closes this work order.
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = main(
+                    [
+                        "trader-repair-orchestrator",
+                        "--trader-support-bot",
+                        str(support),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--ack-active-lane-dispatch",
+                        first_digest,
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                json.loads(stdout.getvalue())["acknowledged_active_lane_dispatch"],
+                first_digest,
+            )
+            second = json.loads(output.read_text())
+            second_work = second["codex_work_order"]
+            self.assertEqual(second_work["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertFalse(second_work["dispatch_allowed"])
+            self.assertTrue(second_work["repeat_suppressed"])
+            self.assertEqual(second_work["reason_code"], "MATERIAL_EVIDENCE_UNCHANGED")
+            self.assertEqual(second_work["material_digest"], first_digest)
+            self.assertEqual(second_work["suggested_commands"], [])
+            self.assertEqual(second_work["suggested_command_steps"], [])
+            self.assertNotIn(
+                "suggested_commands",
+                second_work["active_lane_evidence_work"],
+            )
+            self.assertFalse(
+                second_work["active_lane_evidence_work"]["command_plan_available"]
+            )
+            self.assertNotIn(
+                "suggested_commands",
+                second_work["proof_state"]["active_lane_evidence_work"],
+            )
+            self.assertNotIn(
+                "suggested_commands",
+                second_work["active_lane_evidence_work"]["material_state"],
+            )
+
+            # Retrying the same exact ACK is idempotent. This recovers a
+            # derivative report/downstream failure after authoritative state
+            # already committed without reopening or duplicating the work.
+            replay_stdout = io.StringIO()
+            with redirect_stdout(replay_stdout):
+                replay_rc = main(
+                    [
+                        "trader-repair-orchestrator",
+                        "--trader-support-bot",
+                        str(support),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--ack-active-lane-dispatch",
+                        first_digest,
+                    ]
+                )
+            self.assertEqual(replay_rc, 0)
+            replay_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertTrue(replay_work["acknowledgement_replayed"])
+            self.assertEqual(replay_work["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertEqual(replay_work["suggested_commands"], [])
+            acknowledged_bytes = output.read_bytes()
+            mismatch_stdout = io.StringIO()
+            with redirect_stdout(mismatch_stdout):
+                mismatch_rc = main(
+                    [
+                        "trader-repair-orchestrator",
+                        "--trader-support-bot",
+                        str(support),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--ack-active-lane-dispatch",
+                        "0" * 64,
+                    ]
+                )
+            self.assertEqual(mismatch_rc, 3)
+            self.assertIn("requires an existing pending", mismatch_stdout.getvalue())
+            self.assertEqual(output.read_bytes(), acknowledged_bytes)
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=3),
+            ).run()
+            third_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(third_work["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertTrue(third_work["repeat_suppressed"])
+            self.assertEqual(third_work["suggested_commands"], [])
+
+            # A regenerated timestamp alone is not material and must not reopen work.
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                generated_at_utc=(now + timedelta(minutes=4)).isoformat(),
+                local_tp_trades=2,
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=4),
+            ).run()
+            timestamp_only_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(timestamp_only_work["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertEqual(timestamp_only_work["material_digest"], first_digest)
+
+            # A new exact-vehicle TP receipt is material and permits one new pass.
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                generated_at_utc=(now + timedelta(minutes=5)).isoformat(),
+                local_tp_trades=3,
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now + timedelta(minutes=5),
+            ).run()
+            changed = json.loads(output.read_text())
+            changed_work = changed["codex_work_order"]
+            self.assertEqual(changed_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertTrue(changed_work["dispatch_allowed"])
+            self.assertNotEqual(changed_work["material_digest"], first_digest)
+            self.assertEqual(
+                _evaluate_success_condition(
+                    first_condition,
+                    changed["loop_engineering_prompt"]["current_state"],
+                )["status"],
+                "MET",
+            )
+
+    def test_whitespace_ack_is_rejected_before_state_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                rc = main(
+                    [
+                        "trader-repair-orchestrator",
+                        "--trader-support-bot",
+                        str(support),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--ack-active-lane-dispatch",
+                        "   ",
+                    ]
+                )
+
+        self.assertEqual(rc, 3)
+        self.assertIn("requires a non-empty exact digest", stdout.getvalue())
+        self.assertFalse(output.exists())
+        self.assertFalse(report.exists())
+
+    def test_fired_guardian_and_explicit_action_aliases_advance_one_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Consume data/guardian_events.json: CONTRACT_ADD_TRIGGER fired for the "
+                    "watched range rail. Do not repeat WAIT_FOR_RANGE_RAIL_RECHECK; refresh "
+                    "broker truth and active board, then reprice the RANGE_ROTATION counterpart "
+                    "and continue exact TP-proof collection."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            fired_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(
+                fired_work["action_code"],
+                "REPRICE_RANGE_ROTATION_COUNTERPART",
+            )
+            self.assertEqual(fired_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertTrue(
+                any("broker-snapshot" in command for command in fired_work["suggested_commands"])
+            )
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+                fired_work["suggested_commands"],
+            )
+            self.assertLess(
+                next(
+                    index
+                    for index, command in enumerate(fired_work["suggested_commands"])
+                    if "generate-intents" in command
+                ),
+                fired_work["suggested_commands"].index(
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair"
+                ),
+            )
+            fired_commands = fired_work["suggested_commands"]
+            frontier_index = fired_commands.index(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier"
+            )
+            entry_recovery_index = fired_commands.index(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli entry-frequency-recovery"
+            )
+            forecast_refresh_index = fired_commands.index(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh"
+            )
+            range_repair_index = fired_commands.index(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair"
+            )
+            self.assertLess(frontier_index, entry_recovery_index)
+            self.assertLess(entry_recovery_index, forecast_refresh_index)
+            self.assertLess(forecast_refresh_index, range_repair_index)
+            self.assertTrue(
+                any(
+                    command == "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract"
+                    for command in fired_commands[forecast_refresh_index + 1 : range_repair_index]
+                )
+            )
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Consume the forecast artifact: next safe action is "
+                    "REFRESH_FORECAST_RANGE_BOX; follow-up evidence action is "
+                    "EXACT_TP_PROOF_COLLECTION."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=fired_work["material_digest"],
+            ).run()
+            forecast_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(forecast_work["action_code"], "FORECAST_PATTERN_REFRESH")
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh",
+                forecast_work["suggested_commands"],
+            )
+            self.assertNotIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                forecast_work["suggested_commands"],
+            )
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Consume entry recovery: next safe action is "
+                    "TRIGGER_PROJECTION_TO_LIMIT_PROOF, METHOD_SCOPED_PROFILE_PROMOTION, "
+                    "and EXACT_TP_PROOF_COLLECTION."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=forecast_work["material_digest"],
+            ).run()
+            projection_work = json.loads(output.read_text())["codex_work_order"]
+            projection_commands = projection_work["suggested_commands"]
+            self.assertEqual(
+                projection_work["action_code"],
+                "TRIGGER_PROJECTION_TO_LIMIT_PROOF",
+            )
+            self.assertLess(
+                projection_commands.index(
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections"
+                ),
+                projection_commands.index(
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh"
+                ),
+            )
+            self.assertLess(
+                projection_commands.index(
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh"
+                ),
+                projection_commands.index(
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract"
+                ),
+            )
+            self.assertNotIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                projection_commands,
+            )
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Consume entry_frequency_recovery: next safe tuning action is "
+                    "CURRENT_INTENT_REGEN_REQUIRED; do not send."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=projection_work["material_digest"],
+            ).run()
+            regen_work = json.loads(output.read_text())["codex_work_order"]
+            regen_commands = regen_work["suggested_commands"]
+            self.assertEqual(regen_work["action_code"], "CURRENT_INTENT_REGEN_REQUIRED")
+            self.assertLess(
+                next(index for index, command in enumerate(regen_commands) if "broker-snapshot" in command),
+                next(index for index, command in enumerate(regen_commands) if "daily-target-state" in command),
+            )
+            self.assertLess(
+                next(index for index, command in enumerate(regen_commands) if "daily-target-state" in command),
+                next(index for index, command in enumerate(regen_commands) if "generate-intents" in command),
+            )
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Consume entry_frequency_recovery: next safe tuning action is "
+                    "METHOD_SCOPED_PROFILE_PROMOTION; do not send."
+                ),
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=regen_work["material_digest"],
+            ).run()
+            unmapped = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(unmapped["status"], "ACTIVE_LANE_ACTION_MAPPING_REQUIRED")
+            self.assertEqual(unmapped["reason_code"], "ACTION_STAGE_MAPPING_REQUIRED")
+            self.assertFalse(unmapped["dispatch_allowed"])
+            self.assertEqual(unmapped["suggested_commands"], [])
+            self.assertTrue(unmapped["commit_and_live_sync_required"])
+            self.assertIn(
+                "src/quant_rabbit/trader_repair_orchestrator.py",
+                unmapped["suggested_files"],
+            )
+            self.assertTrue(unmapped["targeted_test_commands"])
+
+    def test_frontier_tp_proof_collection_alias_dispatches_exact_tp_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "TP_PROOF_COLLECTION: collect exact TAKE_PROFIT_ORDER proof for "
+                    "range_trader:AUD_CAD:SHORT:RANGE_ROTATION; do not mix market-close losses."
+                ),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            work = json.loads(output.read_text())["codex_work_order"]
+
+        self.assertEqual(work["status"], "READ_ONLY_EVIDENCE_WORK")
+        self.assertEqual(work["action_code"], "EXACT_TP_PROOF_COLLECTION")
+        self.assertIn(
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+            work["suggested_commands"],
+        )
+        self.assertFalse(work["commit_and_live_sync_required"])
+
+    def test_primary_exact_tp_action_outranks_parallel_frontier_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Use the latest active board. Collect exact local TAKE_PROFIT_ORDER proof "
+                    "for EUR_USD|SHORT|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER. "
+                    "Pair this with non_eurusd_live_grade_frontier evidence lane "
+                    "range_trader:AUD_CAD:SHORT:RANGE_ROTATION. The next safe action is "
+                    "WAIT_FOR_RANGE_RAIL_RECHECK; do not send."
+                ),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            work = json.loads(output.read_text())["codex_work_order"]
+
+        self.assertEqual(work["status"], "READ_ONLY_EVIDENCE_WORK")
+        self.assertEqual(work["action_code"], "EXACT_TP_PROOF_COLLECTION")
+        self.assertTrue(work["dispatch_allowed"])
+        self.assertIn(
+            "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+            work["suggested_commands"],
+        )
+
+    def test_primary_exact_tp_action_outranks_parallel_fired_guardian_reprice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action=(
+                    "Collect exact local TAKE_PROFIT_ORDER proof for "
+                    "EUR_USD|SHORT|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER. "
+                    "Parallel non_eurusd_live_grade_frontier evidence lane "
+                    "range_trader:AUD_CAD:SHORT:RANGE_ROTATION. CONTRACT_ADD_TRIGGER fired; "
+                    "do not repeat WAIT_FOR_RANGE_RAIL_RECHECK; reprice the RANGE_ROTATION "
+                    "counterpart."
+                ),
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            work = json.loads(output.read_text())["codex_work_order"]
+
+        self.assertEqual(work["action_code"], "EXACT_TP_PROOF_COLLECTION")
+        self.assertNotIn(
+            "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot "
+            "data/broker_snapshot.json --reuse-market-artifacts",
+            work["suggested_commands"],
+        )
+
+    def test_state_lock_serializes_ack_against_ordinary_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            digest = json.loads(output.read_text())["codex_work_order"]["material_digest"]
+
+            import quant_rabbit.trader_repair_orchestrator as repair_module
+
+            original_read = repair_module._read_previous_orchestrator_output
+            ack_read_entered = threading.Event()
+            release_ack_read = threading.Event()
+            refresh_read_entered = threading.Event()
+            errors: list[BaseException] = []
+
+            def controlled_read(path: Path):
+                if threading.current_thread().name == "ack-run":
+                    ack_read_entered.set()
+                    if not release_ack_read.wait(timeout=3):
+                        raise TimeoutError("test did not release ACK read")
+                elif threading.current_thread().name == "refresh-run":
+                    refresh_read_entered.set()
+                return original_read(path)
+
+            def execute(orchestrator: TraderRepairOrchestrator) -> None:
+                try:
+                    orchestrator.run()
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    errors.append(exc)
+
+            ack_thread = threading.Thread(
+                name="ack-run",
+                target=execute,
+                args=(
+                    TraderRepairOrchestrator(
+                        support_bot_path=support,
+                        output_path=output,
+                        report_path=report,
+                        ack_active_lane_dispatch=digest,
+                    ),
+                ),
+            )
+            refresh_thread = threading.Thread(
+                name="refresh-run",
+                target=execute,
+                args=(
+                    TraderRepairOrchestrator(
+                        support_bot_path=support,
+                        output_path=output,
+                        report_path=report,
+                    ),
+                ),
+            )
+            with patch(
+                "quant_rabbit.trader_repair_orchestrator._read_previous_orchestrator_output",
+                side_effect=controlled_read,
+            ):
+                ack_thread.start()
+                self.assertTrue(ack_read_entered.wait(timeout=2))
+                refresh_thread.start()
+                refresh_entered_while_ack_held_lock = refresh_read_entered.wait(timeout=0.15)
+                release_ack_read.set()
+                ack_thread.join(timeout=3)
+                refresh_thread.join(timeout=3)
+
+            final_work = json.loads(output.read_text())["codex_work_order"]
+
+        self.assertFalse(refresh_entered_while_ack_held_lock)
+        self.assertFalse(ack_thread.is_alive())
+        self.assertFalse(refresh_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(final_work["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+        self.assertIsNone(final_work["pending_material_digest"])
+        self.assertIn(digest, final_work["dispatched_material_digests"])
+
+    def test_report_publish_failure_keeps_pending_ack_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            pending = json.loads(output.read_text())["codex_work_order"]
+            digest = pending["material_digest"]
+
+            import quant_rabbit.trader_repair_orchestrator as repair_module
+
+            original_replace = repair_module._replace_prepared_text
+
+            def fail_report_replace(temp_path: Path, destination: Path) -> None:
+                if destination == report:
+                    raise OSError("simulated report ENOSPC")
+                original_replace(temp_path, destination)
+
+            with patch(
+                "quant_rabbit.trader_repair_orchestrator._replace_prepared_text",
+                side_effect=fail_report_replace,
+            ):
+                with self.assertRaisesRegex(OSError, "simulated report ENOSPC"):
+                    TraderRepairOrchestrator(
+                        support_bot_path=support,
+                        output_path=output,
+                        report_path=report,
+                        ack_active_lane_dispatch=digest,
+                    ).run()
+
+            after_failure = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(after_failure["pending_material_digest"], digest)
+            self.assertNotIn(digest, after_failure["dispatched_material_digests"])
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=digest,
+            ).run()
+            recovered = json.loads(output.read_text())["codex_work_order"]
+            recovered_report = report.read_text()
+
+        self.assertEqual(recovered["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+        self.assertIn(digest, recovered["dispatched_material_digests"])
+        self.assertTrue(recovered_report)
+
+    def test_approval_or_evidence_wait_takes_precedence_over_active_lane_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(
+                support,
+                requests=[
+                    _request(
+                        "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                        priority="P0",
+                        requires_explicit_operator_approval=True,
+                    )
+                ],
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            approval = json.loads(output.read_text())
+            self.assertEqual(approval["status"], STATUS_APPROVAL_REQUIRED)
+            self.assertEqual(
+                approval["codex_work_order"]["status"],
+                "NO_ACTIONABLE_CODEX_WORK",
+            )
+
+            _write_support_with_active_lane(
+                support,
+                requests=[
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
+                    )
+                ],
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            waiting = json.loads(output.read_text())
+            self.assertEqual(waiting["status"], STATUS_BLOCKED)
+            self.assertEqual(
+                waiting["codex_work_order"]["status"],
+                "NO_ACTIONABLE_CODEX_WORK",
+            )
+
+    def test_last_evidence_dispatch_survives_an_intervening_repair_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            first_work = json.loads(output.read_text())["codex_work_order"]
+            digest = first_work["material_digest"]
+            self.assertEqual(first_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+
+            _write_support_with_active_lane(
+                support,
+                requests=[
+                    _request(
+                        "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                        priority="P0",
+                        requires_explicit_operator_approval=True,
+                    )
+                ],
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            queued_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(queued_work["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertEqual(queued_work["pending_material_digest"], digest)
+            self.assertIsNone(queued_work["last_dispatched_material_digest"])
+
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            resumed_work = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(resumed_work["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertTrue(resumed_work["execution_pending"])
+            self.assertFalse(resumed_work["new_dispatch_issued"])
+            self.assertEqual(resumed_work["material_digest"], digest)
+            self.assertTrue(resumed_work["suggested_commands"])
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=digest,
+            ).run()
+            acknowledged = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(acknowledged["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertTrue(acknowledged["repeat_suppressed"])
+            self.assertEqual(acknowledged["suggested_commands"], [])
+
+    def test_dispatch_history_suppresses_a_material_state_after_lane_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            first = json.loads(output.read_text())["codex_work_order"]
+            first_digest = first["material_digest"]
+            self.assertEqual(first["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action="The next safe action is FORECAST_PATTERN_REFRESH; do not send.",
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=first_digest,
+            ).run()
+            second = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(second["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertNotEqual(second["material_digest"], first_digest)
+
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=second["material_digest"],
+            ).run()
+            cycled = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(cycled["material_digest"], first_digest)
+            self.assertEqual(cycled["status"], READ_ONLY_EVIDENCE_WAIT_STATUS)
+            self.assertTrue(cycled["repeat_suppressed"])
+            self.assertEqual(cycled["suggested_commands"], [])
+            self.assertIn(first_digest, cycled["dispatched_material_digests"])
+            self.assertIn(second["material_digest"], cycled["dispatched_material_digests"])
+
+    def test_terminal_material_change_supersedes_unexecuted_stale_pending_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            first = json.loads(output.read_text())["codex_work_order"]
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action="The next safe action is FORECAST_PATTERN_REFRESH; do not send.",
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            terminal = json.loads(output.read_text())["codex_work_order"]
+
+            self.assertEqual(terminal["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertTrue(terminal["new_dispatch_issued"])
+            self.assertTrue(terminal["execution_pending"])
+            self.assertEqual(
+                terminal["superseded_pending_material_digest"],
+                first["material_digest"],
+            )
+            self.assertNotEqual(terminal["pending_dispatch_id"], first["pending_dispatch_id"])
+            self.assertNotIn(first["material_digest"], terminal["dispatched_material_digests"])
+
+    def test_completed_ack_replay_preserves_newer_material_pending_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            first = json.loads(output.read_text())["codex_work_order"]
+
+            _write_support_with_active_lane(
+                support,
+                requests=[],
+                next_action="The next safe action is FORECAST_PATTERN_REFRESH; do not send.",
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=first["material_digest"],
+            ).run()
+            newer = json.loads(output.read_text())["codex_work_order"]
+            self.assertEqual(newer["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertIn(first["material_digest"], newer["dispatched_material_digests"])
+            self.assertNotEqual(newer["pending_material_digest"], first["material_digest"])
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                ack_active_lane_dispatch=first["material_digest"],
+            ).run()
+            replayed = json.loads(output.read_text())["codex_work_order"]
+
+        self.assertTrue(replayed["acknowledgement_replayed"])
+        self.assertEqual(replayed["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+        self.assertEqual(replayed["pending_material_digest"], newer["pending_material_digest"])
+        self.assertIn(first["material_digest"], replayed["dispatched_material_digests"])
+
+    def test_corrupt_previous_output_self_recovers_to_atomic_valid_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support_with_active_lane(support, requests=[])
+            output.write_text("{", encoding="utf-8")
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            payload = json.loads(output.read_text())
+
+            self.assertEqual(
+                payload["metrics"]["previous_output_recovery"],
+                "CORRUPT_PREVIOUS_OUTPUT_IGNORED",
+            )
+            self.assertEqual(
+                payload["codex_work_order"]["status"],
+                READ_ONLY_EVIDENCE_WORK_STATUS,
+            )
+            self.assertTrue(report.read_text())
+
     def test_pending_cancel_review_waits_for_trader_receipt_not_codex_implementation(self) -> None:
         now = datetime(2026, 6, 25, 2, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -2189,6 +3289,78 @@ def _write_support(
             sort_keys=True,
         )
         + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_support_with_active_lane(
+    path: Path,
+    *,
+    requests: list[dict[str, object]],
+    generated_at_utc: str = "2026-07-10T00:20:00+00:00",
+    local_tp_trades: int = 2,
+    next_action: str | None = None,
+) -> None:
+    lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+    action = next_action or (
+        "Use the latest active_opportunity_board rerank. Collect exact local "
+        "TAKE_PROFIT_ORDER proof for EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER; "
+        "require positive expectancy, zero TP losses, and positive Wilson-stressed "
+        "expectancy before reranking. Do not send."
+    )
+    blockers = [
+        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+        "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+        "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+    ]
+    payload = {
+        "generated_at_utc": generated_at_utc,
+        "status": "SUPPORT_BLOCKED",
+        "repair_requests": requests,
+        "entry_readiness": {
+            "live_ready_lanes": 0,
+            "shortest_live_ready_path": {
+                "lane_id": lane_id,
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "method": "BREAKOUT_FAILURE",
+                "order_type": "LIMIT",
+                "status": "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE",
+                "current_status": "DRY_RUN_BLOCKED",
+                "selection_basis": "active_trader_contract",
+                "blocker_codes": blockers,
+                "blocker_groups": ["forecast_telemetry", "proof_gap", "global"],
+                "evidence_needed": ["collect exact-vehicle TP proof"],
+                "first_next_step": action,
+                "active_path": {
+                    "lane_id": lane_id,
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "method": "BREAKOUT_FAILURE",
+                    "order_type": "LIMIT",
+                    "status": "EVIDENCE_ACQUISITION",
+                    "contract_status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                    "generated_at_utc": generated_at_utc,
+                    "live_permission": False,
+                    "blocker_codes": blockers,
+                    "next_action": action,
+                    "local_tp_proof": {
+                        "capture_take_profit_scope_key": (
+                            "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER"
+                        ),
+                        "capture_take_profit_trades": local_tp_trades,
+                        "capture_take_profit_wins": local_tp_trades,
+                        "capture_take_profit_losses": 0,
+                        "capture_take_profit_expectancy_jpy": 1146.7898,
+                        "capture_take_profit_proof_floor": 20,
+                        "generated_at_utc": generated_at_utc,
+                    },
+                },
+            },
+        },
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
