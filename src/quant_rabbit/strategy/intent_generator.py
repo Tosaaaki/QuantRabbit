@@ -5314,6 +5314,7 @@ MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE = (
     "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED"
 )
 MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS = 24.0 * 30.0
+MONTH_SCALE_EXECUTABLE_RESIDUAL_GROUP_LIMIT = 10
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
     "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
@@ -9942,21 +9943,33 @@ def _profitability_acceptance_month_residual_issue(data_root: Path) -> dict[str,
     if isinstance(payload, dict):
         residual_groups.extend(_month_residual_groups_from_acceptance(payload))
     residual_groups.extend(_month_residual_groups_from_timing_audit(data_root))
-    blocked_segments: list[dict[str, Any]] = []
-    seen_keys: set[tuple[str, str, str, float | None]] = set()
+    normalised_segments: list[dict[str, Any]] = []
     for group in residual_groups:
         segment = _normalise_month_residual_group(group)
         if segment is not None:
-            key = (
-                str(segment.get("pair") or ""),
-                str(segment.get("side") or ""),
-                str(segment.get("method") or ""),
-                _optional_float(segment.get("net_jpy")),
-            )
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            blocked_segments.append(segment)
+            normalised_segments.append(segment)
+    normalised_segments.sort(
+        key=lambda segment: (
+            float(segment.get("net_jpy") or 0.0),
+            str(segment.get("pair") or ""),
+            str(segment.get("side") or ""),
+            str(segment.get("method") or ""),
+        )
+    )
+    blocked_segments: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for segment in normalised_segments:
+        key = (
+            str(segment.get("pair") or "").upper(),
+            str(segment.get("side") or "").upper(),
+            str(segment.get("method") or "").upper(),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        blocked_segments.append(segment)
+        if len(blocked_segments) >= MONTH_SCALE_EXECUTABLE_RESIDUAL_GROUP_LIMIT:
+            break
     if not blocked_segments:
         return None
     worst = blocked_segments[0]
@@ -9970,7 +9983,7 @@ def _profitability_acceptance_month_residual_issue(data_root: Path) -> dict[str,
             f"({', '.join(label_parts)})"
         ),
         "severity": "BLOCK",
-        "blocked_profitability_segments": blocked_segments[:10],
+        "blocked_profitability_segments": blocked_segments,
     }
 
 
@@ -10001,22 +10014,60 @@ def _month_residual_groups_from_acceptance(payload: dict[str, Any]) -> list[dict
 
 
 def _month_residual_groups_from_replay_metrics(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    overall_groups = metrics.get("top_repair_replay_residual_groups")
+    if isinstance(overall_groups, list):
+        return _canonical_month_residual_groups(overall_groups)
+
     groups: list[dict[str, Any]] = []
     typed_keys = (
         "top_tp_progress_repair_residual_groups",
         "top_entry_quality_residual_groups",
     )
-    typed_present = any(key in metrics for key in typed_keys)
-    if typed_present:
-        for key in typed_keys:
-            raw_groups = metrics.get(key)
-            if isinstance(raw_groups, list):
-                groups.extend(item for item in raw_groups if isinstance(item, dict))
-        return groups
-    raw_groups = metrics.get("top_repair_replay_residual_groups")
-    if isinstance(raw_groups, list):
-        groups.extend(item for item in raw_groups if isinstance(item, dict))
-    return groups
+    for key in typed_keys:
+        raw_groups = metrics.get(key)
+        if isinstance(raw_groups, list):
+            groups.extend(item for item in raw_groups if isinstance(item, dict))
+    return _canonical_month_residual_groups(groups)
+
+
+def _canonical_month_residual_groups(groups: Iterable[Any]) -> list[dict[str, Any]]:
+    """Return the executable global worst groups, never per-scope concatenation order."""
+
+    rows: list[dict[str, Any]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        pair = str(group.get("pair") or "").strip().upper()
+        side = str(group.get("side") or "").strip().upper()
+        method = str(group.get("method") or "").strip().upper()
+        replay_pl = _optional_float(group.get("repair_replay_pl_jpy"))
+        if not pair or not side or not method or replay_pl is None or replay_pl >= 0.0:
+            continue
+        rows.append(group)
+    rows.sort(
+        key=lambda group: (
+            float(_optional_float(group.get("repair_replay_pl_jpy")) or 0.0),
+            float(_optional_float(group.get("actual_pl_jpy")) or 0.0),
+            str(group.get("pair") or "").upper(),
+            str(group.get("side") or "").upper(),
+            str(group.get("method") or "").upper(),
+        )
+    )
+    result: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for group in rows:
+        key = (
+            str(group.get("pair") or "").strip().upper(),
+            str(group.get("side") or "").strip().upper(),
+            str(group.get("method") or "").strip().upper(),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        result.append(group)
+        if len(result) >= MONTH_SCALE_EXECUTABLE_RESIDUAL_GROUP_LIMIT:
+            break
+    return result
 
 
 def _month_residual_groups_from_timing_audit(data_root: Path) -> list[dict[str, Any]]:

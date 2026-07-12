@@ -6263,22 +6263,22 @@ def _build_repair_requests(
             guardian_tuning_acquisition,
         )
         selected_events = [
-            entry.get("selected_event")
-            for entry in tuning_entries
-            if isinstance(entry.get("selected_event"), dict)
+            tuning_entry.get("selected_event")
+            for tuning_entry in tuning_entries
+            if isinstance(tuning_entry.get("selected_event"), dict)
         ]
         pair_values: list[Any] = []
         family_values: list[Any] = []
         reason_values: list[Any] = []
-        for entry in tuning_entries:
+        for tuning_entry in tuning_entries:
             entry_review = (
-                entry.get("bot_tuning_review")
-                if isinstance(entry.get("bot_tuning_review"), dict)
+                tuning_entry.get("bot_tuning_review")
+                if isinstance(tuning_entry.get("bot_tuning_review"), dict)
                 else {}
             )
             entry_event = (
-                entry.get("selected_event")
-                if isinstance(entry.get("selected_event"), dict)
+                tuning_entry.get("selected_event")
+                if isinstance(tuning_entry.get("selected_event"), dict)
                 else {}
             )
             entry_details = (
@@ -6299,21 +6299,21 @@ def _build_repair_requests(
             pair_values.extend(
                 _string_list(
                     entry_review.get("affected_pairs")
-                    or entry.get("affected_pairs")
+                    or tuning_entry.get("affected_pairs")
                     or entry_event.get("pair")
                 )
             )
             family_values.extend(
                 _string_list(
                     entry_review.get("affected_bot_families")
-                    or entry.get("affected_bot_families")
+                    or tuning_entry.get("affected_bot_families")
                     or list(family_consensus)
                 )
             )
             reason_values.extend(
                 _string_list(
-                    entry.get("material_reason_codes")
-                    or entry.get("wake_reason_codes")
+                    tuning_entry.get("material_reason_codes")
+                    or tuning_entry.get("wake_reason_codes")
                     or entry_event.get("wake_reason_codes")
                 )
             )

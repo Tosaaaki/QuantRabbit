@@ -51,6 +51,7 @@ from quant_rabbit.strategy.intent_generator import (
     _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
     _predictive_scout_nav_risk_metadata,
+    _profitability_acceptance_month_residual_issue,
     _range_indicators_for_lane,
     _range_seed_direction,
     _same_day_loss_streak_issues,
@@ -10788,6 +10789,139 @@ class IntentGeneratorTest(unittest.TestCase):
                 "without a TP-progress production-gate profit candidate",
                 issue["message"],
             )
+
+    def test_month_scale_gate_uses_canonical_global_top_ten_before_typed_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical_pairs = [
+                "AUD_USD",
+                "NZD_CAD",
+                "NZD_USD",
+                "EUR_CHF",
+                "GBP_USD",
+                "GBP_CHF",
+                "EUR_GBP",
+                "EUR_JPY",
+                "USD_JPY",
+                "EUR_USD",
+            ]
+            canonical_groups = [
+                {
+                    "pair": pair,
+                    "side": "LONG",
+                    "method": "RANGE_ROTATION",
+                    "exit_reason": "STOP_LOSS_ORDER",
+                    "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                    "loss_closes": 1,
+                    "actual_pl_jpy": float(-2000 + index * 100),
+                    "repair_replay_pl_jpy": float(-2000 + index * 100),
+                }
+                for index, pair in enumerate(canonical_pairs)
+            ]
+            typed_tp_diagnostic = {
+                "pair": "AUD_NZD",
+                "side": "SHORT",
+                "method": "RANGE_ROTATION",
+                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                "residual_scope": "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+                "loss_closes": 1,
+                "actual_pl_jpy": -50.0,
+                "repair_replay_pl_jpy": -50.0,
+            }
+            replay_metrics = {
+                "top_repair_replay_residual_groups": canonical_groups,
+                "top_tp_progress_repair_residual_groups": [typed_tp_diagnostic],
+                "top_entry_quality_residual_groups": canonical_groups,
+            }
+            (root / "profitability_acceptance.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                                "message": "month-scale replay remains negative",
+                                "evidence": replay_metrics,
+                            }
+                        ],
+                        "metrics": {"profit_capture_replay_repair": replay_metrics},
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertTrue(metadata["month_scale_residual_loss_repair_blocked"])
+            self.assertEqual(
+                metadata["month_scale_residual_loss_group"]["repair_replay_pl_jpy"],
+                -1100.0,
+            )
+            self.assertIn(MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE, issue_codes)
+
+    def test_month_scale_gate_deduplicates_shape_and_keeps_worst_source_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            finding_group = {
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "method": "RANGE_ROTATION",
+                "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                "repair_replay_pl_jpy": -100.0,
+            }
+            metrics_group = {
+                **finding_group,
+                "repair_replay_pl_jpy": -200.0,
+            }
+            (root / "profitability_acceptance.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                                "message": "month-scale replay remains negative",
+                                "evidence": {
+                                    "top_repair_replay_residual_groups": [finding_group]
+                                },
+                            }
+                        ],
+                        "metrics": {
+                            "profit_capture_replay_repair": {
+                                "top_repair_replay_residual_groups": [metrics_group]
+                            }
+                        },
+                    }
+                )
+            )
+
+            issue = _profitability_acceptance_month_residual_issue(root)
+
+            self.assertIsNotNone(issue)
+            assert issue is not None
+            segments = issue["blocked_profitability_segments"]
+            self.assertEqual(len(segments), 1)
+            self.assertEqual(segments[0]["pair"], "EUR_USD")
+            self.assertEqual(segments[0]["net_jpy"], -200.0)
 
     def test_month_scale_timing_artifact_blocks_matching_harvest_repair_before_acceptance_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

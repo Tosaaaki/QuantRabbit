@@ -156,6 +156,83 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertTrue(evidence["preserve_blockers"])
         self.assertTrue(all("LiveOrderGateway" not in command for command in request["verification_commands"]))
 
+    def test_pending_tuning_work_order_does_not_hide_current_month_residual_blocks(self) -> None:
+        work_order = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-eurusd-residual-regression",
+            "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|DOWN",
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+            },
+            "bot_tuning_review": {
+                "affected_pairs": ["EUR_USD"],
+                "affected_bot_families": ["range"],
+            },
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+        entry_readiness = {
+            "month_scale_residual_blocked_intents": [
+                {
+                    "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                    "pair": "NZD_CAD",
+                    "side": "SHORT",
+                    "method": "RANGE_ROTATION",
+                    "blocker_codes": ["MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED"],
+                }
+            ]
+        }
+        acceptance = trader_support_bot_module._acceptance_summary(
+            {
+                "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                "findings": [
+                    {
+                        "priority": "P0",
+                        "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                        "message": "month-scale replay remains negative",
+                        "next_action": "wait for replay after the residual block is active",
+                        "evidence": {
+                            "window_lookback_hours": 744.0,
+                            "repair_replay_counterfactual_pl_jpy": -13704.3847,
+                            "top_repair_replay_residual_groups": [
+                                {
+                                    "pair": "NZD_CAD",
+                                    "side": "SHORT",
+                                    "method": "RANGE_ROTATION",
+                                    "repair_replay_pl_jpy": -2044.4543,
+                                    "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "metrics": {},
+            }
+        )
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry=entry_readiness,
+            acceptance=acceptance,
+            guardian_tuning_work_order=work_order,
+        )
+
+        request = next(
+            item
+            for item in requests
+            if item["code"] == "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY"
+        )
+        self.assertEqual(
+            request["status"],
+            "RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
+        )
+        block_status = request["evidence_summary"]["current_residual_block_status"]
+        self.assertEqual(block_status["current_residual_blocked_intents_count"], 1)
+        self.assertEqual(block_status["top_residual_groups_with_current_blocked_intent"], 1)
+
     def test_forward_acquisition_ready_wakes_gpt_review_without_replay_proof(self) -> None:
         work_order = {
             "status": "PENDING_HOURLY_AI_REVIEW",
