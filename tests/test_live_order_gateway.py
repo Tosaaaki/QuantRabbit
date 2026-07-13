@@ -475,6 +475,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
         client: ReconciliationExecutionClient,
         edge_basis: str = "EXACT_VEHICLE_TAKE_PROFIT",
         batch: bool = False,
+        append_non_tp_loss_after_reservation: bool = False,
     ) -> tuple[Any, dict[str, Any], Path]:
         target_state, target_report, ledger_path, ledger_report = (
             _reconciliation_files(root, gross_loss_jpy=300.0)
@@ -507,6 +508,18 @@ class LiveOrderGatewayTest(unittest.TestCase):
             live_enabled=True,
             max_loss_jpy=3_000.0,
         )
+        original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
+
+        def reserve_then_optionally_append_non_tp_loss(gateway_self, **kwargs):
+            result = original_reserve(gateway_self, **kwargs)
+            if append_non_tp_loss_after_reservation and result.issue is None:
+                _insert_exact_non_tp_loss(
+                    ledger_path,
+                    method="RANGE_ROTATION",
+                    realized_pl_jpy=-2_100.0,
+                )
+            return result
+
         with (
             patch.object(
                 LiveOrderGateway,
@@ -522,6 +535,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 execution_module,
                 "DailyTargetLedger",
                 FixedReconciliationTargetLedger,
+            ),
+            patch.object(
+                LiveOrderGateway,
+                "_reserve_ordinary_entry_post",
+                reserve_then_optionally_append_non_tp_loss,
             ),
         ):
             summary = (
@@ -1598,6 +1616,65 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertEqual(boundary["status"], "PASSED")
         self.assertEqual(client.orders[0]["price"], "1.17100")
         self.assertNotIn("priceBound", client.orders[0])
+
+    def test_tp_proven_range_final_edge_recheck_blocks_new_non_tp_loss_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                summary, order, ledger_path = (
+                    self._run_real_tp_proven_range_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                        append_non_tp_loss_after_reservation=True,
+                    )
+                )
+                with closing(sqlite3.connect(ledger_path)) as conn:
+                    claim_status = conn.execute(
+                        "SELECT status FROM ordinary_live_entry_signal_claims"
+                    ).fetchone()[0]
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            self.assertIn(
+                "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
+                {issue["code"] for issue in order["risk_issues"]},
+            )
+            reconciliation = order["pre_post_reconciliation"]
+            early_edge = reconciliation["capital_allocation_edge_recheck"]
+            self.assertEqual(early_edge["status"], "PASSED")
+            self.assertEqual(early_edge["basis"], "EXACT_VEHICLE_TAKE_PROFIT")
+            boundary = reconciliation["final_post_reservation_boundary"]
+            final_edge = boundary["capital_allocation_edge_recheck"]
+            self.assertEqual(boundary["status"], "BLOCKED")
+            self.assertFalse(boundary["post_attempted"])
+            self.assertEqual(final_edge["status"], "BLOCKED")
+            self.assertEqual(final_edge["basis"], "EXACT_VEHICLE_TAKE_PROFIT")
+            self.assertIn(
+                "ALL_EXIT_EVIDENCE_SUPPRESSES_TP_EXCEPTION",
+                final_edge["failed_checks"],
+            )
+            self.assertEqual(final_edge["current_tp"]["trades"], 20)
+            self.assertEqual(final_edge["current_tp"]["losses"], 0)
+            self.assertGreater(final_edge["current_tp"]["net_jpy"], 0.0)
+            self.assertGreater(
+                final_edge["current_tp"]["expectancy_jpy"],
+                0.0,
+            )
+            self.assertEqual(final_edge["current_all_exit"]["trades"], 21)
+            self.assertEqual(final_edge["current_all_exit"]["losses"], 1)
+            self.assertLess(final_edge["current_all_exit"]["net_jpy"], 0.0)
+            self.assertTrue(
+                final_edge["current_all_exit"]["blocks_tp_exception"]
+            )
+            self.assertEqual(
+                order["ordinary_entry_claim"]["status"],
+                "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+            )
+            self.assertEqual(
+                claim_status,
+                "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+            )
 
     def test_tp_proven_range_final_s5_entry_touch_retains_reservation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -10108,6 +10185,100 @@ def _insert_exact_tp_outcomes(
                     inserted_at,
                 ),
             )
+
+
+def _insert_exact_non_tp_loss(
+    ledger_path: Path,
+    *,
+    method: str,
+    realized_pl_jpy: float,
+) -> None:
+    desk = "trend_trader" if method == "TREND_CONTINUATION" else "range_trader"
+    lane_id = f"{desk}:EUR_USD:LONG:{method}:LIMIT"
+    trade_id = "post-reservation-non-tp-loss-trade"
+    entry_order_id = "post-reservation-non-tp-loss-entry"
+    close_order_id = "post-reservation-non-tp-loss-close"
+    ts_utc = datetime.now(timezone.utc).isoformat()
+    inserted_at = ts_utc
+    rows = (
+        (
+            "post-reservation-non-tp-loss:gateway",
+            ts_utc,
+            "GATEWAY_ORDER_SENT",
+            lane_id,
+            entry_order_id,
+            trade_id,
+            None,
+            "LIMIT_ORDER",
+            json.dumps({"type": "LIMIT_ORDER"}),
+        ),
+        (
+            "post-reservation-non-tp-loss:fill",
+            ts_utc,
+            "ORDER_FILLED",
+            lane_id,
+            entry_order_id,
+            trade_id,
+            None,
+            "LIMIT_ORDER",
+            json.dumps(
+                {
+                    "type": "ORDER_FILL",
+                    "time": ts_utc,
+                    "instrument": "EUR_USD",
+                    "orderID": entry_order_id,
+                    "units": "1000",
+                    "reason": "LIMIT_ORDER",
+                    "tradeOpened": {
+                        "tradeID": trade_id,
+                        "units": "1000",
+                    },
+                }
+            ),
+        ),
+        (
+            "post-reservation-non-tp-loss:close",
+            ts_utc,
+            "TRADE_CLOSED",
+            lane_id,
+            close_order_id,
+            trade_id,
+            realized_pl_jpy,
+            "MARKET_ORDER_TRADE_CLOSE",
+            json.dumps(
+                {
+                    "type": "ORDER_FILL",
+                    "time": ts_utc,
+                    "instrument": "EUR_USD",
+                    "orderID": close_order_id,
+                    "reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "commission": "0.0",
+                    "guaranteedExecutionFee": "0.0",
+                    "tradesClosed": [
+                        {
+                            "tradeID": trade_id,
+                            "realizedPL": str(realized_pl_jpy),
+                            "financing": "0.0",
+                        }
+                    ],
+                }
+            ),
+        ),
+    )
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                client_order_id, pair, side, units, price, tp, sl,
+                realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                related_transaction_ids_json, raw_json, inserted_at_utc
+            )
+            VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'LONG', 1000,
+                    1.1729, 1.1745, 1.1721, ?, 0.0, ?, NULL, '[]', ?, ?)
+            """,
+            [(*row, inserted_at) for row in rows],
+        )
 
 
 def _trader_pending_order(
