@@ -32,6 +32,19 @@ from quant_rabbit.predictive_scout import (
     predictive_scout_metadata_supported,
 )
 from quant_rabbit.risk import FORECAST_LIVE_PRECISION_MIN_SAMPLES
+from quant_rabbit.strategy.forecast_technical_context import (
+    CONFIDENCE_SEMANTICS,
+    build_forecast_technical_context,
+    forecast_pair_chart_row_sha256,
+    forecast_technical_context_is_current_for_allocation,
+    normalize_forecast_technical_context_evidence,
+    unknown_forecast_technical_context_evidence,
+)
+from quant_rabbit.strategy.failed_break_evidence import failed_break_direction
+from quant_rabbit.strategy.regime_family_weighting import (
+    forecast_direction_consistency,
+    verify_regime_family_weighting_receipt,
+)
 
 
 MARKET_READ_OVERLAY_SCHEMA_VERSION = 2
@@ -52,7 +65,7 @@ CAPITAL_ALLOCATION_MIN_EXACT_NET_TRADES = EXACT_VEHICLE_NET_EDGE_MIN_TRADES
 CAPITAL_ALLOCATION_FORECAST_MIN_SAMPLES = FORECAST_LIVE_PRECISION_MIN_SAMPLES
 CAPITAL_ALLOCATION_KELLY_FRACTION = 0.25
 CAPITAL_ALLOCATION_NUMERIC_CEILING_CONTRACT = (
-    "FORECAST_ECONOMIC_WILSON_QUARTER_KELLY_V1"
+    "LANE_ECONOMIC_WILSON_QUARTER_KELLY_V2"
 )
 
 OVERLAY_ALLOWED_FIELDS = frozenset(
@@ -645,6 +658,11 @@ def apply_codex_market_read_overlay(
     execution_cost_floor_sha256 = str(
         rebuilt_cost_floor.get("proof_sha256") or ""
     ) or None
+    capital_allocation_edge_basis = (
+        str(rebuilt_selected_lane.get("edge_basis") or "") or None
+        if isinstance(rebuilt_selected_lane, Mapping)
+        else None
+    )
     merged["decision_provenance"] = {
         "schema_version": MARKET_READ_OVERLAY_SCHEMA_VERSION,
         "author_kind": CODEX_MARKET_READ_AUTHOR,
@@ -668,6 +686,7 @@ def apply_codex_market_read_overlay(
         "capital_allocation_board_sha256": str(
             capital_allocation["allocation_board_sha256"]
         ),
+        "capital_allocation_edge_basis": capital_allocation_edge_basis,
         "execution_cost_floor_sha256": execution_cost_floor_sha256,
         "authorized_size_multiple": float(capital_allocation["size_multiple"]),
         "authorized_units": int(capital_allocation["selected_units"]),
@@ -817,6 +836,16 @@ def _validated_capital_allocation(
             "MARKET_READ_CAPITAL_ALLOCATION_LANE_MISSING",
             "selected baseline lane is absent from the content-addressed allocation board",
         )
+    forecast_context_error = _selected_lane_forecast_context_binding_error(
+        board=board,
+        selected_lane=selected_lane,
+        lane_id=lane_id,
+    )
+    if forecast_context_error is not None:
+        raise MarketReadOverlayError(
+            "MARKET_READ_CAPITAL_ALLOCATION_FORECAST_CONTEXT_INVALID",
+            forecast_context_error,
+        )
     if selected_lane.get("allocation_eligible") is not True:
         raise MarketReadOverlayError(
             "MARKET_READ_CAPITAL_ALLOCATION_EDGE_NOT_PROVEN",
@@ -853,6 +882,238 @@ def _validated_capital_allocation(
     allocation["lane_id"] = lane_id
     allocation["size_multiple"] = size_multiple
     return allocation
+
+
+def _selected_lane_range_tp_breakout_failure_proven(
+    selected_lane: Mapping[str, Any],
+) -> bool:
+    """Re-derive the narrow RANGE failed-break exception from the board.
+
+    The board is content addressed, but a naked boolean inside it is still a
+    claim.  Re-bind the executable LIMIT vehicle, exact-TP cohort, current
+    ledger surface, cost-aware numeric proof, and range rails before allowing
+    a non-directional RANGE forecast to carry the failed-break side.
+    """
+
+    forecast = (
+        selected_lane.get("forecast")
+        if isinstance(selected_lane.get("forecast"), Mapping)
+        else {}
+    )
+    capture = (
+        selected_lane.get("capture")
+        if isinstance(selected_lane.get("capture"), Mapping)
+        else {}
+    )
+    numeric = (
+        selected_lane.get("numeric_ceiling")
+        if isinstance(selected_lane.get("numeric_ceiling"), Mapping)
+        else {}
+    )
+    inputs = (
+        numeric.get("inputs")
+        if isinstance(numeric.get("inputs"), Mapping)
+        else {}
+    )
+    geometry = (
+        numeric.get("geometry")
+        if isinstance(numeric.get("geometry"), Mapping)
+        else {}
+    )
+    forecast_basis = forecast.get("range_trade_economic_basis")
+    numeric_basis = inputs.get("range_trade_economic_basis")
+    ledger_sha = str(capture.get("execution_ledger_surface_sha256") or "")
+    max_multiple = _strict_positive_number(numeric.get("max_multiple"))
+    return bool(
+        str(selected_lane.get("method") or "").strip().upper()
+        == "BREAKOUT_FAILURE"
+        and _normalized_order_vehicle(selected_lane.get("order_type")) == "LIMIT"
+        and str(forecast.get("direction") or "").strip().upper() == "RANGE"
+        and str(forecast.get("calibration_name") or "").strip().lower()
+        == "directional_forecast_range"
+        and selected_lane.get("edge_basis") == "EXACT_VEHICLE_TAKE_PROFIT"
+        and capture.get("exact_vehicle_edge_proven") is True
+        and SHA256_RE.fullmatch(ledger_sha)
+        and isinstance(forecast_basis, Mapping)
+        and isinstance(numeric_basis, Mapping)
+        and dict(forecast_basis) == dict(numeric_basis)
+        and str(forecast_basis.get("basis") or "").strip().upper()
+        == "EXACT_TP_PROVEN_HARVEST"
+        and str(forecast_basis.get("execution_ledger_surface_sha256") or "")
+        == ledger_sha
+        and inputs.get("range_trade_economic_basis_valid") is True
+        and numeric.get("reason")
+        == "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT"
+        and numeric.get("execution_cost_floor_valid") is True
+        and geometry.get("range_rails_bound") is True
+        and geometry.get("forecast_outcome_conservatively_contains_order") is True
+        and geometry.get("range_risk_cap_passed") is True
+        and geometry.get("passed") is True
+        and max_multiple is not None
+        and math.isclose(
+            max_multiple,
+            1.0,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    )
+
+
+def _selected_lane_forecast_context_binding_error(
+    *,
+    board: Mapping[str, Any],
+    selected_lane: Mapping[str, Any],
+    lane_id: str,
+) -> str | None:
+    """Re-prove the selected context binding before accepting GPT allocation."""
+
+    match_count = board.get("selected_lane_match_count")
+    if (
+        isinstance(match_count, bool)
+        or not isinstance(match_count, int)
+        or match_count != 1
+        or board.get("selected_lane_unique") is not True
+        or str(board.get("selected_lane_id") or "") != lane_id
+    ):
+        return "capital-allocation board does not bind exactly one selected lane"
+    if board.get("forecast_context_scope") != "SELECTED_LANE":
+        return "selected trade allocation requires SELECTED_LANE forecast context"
+    scoped = board.get("forecast_context")
+    if not isinstance(scoped, Mapping):
+        return "selected trade allocation lacks a forecast-context receipt"
+    if set(scoped) != {
+        "pair",
+        "direction",
+        "source_lane_id",
+        "source_generated_at_utc",
+        "candidate_count",
+        "valid_candidate_count",
+        "invalid_candidate_count",
+        "distinct_context_sha256_count",
+        "technical_context",
+    }:
+        return "selected forecast-context receipt has an unexpected schema"
+    if (
+        _strict_nonnegative_int(scoped.get("candidate_count")) != 1
+        or _strict_nonnegative_int(scoped.get("valid_candidate_count")) != 1
+        or _strict_nonnegative_int(scoped.get("invalid_candidate_count")) != 0
+        or _strict_nonnegative_int(
+            scoped.get("distinct_context_sha256_count")
+        )
+        != 1
+    ):
+        return "selected forecast-context receipt does not prove one valid candidate"
+    if str(scoped.get("source_lane_id") or "") != lane_id:
+        return "selected forecast context is bound to a different source lane"
+    if scoped.get("source_generated_at_utc") != board.get(
+        "order_intents_generated_at_utc"
+    ):
+        return "selected forecast context is bound to a different intent snapshot"
+
+    pair = str(selected_lane.get("pair") or "").strip().upper()
+    forecast = (
+        selected_lane.get("forecast")
+        if isinstance(selected_lane.get("forecast"), Mapping)
+        else None
+    )
+    if not pair or pair not in DEFAULT_TRADER_PAIRS or not isinstance(forecast, Mapping):
+        return "selected lane lacks a supported pair or forecast receipt"
+    forecast_binding = _directional_forecast_trade_binding(
+        side=selected_lane.get("side"),
+        forecast_direction=forecast.get("direction"),
+        calibration_name=forecast.get("calibration_name"),
+        method=selected_lane.get("method"),
+    )
+    if not forecast_binding["direction_side_aligned"]:
+        return "selected forecast direction contradicts the executable order side"
+    if not forecast_binding["calibration_identity_valid"]:
+        return "selected forecast calibration identity contradicts its direction"
+    if str(scoped.get("pair") or "") != pair:
+        return "selected forecast-context pair does not match the lane"
+    if scoped.get("direction") != forecast_binding["forecast_direction"]:
+        return "selected forecast-context direction does not match the lane"
+
+    current_price = forecast.get("current_price")
+    lane_evidence = normalize_forecast_technical_context_evidence(
+        forecast.get("technical_context"),
+        pair=pair,
+        current_price=current_price,
+    )
+    scoped_evidence = normalize_forecast_technical_context_evidence(
+        scoped.get("technical_context"),
+        pair=pair,
+        current_price=current_price,
+    )
+    if (
+        lane_evidence.get("status") != "VALID"
+        or scoped_evidence.get("status") != "VALID"
+    ):
+        return "selected lane forecast context is missing, invalid, or unbound"
+    lane_evidence_sha = str(lane_evidence.get("evidence_sha256") or "")
+    scoped_evidence_sha = str(scoped_evidence.get("evidence_sha256") or "")
+    lane_context_sha = str(lane_evidence.get("context_sha256") or "")
+    scoped_context_sha = str(scoped_evidence.get("context_sha256") or "")
+    if (
+        not SHA256_RE.fullmatch(lane_evidence_sha)
+        or lane_evidence_sha != scoped_evidence_sha
+        or not SHA256_RE.fullmatch(lane_context_sha)
+        or lane_context_sha != scoped_context_sha
+    ):
+        return "selected forecast-context digest does not match its source lane"
+    regime_family_binding = _regime_family_allocation_binding(
+        technical_context=lane_evidence,
+        pair=pair,
+        side=selected_lane.get("side"),
+        method=selected_lane.get("method"),
+        forecast_direction=forecast.get("direction"),
+        explicit_receipt_sha256=forecast.get(
+            "regime_family_weighting_sha256"
+        ),
+        explicit_selected_method=forecast.get(
+            "regime_family_selected_method"
+        ),
+        explicit_family_direction=forecast.get("regime_family_direction"),
+        range_tp_proven_breakout_failure=(
+            _selected_lane_range_tp_breakout_failure_proven(selected_lane)
+        ),
+        canonical_policy_sources=board.get("dynamic_tf_policy_sources"),
+        canonical_forecast_context_sha256=board.get(
+            "canonical_forecast_context_sha256"
+        ),
+    )
+    if not regime_family_binding["current_context_bound"]:
+        return "selected lane forecast context is legacy/intermediate and cannot allocate"
+    if not regime_family_binding["canonical_policy_sources_bound"]:
+        return "selected lane dynamic-TF policy sources do not match the evidence packet"
+    if not regime_family_binding["canonical_forecast_context_bound"]:
+        return "selected lane technical context does not match canonical chart/source/quote rebuild"
+    if not regime_family_binding["receipt_valid"]:
+        return "selected lane lacks a valid regime-family weighting receipt"
+    if not regime_family_binding["sha_bound"]:
+        return "selected lane regime-family receipt SHA is unbound"
+    if (
+        not regime_family_binding["selected_method_bound"]
+        or not regime_family_binding["executable_method_bound"]
+    ):
+        return "selected lane method contradicts the regime-family receipt"
+    if not regime_family_binding["family_direction_bound"]:
+        return "selected lane family direction is unbound"
+    if not regime_family_binding["direction_consistent"]:
+        return "selected lane forecast direction contradicts family evidence"
+    if not regime_family_binding["actionable_direction_bound"]:
+        return "selected lane family direction is non-actionable or has no coverage"
+    scoped_body = scoped_evidence.get("technical_context_v1")
+    scoped_receipt = (
+        scoped_body.get("regime_family_weighting")
+        if isinstance(scoped_body, Mapping)
+        and isinstance(scoped_body.get("regime_family_weighting"), Mapping)
+        else {}
+    )
+    if scoped_receipt.get("receipt_sha256") != regime_family_binding[
+        "receipt_sha256"
+    ]:
+        return "selected regime-family receipt does not match scoped context"
+    return None
 
 
 def revalidate_codex_market_read_artifacts(
@@ -988,6 +1249,21 @@ def validate_codex_market_read_provenance(
             (
                 "AI_EXECUTION_COST_FLOOR_PROVENANCE_INVALID",
                 "schema-v2 TRADE requires the exact ledger-derived execution-cost floor digest",
+            )
+        )
+    claimed_edge_basis = str(
+        claimed.get("capital_allocation_edge_basis") or ""
+    )
+    if action.upper() == "TRADE" and claimed_edge_basis not in {
+        "EXACT_VEHICLE_ALL_EXIT_NET",
+        "EXACT_VEHICLE_TAKE_PROFIT",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "HEDGE_RISK_REDUCTION",
+    }:
+        issues.append(
+            (
+                "AI_CAPITAL_ALLOCATION_EDGE_BASIS_INVALID",
+                "schema-v2 TRADE requires the exact board-selected edge basis",
             )
         )
     if claimed.get("model") != "gpt-5.5" or str(claimed.get("reasoning_effort") or "").lower() != "high":
@@ -1580,6 +1856,12 @@ def _build_evidence_packet(
         profitability_acceptance=profitability,
         execution_ledger_surface=execution_ledger_surface,
         broker_snapshot=broker,
+        dynamic_tf_policy_sources=_dynamic_tf_packet_source_descriptors(
+            sources
+        ),
+        pair_charts_path=normalized_sources.get("pair_charts"),
+        calendar_path=normalized_sources.get("calendar"),
+        strategy_profile_path=normalized_sources.get("strategy_profile"),
         as_of=prepared_at,
     )
     allocation_board_sha = canonical_json_sha256(capital_allocation_board)
@@ -1616,6 +1898,12 @@ def _build_evidence_packet(
         "execution_ledger_allocation_surface": execution_ledger_surface,
         "capital_allocation_board": capital_allocation_board,
         "capital_allocation_board_sha256": allocation_board_sha,
+        "forecast_context_scope": capital_allocation_board.get(
+            "forecast_context_scope"
+        ),
+        "forecast_context": deepcopy(
+            capital_allocation_board.get("forecast_context")
+        ),
         "contract": {
             "overlay_author": CODEX_MARKET_READ_AUTHOR,
             "allowed_overlay_fields": sorted(OVERLAY_ALLOWED_FIELDS),
@@ -1996,6 +2284,82 @@ def _forecast_replay_exit_policy_validation(value: Any) -> dict[str, Any] | None
     }
 
 
+def _rebuild_canonical_forecast_context(
+    result: Mapping[str, Any] | None,
+    *,
+    pair_charts_path: Path | None,
+    calendar_path: Path | None,
+    strategy_profile_path: Path | None,
+    broker_snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Rebuild context only from packet-authoritative chart/source/quote facts."""
+
+    if (
+        not isinstance(result, Mapping)
+        or pair_charts_path is None
+        or calendar_path is None
+        or strategy_profile_path is None
+    ):
+        return None
+    intent = result.get("intent")
+    if not isinstance(intent, Mapping):
+        return None
+    pair = str(intent.get("pair") or "").strip().upper()
+    if pair not in DEFAULT_TRADER_PAIRS:
+        return None
+    try:
+        payload = json.loads(pair_charts_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    charts = payload.get("charts") if isinstance(payload, Mapping) else None
+    matches = [
+        chart
+        for chart in charts if isinstance(chart, Mapping)
+        and str(chart.get("pair") or "").strip().upper() == pair
+    ] if isinstance(charts, list) else []
+    if len(matches) != 1:
+        return None
+    canonical_chart = dict(matches[0])
+    if isinstance(payload, Mapping):
+        packet_generated_at = payload.get("generated_at_utc")
+        if packet_generated_at is not None:
+            canonical_chart.setdefault(
+                "generated_at_utc",
+                packet_generated_at,
+            )
+    quotes = broker_snapshot.get("quotes")
+    quote = quotes.get(pair) if isinstance(quotes, Mapping) else None
+    if not isinstance(quote, Mapping):
+        return None
+    bid = _strict_positive_number(quote.get("bid"))
+    ask = _strict_positive_number(quote.get("ask"))
+    if bid is None or ask is None or ask <= bid:
+        return None
+    try:
+        evaluated_at = _parse_utc(
+            broker_snapshot.get("fetched_at_utc"),
+            code="DYNAMIC_TF_POLICY_CANONICAL_CLOCK_INVALID",
+        )
+        spread_pips = (ask - bid) * float(instrument_pip_factor(pair))
+        return build_forecast_technical_context(
+            canonical_chart,
+            pair=pair,
+            current_price=(bid + ask) / 2.0,
+            spread_pips=spread_pips,
+            calendar_path=calendar_path,
+            strategy_profile_path=strategy_profile_path,
+            now_utc=evaluated_at,
+        )
+    except (
+        MarketReadOverlayError,
+        OSError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
+        return None
+
+
 def _build_capital_allocation_board(
     *,
     baseline: Mapping[str, Any],
@@ -2003,22 +2367,19 @@ def _build_capital_allocation_board(
     profitability_acceptance: Mapping[str, Any],
     execution_ledger_surface: Mapping[str, Any],
     broker_snapshot: Mapping[str, Any],
+    dynamic_tf_policy_sources: Mapping[str, Any],
+    pair_charts_path: Path | None,
+    calendar_path: Path | None,
+    strategy_profile_path: Path | None,
     as_of: datetime,
 ) -> dict[str, Any]:
     baseline_action = str(baseline.get("action") or "").strip().upper()
     selected_lane_id = str(baseline.get("selected_lane_id") or "").strip() or None
-    selected_result: Mapping[str, Any] | None = None
-    results = order_intents.get("results")
-    if isinstance(results, list) and selected_lane_id:
-        selected_result = next(
-            (
-                item
-                for item in results
-                if isinstance(item, Mapping)
-                and str(item.get("lane_id") or "").strip() == selected_lane_id
-            ),
-            None,
-        )
+    selected_matches = _order_intent_lane_matches(order_intents, selected_lane_id)
+    selected_result: Mapping[str, Any] | None = (
+        selected_matches[0] if len(selected_matches) == 1 else None
+    )
+    selected_lane_match_count = len(selected_matches)
 
     metrics = (
         profitability_acceptance.get("metrics")
@@ -2084,6 +2445,18 @@ def _build_capital_allocation_board(
         execution_ledger_surface,
         field="exact_vehicle_take_profit",
     )
+    canonical_forecast_context = _rebuild_canonical_forecast_context(
+        selected_result,
+        pair_charts_path=pair_charts_path,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        broker_snapshot=broker_snapshot,
+    )
+    canonical_forecast_context_sha256 = (
+        str(canonical_forecast_context.get("context_sha256") or "")
+        if isinstance(canonical_forecast_context, Mapping)
+        else None
+    )
     lane = _capital_allocation_lane(
         selected_result,
         current_exact_vehicle_net_metrics=current_exact_net,
@@ -2093,6 +2466,10 @@ def _build_capital_allocation_board(
         ),
         account_nav_jpy=_broker_snapshot_nav_jpy(broker_snapshot),
         broker_snapshot=broker_snapshot,
+        dynamic_tf_policy_sources=dynamic_tf_policy_sources,
+        canonical_forecast_context_sha256=(
+            canonical_forecast_context_sha256
+        ),
         execution_cost_floor=(
             execution_cost_floor_from_surface(
                 execution_ledger_surface,
@@ -2103,12 +2480,30 @@ def _build_capital_allocation_board(
             else None
         ),
     )
+    forecast_context_scope, forecast_context = _allocation_board_forecast_context(
+        baseline=baseline,
+        order_intents=order_intents,
+        selected_result=selected_result,
+        selected_lane=lane,
+        selected_lane_id=selected_lane_id,
+        selected_lane_match_count=selected_lane_match_count,
+    )
     return {
         "schema_version": 2,
         "baseline_action": baseline_action,
         "selected_lane_id": selected_lane_id,
+        "selected_lane_match_count": selected_lane_match_count,
+        "selected_lane_unique": selected_lane_match_count == 1,
         "order_intents_generated_at_utc": order_intents.get("generated_at_utc"),
         "selected_lane": lane,
+        "dynamic_tf_policy_sources": deepcopy(
+            dict(dynamic_tf_policy_sources)
+        ),
+        "canonical_forecast_context_sha256": (
+            canonical_forecast_context_sha256
+        ),
+        "forecast_context_scope": forecast_context_scope,
+        "forecast_context": forecast_context,
         "execution_ledger": {
             "parse_status": execution_ledger_surface.get("parse_status"),
             "coverage_start_utc": execution_ledger_surface.get(
@@ -2129,6 +2524,589 @@ def _build_capital_allocation_board(
     }
 
 
+def _allocation_board_forecast_context(
+    *,
+    baseline: Mapping[str, Any],
+    order_intents: Mapping[str, Any],
+    selected_result: Mapping[str, Any] | None,
+    selected_lane: Mapping[str, Any] | None,
+    selected_lane_id: str | None,
+    selected_lane_match_count: int,
+) -> tuple[str, dict[str, Any]]:
+    """Select one pair/direction-bound point-in-time forecast context.
+
+    All candidates belong to the same generated order-intent snapshot.  A
+    forced-prediction lookup accepts duplicate lanes only when their verified
+    context SHA is identical; competing SHAs are UNKNOWN instead of being
+    resolved by append order or score.
+    """
+
+    generated_at = order_intents.get("generated_at_utc")
+    baseline_action = str(baseline.get("action") or "").strip().upper()
+    if (
+        baseline_action == "TRADE"
+        and selected_lane_id
+        and selected_lane_match_count != 1
+    ):
+        reason = (
+            "FORECAST_TECHNICAL_CONTEXT_SELECTED_LANE_NOT_FOUND"
+            if selected_lane_match_count == 0
+            else "FORECAST_TECHNICAL_CONTEXT_SELECTED_LANE_DUPLICATE"
+        )
+        return "SELECTED_LANE_INVALID", {
+            "pair": None,
+            "direction": None,
+            "source_lane_id": selected_lane_id,
+            "source_generated_at_utc": generated_at,
+            "candidate_count": selected_lane_match_count,
+            "valid_candidate_count": 0,
+            "invalid_candidate_count": selected_lane_match_count,
+            "distinct_context_sha256_count": 0,
+            "technical_context": unknown_forecast_technical_context_evidence(reason),
+        }
+    if isinstance(selected_result, Mapping):
+        intent = (
+            selected_result.get("intent")
+            if isinstance(selected_result.get("intent"), Mapping)
+            else {}
+        )
+        metadata = (
+            intent.get("metadata")
+            if isinstance(intent.get("metadata"), Mapping)
+            else {}
+        )
+        pair = str(intent.get("pair") or "").strip().upper() or None
+        forecast_binding = _directional_forecast_trade_binding(
+            side=intent.get("side"),
+            forecast_direction=metadata.get("forecast_direction"),
+            calibration_name=metadata.get(
+                "forecast_directional_calibration_name"
+            ),
+            method=(
+                intent.get("market_context", {}).get("method")
+                if isinstance(intent.get("market_context"), Mapping)
+                else None
+            ),
+        )
+        side_direction = forecast_binding["side_direction"]
+        forecast_direction = forecast_binding["forecast_direction"]
+        lane_forecast = (
+            selected_lane.get("forecast")
+            if isinstance(selected_lane, Mapping)
+            and isinstance(selected_lane.get("forecast"), Mapping)
+            else {}
+        )
+        evidence = normalize_forecast_technical_context_evidence(
+            lane_forecast.get("technical_context"),
+            pair=pair,
+            current_price=metadata.get("forecast_current_price"),
+        )
+        if not forecast_binding["direction_side_aligned"]:
+            evidence = unknown_forecast_technical_context_evidence(
+                "FORECAST_TECHNICAL_CONTEXT_DIRECTION_MISMATCH"
+            )
+        elif not forecast_binding["calibration_identity_valid"]:
+            evidence = unknown_forecast_technical_context_evidence(
+                "FORECAST_TECHNICAL_CONTEXT_CALIBRATION_MISMATCH"
+            )
+        return "SELECTED_LANE", {
+            "pair": pair,
+            "direction": forecast_direction or side_direction,
+            "source_lane_id": str(selected_result.get("lane_id") or "") or None,
+            "source_generated_at_utc": generated_at,
+            "candidate_count": 1,
+            "valid_candidate_count": (
+                1 if evidence.get("status") == "VALID" else 0
+            ),
+            "invalid_candidate_count": (
+                0 if evidence.get("status") == "VALID" else 1
+            ),
+            "distinct_context_sha256_count": (
+                1 if evidence.get("status") == "VALID" else 0
+            ),
+            "technical_context": evidence,
+        }
+
+    market_read = (
+        baseline.get("market_read_first")
+        if isinstance(baseline.get("market_read_first"), Mapping)
+        else {}
+    )
+    forced = (
+        market_read.get("best_trade_if_forced")
+        if isinstance(market_read.get("best_trade_if_forced"), Mapping)
+        else {}
+    )
+    pair = str(forced.get("pair") or "").strip().upper() or None
+    direction = _forecast_direction_label(forced.get("direction"))
+    if pair is None or direction is None:
+        return "MISSING", {
+            "pair": pair,
+            "direction": direction,
+            "source_lane_id": None,
+            "source_generated_at_utc": generated_at,
+            "candidate_count": 0,
+            "valid_candidate_count": 0,
+            "invalid_candidate_count": 0,
+            "distinct_context_sha256_count": 0,
+            "technical_context": unknown_forecast_technical_context_evidence(
+                "FORECAST_TECHNICAL_CONTEXT_SCOPE_MISSING"
+            ),
+        }
+
+    matching_count = 0
+    valid_candidates: list[tuple[str, dict[str, Any]]] = []
+    invalid_count = 0
+    results = order_intents.get("results")
+    for result in results if isinstance(results, list) else []:
+        if not isinstance(result, Mapping):
+            continue
+        intent = (
+            result.get("intent")
+            if isinstance(result.get("intent"), Mapping)
+            else {}
+        )
+        metadata = (
+            intent.get("metadata")
+            if isinstance(intent.get("metadata"), Mapping)
+            else {}
+        )
+        if str(intent.get("pair") or "").strip().upper() != pair:
+            continue
+        if _forecast_direction_label(metadata.get("forecast_direction")) != direction:
+            continue
+        matching_count += 1
+        if direction in {"UP", "DOWN"} and _forecast_direction_label(
+            intent.get("side")
+        ) != direction:
+            invalid_count += 1
+            continue
+        evidence = normalize_forecast_technical_context_evidence(
+            metadata.get("forecast_technical_context"),
+            pair=pair,
+            current_price=metadata.get("forecast_current_price"),
+        )
+        if evidence.get("status") != "VALID":
+            invalid_count += 1
+            continue
+        valid_candidates.append((str(result.get("lane_id") or ""), evidence))
+
+    distinct_shas = {
+        str(evidence.get("context_sha256") or "")
+        for _lane_id, evidence in valid_candidates
+        if evidence.get("context_sha256")
+    }
+    if invalid_count > 0 or len(distinct_shas) != 1:
+        reason = (
+            "FORECAST_TECHNICAL_CONTEXT_CANDIDATE_INVALID"
+            if invalid_count > 0
+            else (
+                "FORECAST_TECHNICAL_CONTEXT_NOT_FOUND"
+                if not distinct_shas
+                else "FORECAST_TECHNICAL_CONTEXT_AMBIGUOUS"
+            )
+        )
+        return "FORCED_PREDICTION", {
+            "pair": pair,
+            "direction": direction,
+            "source_lane_id": None,
+            "source_generated_at_utc": generated_at,
+            "candidate_count": matching_count,
+            "valid_candidate_count": len(valid_candidates),
+            "invalid_candidate_count": invalid_count,
+            "distinct_context_sha256_count": len(distinct_shas),
+            "technical_context": unknown_forecast_technical_context_evidence(reason),
+        }
+
+    valid_candidates.sort(key=lambda item: (item[0], item[1]["evidence_sha256"]))
+    source_lane_id, evidence = valid_candidates[0]
+    return "FORCED_PREDICTION", {
+        "pair": pair,
+        "direction": direction,
+        "source_lane_id": source_lane_id or None,
+        "source_generated_at_utc": generated_at,
+        "candidate_count": matching_count,
+        "valid_candidate_count": len(valid_candidates),
+        "invalid_candidate_count": 0,
+        "distinct_context_sha256_count": 1,
+        "technical_context": evidence,
+    }
+
+
+def _forecast_direction_label(value: Any) -> str | None:
+    normalized = _normalized_direction(value)
+    if normalized == "LONG":
+        return "UP"
+    if normalized == "SHORT":
+        return "DOWN"
+    return normalized
+
+
+def _normalized_order_vehicle(value: Any) -> str | None:
+    order_type = str(value or "").strip().upper()
+    vehicle = {
+        "STOP_ENTRY": "STOP",
+        "STOP-ENTRY": "STOP",
+        "STOP_ORDER": "STOP",
+        "LIMIT_ORDER": "LIMIT",
+        "MARKET_ORDER": "MARKET",
+    }.get(order_type, order_type)
+    return vehicle if vehicle in {"LIMIT", "MARKET", "STOP"} else None
+
+
+def _directional_forecast_trade_binding(
+    *,
+    side: Any,
+    forecast_direction: Any,
+    calibration_name: Any,
+    method: Any,
+) -> dict[str, Any]:
+    """Return the lane-aware forecast/calibration binding for live sizing.
+
+    Context integrity alone cannot authorize a lane: the verified body must be
+    attached to the same directional thesis the order will execute.  Keep this
+    one binding shared by board construction, numeric sizing, and the final
+    capital-allocation verifier so pre-bounded HEDGE/SCOUT paths cannot bypass
+    it at a different layer. RANGE is not coerced into UP/DOWN: only the two
+    range-compatible methods can carry a side, and their family/proof direction
+    is checked independently below.
+    """
+
+    side_text = str(side or "").strip().upper()
+    direction_text = str(forecast_direction or "").strip().upper()
+    method_text = str(method or "").strip().upper()
+    side_direction = (
+        "UP"
+        if side_text == "LONG"
+        else "DOWN"
+        if side_text == "SHORT"
+        else None
+    )
+    normalized_direction = (
+        direction_text if direction_text in {"UP", "DOWN", "RANGE"} else None
+    )
+    expected_calibration_name = (
+        f"directional_forecast_{normalized_direction.lower()}"
+        if normalized_direction is not None
+        else None
+    )
+    normalized_calibration_name = str(calibration_name or "").strip().lower()
+    range_method_bound = bool(
+        normalized_direction == "RANGE"
+        and method_text in {"RANGE_ROTATION", "BREAKOUT_FAILURE"}
+    )
+    return {
+        "side_direction": side_direction,
+        "forecast_direction": normalized_direction,
+        "method": method_text or None,
+        "range_method_bound": range_method_bound,
+        "direction_side_aligned": bool(
+            side_direction is not None
+            and (
+                normalized_direction == side_direction
+                or range_method_bound
+            )
+        ),
+        "calibration_name": normalized_calibration_name or None,
+        "expected_calibration_name": expected_calibration_name,
+        "calibration_identity_valid": bool(
+            expected_calibration_name is not None
+            and normalized_calibration_name == expected_calibration_name
+        ),
+    }
+
+
+def _dynamic_tf_policy_source_matches_packet(
+    policy_source: object,
+    packet_source: object,
+) -> bool:
+    if not isinstance(policy_source, Mapping) or not isinstance(
+        packet_source, Mapping
+    ):
+        return False
+    if set(packet_source) != {"path", "exists", "sha256", "size_bytes"}:
+        return False
+    policy_path = policy_source.get("path")
+    packet_path = packet_source.get("path")
+    if not isinstance(policy_path, str) or not isinstance(packet_path, str):
+        return False
+    try:
+        normalized_policy_path = str(_normalize_source_path(policy_path))
+        normalized_packet_path = str(_normalize_source_path(packet_path))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if normalized_policy_path != normalized_packet_path:
+        return False
+    status = policy_source.get("status")
+    exists = packet_source.get("exists")
+    if not isinstance(exists, bool):
+        return False
+    if status == "MISSING":
+        return bool(
+            not exists
+            and policy_source.get("sha256") is None
+            and policy_source.get("byte_length") is None
+            and packet_source.get("sha256") is None
+            and packet_source.get("size_bytes") is None
+        )
+    if status == "NOT_APPLICABLE":
+        return bool(
+            policy_source.get("sha256") is None
+            and policy_source.get("byte_length") is None
+        )
+    if status not in {
+        "OK",
+        "INVALID_JSON",
+        "INVALID_ROOT",
+        "LIMIT_EXCEEDED",
+    } or not exists:
+        return False
+    policy_size = policy_source.get("byte_length")
+    packet_size = packet_source.get("size_bytes")
+    if (
+        isinstance(policy_size, bool)
+        or not isinstance(policy_size, int)
+        or packet_size != policy_size
+    ):
+        return False
+    policy_sha = policy_source.get("sha256")
+    if policy_sha is not None and packet_source.get("sha256") != policy_sha:
+        return False
+    return True
+
+
+def _dynamic_tf_policy_sources_bound(
+    body: Mapping[str, Any],
+    canonical_policy_sources: Mapping[str, Any] | None,
+) -> bool:
+    parent_source = body.get("dynamic_tf_policy_source_context")
+    if not isinstance(parent_source, Mapping) or not isinstance(
+        canonical_policy_sources, Mapping
+    ):
+        return False
+    return bool(
+        _dynamic_tf_policy_source_matches_packet(
+            parent_source.get("news_source"),
+            canonical_policy_sources.get("calendar"),
+        )
+        and _dynamic_tf_policy_source_matches_packet(
+            parent_source.get("strategy_profile_source"),
+            canonical_policy_sources.get("strategy_profile"),
+        )
+    )
+
+
+def _regime_family_allocation_binding(
+    *,
+    technical_context: Mapping[str, Any],
+    pair: Any,
+    side: Any,
+    method: Any,
+    forecast_direction: Any,
+    explicit_receipt_sha256: Any,
+    explicit_selected_method: Any,
+    explicit_family_direction: Any,
+    range_tp_proven_breakout_failure: bool = False,
+    canonical_policy_sources: Mapping[str, Any] | None = None,
+    canonical_forecast_context_sha256: Any = None,
+) -> dict[str, Any]:
+    """Re-prove receipt/context/intent identity before fresh allocation."""
+
+    body = (
+        technical_context.get("technical_context_v1")
+        if isinstance(technical_context.get("technical_context_v1"), Mapping)
+        else {}
+    )
+    receipt = (
+        body.get("regime_family_weighting")
+        if isinstance(body.get("regime_family_weighting"), Mapping)
+        else None
+    )
+    current_context_bound = forecast_technical_context_is_current_for_allocation(
+        body
+    )
+    canonical_policy_sources_bound = _dynamic_tf_policy_sources_bound(
+        body,
+        canonical_policy_sources,
+    )
+    expected_context_sha = str(canonical_forecast_context_sha256 or "")
+    canonical_forecast_context_bound = bool(
+        SHA256_RE.fullmatch(expected_context_sha)
+        and str(body.get("context_sha256") or "") == expected_context_sha
+    )
+    valid, receipt_error = verify_regime_family_weighting_receipt(
+        receipt,
+        pair=str(pair or "").strip().upper() or None,
+    )
+    source = (
+        receipt.get("source_identity")
+        if valid and isinstance(receipt, Mapping)
+        and isinstance(receipt.get("source_identity"), Mapping)
+        else {}
+    )
+    aggregate = (
+        receipt.get("aggregate")
+        if valid and isinstance(receipt, Mapping)
+        and isinstance(receipt.get("aggregate"), Mapping)
+        else {}
+    )
+    receipt_sha = str(receipt.get("receipt_sha256") or "") if valid and isinstance(receipt, Mapping) else ""
+    selected_method = source.get("selected_method")
+    family_direction = str(aggregate.get("direction") or "") or None
+    directional_coverage = _strict_positive_number(
+        aggregate.get("directional_coverage_weight")
+    )
+    explicit_sha = str(explicit_receipt_sha256 or "")
+    method_text = str(method or "").strip().upper()
+    explicit_method = (
+        str(explicit_selected_method).strip().upper()
+        if explicit_selected_method is not None
+        else None
+    )
+    direction_consistent, direction_reason = forecast_direction_consistency(
+        receipt,
+        forecast_direction=forecast_direction,
+    )
+    normalized_forecast_direction = str(forecast_direction or "").strip().upper()
+    side_text = str(side or "").strip().upper()
+    side_direction = (
+        "UP"
+        if side_text == "LONG"
+        else "DOWN"
+        if side_text == "SHORT"
+        else None
+    )
+    failed_break = (
+        body.get("m5_failed_break_evidence")
+        if isinstance(body.get("m5_failed_break_evidence"), Mapping)
+        else None
+    )
+    failed_break_side = failed_break_direction(failed_break)
+    failed_break_forecast_direction = (
+        "UP"
+        if failed_break_side == "LONG"
+        else "DOWN"
+        if failed_break_side == "SHORT"
+        else None
+    )
+    breakout_failure_method = method_text == "BREAKOUT_FAILURE"
+    failed_break_direction_bound = bool(
+        failed_break_forecast_direction is not None
+        and failed_break_forecast_direction == side_direction
+    )
+    opposite_side_direction = (
+        "DOWN"
+        if side_direction == "UP"
+        else "UP"
+        if side_direction == "DOWN"
+        else None
+    )
+    range_rotation_method = method_text == "RANGE_ROTATION"
+    forecast_side_bound = bool(
+        side_direction is not None
+        and (
+            normalized_forecast_direction == side_direction
+            or (
+                range_rotation_method
+                and normalized_forecast_direction == "RANGE"
+            )
+            or (
+                breakout_failure_method
+                and normalized_forecast_direction == "RANGE"
+                and range_tp_proven_breakout_failure is True
+            )
+        )
+    )
+    actionable_direction_bound = bool(
+        (
+            breakout_failure_method
+            and forecast_side_bound
+            and failed_break_direction_bound
+            and family_direction != opposite_side_direction
+        )
+        or (
+            not breakout_failure_method
+            and forecast_side_bound
+            and family_direction in {"UP", "DOWN"}
+            and family_direction == side_direction
+            and directional_coverage is not None
+        )
+    )
+    sha_bound = bool(
+        valid
+        and SHA256_RE.fullmatch(receipt_sha)
+        and explicit_sha == receipt_sha
+    )
+    selected_method_bound = explicit_method == selected_method
+    family_direction_bound = explicit_family_direction == family_direction
+    # NONE is deliberately not an executable method. TRANSITION/UNKNOWN and
+    # BREAKOUT_PENDING therefore cannot inherit permission from a lane method.
+    executable_method_bound = bool(
+        selected_method
+        and method_text
+        and method_text == selected_method
+    )
+    passed = bool(
+        technical_context.get("status") == "VALID"
+        and current_context_bound
+        and canonical_policy_sources_bound
+        and canonical_forecast_context_bound
+        and valid
+        and sha_bound
+        and selected_method_bound
+        and family_direction_bound
+        and executable_method_bound
+        and direction_consistent
+        and forecast_side_bound
+        and actionable_direction_bound
+    )
+    return {
+        "passed": passed,
+        "receipt_valid": valid,
+        "current_context_bound": current_context_bound,
+        "canonical_policy_sources_bound": canonical_policy_sources_bound,
+        "canonical_forecast_context_bound": canonical_forecast_context_bound,
+        "receipt_error": receipt_error,
+        "receipt_sha256": receipt_sha or None,
+        "sha_bound": sha_bound,
+        "selected_method": selected_method,
+        "selected_method_bound": selected_method_bound,
+        "executable_method_bound": executable_method_bound,
+        "family_direction": family_direction,
+        "family_direction_bound": family_direction_bound,
+        "direction_consistent": direction_consistent,
+        "direction_reason": direction_reason,
+        "directional_coverage_weight": directional_coverage,
+        "side_direction": side_direction,
+        "forecast_side_bound": forecast_side_bound,
+        "range_tp_proven_breakout_failure": bool(
+            range_tp_proven_breakout_failure
+        ),
+        "failed_break_side": failed_break_side,
+        "failed_break_direction_bound": failed_break_direction_bound,
+        "actionable_direction_bound": actionable_direction_bound,
+    }
+
+
+def _order_intent_lane_matches(
+    order_intents: Mapping[str, Any],
+    lane_id: str | None,
+) -> list[Mapping[str, Any]]:
+    """Return every exact lane-id match so allocation cannot pick by order."""
+
+    if not lane_id:
+        return []
+    results = order_intents.get("results")
+    if not isinstance(results, list):
+        return []
+    return [
+        item
+        for item in results
+        if isinstance(item, Mapping)
+        and str(item.get("lane_id") or "").strip() == lane_id
+    ]
+
+
 def _selected_execution_ledger_allocation_surface(
     surface: Mapping[str, Any],
     *,
@@ -2144,18 +3122,13 @@ def _selected_execution_ledger_allocation_surface(
     """
 
     selected_lane_id = str(baseline.get("selected_lane_id") or "").strip()
-    selected_result: Mapping[str, Any] | None = None
-    results = order_intents.get("results")
-    if selected_lane_id and isinstance(results, list):
-        selected_result = next(
-            (
-                row
-                for row in results
-                if isinstance(row, Mapping)
-                and str(row.get("lane_id") or "").strip() == selected_lane_id
-            ),
-            None,
-        )
+    selected_matches = _order_intent_lane_matches(
+        order_intents,
+        selected_lane_id or None,
+    )
+    selected_result: Mapping[str, Any] | None = (
+        selected_matches[0] if len(selected_matches) == 1 else None
+    )
     exact_key = _allocation_lane_exact_key(selected_result)
 
     def selected_rows(field: str) -> list[dict[str, Any]]:
@@ -2507,6 +3480,145 @@ def _exact_vehicle_take_profit_edge_proven(
     )
 
 
+def _tp_proven_harvest_range_economic_basis(
+    *,
+    intent: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    method: str,
+    positive_tp_edge: bool,
+    execution_ledger_surface_sha256: str,
+) -> dict[str, Any] | None:
+    """Return a strict passive TP HARVEST cohort receipt for RANGE.
+
+    The caller has already rebound the exact TP cohort to the current semantic
+    ledger surface.  This additionally rechecks the stronger live rotation
+    contract and its Wilson-stressed expectancy instead of treating a pooled TP
+    label as a trade probability.
+    """
+
+    if not positive_tp_edge or method not in {"RANGE_ROTATION", "BREAKOUT_FAILURE"}:
+        return None
+    if str(metadata.get("forecast_direction") or "").strip().upper() != "RANGE":
+        return None
+    vehicle = _normalized_order_vehicle(intent.get("order_type"))
+    # This is a passive rail/fade exception.  STOP is a momentum trigger and
+    # has no canonical RANGE TP_PROVEN geometry in the current contract.
+    if vehicle != "LIMIT":
+        return None
+    if str(metadata.get("position_intent") or "NEW").strip().upper() == "HEDGE":
+        return None
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return None
+    if str(metadata.get("tp_execution_mode") or "").strip().upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("tp_target_intent") or "").strip().upper() != "HARVEST":
+        return None
+    if str(metadata.get("opportunity_mode") or "").strip().upper() != "HARVEST":
+        return None
+    if str(metadata.get("positive_rotation_mode") or "").strip().upper() != "TP_PROVEN_HARVEST":
+        return None
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return None
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").strip().upper() != "TP_PROVEN_RELAXED":
+        return None
+
+    trades = _strict_nonnegative_int(metadata.get("capture_take_profit_trades"))
+    wins = _strict_nonnegative_int(metadata.get("capture_take_profit_wins"))
+    losses = _strict_nonnegative_int(metadata.get("capture_take_profit_losses"))
+    mirrored_trades = _strict_nonnegative_int(
+        metadata.get("positive_rotation_tp_trades")
+    )
+    mirrored_wins = _strict_nonnegative_int(
+        metadata.get("positive_rotation_tp_wins")
+    )
+    avg_win = _strict_positive_number(
+        metadata.get("capture_take_profit_avg_win_jpy")
+    )
+    loss_proxy = _strict_positive_number(
+        metadata.get("positive_rotation_loss_proxy_jpy")
+    )
+    stored_wilson = _strict_probability(
+        metadata.get("positive_rotation_tp_win_rate_lower")
+    )
+    stored_pessimistic = _strict_positive_number(
+        metadata.get("positive_rotation_pessimistic_expectancy_jpy")
+    )
+    if (
+        trades is None
+        or wins is None
+        or losses is None
+        or trades < 20
+        or wins > trades
+        or losses != 0
+        or mirrored_trades != trades
+        or mirrored_wins != wins
+        or avg_win is None
+        or loss_proxy is None
+        or stored_wilson is None
+        or stored_pessimistic is None
+    ):
+        return None
+    hit_rate = wins / trades
+    wilson_lower = hit_rate_wilson_lower(hit_rate, trades)
+    if wilson_lower is None:
+        return None
+    pessimistic = wilson_lower * avg_win - (1.0 - wilson_lower) * loss_proxy
+    if (
+        pessimistic <= 0.0
+        or not math.isclose(
+            stored_wilson,
+            round(wilson_lower, 6),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or not math.isclose(
+            stored_pessimistic,
+            round(pessimistic, 4),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        return None
+    return {
+        "basis": "EXACT_TP_PROVEN_HARVEST",
+        # These are conditional outcomes inside the exact TP exit cohort, not
+        # an unconditional probability that a fresh RANGE trade will win.
+        "conditional_tp_exit_win_rate": hit_rate,
+        "tp_exit_samples": trades,
+        "minimum_tp_exit_samples": 20,
+        "conditional_tp_exit_wilson95_lower": wilson_lower,
+        "stressed_harvest_expectancy_jpy": pessimistic,
+        "execution_ledger_surface_sha256": execution_ledger_surface_sha256,
+    }
+
+
+def _range_lane_economic_basis(
+    *,
+    intent: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    method: str,
+    exact_vehicle_net_edge: Mapping[str, Any],
+    positive_tp_edge: bool,
+    execution_ledger_surface_sha256: str,
+) -> dict[str, Any] | None:
+    """Select a RANGE trade-outcome basis without reusing box-hold precision."""
+
+    if str(metadata.get("forecast_direction") or "").strip().upper() != "RANGE":
+        return None
+    # Ordinary schema-v2 GPT numeric allocation is MARKET-only.  A positive
+    # all-exit LIMIT/STOP row is valuable evidence, but it cannot silently widen
+    # that transport contract.  The sole non-market RANGE path is the existing
+    # exact TP_PROVEN_HARVEST repair exception below.
+    _ = exact_vehicle_net_edge
+    return _tp_proven_harvest_range_economic_basis(
+        intent=intent,
+        metadata=metadata,
+        method=method,
+        positive_tp_edge=positive_tp_edge,
+        execution_ledger_surface_sha256=execution_ledger_surface_sha256,
+    )
+
+
 def _broker_snapshot_nav_jpy(broker_snapshot: Mapping[str, Any]) -> float | None:
     account = (
         broker_snapshot.get("account")
@@ -2568,6 +3680,7 @@ def _capital_allocation_numeric_ceiling(
     broker_quote_to_jpy: float | None,
     predictive_scout: bool,
     hedge: bool,
+    range_economic_basis: Mapping[str, Any] | None = None,
     forecast_current_binding_mode: str = "EXACT_SNAPSHOT_MID",
     execution_cost_floor: Mapping[str, Any] | None = None,
     market_entry_slippage_embedded: bool = False,
@@ -2577,6 +3690,15 @@ def _capital_allocation_numeric_ceiling(
     pair = str(intent.get("pair") or "").strip().upper()
     side = str(intent.get("side") or "").strip().upper()
     order_type = str(intent.get("order_type") or "").strip().upper()
+    order_vehicle = _normalized_order_vehicle(order_type)
+    intent_market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), Mapping)
+        else {}
+    )
+    cost_method = str(
+        intent_market_context.get("method") or "UNKNOWN"
+    ).strip().upper()
     raw_units = intent.get("units")
     units = (
         abs(raw_units)
@@ -2585,10 +3707,14 @@ def _capital_allocation_numeric_ceiling(
         and raw_units != 0
         else None
     )
-    forecast_direction = str(metadata.get("forecast_direction") or "").strip().upper()
-    calibration_name = str(
-        metadata.get("forecast_directional_calibration_name") or ""
-    ).strip().lower()
+    forecast_binding = _directional_forecast_trade_binding(
+        side=side,
+        forecast_direction=metadata.get("forecast_direction"),
+        calibration_name=metadata.get("forecast_directional_calibration_name"),
+        method=cost_method,
+    )
+    forecast_direction = str(forecast_binding["forecast_direction"] or "")
+    calibration_name = str(forecast_binding["calibration_name"] or "")
     entry_price = _strict_positive_number(risk_metrics.get("entry_price"))
     intent_entry = _strict_positive_number(intent.get("entry"))
     bid = _strict_positive_number(broker_bid)
@@ -2631,10 +3757,19 @@ def _capital_allocation_numeric_ceiling(
     forecast_invalidation = _strict_positive_number(
         metadata.get("forecast_invalidation_price")
     )
-    economic_hit_rate = _strict_probability(
+    forecast_range_low = _strict_positive_number(
+        metadata.get("forecast_range_low_price")
+    )
+    forecast_range_high = _strict_positive_number(
+        metadata.get("forecast_range_high_price")
+    )
+    range_support = _strict_positive_number(metadata.get("range_support"))
+    range_resistance = _strict_positive_number(metadata.get("range_resistance"))
+    range_entry_side = str(metadata.get("range_entry_side") or "").strip().upper()
+    forecast_economic_hit_rate = _strict_probability(
         metadata.get("forecast_directional_economic_hit_rate")
     )
-    economic_samples = _strict_nonnegative_int(
+    forecast_economic_samples = _strict_nonnegative_int(
         metadata.get("forecast_directional_economic_samples")
     )
     headline_hit_rate = _strict_probability(
@@ -2654,6 +3789,7 @@ def _capital_allocation_numeric_ceiling(
     reported_reward_risk = _strict_positive_number(risk_metrics.get("reward_risk"))
     spread_pips = _strict_nonnegative_number(risk_metrics.get("spread_pips"))
     nav_jpy = _strict_positive_number(account_nav_jpy)
+    intent_max_loss_jpy = _strict_positive_number(metadata.get("max_loss_jpy"))
     cost_floor = (
         dict(execution_cost_floor)
         if isinstance(execution_cost_floor, Mapping)
@@ -2676,21 +3812,15 @@ def _capital_allocation_numeric_ceiling(
     financing_stress_jpy_per_unit = _strict_nonnegative_number(
         cost_floor.get("financing_adverse_stress_jpy_per_unit")
     )
-    intent_market_context = (
-        intent.get("market_context")
-        if isinstance(intent.get("market_context"), Mapping)
-        else {}
-    )
-    cost_method = str(
-        intent_market_context.get("method") or "UNKNOWN"
-    ).strip().upper()
     metadata_method = str(metadata.get("method") or "").strip().upper()
     method_scope_consistent = bool(
         cost_method != "UNKNOWN"
         and (not metadata_method or metadata_method == cost_method)
     )
-    expected_cost_scope_key = "|".join(
-        (pair, side, cost_method, "MARKET")
+    expected_cost_scope_key = (
+        "|".join((pair, side, cost_method, order_vehicle))
+        if order_vehicle is not None
+        else ""
     )
     cost_floor_valid = bool(
         cost_floor.get("status") == "PASSED"
@@ -2701,22 +3831,83 @@ def _capital_allocation_numeric_ceiling(
         and financing_stress_jpy_per_unit is not None
         and cost_floor.get("spread_double_count_forbidden") is True
         and method_scope_consistent
+        and bool(expected_cost_scope_key)
         and str(cost_floor.get("scope_key") or "").upper()
         == expected_cost_scope_key
     )
 
-    direction_side_aligned = (
-        (side == "LONG" and forecast_direction == "UP")
-        or (side == "SHORT" and forecast_direction == "DOWN")
+    normalized_range_basis = (
+        dict(range_economic_basis)
+        if isinstance(range_economic_basis, Mapping)
+        else {}
     )
-    expected_calibration_name = (
-        f"directional_forecast_{forecast_direction.lower()}"
-        if forecast_direction in {"UP", "DOWN"}
+    range_basis_hit_rate = _strict_probability(
+        normalized_range_basis.get("conditional_tp_exit_win_rate")
+    )
+    range_basis_samples = _strict_nonnegative_int(
+        normalized_range_basis.get("tp_exit_samples")
+    )
+    range_basis_minimum_samples = _strict_nonnegative_int(
+        normalized_range_basis.get("minimum_tp_exit_samples")
+    )
+    range_basis_wilson = _strict_probability(
+        normalized_range_basis.get("conditional_tp_exit_wilson95_lower")
+    )
+    range_basis_stressed_expectancy = _strict_positive_number(
+        normalized_range_basis.get("stressed_harvest_expectancy_jpy")
+    )
+    range_basis_name = str(normalized_range_basis.get("basis") or "").strip().upper()
+    range_basis_digest = str(
+        normalized_range_basis.get("execution_ledger_surface_sha256") or ""
+    )
+    range_lane = bool(
+        forecast_binding["forecast_direction"] == "RANGE"
+        and forecast_binding["range_method_bound"]
+    )
+    recomputed_range_wilson = (
+        hit_rate_wilson_lower(range_basis_hit_rate, range_basis_samples)
+        if range_basis_hit_rate is not None
+        and range_basis_samples is not None
+        and range_basis_samples > 0
         else None
     )
+    range_economic_basis_valid = bool(
+        range_lane
+        and range_basis_name
+        == "EXACT_TP_PROVEN_HARVEST"
+        and range_basis_hit_rate is not None
+        and range_basis_samples is not None
+        and range_basis_minimum_samples is not None
+        and range_basis_samples >= range_basis_minimum_samples
+        and range_basis_stressed_expectancy is not None
+        and SHA256_RE.fullmatch(range_basis_digest)
+        and recomputed_range_wilson is not None
+        and range_basis_wilson is not None
+        and math.isclose(
+            range_basis_wilson,
+            recomputed_range_wilson,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    )
+    # RANGE precision is box integrity, while this receipt is conditional on a
+    # TP exit.  Neither is an unconditional side win probability, so the
+    # generic EV/Kelly inputs remain null on the prebounded exception.
+    economic_hit_rate = None if range_lane else forecast_economic_hit_rate
+    economic_samples = None if range_lane else forecast_economic_samples
+    minimum_economic_samples = (
+        None if range_lane else CAPITAL_ALLOCATION_FORECAST_MIN_SAMPLES
+    )
+    probability_basis = (
+        "PREBOUNDED_CONTRACT_NO_UNCONDITIONAL_TRADE_PROBABILITY"
+        if range_lane
+        else "DIRECTIONAL_ECONOMIC_HIT_RATE"
+    )
+
+    direction_side_aligned = bool(forecast_binding["direction_side_aligned"])
+    expected_calibration_name = forecast_binding["expected_calibration_name"]
     calibration_identity_valid = bool(
-        expected_calibration_name is not None
-        and calibration_name == expected_calibration_name
+        forecast_binding["calibration_identity_valid"]
     )
     mid_tolerance = (
         0.5 / (float(pip_factor) * 10.0) + 1e-12
@@ -2753,11 +3944,41 @@ def _capital_allocation_numeric_ceiling(
         signed_fresh_mid_drift_pips is not None
         and signed_fresh_mid_drift_pips >= -1e-9
     )
+    range_fresh_quote_inside_rails = bool(
+        range_lane
+        and forecast_range_low is not None
+        and forecast_range_high is not None
+        and bid is not None
+        and ask is not None
+        and forecast_range_low < bid < ask < forecast_range_high
+    )
+    range_fresh_limit_remains_passive = bool(
+        range_lane
+        and order_vehicle == "LIMIT"
+        and intent_entry is not None
+        and forecast_current is not None
+        and (
+            side == "LONG"
+            and ask is not None
+            and intent_entry < ask
+            and intent_entry < forecast_current
+            or side == "SHORT"
+            and bid is not None
+            and intent_entry > bid
+            and intent_entry > forecast_current
+        )
+    )
+    range_fresh_passive_rail_passed = bool(
+        range_fresh_quote_inside_rails
+        and range_fresh_limit_remains_passive
+    )
     forecast_current_binding_passed = bool(
         forecast_current_matches_broker_mid
         if normalized_current_binding_mode == "EXACT_SNAPSHOT_MID"
         else directional_fresh_market_drift_passed
         if normalized_current_binding_mode == "DIRECTIONAL_FRESH_MARKET_DRIFT"
+        else range_fresh_passive_rail_passed
+        if normalized_current_binding_mode == "RANGE_FRESH_PASSIVE_RAIL"
         else False
     )
     expected_spread_pips = (
@@ -2805,7 +4026,207 @@ def _capital_allocation_numeric_ceiling(
     price_reward_risk: float | None = None
     executable_forecast_target: float | None = None
     executable_forecast_invalidation: float | None = None
-    if side == "LONG":
+    range_rails_bound = False
+    range_expected_rail_entry: float | None = None
+    range_entry_exact_rail_bound = False
+    range_entry_within_rail_zone = False
+    if range_lane:
+        range_support_bound = bool(
+            forecast_range_low is not None
+            and range_support is not None
+            and math.isclose(
+                forecast_range_low,
+                range_support,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        range_resistance_bound = bool(
+            forecast_range_high is not None
+            and range_resistance is not None
+            and math.isclose(
+                forecast_range_high,
+                range_resistance,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        range_model_bound = bool(
+            str(metadata.get("geometry_model") or "").strip().upper()
+            == "RANGE_RAIL_LIMIT"
+        )
+        range_flags_bound = bool(
+            metadata.get("range_tp_is_inside_box") is True
+            and metadata.get("range_sl_outside_box") is True
+        )
+        range_entry_side_bound = bool(
+            side == "LONG" and range_entry_side == "SUPPORT"
+            or side == "SHORT" and range_entry_side == "RESISTANCE"
+        )
+        box_width = (
+            forecast_range_high - forecast_range_low
+            if forecast_range_low is not None
+            and forecast_range_high is not None
+            else None
+        )
+        rail_entry_buffer = (
+            max(
+                (1.0 / pip_factor) / 10.0,
+                min(
+                    spread_pips * 0.5 * (1.0 / pip_factor),
+                    box_width * 0.25,
+                ),
+            )
+            if pip_factor is not None
+            and spread_pips is not None
+            and box_width is not None
+            and box_width > 2.0 * ((1.0 / pip_factor) / 10.0)
+            else None
+        )
+        price_precision = (
+            3 if pip_factor == 100 else 5 if pip_factor == 10000 else None
+        )
+        range_expected_rail_entry = (
+            round(
+                forecast_range_low + rail_entry_buffer
+                if side == "LONG"
+                else forecast_range_high - rail_entry_buffer,
+                price_precision,
+            )
+            if rail_entry_buffer is not None
+            and forecast_range_low is not None
+            and forecast_range_high is not None
+            and price_precision is not None
+            and side in {"LONG", "SHORT"}
+            else None
+        )
+        range_entry_exact_rail_bound = bool(
+            range_expected_rail_entry is not None
+            and entry_price is not None
+            and math.isclose(
+                entry_price,
+                range_expected_rail_entry,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        range_entry_distance_from_rail = (
+            entry_price - forecast_range_low
+            if side == "LONG"
+            and entry_price is not None
+            and forecast_range_low is not None
+            else forecast_range_high - entry_price
+            if side == "SHORT"
+            and entry_price is not None
+            and forecast_range_high is not None
+            else None
+        )
+        range_entry_within_rail_zone = bool(
+            range_entry_distance_from_rail is not None
+            and box_width is not None
+            and range_entry_distance_from_rail > 0.0
+            and range_entry_distance_from_rail
+            <= box_width * 0.25 + 1e-12
+        )
+        range_entry_geometry_bound = bool(
+            range_entry_exact_rail_bound
+            if normalized_current_binding_mode == "EXACT_SNAPSHOT_MID"
+            else range_entry_within_rail_zone
+            if normalized_current_binding_mode == "RANGE_FRESH_PASSIVE_RAIL"
+            else False
+        )
+        range_rails_bound = bool(
+            forecast_range_low is not None
+            and forecast_range_high is not None
+            and forecast_range_low < forecast_range_high
+            and forecast_current is not None
+            and forecast_range_low < forecast_current < forecast_range_high
+            and range_fresh_quote_inside_rails
+            and range_support_bound
+            and range_resistance_bound
+            and range_model_bound
+            and range_flags_bound
+            and range_entry_side_bound
+            and range_entry_geometry_bound
+            and range_fresh_limit_remains_passive
+            and order_vehicle == "LIMIT"
+        )
+        if side == "LONG":
+            required_relation = (
+                "order_sl < range_low-half_spread <= entry < order_tp "
+                "<= range_high-half_spread"
+            )
+            executable_forecast_target = (
+                forecast_range_high - half_spread_price
+                if forecast_range_high is not None
+                and half_spread_price is not None
+                else None
+            )
+            executable_forecast_invalidation = (
+                forecast_range_low - half_spread_price
+                if forecast_range_low is not None
+                and half_spread_price is not None
+                else None
+            )
+            geometry_contains_order = bool(
+                range_rails_bound
+                and None
+                not in (
+                    executable_forecast_invalidation,
+                    entry_price,
+                    order_tp,
+                    executable_forecast_target,
+                    order_sl,
+                )
+                and order_sl < executable_forecast_invalidation
+                <= entry_price
+                < order_tp
+                <= executable_forecast_target
+            )
+            if geometry_contains_order:
+                price_reward_risk = (order_tp - entry_price) / (
+                    entry_price - order_sl
+                )
+        elif side == "SHORT":
+            required_relation = (
+                "order_sl > range_high+half_spread >= entry > order_tp "
+                ">= range_low+half_spread"
+            )
+            executable_forecast_target = (
+                forecast_range_low + half_spread_price
+                if forecast_range_low is not None
+                and half_spread_price is not None
+                else None
+            )
+            executable_forecast_invalidation = (
+                forecast_range_high + half_spread_price
+                if forecast_range_high is not None
+                and half_spread_price is not None
+                else None
+            )
+            geometry_contains_order = bool(
+                range_rails_bound
+                and None
+                not in (
+                    executable_forecast_target,
+                    order_tp,
+                    entry_price,
+                    executable_forecast_invalidation,
+                    order_sl,
+                )
+                and order_sl > executable_forecast_invalidation
+                >= entry_price
+                > order_tp
+                >= executable_forecast_target
+            )
+            if geometry_contains_order:
+                price_reward_risk = (entry_price - order_tp) / (
+                    order_sl - entry_price
+                )
+        else:
+            required_relation = "LONG_OR_SHORT_RANGE_RAIL_REQUIRED"
+            geometry_contains_order = False
+    elif side == "LONG":
         required_relation = (
             "order_sl <= forecast_invalidation-half_spread < forecast_current "
             "<= entry < order_tp <= forecast_target-half_spread"
@@ -2877,7 +4298,8 @@ def _capital_allocation_numeric_ceiling(
 
     p_lower = (
         hit_rate_wilson_lower(economic_hit_rate, economic_samples)
-        if economic_hit_rate is not None
+        if not range_lane
+        and economic_hit_rate is not None
         and economic_samples is not None
         and economic_samples > 0
         else None
@@ -2959,7 +4381,7 @@ def _capital_allocation_numeric_ceiling(
     )
     entry_slippage_stress_pips = (
         0.0
-        if market_entry_slippage_embedded
+        if market_entry_slippage_embedded or order_vehicle == "LIMIT"
         else market_entry_adverse_p95_pips
         if cost_floor_valid
         else None
@@ -3063,6 +4485,22 @@ def _capital_allocation_numeric_ceiling(
             abs_tol=1e-9,
         )
     )
+    range_tp_prebounded = bool(
+        range_lane
+        and range_economic_basis_valid
+        and order_vehicle == "LIMIT"
+    )
+    range_risk_cap_passed = bool(
+        range_tp_prebounded
+        and net_risk_jpy is not None
+        and net_reward_jpy is not None
+        and net_reward_jpy > 0.0
+        and intent_max_loss_jpy is not None
+        and net_risk_jpy <= intent_max_loss_jpy + 1e-9
+        and nav_jpy is not None
+        and net_risk_jpy / nav_jpy * 100.0
+        <= 1.0 + 1e-12
+    )
 
     bypass_reason = (
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
@@ -3074,19 +4512,22 @@ def _capital_allocation_numeric_ceiling(
     if not method_scope_consistent:
         reason = "METHOD_SCOPE_MISMATCH"
         max_multiple = 0.0
-    elif bypass_reason is not None:
-        reason = bypass_reason
-        max_multiple = 1.0
     elif not direction_side_aligned:
         reason = "FORECAST_DIRECTION_SIDE_MISMATCH"
         max_multiple = 0.0
     elif not calibration_identity_valid:
         reason = "FORECAST_CALIBRATION_IDENTITY_MISMATCH"
         max_multiple = 0.0
+    elif bypass_reason is not None:
+        reason = bypass_reason
+        max_multiple = 1.0
     elif not entry_binding_passed:
         reason = "ORDER_ENTRY_RISK_METRICS_BINDING_INVALID"
         max_multiple = 0.0
-    elif order_type != "MARKET":
+    elif range_lane and not range_economic_basis_valid:
+        reason = "RANGE_TRADE_ECONOMIC_BASIS_MISSING_INVALID_OR_UNBOUND"
+        max_multiple = 0.0
+    elif order_vehicle != "MARKET" and not range_lane:
         reason = "FORECAST_ECONOMIC_PROBABILITY_ENTRY_VEHICLE_UNBOUND"
         max_multiple = 0.0
     elif not cost_floor_valid:
@@ -3099,6 +4540,9 @@ def _capital_allocation_numeric_ceiling(
             else "FORECAST_CURRENT_FRESH_DIRECTIONAL_DRIFT_INVALID"
             if normalized_current_binding_mode
             == "DIRECTIONAL_FRESH_MARKET_DRIFT"
+            else "FORECAST_RANGE_FRESH_PASSIVE_RAIL_INVALID"
+            if normalized_current_binding_mode
+            == "RANGE_FRESH_PASSIVE_RAIL"
             else "FORECAST_CURRENT_BINDING_MODE_INVALID"
         )
         max_multiple = 0.0
@@ -3108,17 +4552,26 @@ def _capital_allocation_numeric_ceiling(
     elif not geometry_contains_order:
         reason = "FORECAST_RAIL_DOES_NOT_CONSERVATIVELY_CONTAIN_ORDER"
         max_multiple = 0.0
+    elif risk_jpy is None or reward_jpy is None or not risk_metrics_consistent:
+        reason = "RISK_REWARD_JPY_GEOMETRY_INCONSISTENT"
+        max_multiple = 0.0
+    elif range_tp_prebounded and not range_risk_cap_passed:
+        reason = "TP_PROVEN_RANGE_PREBOUNDED_RISK_CAP_INVALID"
+        max_multiple = 0.0
+    elif range_tp_prebounded:
+        reason = "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT"
+        max_multiple = 1.0
     elif economic_hit_rate is None:
         reason = "ECONOMIC_HIT_RATE_MISSING_OR_INVALID"
         max_multiple = 0.0
-    elif economic_samples is None or economic_samples < CAPITAL_ALLOCATION_FORECAST_MIN_SAMPLES:
+    elif (
+        economic_samples is None
+        or economic_samples < minimum_economic_samples
+    ):
         reason = "ECONOMIC_SAMPLE_FLOOR_NOT_MET"
         max_multiple = 0.0
     elif p_lower is None:
         reason = "ECONOMIC_WILSON_LOWER_UNAVAILABLE"
-        max_multiple = 0.0
-    elif risk_jpy is None or reward_jpy is None or not risk_metrics_consistent:
-        reason = "RISK_REWARD_JPY_GEOMETRY_INCONSISTENT"
         max_multiple = 0.0
     elif (
         additional_cost_jpy is None
@@ -3152,9 +4605,14 @@ def _capital_allocation_numeric_ceiling(
             else "QUARTER_KELLY_CAP_BELOW_MINIMUM_MULTIPLE"
         )
 
+    range_tp_contract_authorized = (
+        reason == "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT"
+    )
     evidence = {
         "contract": CAPITAL_ALLOCATION_NUMERIC_CEILING_CONTRACT,
-        "applies_to_ordinary_new_entry": bypass_reason is None,
+        "applies_to_ordinary_new_entry": bool(
+            bypass_reason is None and not range_tp_contract_authorized
+        ),
         "inputs": {
             "side": side or None,
             "order_type": order_type or None,
@@ -3189,9 +4647,25 @@ def _capital_allocation_numeric_ceiling(
             "forecast_invalidation_price": _rounded_evidence_number(
                 forecast_invalidation
             ),
+            "forecast_range_low_price": _rounded_evidence_number(
+                forecast_range_low
+            ),
+            "forecast_range_high_price": _rounded_evidence_number(
+                forecast_range_high
+            ),
+            "forecast_directional_economic_hit_rate_context_only": (
+                _rounded_evidence_number(forecast_economic_hit_rate)
+            ),
+            "forecast_directional_economic_samples_context_only": (
+                forecast_economic_samples
+            ),
             "economic_hit_rate": _rounded_evidence_number(economic_hit_rate),
             "economic_samples": economic_samples,
-            "minimum_economic_samples": CAPITAL_ALLOCATION_FORECAST_MIN_SAMPLES,
+            "minimum_economic_samples": minimum_economic_samples,
+            "range_trade_economic_basis": (
+                normalized_range_basis if range_lane else None
+            ),
+            "range_trade_economic_basis_valid": range_economic_basis_valid,
             "headline_hit_rate_context_only": _rounded_evidence_number(
                 headline_hit_rate
             ),
@@ -3216,10 +4690,26 @@ def _capital_allocation_numeric_ceiling(
             "directional_fresh_market_drift_passed": (
                 directional_fresh_market_drift_passed
             ),
+            "range_fresh_quote_inside_rails": range_fresh_quote_inside_rails,
+            "range_fresh_limit_remains_passive": (
+                range_fresh_limit_remains_passive
+            ),
+            "range_fresh_passive_rail_passed": (
+                range_fresh_passive_rail_passed
+            ),
             "forecast_current_binding_passed": (
                 forecast_current_binding_passed
             ),
             "spread_matches_broker": spread_matches_broker,
+            "range_rails_bound": range_rails_bound,
+            "range_support": _rounded_evidence_number(range_support),
+            "range_resistance": _rounded_evidence_number(range_resistance),
+            "range_entry_side": range_entry_side or None,
+            "range_expected_rail_entry": _rounded_evidence_number(
+                range_expected_rail_entry
+            ),
+            "range_entry_exact_rail_bound": range_entry_exact_rail_bound,
+            "range_entry_within_rail_zone": range_entry_within_rail_zone,
             "executable_forecast_target": _rounded_evidence_number(
                 executable_forecast_target
             ),
@@ -3243,6 +4733,11 @@ def _capital_allocation_numeric_ceiling(
                 expected_jpy_per_pip
             ),
             "risk_metrics_consistent": risk_metrics_consistent,
+            "intent_max_loss_jpy": _rounded_evidence_number(
+                intent_max_loss_jpy
+            ),
+            "range_tp_prebounded": range_tp_prebounded,
+            "range_risk_cap_passed": range_risk_cap_passed,
             "passed": (
                 direction_side_aligned
                 and calibration_identity_valid
@@ -3251,19 +4746,30 @@ def _capital_allocation_numeric_ceiling(
                 and spread_matches_broker
                 and geometry_contains_order
                 and risk_metrics_consistent
+                and (not range_tp_prebounded or range_risk_cap_passed)
             ),
         },
         "probability": {
-            "basis": "DIRECTIONAL_ECONOMIC_HIT_RATE_WILSON95_LOWER",
+            "basis": probability_basis,
             "headline_hit_rate_may_not_substitute": True,
+            "range_box_hold_rate_may_not_substitute_for_trade_ev": True,
             "shared_live_wilson_floor_rechecked": False,
             "shared_live_wilson_floor_basis": (
                 "LIVE_READY_ALREADY_GATES_PRECISION;THIS_LAYER_SIZES_BY_EV_AND_KELLY"
             ),
             "economic_wilson95_lower": _rounded_evidence_number(p_lower),
+            "range_lane_evidence_wilson95_lower": (
+                _rounded_evidence_number(recomputed_range_wilson)
+                if range_lane
+                else None
+            ),
         },
         "ev_lower": {
-            "formula": "p_lower*reward_jpy-(1-p_lower)*risk_jpy-additional_cost_jpy",
+            "formula": (
+                None
+                if range_tp_contract_authorized
+                else "p_lower*reward_jpy-(1-p_lower)*risk_jpy-additional_cost_jpy"
+            ),
             "risk_jpy_snapshot": _rounded_evidence_number(risk_jpy),
             "reward_jpy_snapshot": _rounded_evidence_number(reward_jpy),
             "gross_reward_risk": _rounded_evidence_number(derived_reward_risk),
@@ -3310,6 +4816,8 @@ def _capital_allocation_numeric_ceiling(
                     "WORST_FILL_PRICE_EMBEDS_ENTRY_ADVERSE_MOVE;"
                     "ENTRY_P95_NOT_DOUBLE_COUNTED;"
                     if market_entry_slippage_embedded
+                    else "PASSIVE_LIMIT_CANNOT_FILL_WORSE_THAN_LIMIT_PRICE;"
+                    if order_vehicle == "LIMIT"
                     else "ENTRY_P95_ADDED_AS_SEPARATE_STRESS;"
                 )
                 +
@@ -3321,7 +4829,11 @@ def _capital_allocation_numeric_ceiling(
             "positive": ev_strictly_positive,
         },
         "kelly": {
-            "formula": "p_lower-(1-p_lower)/(net_reward_jpy/net_risk_jpy)",
+            "formula": (
+                None
+                if range_tp_contract_authorized
+                else "p_lower-(1-p_lower)/(net_reward_jpy/net_risk_jpy)"
+            ),
             "fractional_kelly_multiplier": CAPITAL_ALLOCATION_KELLY_FRACTION,
             "full_kelly_risk_fraction": _rounded_evidence_number(
                 full_kelly_risk_fraction
@@ -3330,7 +4842,11 @@ def _capital_allocation_numeric_ceiling(
             "quarter_kelly_risk_nav_pct": _rounded_evidence_number(
                 quarter_kelly_risk_nav_pct
             ),
-            "decision_basis": "NAV_PERCENT_RATIO",
+            "decision_basis": (
+                "PREBOUNDED_EXACT_TP_HARVEST_BASE_UNITS"
+                if range_tp_contract_authorized
+                else "NAV_PERCENT_RATIO"
+            ),
             "risk_budget_jpy_snapshot_explanation": _rounded_evidence_number(
                 risk_budget_jpy
             ),
@@ -3389,6 +4905,8 @@ def _capital_allocation_lane(
     execution_ledger_surface_sha256: str = "",
     account_nav_jpy: float | None = None,
     broker_snapshot: Mapping[str, Any] | None = None,
+    dynamic_tf_policy_sources: Mapping[str, Any] | None = None,
+    canonical_forecast_context_sha256: str | None = None,
     execution_cost_floor: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(result, Mapping):
@@ -3437,42 +4955,9 @@ def _capital_allocation_lane(
         == "ATTACHED_TECHNICAL_TP"
     )
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
-    broker_bid, broker_ask = _broker_snapshot_bid_ask(
-        broker_snapshot or {},
-        pair=str(intent.get("pair") or "").strip().upper(),
+    tp_expectancy = _optional_float(
+        metadata.get("capture_take_profit_expectancy_jpy")
     )
-    numeric_ceiling, numeric_max_multiple = _capital_allocation_numeric_ceiling(
-        intent=intent,
-        metadata=metadata,
-        risk_metrics=risk_metrics,
-        account_nav_jpy=account_nav_jpy,
-        broker_bid=broker_bid,
-        broker_ask=broker_ask,
-        broker_quote_to_jpy=_broker_snapshot_quote_to_jpy(
-            broker_snapshot or {},
-            pair=str(intent.get("pair") or "").strip().upper(),
-        ),
-        predictive_scout=predictive_scout,
-        hedge=hedge,
-        execution_cost_floor=execution_cost_floor,
-    )
-    candidate_size_multiples = [
-        multiple
-        for multiple in (
-            [1.0]
-            if predictive_scout or hedge
-            else list(CAPITAL_ALLOCATION_SIZE_MULTIPLES)
-        )
-        if multiple <= numeric_max_multiple + 1e-12
-    ]
-    allowed_size_multiples = [
-        multiple
-        for multiple in candidate_size_multiples
-        if base_units * CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][0]
-        // CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][1]
-        > 0
-    ]
-    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
     raw_tp_trades = metadata.get("capture_take_profit_trades")
     tp_trades = (
         raw_tp_trades
@@ -3485,11 +4970,12 @@ def _capital_allocation_lane(
         if isinstance(raw_tp_losses, int) and not isinstance(raw_tp_losses, bool)
         else None
     )
-    capture_status = str(metadata.get("capture_economics_status") or "").strip().upper()
+    capture_status = str(
+        metadata.get("capture_economics_status") or ""
+    ).strip().upper()
     overall_expectancy = _optional_float(metadata.get("capture_expectancy_jpy"))
-    if overall_expectancy is None:
-        if capture_status and capture_status != "NEGATIVE_EXPECTANCY":
-            overall_expectancy = 0.0
+    if overall_expectancy is None and capture_status and capture_status != "NEGATIVE_EXPECTANCY":
+        overall_expectancy = 0.0
     exact_vehicle_tp_edge = _exact_vehicle_take_profit_edge_proven(
         intent=intent,
         metadata=metadata,
@@ -3507,7 +4993,7 @@ def _capital_allocation_lane(
         current_metrics=current_exact_vehicle_net_metrics,
         execution_ledger_surface_sha256=execution_ledger_surface_sha256,
     )
-    positive_tp_edge = (
+    positive_tp_edge = bool(
         exact_vehicle_tp_edge
         and tp_expectancy is not None
         and tp_expectancy > 0.0
@@ -3515,16 +5001,122 @@ def _capital_allocation_lane(
         and tp_losses == 0
         and exact_vehicle_net_edge["blocks_tp_exception"] is not True
     )
+    range_economic_basis = _range_lane_economic_basis(
+        intent=intent,
+        metadata=metadata,
+        method=method,
+        exact_vehicle_net_edge=exact_vehicle_net_edge,
+        positive_tp_edge=positive_tp_edge,
+        execution_ledger_surface_sha256=execution_ledger_surface_sha256,
+    )
+    range_tp_proven_breakout_failure = bool(
+        method == "BREAKOUT_FAILURE"
+        and isinstance(range_economic_basis, Mapping)
+    )
+    technical_context = normalize_forecast_technical_context_evidence(
+        metadata.get("forecast_technical_context"),
+        pair=str(intent.get("pair") or "").strip().upper() or None,
+        current_price=metadata.get("forecast_current_price"),
+    )
+    forecast_binding = _directional_forecast_trade_binding(
+        side=intent.get("side"),
+        forecast_direction=metadata.get("forecast_direction"),
+        calibration_name=metadata.get("forecast_directional_calibration_name"),
+        method=method,
+    )
+    technical_context_envelope_valid = technical_context.get("status") == "VALID"
+    regime_family_binding = _regime_family_allocation_binding(
+        technical_context=technical_context,
+        pair=intent.get("pair"),
+        side=intent.get("side"),
+        method=method,
+        forecast_direction=metadata.get("forecast_direction"),
+        explicit_receipt_sha256=metadata.get(
+            "forecast_regime_family_weighting_sha256"
+        ),
+        explicit_selected_method=metadata.get(
+            "forecast_regime_family_selected_method"
+        ),
+        explicit_family_direction=metadata.get(
+            "forecast_regime_family_direction"
+        ),
+        range_tp_proven_breakout_failure=(
+            range_tp_proven_breakout_failure
+        ),
+        canonical_policy_sources=dynamic_tf_policy_sources,
+        canonical_forecast_context_sha256=(
+            canonical_forecast_context_sha256
+        ),
+    )
+    technical_context_valid = bool(
+        technical_context_envelope_valid
+        and forecast_binding["direction_side_aligned"]
+        and forecast_binding["calibration_identity_valid"]
+        and regime_family_binding["passed"]
+    )
+    broker_bid, broker_ask = _broker_snapshot_bid_ask(
+        broker_snapshot or {},
+        pair=str(intent.get("pair") or "").strip().upper(),
+    )
+    numeric_ceiling, numeric_max_multiple = _capital_allocation_numeric_ceiling(
+        intent=intent,
+        metadata=metadata,
+        risk_metrics=risk_metrics,
+        account_nav_jpy=account_nav_jpy,
+        broker_bid=broker_bid,
+        broker_ask=broker_ask,
+        broker_quote_to_jpy=_broker_snapshot_quote_to_jpy(
+            broker_snapshot or {},
+            pair=str(intent.get("pair") or "").strip().upper(),
+        ),
+        predictive_scout=predictive_scout,
+        hedge=hedge,
+        range_economic_basis=range_economic_basis,
+        execution_cost_floor=execution_cost_floor,
+    )
+    candidate_size_multiples = [
+        multiple
+        for multiple in (
+            [1.0]
+            if predictive_scout or hedge
+            else list(CAPITAL_ALLOCATION_SIZE_MULTIPLES)
+        )
+        if multiple <= numeric_max_multiple + 1e-12
+    ]
+    allowed_size_multiples = [
+        multiple
+        for multiple in candidate_size_multiples
+        if base_units * CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][0]
+        // CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][1]
+        > 0
+        and technical_context_valid
+    ]
     explicit_negative_edge = (
         capture_status == "NEGATIVE_EXPECTANCY"
         or (overall_expectancy is not None and overall_expectancy < 0.0)
     )
+    range_nonmarket = bool(
+        str(metadata.get("forecast_direction") or "").strip().upper()
+        == "RANGE"
+        and _normalized_order_vehicle(intent.get("order_type"))
+        in {"LIMIT", "STOP"}
+    )
     positive_edge_proven = bool(
-        method_scope_consistent
+        technical_context_valid
+        and method_scope_consistent
         and (
             predictive_scout
-            or exact_vehicle_net_edge["proven"]
-            or positive_tp_edge
+            or (
+                positive_tp_edge
+                and (
+                    not range_nonmarket
+                    or isinstance(range_economic_basis, Mapping)
+                )
+            )
+            or (
+                exact_vehicle_net_edge["proven"]
+                and not range_nonmarket
+            )
             or hedge
         )
     )
@@ -3533,6 +5125,39 @@ def _capital_allocation_lane(
         for code in result.get("live_blocker_codes", []) or []
         if str(code)
     ]
+    if not technical_context_envelope_valid:
+        live_blocker_codes.append("FORECAST_TECHNICAL_CONTEXT_UNKNOWN_FOR_ALLOCATION")
+    if not regime_family_binding["current_context_bound"]:
+        live_blocker_codes.append(
+            "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT_FOR_ALLOCATION"
+        )
+    if not regime_family_binding["canonical_policy_sources_bound"]:
+        live_blocker_codes.append(
+            "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
+        )
+    if not regime_family_binding["canonical_forecast_context_bound"]:
+        live_blocker_codes.append(
+            "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
+        )
+    if not forecast_binding["direction_side_aligned"]:
+        live_blocker_codes.append("FORECAST_DIRECTION_SIDE_MISMATCH")
+    if not forecast_binding["calibration_identity_valid"]:
+        live_blocker_codes.append("FORECAST_CALIBRATION_IDENTITY_MISMATCH")
+    if not regime_family_binding["receipt_valid"]:
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_MISSING_OR_INVALID")
+    if not regime_family_binding["sha_bound"]:
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_SHA_UNBOUND")
+    if (
+        not regime_family_binding["selected_method_bound"]
+        or not regime_family_binding["executable_method_bound"]
+    ):
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH")
+    if not regime_family_binding["family_direction_bound"]:
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND")
+    if not regime_family_binding["direction_consistent"]:
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION")
+    if not regime_family_binding["actionable_direction_bound"]:
+        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE")
     allocation_eligible = (
         str(result.get("status") or "").strip().upper() == "LIVE_READY"
         and result.get("risk_allowed") is True
@@ -3551,12 +5176,39 @@ def _capital_allocation_lane(
         "allocation_eligible": allocation_eligible,
         "positive_edge_proven": positive_edge_proven,
         "edge_basis": (
-            "METHOD_SCOPE_MISMATCH"
+            "FORECAST_TECHNICAL_CONTEXT_UNKNOWN"
+            if not technical_context_envelope_valid
+            else "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT"
+            if not regime_family_binding["current_context_bound"]
+            else "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
+            if not regime_family_binding["canonical_policy_sources_bound"]
+            else "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
+            if not regime_family_binding["canonical_forecast_context_bound"]
+            else "FORECAST_DIRECTION_SIDE_MISMATCH"
+            if not forecast_binding["direction_side_aligned"]
+            else "FORECAST_CALIBRATION_IDENTITY_MISMATCH"
+            if not forecast_binding["calibration_identity_valid"]
+            else "REGIME_FAMILY_WEIGHTING_INVALID"
+            if not regime_family_binding["receipt_valid"]
+            else "REGIME_FAMILY_WEIGHTING_SHA_UNBOUND"
+            if not regime_family_binding["sha_bound"]
+            else "REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH"
+            if not regime_family_binding["executable_method_bound"]
+            or not regime_family_binding["selected_method_bound"]
+            else "REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND"
+            if not regime_family_binding["family_direction_bound"]
+            else "REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION"
+            if not regime_family_binding["direction_consistent"]
+            else "REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE"
+            if not regime_family_binding["actionable_direction_bound"]
+            else "METHOD_SCOPE_MISMATCH"
             if not method_scope_consistent
             else "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
             if predictive_scout
             else "HEDGE_RISK_REDUCTION"
             if hedge
+            else "EXACT_VEHICLE_TAKE_PROFIT"
+            if positive_tp_edge and range_nonmarket
             else "EXACT_VEHICLE_ALL_EXIT_NET"
             if exact_vehicle_net_edge["proven"]
             else "EXACT_VEHICLE_TAKE_PROFIT"
@@ -3603,6 +5255,7 @@ def _capital_allocation_lane(
         "forecast": {
             "direction": metadata.get("forecast_direction"),
             "confidence": _optional_float(metadata.get("forecast_confidence")),
+            "confidence_semantics": CONFIDENCE_SEMANTICS,
             "raw_confidence": _optional_float(metadata.get("forecast_raw_confidence")),
             "calibration_name": metadata.get("forecast_directional_calibration_name"),
             "calibration_multiplier": _optional_float(
@@ -3624,6 +5277,31 @@ def _capital_allocation_lane(
             "invalidation_price": _optional_float(
                 metadata.get("forecast_invalidation_price")
             ),
+            "range_low_price": _optional_float(
+                metadata.get("forecast_range_low_price")
+            ),
+            "range_high_price": _optional_float(
+                metadata.get("forecast_range_high_price")
+            ),
+            "range_trade_economic_basis": (
+                dict(range_economic_basis)
+                if isinstance(range_economic_basis, Mapping)
+                else None
+            ),
+            "range_tp_proven_breakout_failure": (
+                range_tp_proven_breakout_failure
+            ),
+            "technical_context": technical_context,
+            "regime_family_weighting_sha256": regime_family_binding[
+                "receipt_sha256"
+            ],
+            "regime_family_selected_method": regime_family_binding[
+                "selected_method"
+            ],
+            "regime_family_direction": regime_family_binding[
+                "family_direction"
+            ],
+            "regime_family_binding": regime_family_binding,
         },
         "capture": {
             "status": metadata.get("capture_economics_status"),
@@ -3683,6 +5361,26 @@ def _source_descriptor(path: Path) -> dict[str, Any]:
         "size_bytes": len(raw),
         "generated_at_utc": generated_at,
     }
+
+
+def _dynamic_tf_packet_source_descriptors(
+    sources: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Freeze the packet-authoritative files used by dynamic TF policy."""
+
+    result: dict[str, Any] = {}
+    for name in ("calendar", "strategy_profile"):
+        source = sources.get(name)
+        if not isinstance(source, Mapping):
+            result[name] = None
+            continue
+        result[name] = {
+            "path": source.get("path"),
+            "exists": source.get("exists"),
+            "sha256": source.get("sha256"),
+            "size_bytes": source.get("size_bytes"),
+        }
+    return result
 
 
 def _normalize_source_path(path: Path | str) -> Path:

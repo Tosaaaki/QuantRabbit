@@ -32,6 +32,7 @@ from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 TEST_PER_TRADE_RISK_JPY = 10_000.0
 TEST_DAILY_RISK_BUDGET_JPY = 50_000.0
 PREDICTIVE_SCOUT_LANE_ID = "predictive_scout:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+TP_PROVEN_RANGE_LANE_ID = "range_trader:EUR_USD:LONG:RANGE_ROTATION:LIMIT"
 PREDICTIVE_SCOUT_RULE_NAME = (
     "USD_CAD_DOWN_H31_60m_C0p50_0p65_FADE_TO_UP_"
     "S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7"
@@ -320,6 +321,84 @@ class LiveOrderGatewayTest(unittest.TestCase):
         order = payload["orders"][0] if batch else payload
         return summary, order, ledger_path
 
+    def _run_real_tp_proven_range_gateway(
+        self,
+        *,
+        root: Path,
+        client: ReconciliationExecutionClient,
+        edge_basis: str = "EXACT_VEHICLE_TAKE_PROFIT",
+        batch: bool = False,
+    ) -> tuple[Any, dict[str, Any], Path]:
+        target_state, target_report, ledger_path, ledger_report = (
+            _reconciliation_files(root, gross_loss_jpy=300.0)
+        )
+        _insert_exact_tp_outcomes(
+            ledger_path,
+            losses=0,
+            method="RANGE_ROTATION",
+        )
+        intents = _tp_proven_range_limit_intents(root, client=client)
+        cost_floor = _synthetic_execution_cost_floor(
+            ("EUR_USD", "LONG", "RANGE_ROTATION", "LIMIT")
+        )
+        gateway = LiveOrderGateway(
+            client=client,
+            strategy_profile=_profile(root),
+            output_path=root / "request.json",
+            report_path=root / "report.md",
+            target_state_path=target_state,
+            target_report_path=target_report,
+            execution_ledger_db_path=ledger_path,
+            execution_ledger_report_path=ledger_report,
+            verified_decision_path=_write_ordinary_verified_decision(
+                root,
+                lane_id=TP_PROVEN_RANGE_LANE_ID,
+                direction="RANGE",
+                edge_basis=edge_basis,
+                execution_cost_floor=cost_floor,
+            ),
+            live_enabled=True,
+            max_loss_jpy=3_000.0,
+        )
+        with (
+            patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ),
+            patch.object(
+                LiveOrderGateway,
+                "_final_pre_post_boundary",
+                self._original_final_pre_post_boundary,
+            ),
+            patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                FixedReconciliationTargetLedger,
+            ),
+        ):
+            summary = (
+                gateway.run_batch(
+                    intents_path=intents,
+                    lane_ids=(TP_PROVEN_RANGE_LANE_ID,),
+                    send=True,
+                    confirm_live=True,
+                )
+                if batch
+                else gateway.run(
+                    intents_path=intents,
+                    lane_id=TP_PROVEN_RANGE_LANE_ID,
+                    send=True,
+                    confirm_live=True,
+                )
+            )
+        payload = json.loads((root / "request.json").read_text())
+        return (
+            summary,
+            payload["orders"][0] if batch else payload,
+            ledger_path,
+        )
+
     def test_codex_capital_allocation_binds_preclip_units_and_allows_only_later_reduction(self) -> None:
         lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
         board_sha = "a" * 64
@@ -347,6 +426,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             "decision_provenance": {
                 "schema_version": 2,
                 "author_kind": "CODEX_MARKET_READ",
+                "capital_allocation_edge_basis": "EXACT_VEHICLE_ALL_EXIT_NET",
                 "capital_allocation_sha256": allocation_sha,
                 "capital_allocation_board_sha256": board_sha,
                 "authorized_size_multiple": 0.75,
@@ -433,6 +513,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             "decision_provenance": {
                 "schema_version": 2,
                 "author_kind": "CODEX_MARKET_READ",
+                "capital_allocation_edge_basis": "EXACT_VEHICLE_ALL_EXIT_NET",
                 "capital_allocation_sha256": allocation_sha,
                 "capital_allocation_board_sha256": "b" * 64,
                 "authorized_size_multiple": 0.5,
@@ -475,8 +556,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
             )
 
     def test_live_allocation_validator_rejects_receipt_bytes_swapped_after_entry(self) -> None:
-        original_requirement = (
-            execution_module._codex_numeric_allocation_requirement_at_entry
+        original_freeze = (
+            execution_module._freeze_verified_decision_receipt
         )
         for batch in (False, True):
             with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
@@ -495,11 +576,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 ).read_bytes()
                 client = FakeExecutionClient()
 
-                def freeze_then_swap(path, *, expected_sha256):
-                    result = original_requirement(
-                        path,
-                        expected_sha256=expected_sha256,
-                    )
+                def freeze_then_swap(path):
+                    result = original_freeze(path)
                     verified.write_bytes(replacement)
                     return result
 
@@ -514,7 +592,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 )
                 with patch.object(
                     execution_module,
-                    "_codex_numeric_allocation_requirement_at_entry",
+                    "_freeze_verified_decision_receipt",
                     side_effect=freeze_then_swap,
                 ):
                     if batch:
@@ -546,6 +624,94 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     "GPT_VERIFIED_RECEIPT_BYTES_MISMATCH_FOR_LIVE_SEND",
                     {issue["code"] for issue in risk_issues},
                 )
+
+    def test_receipt_freeze_keeps_same_byte_basis_and_cost_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_cost = _synthetic_execution_cost_floor()
+            first = _write_ordinary_verified_decision(
+                root,
+                lane_id="lane:EUR_USD:LONG",
+                edge_basis="EXACT_VEHICLE_ALL_EXIT_NET",
+                execution_cost_floor=first_cost,
+            )
+            frozen = execution_module._freeze_verified_decision_receipt(first)
+            replacement_cost = {
+                **first_cost,
+                "proof_sha256": "d" * 64,
+            }
+            replacement = _write_ordinary_verified_decision(
+                root,
+                lane_id="lane:EUR_USD:LONG",
+                edge_basis="EXACT_VEHICLE_TAKE_PROFIT",
+                execution_cost_floor=replacement_cost,
+                suffix="replacement-freeze",
+            ).read_bytes()
+            first.write_bytes(replacement)
+
+        self.assertTrue(frozen.numeric_allocation_required)
+        self.assertEqual(
+            frozen.capital_allocation_edge_basis,
+            "EXACT_VEHICLE_ALL_EXIT_NET",
+        )
+        self.assertEqual(
+            frozen.execution_cost_floor_sha256,
+            first_cost["proof_sha256"],
+        )
+        self.assertNotEqual(
+            frozen.sha256,
+            execution_module.hashlib.sha256(replacement).hexdigest(),
+        )
+
+    def test_required_signed_basis_and_cost_never_fall_back_to_intent(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.17306,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="signed evidence must remain exact",
+            market_context=MarketContext(
+                regime="TREND",
+                narrative="trend",
+                chart_story="trend",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="below structure",
+            ),
+            metadata=_ordinary_claim_metadata(
+                vehicle="MARKET",
+                numeric_forecast=True,
+            ),
+        )
+        evidence, issue = execution_module._capital_allocation_edge_pre_post_recheck(
+            intent,
+            ledger_path=Path("not-read.db"),
+            expected_edge_basis=None,
+            expected_execution_cost_floor_sha256="a" * 64,
+            execution_cost_floor_required=True,
+        )
+        self.assertIsNotNone(issue)
+        self.assertEqual(
+            issue.code,
+            "PRE_POST_GPT_ALLOCATION_SIGNED_EDGE_BASIS_UNREADABLE",
+        )
+        self.assertEqual(evidence["status"], "BLOCKED")
+
+        evidence, issue = execution_module._capital_allocation_edge_pre_post_recheck(
+            intent,
+            ledger_path=Path("not-read.db"),
+            expected_edge_basis="EXACT_VEHICLE_ALL_EXIT_NET",
+            expected_execution_cost_floor_sha256=None,
+            execution_cost_floor_required=True,
+        )
+        self.assertIsNotNone(issue)
+        self.assertEqual(
+            issue.code,
+            "PRE_POST_GPT_ALLOCATION_SIGNED_COST_FLOOR_UNREADABLE",
+        )
+        self.assertEqual(evidence["status"], "BLOCKED")
 
     def test_missing_verified_receipt_reports_single_change_issue_direct_and_batch(self) -> None:
         for batch in (False, True):
@@ -1244,6 +1410,199 @@ class LiveOrderGatewayTest(unittest.TestCase):
                         "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
                     )
 
+    def test_tp_proven_range_passive_limit_send_freezes_rail_and_fresh_tp_basis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = ReconciliationExecutionClient()
+            summary, order, _ = self._run_real_tp_proven_range_gateway(
+                root=Path(tmp),
+                client=client,
+            )
+
+        self.assertTrue(summary.sent, json.dumps(order, sort_keys=True))
+        self.assertEqual(len(client.orders), 1)
+        request = order["order_request"]
+        self.assertEqual(request["type"], "LIMIT")
+        self.assertEqual(request["price"], "1.17100")
+        self.assertNotIn("priceBound", request)
+        reconciliation = order["pre_post_reconciliation"]
+        numeric = reconciliation["capital_allocation_numeric_recheck"]
+        self.assertEqual(
+            numeric["numeric_ceiling"]["reason"],
+            "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
+        )
+        self.assertTrue(numeric["range_tp_prebounded_claimed"])
+        self.assertTrue(numeric["range_tp_geometry_frozen"])
+        self.assertEqual(
+            numeric["range_tp_fresh_edge_basis"]["basis"],
+            "EXACT_TP_PROVEN_HARVEST",
+        )
+        self.assertEqual(
+            numeric["forecast_s5_path_proof"]["barrier_basis"],
+            "RANGE_RAILS",
+        )
+        self.assertFalse(
+            numeric["forecast_s5_path_proof"]["order_entry_touched"]
+        )
+        self.assertEqual(
+            reconciliation["capital_allocation_edge_recheck"]["basis"],
+            "EXACT_VEHICLE_TAKE_PROFIT",
+        )
+        boundary = reconciliation["final_post_reservation_boundary"]
+        self.assertEqual(boundary["status"], "PASSED")
+        self.assertEqual(client.orders[0]["price"], "1.17100")
+        self.assertNotIn("priceBound", client.orders[0])
+
+    def test_tp_proven_range_final_s5_entry_touch_retains_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = FinalRangeEntryTouchExecutionClient()
+            summary, order, ledger_path = (
+                self._run_real_tp_proven_range_gateway(
+                    root=Path(tmp),
+                    client=client,
+                )
+            )
+            with closing(sqlite3.connect(ledger_path)) as conn:
+                claim_status = conn.execute(
+                    "SELECT status FROM ordinary_live_entry_signal_claims"
+                ).fetchone()[0]
+
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.orders, [])
+        self.assertEqual(client.s5_calls, 2)
+        self.assertIn(
+            "FINAL_PRE_POST_GPT_ALLOCATION_FORECAST_S5_PATH_REPROOF_FAILED",
+            {issue["code"] for issue in order["risk_issues"]},
+        )
+        boundary = order["pre_post_reconciliation"][
+            "final_post_reservation_boundary"
+        ]
+        proof = boundary["capital_allocation_numeric_recheck"][
+            "forecast_s5_path_proof"
+        ]
+        self.assertEqual(
+            proof["reason"],
+            "FORECAST_S5_RANGE_ENTRY_OR_SL_TOUCHED",
+        )
+        self.assertTrue(proof["order_entry_touched"])
+        self.assertFalse(boundary["post_attempted"])
+        self.assertEqual(
+            order["ordinary_entry_claim"]["status"],
+            "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+        )
+        self.assertEqual(
+            claim_status,
+            "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+        )
+
+    def test_tp_proven_range_signed_edge_basis_switch_blocks_before_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = ReconciliationExecutionClient()
+            summary, order, _ = self._run_real_tp_proven_range_gateway(
+                root=Path(tmp),
+                client=client,
+                edge_basis="EXACT_VEHICLE_ALL_EXIT_NET",
+            )
+
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.orders, [])
+        self.assertIn(
+            "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_UNPROVEN",
+            {issue["code"] for issue in order["risk_issues"]},
+        )
+        self.assertEqual(
+            order["pre_post_reconciliation"]["status"],
+            "BLOCKED",
+        )
+
+    def test_gateway_uses_frozen_receipt_basis_and_cost_without_path_reread(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                with (
+                    patch.object(
+                        execution_module,
+                        "_verified_capital_allocation_edge_basis",
+                        side_effect=AssertionError(
+                            "mutable receipt path must not select an edge basis"
+                        ),
+                    ),
+                    patch.object(
+                        execution_module,
+                        "_verified_execution_cost_floor_sha256",
+                        side_effect=AssertionError(
+                            "mutable receipt path must not select a cost proof"
+                        ),
+                    ),
+                ):
+                    summary, order, _ = (
+                        self._run_real_tp_proven_range_gateway(
+                            root=Path(tmp),
+                            client=client,
+                            batch=batch,
+                        )
+                    )
+
+                self.assertTrue(summary.sent, json.dumps(order, sort_keys=True))
+                self.assertEqual(len(client.orders), 1)
+                self.assertEqual(
+                    order["pre_post_reconciliation"][
+                        "capital_allocation_edge_recheck"
+                    ]["basis"],
+                    "EXACT_VEHICLE_TAKE_PROFIT",
+                )
+
+    def test_tp_proven_range_post_s5_quote_cross_retains_reservation_direct_and_batch(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = PostS5RangeQuoteCrossExecutionClient()
+                summary, order, ledger_path = (
+                    self._run_real_tp_proven_range_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                    )
+                )
+                with closing(sqlite3.connect(ledger_path)) as conn:
+                    claim_status = conn.execute(
+                        "SELECT status FROM ordinary_live_entry_signal_claims"
+                    ).fetchone()[0]
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            self.assertEqual(client.s5_calls, 2)
+            self.assertEqual(client.snapshot_reads_after_final_s5, 1)
+            codes = {issue["code"] for issue in order["risk_issues"]}
+            self.assertIn(
+                "FINAL_PRE_POST_TP_PROVEN_RANGE_TRIGGER_CROSSED",
+                codes,
+            )
+            self.assertNotIn("LIMIT_ENTRY_REPRICED_PASSIVE", codes)
+            boundary = order["pre_post_reconciliation"][
+                "final_post_reservation_boundary"
+            ]
+            quote_fence = boundary[
+                "post_s5_tp_proven_range_quote_fence"
+            ]
+            self.assertEqual(quote_fence["status"], "BLOCKED")
+            self.assertEqual(
+                quote_fence["reason"],
+                "POST_S5_RANGE_LIMIT_ENTRY_CROSSED",
+            )
+            self.assertTrue(quote_fence["entry_touched"])
+            self.assertFalse(quote_fence["repriced"])
+            broker_fence = boundary["post_s5_broker_fence"]
+            self.assertTrue(broker_fence["account_and_quote_same_snapshot"])
+            self.assertTrue(broker_fence["account_fence_passed"])
+            self.assertFalse(boundary["post_attempted"])
+            self.assertEqual(
+                order["ordinary_entry_claim"]["status"],
+                "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+            )
+            self.assertEqual(
+                claim_status,
+                "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+            )
+
     def test_post_s5_account_deterioration_blocks_direct_and_batch(self) -> None:
         for batch in (False, True):
             for scenario in ("nav", "margin_used", "margin_available"):
@@ -1260,7 +1619,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     self.assertFalse(summary.sent)
                     self.assertEqual(client.orders, [])
                     self.assertEqual(client.s5_calls, 2)
-                    self.assertEqual(client.account_reads_after_final_s5, 1)
+                    self.assertEqual(client.snapshot_reads_after_final_s5, 1)
                     codes = {issue["code"] for issue in order["risk_issues"]}
                     self.assertIn("FINAL_PRE_POST_ACCOUNT_FENCE_FAILED", codes)
                     boundary = order["pre_post_reconciliation"][
@@ -1270,7 +1629,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     self.assertEqual(fence["status"], "BLOCKED")
                     self.assertEqual(
                         fence["read_order"],
-                        "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                        "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF_SAME_BROKER_SNAPSHOT",
                     )
                     self.assertTrue(
                         fence[f"{scenario}_worsened"]
@@ -2394,6 +2753,33 @@ class LiveOrderGatewayTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertIn("PREDICTIVE_SCOUT_TRIGGER_CROSSED", issue_codes)
             self.assertNotIn("LIMIT_ENTRY_REPRICED_PASSIVE", issue_codes)
+
+    def test_tp_proven_range_crossed_limit_expires_instead_of_repricing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _tp_proven_range_limit_intents(
+                root,
+                client=client,
+                crossed=True,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(
+                intents_path=intents,
+                lane_id=TP_PROVEN_RANGE_LANE_ID,
+            )
+            payload = json.loads((root / "request.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(payload["order_request"]["price"], "1.17310")
+        issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+        self.assertIn("TP_PROVEN_RANGE_TRIGGER_CROSSED", issue_codes)
+        self.assertNotIn("LIMIT_ENTRY_REPRICED_PASSIVE", issue_codes)
 
     def test_predictive_scout_gateway_rechecks_policy_and_uses_gtd(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
@@ -8235,12 +8621,32 @@ class FinalS5ScenarioExecutionClient(ReconciliationExecutionClient):
         return payload
 
 
-class PostS5AccountDeteriorationClient(ReconciliationExecutionClient):
-    def __init__(self, scenario: str) -> None:
+class FinalRangeEntryTouchExecutionClient(ReconciliationExecutionClient):
+    """Keep the first RANGE proof clean, then touch its frozen LIMIT entry."""
+
+    def __init__(self) -> None:
         super().__init__()
-        self.scenario = scenario
         self.s5_calls = 0
-        self.account_reads_after_final_s5 = 0
+
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.s5_calls += 1
+        payload = super().get_json(path, query)
+        if self.s5_calls >= 2:
+            payload["candles"][-1]["mid"]["l"] = "1.17100"
+        return payload
+
+
+class PostS5RangeQuoteCrossExecutionClient(ReconciliationExecutionClient):
+    """Cross the frozen RANGE LIMIT only after the final S5 response."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.s5_calls = 0
+        self.snapshot_reads_after_final_s5 = 0
 
     def get_json(
         self,
@@ -8250,21 +8656,62 @@ class PostS5AccountDeteriorationClient(ReconciliationExecutionClient):
         self.s5_calls += 1
         return super().get_json(path, query)
 
-    def account_summary(self, *, now_utc=None):
-        account = super().account_summary(now_utc=now_utc)
+    def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        snapshot = super().snapshot(pairs)
         if self.s5_calls < 2:
-            return account
-        self.account_reads_after_final_s5 += 1
+            return snapshot
+        self.snapshot_reads_after_final_s5 += 1
+        quote = snapshot.quotes["EUR_USD"]
+        return replace(
+            snapshot,
+            quotes={
+                **snapshot.quotes,
+                "EUR_USD": replace(
+                    quote,
+                    bid=1.17098,
+                    ask=1.17100,
+                ),
+            },
+        )
+
+
+class PostS5AccountDeteriorationClient(ReconciliationExecutionClient):
+    def __init__(self, scenario: str) -> None:
+        super().__init__()
+        self.scenario = scenario
+        self.s5_calls = 0
+        self.snapshot_reads_after_final_s5 = 0
+
+    def get_json(
+        self,
+        path: str,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.s5_calls += 1
+        return super().get_json(path, query)
+
+    def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        snapshot = super().snapshot(pairs)
+        if self.s5_calls < 2:
+            return snapshot
+        self.snapshot_reads_after_final_s5 += 1
+        account = snapshot.account
+        assert account is not None
         if self.scenario == "nav":
-            return replace(account, nav_jpy=account.nav_jpy - 1.0)
-        if self.scenario == "margin_used":
-            return replace(account, margin_used_jpy=account.margin_used_jpy + 1.0)
-        if self.scenario == "margin_available":
-            return replace(
+            changed_account = replace(account, nav_jpy=account.nav_jpy - 1.0)
+        elif self.scenario == "margin_used":
+            changed_account = replace(
+                account,
+                margin_used_jpy=account.margin_used_jpy + 1.0,
+            )
+        elif self.scenario == "margin_available":
+            changed_account = replace(
                 account,
                 margin_available_jpy=account.margin_available_jpy - 1.0,
             )
-        raise AssertionError(f"unsupported account scenario: {self.scenario}")
+        else:
+            raise AssertionError(f"unsupported account scenario: {self.scenario}")
+        return replace(snapshot, account=changed_account)
 
 
 class PostReservationTransactionAdvanceClient(ReconciliationExecutionClient):
@@ -8939,6 +9386,8 @@ def _write_ordinary_verified_decision(
     action: str = "TRADE",
     direction: str = "LONG",
     size_multiple: float = 1.0,
+    edge_basis: str = "EXACT_VEHICLE_ALL_EXIT_NET",
+    execution_cost_floor: dict[str, Any] | None = None,
     suffix: str = "",
 ) -> Path:
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -8976,12 +9425,16 @@ def _write_ordinary_verified_decision(
         decision["decision_provenance"] = {
             "schema_version": 2,
             "author_kind": "CODEX_MARKET_READ",
+            "capital_allocation_edge_basis": edge_basis,
             "capital_allocation_sha256": allocation_sha,
             "capital_allocation_board_sha256": "c" * 64,
             "authorized_size_multiple": size_multiple,
             "authorized_units": int(1000 * size_multiple),
             "execution_cost_floor_sha256": (
-                _synthetic_execution_cost_floor()["proof_sha256"]
+                (
+                    execution_cost_floor
+                    or _synthetic_execution_cost_floor()
+                )["proof_sha256"]
             ),
         }
     payload = {
@@ -9026,6 +9479,7 @@ def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
     payload["decision"]["decision_provenance"] = {
         "schema_version": 2,
         "author_kind": "CODEX_MARKET_READ",
+        "capital_allocation_edge_basis": "EXACT_VEHICLE_ALL_EXIT_NET",
         "model": "gpt-5.5",
         "reasoning_effort": "high",
         "capital_allocation_sha256": allocation_sha,
@@ -9162,6 +9616,124 @@ def _write_macro_reconciliation_target_state(target_state: Path) -> None:
     )
 
 
+def _tp_proven_range_limit_intents(
+    root: Path,
+    *,
+    client: FakeExecutionClient,
+    crossed: bool = False,
+    metadata_updates: dict[str, Any] | None = None,
+) -> Path:
+    quote = client.snapshot_value.quotes["EUR_USD"]
+    emitted_at = (quote.timestamp_utc - timedelta(seconds=1)).isoformat()
+    trades = 20
+    wins = 20
+    loss_proxy = 300.0
+    avg_win = 100.0
+    wilson = execution_module.hit_rate_wilson_lower(
+        wins / trades,
+        trades,
+    )
+    if wilson is None:
+        raise AssertionError("TP-proven RANGE fixture has no Wilson lower bound")
+    pessimistic = wilson * avg_win - (1.0 - wilson) * loss_proxy
+    metadata: dict[str, Any] = {
+        "desk": "range_trader",
+        "campaign_role": "NOW",
+        "parent_lane_id": TP_PROVEN_RANGE_LANE_ID.rsplit(":", 1)[0],
+        "forecast_cycle_id": (
+            f"pre-entry-forecast-refresh:{emitted_at}:{emitted_at}"
+        ),
+        "forecast_direction": "RANGE",
+        "forecast_confidence": 1.0,
+        "forecast_raw_confidence": 1.0,
+        "forecast_calibration_multiplier": 1.0,
+        "forecast_directional_calibration_name": (
+            "directional_forecast_range"
+        ),
+        "forecast_directional_economic_hit_rate": 1.0,
+        "forecast_directional_economic_samples": 100,
+        "forecast_directional_hit_rate": 1.0,
+        "forecast_directional_samples": 100,
+        "forecast_directional_timeout_rate": 0.0,
+        "forecast_horizon_min": 120,
+        "forecast_current_price": (quote.bid + quote.ask) / 2.0,
+        "forecast_range_low_price": 1.17000,
+        "forecast_range_high_price": 1.17600,
+        "forecast_target_price": 1.17600,
+        "forecast_invalidation_price": 1.17000,
+        "range_support": 1.17000,
+        "range_resistance": 1.17600,
+        "range_entry_side": "SUPPORT",
+        "geometry_model": "RANGE_RAIL_LIMIT",
+        "range_tp_is_inside_box": True,
+        "range_sl_outside_box": True,
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "positive_rotation_live_ready": True,
+        "positive_rotation_mode": "TP_PROVEN_HARVEST",
+        "positive_rotation_tp_trades": trades,
+        "positive_rotation_tp_wins": wins,
+        "positive_rotation_loss_proxy_jpy": loss_proxy,
+        "positive_rotation_tp_win_rate_lower": round(wilson, 6),
+        "positive_rotation_pessimistic_expectancy_jpy": round(
+            pessimistic,
+            4,
+        ),
+        "loss_asymmetry_guard_active": True,
+        "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+        "loss_asymmetry_guard_relaxed": True,
+        "loss_asymmetry_guard_loss_cap_jpy": avg_win,
+        "loss_asymmetry_guard_base_max_loss_jpy": 400.0,
+        "loss_asymmetry_guard_effective_max_loss_jpy": 400.0,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "capture_avg_win_jpy": avg_win,
+        "capture_avg_loss_jpy": loss_proxy,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": (
+            "EUR_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER"
+        ),
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_vehicle": "LIMIT",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "capture_take_profit_trades": trades,
+        "capture_take_profit_wins": wins,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_net_jpy": trades * avg_win,
+        "capture_take_profit_expectancy_jpy": avg_win,
+        "capture_take_profit_avg_win_jpy": avg_win,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "max_loss_jpy": 400.0,
+        "tp_atr_pips": 14.0,
+    }
+    metadata.update(metadata_updates or {})
+    intents = _intents(
+        root,
+        order_type="LIMIT",
+        units=1000,
+        lane_id=TP_PROVEN_RANGE_LANE_ID,
+        entry=1.17310 if crossed else 1.17100,
+        tp=1.17500,
+        sl=1.16900,
+        metadata=metadata,
+    )
+    payload = json.loads(intents.read_text())
+    intent = payload["results"][0]["intent"]
+    intent["thesis"] = "fresh TP-proven passive range support rotation"
+    intent["market_context"] = {
+        "regime": "RANGE",
+        "narrative": "support rail rotation toward the inner premium rail",
+        "chart_story": "passive support LIMIT remains below the current ask",
+        "method": "RANGE_ROTATION",
+        "invalidation": "range support acceptance fails below the outer stop",
+    }
+    intents.write_text(json.dumps(payload) + "\n")
+    return intents
+
+
 def _tp_relaxed_limit_intents(
     root: Path,
     *,
@@ -9244,9 +9816,11 @@ def _insert_exact_tp_outcomes(
     ledger_path: Path,
     *,
     losses: int,
+    method: str = "TREND_CONTINUATION",
     first_trade_daily_financing_jpy: float | None = None,
 ) -> None:
-    lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+    desk = "trend_trader" if method == "TREND_CONTINUATION" else "range_trader"
+    lane_id = f"{desk}:EUR_USD:LONG:{method}:LIMIT"
     now = datetime.now(timezone.utc)
     rows: list[tuple[Any, ...]] = []
     for index in range(20):
@@ -9712,6 +10286,7 @@ def _write_predictive_scout_verified_decision(
         decision["decision_provenance"] = {
             "schema_version": 2,
             "author_kind": "CODEX_MARKET_READ",
+            "capital_allocation_edge_basis": "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
             "capital_allocation_sha256": allocation_sha,
             "capital_allocation_board_sha256": "e" * 64,
             "authorized_size_multiple": 1.0,

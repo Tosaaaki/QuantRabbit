@@ -34,12 +34,91 @@ from quant_rabbit.gpt_trader import (
     StaticTraderProvider,
     _draft_candidate_lane_ids,
     _draft_margin_aware_basket,
+    _lane_forecast_packet,
     draft_trader_decision,
     post_stop_thesis_review,
+)
+from quant_rabbit.strategy.forecast_technical_context import (
+    CONFIDENCE_SEMANTICS,
+    MAX_EVIDENCE_BYTES,
+    build_forecast_technical_context,
+    build_forecast_technical_context_evidence,
 )
 
 
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+
+
+def _forecast_context_evidence(
+    pair: str,
+    current_price: float,
+    *,
+    direction: str = "UP",
+    spread_pips: float = 0.2,
+    pair_chart: dict | None = None,
+    calendar_path: Path | None = None,
+    strategy_profile_path: Path | None = None,
+    now_utc: datetime | None = None,
+) -> dict:
+    up = str(direction).upper() == "UP"
+    chart = pair_chart or {
+        "confluence": {
+            "dominant_regime": "TREND_UP" if up else "TREND_DOWN",
+            "price_percentile_24h": 0.7 if up else 0.3,
+            "price_percentile_7d": 0.6 if up else 0.4,
+        },
+        "views": [
+            {
+                "granularity": "M5",
+                "regime_reading": {
+                    "state": "TREND_STRONG",
+                    "atr_percentile": 60.0,
+                },
+                "indicators": {"atr_pips": 2.0},
+                "family_scores": {
+                    "trend_score": 1.0 if up else -1.0,
+                    "mean_rev_score": 0.0,
+                    "breakout_score": 0.0,
+                    "disagreement": 0.0,
+                },
+                "structure": {
+                    "structure_events": [
+                        {
+                            "kind": "BOS_UP" if up else "BOS_DOWN",
+                            "index": 1,
+                            "close_confirmed": True,
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    context = build_forecast_technical_context(
+        chart,
+        pair=pair,
+        current_price=current_price,
+        spread_pips=spread_pips,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        now_utc=now_utc,
+    )
+    return build_forecast_technical_context_evidence(
+        context,
+        pair=pair,
+        current_price=current_price,
+    )
+
+
+def _forecast_weighting_metadata(evidence: dict) -> dict:
+    body = evidence.get("technical_context_v1") or {}
+    receipt = body.get("regime_family_weighting") or {}
+    source = receipt.get("source_identity") or {}
+    aggregate = receipt.get("aggregate") or {}
+    return {
+        "forecast_regime_family_weighting_sha256": receipt.get("receipt_sha256"),
+        "forecast_regime_family_selected_method": source.get("selected_method"),
+        "forecast_regime_family_direction": aggregate.get("direction"),
+    }
 
 
 class GPTTraderBrainTest(unittest.TestCase):
@@ -54,6 +133,69 @@ class GPTTraderBrainTest(unittest.TestCase):
         )
         cost_patch.start()
         self.addCleanup(cost_patch.stop)
+
+    def test_lane_packet_preserves_verified_context_and_drops_tampered_body(self) -> None:
+        evidence = _forecast_context_evidence("EUR_USD", 1.1001)
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.72,
+            "forecast_current_price": 1.1001,
+            "forecast_technical_context": evidence,
+        }
+
+        packet = _lane_forecast_packet(metadata, pair="EUR_USD")
+        self.assertEqual(packet["technical_context"], evidence)
+        self.assertEqual(
+            packet["technical_context"]["confidence_semantics"],
+            CONFIDENCE_SEMANTICS,
+        )
+
+        tampered = json.loads(json.dumps(evidence))
+        tampered["technical_context_v1"]["regime"]["dominant"] = "RANGE"
+        metadata["forecast_technical_context"] = tampered
+        packet = _lane_forecast_packet(metadata, pair="EUR_USD")
+        self.assertEqual(packet["technical_context"]["status"], "UNKNOWN")
+        self.assertEqual(
+            packet["technical_context"]["reason"],
+            "TECHNICAL_CONTEXT_EVIDENCE_HASH_MISMATCH",
+        )
+        self.assertIsNone(packet["technical_context"]["technical_context_v1"])
+        self.assertFalse(packet["technical_context"]["live_permission"])
+
+    def test_lane_packet_does_not_forward_rehashed_oversized_unknown_reason(self) -> None:
+        evidence = _forecast_context_evidence("EUR_USD", 1.1001)
+        marker = "DO_NOT_FORWARD_TO_GPT"
+        evidence.update(
+            {
+                "status": "UNKNOWN",
+                "reason": marker * MAX_EVIDENCE_BYTES,
+                "technical_context_v1": None,
+                "context_sha256": None,
+            }
+        )
+        evidence["evidence_sha256"] = canonical_json_sha256(
+            {
+                key: item
+                for key, item in evidence.items()
+                if key != "evidence_sha256"
+            }
+        )
+        packet = _lane_forecast_packet(
+            {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.72,
+                "forecast_current_price": 1.1001,
+                "forecast_technical_context": evidence,
+            },
+            pair="EUR_USD",
+        )
+
+        self.assertEqual(packet["technical_context"]["status"], "UNKNOWN")
+        self.assertEqual(
+            packet["technical_context"]["reason"],
+            "TECHNICAL_CONTEXT_EVIDENCE_TOO_LARGE",
+        )
+        self.assertNotIn(marker, json.dumps(packet))
 
     def test_trade_revalidates_real_market_read_artifacts_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5813,6 +5955,9 @@ def _apply_real_market_read_artifacts(
             ledger_path=files["execution_ledger"],
             selected_lane_id=str(baseline.get("selected_lane_id") or ""),
             snapshot_path=(broker_snapshot_source_path or files["snapshot"]),
+            pair_charts_path=files["pair_charts"],
+            calendar_path=files["calendar"],
+            strategy_profile_path=files["strategy"],
         )
         refreshed_intents = json.loads(files["intents"].read_text(encoding="utf-8"))
         selected_intent = next(
@@ -5901,6 +6046,9 @@ def _ensure_real_artifact_exact_vehicle_edge(
     ledger_path: Path,
     selected_lane_id: str,
     snapshot_path: Path,
+    pair_charts_path: Path,
+    calendar_path: Path,
+    strategy_profile_path: Path,
 ) -> None:
     payload = json.loads(intents_path.read_text(encoding="utf-8"))
     result = next(
@@ -5979,6 +6127,32 @@ def _ensure_real_artifact_exact_vehicle_edge(
         forecast_target = float(intent["tp"]) - half_spread * 2.0
         forecast_invalidation = float(intent["sl"]) - half_spread * 2.0
         forecast_direction = "DOWN"
+    pair_charts = json.loads(pair_charts_path.read_text(encoding="utf-8"))
+    matching_charts = [
+        item
+        for item in pair_charts.get("charts", []) or []
+        if isinstance(item, dict)
+        and str(item.get("pair") or "").upper() == pair
+    ]
+    if len(matching_charts) != 1:
+        raise AssertionError(
+            f"real artifact fixture requires exactly one {pair} pair-chart row"
+        )
+    pair_chart = json.loads(json.dumps(matching_charts[0]))
+    pair_chart.setdefault("generated_at_utc", pair_charts.get("generated_at_utc"))
+    evaluated_at = datetime.fromisoformat(
+        str(snapshot["fetched_at_utc"]).replace("Z", "+00:00")
+    )
+    forecast_context_evidence = _forecast_context_evidence(
+        pair,
+        (bid + ask) / 2.0,
+        direction=forecast_direction,
+        spread_pips=(ask - bid) * pip_factor,
+        pair_chart=pair_chart,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        now_utc=evaluated_at,
+    )
     metadata.update(
         {
             "attach_take_profit_on_fill": True,
@@ -6024,6 +6198,8 @@ def _ensure_real_artifact_exact_vehicle_edge(
             "capture_market_close_expectancy_jpy": -100.0,
             "forecast_direction": forecast_direction,
             "forecast_current_price": (bid + ask) / 2.0,
+            "forecast_technical_context": forecast_context_evidence,
+            **_forecast_weighting_metadata(forecast_context_evidence),
             "forecast_target_price": forecast_target,
             "forecast_invalidation_price": forecast_invalidation,
             "forecast_directional_calibration_name": (
@@ -6406,6 +6582,11 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                     {
                         "pair": "EUR_USD",
                         "dominant_regime": "TREND_UP",
+                        "confluence": {
+                            "dominant_regime": "TREND_UP",
+                            "price_percentile_24h": 0.7,
+                            "price_percentile_7d": 0.6,
+                        },
                         "chart_story": "EUR_USD trend-up test story",
                         "long_score": 0.8,
                         "short_score": 0.2,
@@ -7154,7 +7335,7 @@ def _chart_views() -> list[dict]:
 
 
 def _chart_view(granularity: str, *, atr_pips: float, state: str, last_jump_bars_ago: int) -> dict:
-    return {
+    view = {
         "granularity": granularity,
         "indicators": {
             "atr_pips": atr_pips,
@@ -7180,6 +7361,17 @@ def _chart_view(granularity: str, *, atr_pips: float, state: str, last_jump_bars
             "lag1_autocorr": 0.12,
         },
     }
+    if granularity == "M5":
+        view["structure"] = {
+            "structure_events": [
+                {
+                    "kind": "BOS_UP",
+                    "index": 1,
+                    "close_confirmed": True,
+                }
+            ]
+        }
+    return view
 
 
 def _result(
@@ -7356,6 +7548,7 @@ def _stamp_codex_market_read(
         "action_downgrade_only": veto,
         "capital_allocation_sha256": canonical_json_sha256(capital_allocation),
         "capital_allocation_board_sha256": "e" * 64,
+        "capital_allocation_edge_basis": "EXACT_VEHICLE_ALL_EXIT_NET",
         "execution_cost_floor_sha256": "f" * 64,
         "authorized_size_multiple": capital_allocation["size_multiple"],
         "authorized_units": capital_allocation["selected_units"],

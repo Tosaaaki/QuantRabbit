@@ -20,7 +20,7 @@ synthesizes a single `DirectionalForecast` per pair from all
 detector outputs:
 
   direction: "UP" | "DOWN" | "RANGE" | "UNCLEAR"
-  confidence: 0.0-1.0 (probability the direction is correct)
+  confidence: 0.0-1.0 calibrated direction score (not a win probability)
   invalidation_price: price level where forecast is proven wrong
   target_price: price level where forecast is proven right
   horizon_min: expected time to play out
@@ -51,10 +51,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
+from quant_rabbit.strategy.regime_family_weighting import forecast_direction_consistency
 from quant_rabbit.strategy.price_action import structural_tp_target
 
 
@@ -144,7 +147,7 @@ RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
 class DirectionalForecast:
     pair: str
     direction: str  # "UP" | "DOWN" | "RANGE" | "UNCLEAR"
-    confidence: float  # 0.0-1.0
+    confidence: float  # 0.0-1.0 calibrated score, not a win probability
     invalidation_price: Optional[float]  # where forecast is wrong
     target_price: Optional[float]  # where forecast is right
     horizon_min: int  # expected play-out time
@@ -647,10 +650,21 @@ def _has_range_context(pair_chart: Dict[str, Any]) -> bool:
 
 
 def _percent_0_100(value: Any) -> Optional[float]:
+    """Convert an IndicatorSet 0..1 quantile rank to percentage points."""
+
     pct = _to_float(value)
-    if pct is None:
+    if pct is None or not 0.0 <= pct <= 1.0:
         return None
-    return pct * 100.0 if 0.0 <= pct <= 1.0 else pct
+    return pct * 100.0
+
+
+def _bounded_percent_0_100(value: Any) -> Optional[float]:
+    """Validate chart-reader regime percentiles, already on a 0..100 scale."""
+
+    pct = _to_float(value)
+    if pct is None or not 0.0 <= pct <= 100.0:
+        return None
+    return pct
 
 
 def _truthy_flag(value: Any) -> bool:
@@ -741,7 +755,9 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
 
         adx = _to_float((indicators or {}).get("adx_14") or (indicators or {}).get("adx"))
         chop = _to_float((indicators or {}).get("choppiness_14"))
-        atr_pct = _percent_0_100((reading or {}).get("atr_percentile"))
+        atr_pct = _bounded_percent_0_100(
+            (reading or {}).get("atr_percentile")
+        )
         if atr_pct is None:
             atr_pct = _percent_0_100((indicators or {}).get("atr_percentile_100"))
         bb_width_pct = _percent_0_100((indicators or {}).get("bb_width_percentile_100"))
@@ -1098,6 +1114,37 @@ def _countertrend_adjustment(
     )
 
 
+def _regime_family_adjustment(
+    technical_context: Dict[str, Any],
+    winner: str,
+    winner_score: float,
+    runner_up_score: float,
+) -> tuple[float, str | None]:
+    """Use the shared receipt only as a contradiction gate.
+
+    Same-direction family evidence never boosts a detector forecast. An exact
+    opposite aggregate removes the winning margin, forcing the existing
+    contested/UNCLEAR logic to decide conservatively without inventing a new
+    confidence multiplier.
+    """
+
+    if winner not in {"UP", "DOWN"}:
+        return winner_score, None
+    receipt = technical_context.get("regime_family_weighting")
+    consistent, reason = forecast_direction_consistency(
+        receipt,
+        forecast_direction=winner,
+    )
+    if consistent:
+        # Aligned/non-directional family context is not an additional detector
+        # and must never surface as a support driver or live permission.
+        return winner_score, None
+    return min(winner_score, runner_up_score), (
+        f"{reason}: {winner} winning margin removed by content-addressed "
+        "regime-selected family evidence"
+    )
+
+
 def _top_reasons(
     contributions: list[tuple[str, float, str]],
     *,
@@ -1325,6 +1372,9 @@ def synthesize_forecast(
     hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
     regime: Optional[str] = None,
     spread_pips: Optional[float] = None,
+    calendar_path: Path | None = None,
+    strategy_profile_path: Path | None = None,
+    now_utc: datetime | None = None,
 ) -> DirectionalForecast:
     """Combine all detector outputs into ONE directional forecast.
 
@@ -1351,6 +1401,9 @@ def synthesize_forecast(
         pair=pair,
         current_price=current_price,
         spread_pips=spread_pips,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        now_utc=now_utc,
     )
     if _is_disabled():
         return DirectionalForecast(
@@ -1478,6 +1531,58 @@ def synthesize_forecast(
     candidates.sort(key=lambda x: -x[1])
     winner, winner_score = candidates[0]
     runner_up_score = candidates[1][1]
+    family_adjusted_score, family_adjustment_reason = _regime_family_adjustment(
+        technical_context_v1,
+        winner,
+        winner_score,
+        runner_up_score,
+    )
+    if family_adjusted_score != winner_score:
+        contradicted_winner = winner
+        if winner == "UP":
+            up_score = family_adjusted_score
+        elif winner == "DOWN":
+            down_score = family_adjusted_score
+        total = up_score + down_score + range_score + either_score
+        candidates = [("UP", up_score), ("DOWN", down_score), ("RANGE", range_score)]
+        candidates.sort(key=lambda x: -x[1])
+        winner, winner_score = candidates[0]
+        runner_up_score = candidates[1][1]
+        # Do not let stable-sort order turn a vetoed DOWN winner into an UP
+        # forecast (or vice versa) when the scores are forced level.  An exact
+        # family-direction contradiction is a fail-closed forecast fact.
+        return DirectionalForecast(
+            pair=pair,
+            direction="UNCLEAR",
+            confidence=0.0,
+            invalidation_price=None,
+            target_price=None,
+            horizon_min=0,
+            drivers_for=_top_reasons(
+                contributions,
+                direction=contradicted_winner,
+            ),
+            drivers_against=(
+                family_adjustment_reason or "regime-family contradiction",
+            ),
+            rationale_summary=(
+                f"regime-family contradiction vetoed {contradicted_winner}: "
+                f"UP={up_score:.1f} DOWN={down_score:.1f} "
+                f"RANGE={range_score:.1f} EITHER={either_score:.1f}"
+            ),
+            current_price=current_price,
+            up_score=up_score,
+            down_score=down_score,
+            range_score=range_score,
+            raw_confidence=0.0,
+            component_scores={
+                "UP": up_score,
+                "DOWN": down_score,
+                "RANGE": range_score,
+                "EITHER": either_score,
+            },
+            technical_context_v1=technical_context_v1,
+        )
     adjusted_winner_score, adjustment_reason = _countertrend_adjustment(
         pair_chart,
         winner,

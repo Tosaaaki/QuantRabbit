@@ -186,6 +186,17 @@ class _FinalPrePostBoundaryResult:
     issues: tuple[RiskIssue, ...] = ()
 
 
+@dataclass(frozen=True)
+class _VerifiedDecisionReceiptFreeze:
+    """One-read receipt facts propagated through every broker boundary."""
+
+    sha256: str | None
+    numeric_allocation_required: bool
+    numeric_requirement_issue: dict[str, str] | None
+    capital_allocation_edge_basis: str | None
+    execution_cost_floor_sha256: str | None
+
+
 # Portfolio occupancy needs to scale with the campaign pace. Three active FX
 # windows (Asia, London, NY) is the coarse session model already used by the
 # archive outcome evidence; the fixed policy cap remains the fallback floor.
@@ -317,17 +328,19 @@ class LiveOrderGateway:
         confirm_live: bool = False,
     ) -> LiveOrderStageSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
-        verified_decision_sha_at_entry = _file_sha256(self.verified_decision_path)
-        (
-            numeric_allocation_recheck_required,
-            numeric_allocation_requirement_issue,
-        ) = (
-            _codex_numeric_allocation_requirement_at_entry(
-                self.verified_decision_path,
-                expected_sha256=verified_decision_sha_at_entry,
-            )
+        verified_decision_receipt_at_entry = (
+            _freeze_verified_decision_receipt(self.verified_decision_path)
             if send
-            else (False, None)
+            else _VerifiedDecisionReceiptFreeze(None, False, None, None, None)
+        )
+        verified_decision_sha_at_entry = (
+            verified_decision_receipt_at_entry.sha256
+        )
+        numeric_allocation_recheck_required = (
+            verified_decision_receipt_at_entry.numeric_allocation_required
+        )
+        numeric_allocation_requirement_issue = (
+            verified_decision_receipt_at_entry.numeric_requirement_issue
         )
         intents_payload = json.loads(intents_path.read_text())
         selected = _select_intent(intents_payload, lane_id)
@@ -577,6 +590,13 @@ class LiveOrderGateway:
                 numeric_allocation_recheck_required=(
                     numeric_allocation_recheck_required
                 ),
+                expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_capital_allocation_edge_basis=(
+                    verified_decision_receipt_at_entry.capital_allocation_edge_basis
+                ),
+                expected_execution_cost_floor_sha256=(
+                    verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
             )
             # The final deep attestation is useful only while building this
             # reconciliation result.  Do not carry it across reservations or
@@ -700,6 +720,12 @@ class LiveOrderGateway:
                 final_intent=intent,
                 early_reconciliation=pre_post_reconciliation,
                 expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_capital_allocation_edge_basis=(
+                    verified_decision_receipt_at_entry.capital_allocation_edge_basis
+                ),
+                expected_execution_cost_floor_sha256=(
+                    verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
                 expected_order_request_sha256=reservation_order_request_sha256,
                 order_request=order_request,
                 ordinary_entry_claim=ordinary_entry_claim,
@@ -1193,17 +1219,19 @@ class LiveOrderGateway:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         ignore_pending_order_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
-        verified_decision_sha_at_entry = _file_sha256(self.verified_decision_path)
-        (
-            numeric_allocation_recheck_required,
-            numeric_allocation_requirement_issue,
-        ) = (
-            _codex_numeric_allocation_requirement_at_entry(
-                self.verified_decision_path,
-                expected_sha256=verified_decision_sha_at_entry,
-            )
+        verified_decision_receipt_at_entry = (
+            _freeze_verified_decision_receipt(self.verified_decision_path)
             if send
-            else (False, None)
+            else _VerifiedDecisionReceiptFreeze(None, False, None, None, None)
+        )
+        verified_decision_sha_at_entry = (
+            verified_decision_receipt_at_entry.sha256
+        )
+        numeric_allocation_recheck_required = (
+            verified_decision_receipt_at_entry.numeric_allocation_required
+        )
+        numeric_allocation_requirement_issue = (
+            verified_decision_receipt_at_entry.numeric_requirement_issue
         )
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
@@ -1465,6 +1493,13 @@ class LiveOrderGateway:
                 numeric_allocation_recheck_required=(
                     numeric_allocation_recheck_required
                 ),
+                expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_capital_allocation_edge_basis=(
+                    verified_decision_receipt_at_entry.capital_allocation_edge_basis
+                ),
+                expected_execution_cost_floor_sha256=(
+                    verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
             )
             clear_guardian_tuning_validation_cache()
             intent = reconciliation.intent
@@ -1585,6 +1620,12 @@ class LiveOrderGateway:
                 final_intent=intent,
                 early_reconciliation=pre_post_reconciliation,
                 expected_receipt_sha256=verified_decision_sha_at_entry,
+                expected_capital_allocation_edge_basis=(
+                    verified_decision_receipt_at_entry.capital_allocation_edge_basis
+                ),
+                expected_execution_cost_floor_sha256=(
+                    verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
                 expected_order_request_sha256=reservation_order_request_sha256,
                 order_request=order_request,
                 ordinary_entry_claim=ordinary_entry_claim,
@@ -1910,6 +1951,9 @@ class LiveOrderGateway:
         intents_path: Path,
         ignore_pending_order_ids: tuple[str, ...] = (),
         numeric_allocation_recheck_required: bool = False,
+        expected_receipt_sha256: str | None = None,
+        expected_capital_allocation_edge_basis: str | None = None,
+        expected_execution_cost_floor_sha256: str | None = None,
     ) -> _PrePostReconciliationResult:
         """Reconcile loss capacity against broker truth immediately before POST.
 
@@ -2047,10 +2091,13 @@ class LiveOrderGateway:
         ) = _capital_allocation_edge_pre_post_recheck(
             verified_intent,
             ledger_path=self.execution_ledger_db_path,
+            expected_edge_basis=(
+                expected_capital_allocation_edge_basis
+                if numeric_allocation_recheck_required
+                else None
+            ),
             expected_execution_cost_floor_sha256=(
-                _verified_execution_cost_floor_sha256(
-                    self.verified_decision_path
-                )
+                expected_execution_cost_floor_sha256
                 if numeric_allocation_recheck_required
                 else None
             ),
@@ -2491,6 +2538,9 @@ class LiveOrderGateway:
                 if isinstance(capital_allocation_edge_recheck, dict)
                 else None
             ),
+            capital_allocation_edge_recheck=(
+                capital_allocation_edge_recheck
+            ),
         )
         if (
             numeric_allocation_recheck_required
@@ -2693,6 +2743,9 @@ class LiveOrderGateway:
                         )
                         else None
                     ),
+                    capital_allocation_edge_recheck=(
+                        capital_allocation_edge_recheck
+                    ),
                     market_entry_slippage_embedded=True,
                 )
                 capital_allocation_numeric_recheck = (
@@ -2771,6 +2824,8 @@ class LiveOrderGateway:
         final_intent: OrderIntent,
         early_reconciliation: dict[str, Any],
         expected_receipt_sha256: str | None,
+        expected_capital_allocation_edge_basis: str | None,
+        expected_execution_cost_floor_sha256: str | None,
         expected_order_request_sha256: str | None,
         order_request: dict[str, Any],
         ordinary_entry_claim: dict[str, Any],
@@ -2965,14 +3020,13 @@ class LiveOrderGateway:
                     _capital_allocation_edge_pre_post_recheck(
                         verified_intent,
                         ledger_path=self.execution_ledger_db_path,
+                        expected_edge_basis=(
+                            expected_capital_allocation_edge_basis
+                            if numeric_allocation_required
+                            else None
+                        ),
                         expected_execution_cost_floor_sha256=(
-                            str(
-                                (
-                                    early_edge.get("execution_cost_floor")
-                                    or {}
-                                ).get("proof_sha256")
-                                or ""
-                            )
+                            expected_execution_cost_floor_sha256
                             if numeric_allocation_required
                             else None
                         ),
@@ -3506,6 +3560,7 @@ class LiveOrderGateway:
                                 if isinstance(final_edge, dict)
                                 else None
                             ),
+                            capital_allocation_edge_recheck=final_edge,
                             market_entry_slippage_embedded=(
                                 final_bound_snapshot is not None
                             ),
@@ -3570,11 +3625,14 @@ class LiveOrderGateway:
         )
 
         # S5 is a historical read, but time still passes while its complete
-        # candle path and worst-fill proof are verified. Read account truth
-        # exactly once afterward. Any transaction or NAV/margin deterioration
-        # blocks; improvements do not relax the conservative coherent snapshot
-        # used above.
-        final_account_fence: dict[str, Any] = {
+        # candle path and worst-fill proof are verified. Read one coherent
+        # broker snapshot afterward so account truth and a passive RANGE quote
+        # cannot straddle different moments. Improvements never relax the
+        # conservative coherent snapshot used above.
+        final_broker_fence: dict[str, Any] = {
+            "status": "NOT_APPLICABLE"
+        }
+        final_range_quote_fence: dict[str, Any] = {
             "status": "NOT_APPLICABLE"
         }
         final_broker_transaction_id = final_numeric_snapshot_transaction_id
@@ -3587,12 +3645,12 @@ class LiveOrderGateway:
             try:
                 if final_snapshot_account is None:
                     raise ValueError("final coherent snapshot account is missing")
-                account_summary_fn = getattr(self.client, "account_summary", None)
-                if not callable(account_summary_fn):
-                    raise ValueError("execution client has no account_summary fence")
-                observed_account = account_summary_fn(
-                    now_utc=datetime.now(timezone.utc)
+                observed_snapshot = self.client.snapshot(
+                    (verified_intent.pair,)
                 )
+                observed_account = observed_snapshot.account
+                if observed_account is None:
+                    raise ValueError("post-S5 broker snapshot account is missing")
 
                 def finite_nonnegative(value: Any) -> float | None:
                     if isinstance(value, bool) or not isinstance(
@@ -3652,18 +3710,41 @@ class LiveOrderGateway:
                     and observed_margin_available + 1e-9
                     < basis_margin_available
                 )
-                fence_passed = bool(
+                account_fence_passed = bool(
                     values_valid
                     and transaction_matches
                     and not nav_worsened
                     and not margin_used_worsened
                     and not margin_available_worsened
                 )
-                final_account_fence = {
+                range_fence_intent = final_reserved_intent or final_intent
+                (
+                    final_range_quote_fence,
+                    final_range_quote_issue,
+                ) = _post_s5_tp_proven_range_quote_fence(
+                    intent=range_fence_intent,
+                    snapshot=observed_snapshot,
+                    prior_snapshot=final_boundary_snapshot,
+                )
+                range_quote_passed = str(
+                    final_range_quote_fence.get("status") or ""
+                ).upper() in {"PASSED", "NOT_APPLICABLE"}
+                fence_passed = account_fence_passed and range_quote_passed
+                observed_quote = observed_snapshot.quotes.get(
+                    verified_intent.pair
+                )
+                final_broker_fence = {
                     "status": "PASSED" if fence_passed else "BLOCKED",
-                    "read_order": "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                    "read_order": (
+                        "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF_"
+                        "SAME_BROKER_SNAPSHOT"
+                    ),
                     "adopted_risk_basis": (
                         "EARLIER_COHERENT_PAIR_SNAPSHOT_CONSERVATIVE"
+                    ),
+                    "account_and_quote_same_snapshot": True,
+                    "observed_snapshot_fetched_at_utc": (
+                        observed_snapshot.fetched_at_utc.isoformat()
                     ),
                     "snapshot_last_transaction_id": (
                         final_numeric_snapshot_transaction_id or None
@@ -3684,32 +3765,60 @@ class LiveOrderGateway:
                     "nav_worsened": nav_worsened,
                     "margin_used_worsened": margin_used_worsened,
                     "margin_available_worsened": margin_available_worsened,
+                    "account_fence_passed": account_fence_passed,
+                    "range_quote_fence_status": (
+                        final_range_quote_fence.get("status")
+                    ),
+                    "range_quote_fence_proof_sha256": (
+                        final_range_quote_fence.get("proof_sha256")
+                    ),
+                    "observed_quote_bid": (
+                        float(observed_quote.bid)
+                        if observed_quote is not None
+                        else None
+                    ),
+                    "observed_quote_ask": (
+                        float(observed_quote.ask)
+                        if observed_quote is not None
+                        else None
+                    ),
                 }
                 final_broker_transaction_id = observed_tx
-                if not fence_passed:
+                if final_range_quote_issue is not None:
+                    issues.append(final_range_quote_issue)
+                if not account_fence_passed:
                     issues.append(
                         RiskIssue(
                             "FINAL_PRE_POST_ACCOUNT_FENCE_FAILED",
-                            "post-S5 account fence detected changed transaction "
-                            "truth, invalid account values, or worse NAV/margin; "
-                            "the durable reservation is retained and no POST is allowed",
+                            "the same post-S5 broker snapshot detected changed "
+                            "transaction truth, invalid account values, or worse "
+                            "NAV/margin; the durable reservation is retained and "
+                            "no POST is allowed",
                         )
                     )
             except Exception as exc:
-                final_account_fence = {
+                final_broker_fence = {
                     "status": "BLOCKED",
-                    "read_order": "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF",
+                    "read_order": (
+                        "AFTER_FINAL_S5_AND_WORST_FILL_REPROOF_"
+                        "SAME_BROKER_SNAPSHOT"
+                    ),
+                    "account_and_quote_same_snapshot": False,
                     "error": f"{type(exc).__name__}: {exc}",
                 }
                 final_broker_transaction_id = ""
                 issues.append(
                     RiskIssue(
                         "FINAL_PRE_POST_ACCOUNT_FENCE_FAILED",
-                        "post-S5 account summary fence could not be completed: "
+                        "post-S5 account-and-quote broker snapshot fence could not be completed: "
                         f"{type(exc).__name__}: {exc}",
                     )
                 )
-        evidence["post_s5_account_fence"] = final_account_fence
+        evidence["post_s5_broker_fence"] = final_broker_fence
+        evidence["post_s5_account_fence"] = final_broker_fence
+        evidence["post_s5_tp_proven_range_quote_fence"] = (
+            final_range_quote_fence
+        )
         evidence["final_broker_last_transaction_id"] = (
             final_broker_transaction_id or None
         )
@@ -6073,6 +6182,119 @@ def _portfolio_loss_remaining_jpy(
     return max(0.0, portfolio_loss_cap - open_risk - pending_risk - max(0.0, cumulative_risk_jpy))
 
 
+def _freeze_verified_decision_receipt(
+    path: Path | None,
+) -> _VerifiedDecisionReceiptFreeze:
+    """Read a verified decision once and freeze every POST-critical identity.
+
+    The mutable path is never consulted again for edge-basis or execution-cost
+    selection. Later path reads may only attest that these exact bytes still
+    occupy the path; they cannot change the frozen semantics.
+    """
+
+    if path is None:
+        return _VerifiedDecisionReceiptFreeze(None, False, None, None, None)
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return _VerifiedDecisionReceiptFreeze(
+            None,
+            True,
+            {
+                "severity": "BLOCK",
+                "code": (
+                    "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY"
+                ),
+                "message": (
+                    "verified GPT receipt could not be read while freezing "
+                    "numeric allocation applicability and signed evidence: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            },
+            None,
+            None,
+        )
+    receipt_sha256 = hashlib.sha256(raw).hexdigest()
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        return _VerifiedDecisionReceiptFreeze(
+            receipt_sha256,
+            True,
+            {
+                "severity": "BLOCK",
+                "code": (
+                    "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY"
+                ),
+                "message": (
+                    "verified GPT receipt is not strict JSON while freezing "
+                    "numeric allocation applicability and signed evidence: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            },
+            None,
+            None,
+        )
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("decision"),
+        dict,
+    ):
+        return _VerifiedDecisionReceiptFreeze(
+            receipt_sha256,
+            True,
+            {
+                "severity": "BLOCK",
+                "code": (
+                    "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY"
+                ),
+                "message": (
+                    "verified GPT receipt lacks an object decision while freezing "
+                    "numeric allocation applicability and signed evidence"
+                ),
+            },
+            None,
+            None,
+        )
+    decision = payload["decision"]
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    allocation = decision.get("capital_allocation")
+    numeric_required = bool(
+        isinstance(allocation, dict)
+        and provenance.get("schema_version") == 2
+        and str(provenance.get("author_kind") or "").strip().upper()
+        == "CODEX_MARKET_READ"
+        and str(decision.get("action") or "").strip().upper() == "TRADE"
+        and str(allocation.get("decision") or "").strip().upper()
+        == "ALLOCATE"
+    )
+    edge_basis = str(
+        provenance.get("capital_allocation_edge_basis") or ""
+    ).strip().upper()
+    if edge_basis not in {
+        "EXACT_VEHICLE_ALL_EXIT_NET",
+        "EXACT_VEHICLE_TAKE_PROFIT",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "HEDGE_RISK_REDUCTION",
+    }:
+        edge_basis = None
+    cost_sha256 = str(
+        provenance.get("execution_cost_floor_sha256") or ""
+    ).strip().lower()
+    if re.fullmatch(r"[0-9a-f]{64}", cost_sha256) is None:
+        cost_sha256 = None
+    return _VerifiedDecisionReceiptFreeze(
+        receipt_sha256,
+        numeric_required,
+        None,
+        edge_basis,
+        cost_sha256,
+    )
+
+
 def _codex_numeric_allocation_requirement_at_entry(
     path: Path | None,
     *,
@@ -6082,19 +6304,10 @@ def _codex_numeric_allocation_requirement_at_entry(
 
     if path is None:
         return False, None
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        return True, {
-            "severity": "BLOCK",
-            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
-            "message": (
-                "verified GPT receipt could not be read while freezing numeric "
-                f"allocation applicability: {type(exc).__name__}: {exc}"
-            ),
-        }
-    current_sha256 = hashlib.sha256(raw).hexdigest()
-    if expected_sha256 is None or current_sha256 != expected_sha256:
+    frozen = _freeze_verified_decision_receipt(path)
+    if frozen.sha256 is None:
+        return True, frozen.numeric_requirement_issue
+    if expected_sha256 is None or frozen.sha256 != expected_sha256:
         return True, {
             "severity": "BLOCK",
             "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_RECEIPT_CHANGED_AT_GATEWAY_ENTRY",
@@ -6103,52 +6316,30 @@ def _codex_numeric_allocation_requirement_at_entry(
                 "allocation applicability"
             ),
         }
-    try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-        return True, {
-            "severity": "BLOCK",
-            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
-            "message": (
-                "verified GPT receipt is not strict JSON while freezing numeric "
-                f"allocation applicability: {type(exc).__name__}: {exc}"
-            ),
-        }
-    if not isinstance(payload, dict) or not isinstance(
-        payload.get("decision"),
-        dict,
-    ):
-        return True, {
-            "severity": "BLOCK",
-            "code": "GPT_CAPITAL_ALLOCATION_REQUIREMENT_UNREADABLE_AT_GATEWAY_ENTRY",
-            "message": (
-                "verified GPT receipt lacks an object decision while freezing "
-                "numeric allocation applicability"
-            ),
-        }
-    decision = payload["decision"]
-    provenance = decision.get("decision_provenance")
-    allocation = decision.get("capital_allocation")
-    required = bool(
-        isinstance(provenance, dict)
-        and isinstance(allocation, dict)
-        and provenance.get("schema_version") == 2
-        and str(provenance.get("author_kind") or "").strip().upper()
-        == "CODEX_MARKET_READ"
-        and str(decision.get("action") or "").strip().upper() == "TRADE"
-        and str(allocation.get("decision") or "").strip().upper() == "ALLOCATE"
-    )
-    return required, None
+    return frozen.numeric_allocation_required, frozen.numeric_requirement_issue
 
 
-def _verified_execution_cost_floor_sha256(path: Path | None) -> str | None:
+def _verified_execution_cost_floor_sha256(
+    path: Path | None,
+    *,
+    expected_sha256: str | None = None,
+) -> str | None:
     """Read the auto-stamped cost proof identity from one verified receipt."""
 
     if path is None:
         return None
     try:
-        payload = json.loads(path.read_text())
+        receipt_bytes = path.read_bytes()
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if (
+        expected_sha256 is not None
+        and hashlib.sha256(receipt_bytes).hexdigest() != expected_sha256
+    ):
+        return None
+    try:
+        payload = json.loads(receipt_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         return None
     decision = (
         payload.get("decision")
@@ -6163,6 +6354,50 @@ def _verified_execution_cost_floor_sha256(path: Path | None) -> str | None:
     )
     value = str(provenance.get("execution_cost_floor_sha256") or "")
     return value if re.fullmatch(r"[0-9a-f]{64}", value) else None
+
+
+def _verified_capital_allocation_edge_basis(
+    path: Path | None,
+    *,
+    expected_sha256: str | None = None,
+) -> str | None:
+    """Read the board-selected edge basis from signed decision provenance."""
+
+    if path is None:
+        return None
+    try:
+        receipt_bytes = path.read_bytes()
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if (
+        expected_sha256 is not None
+        and hashlib.sha256(receipt_bytes).hexdigest() != expected_sha256
+    ):
+        return None
+    try:
+        payload = json.loads(receipt_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    decision = (
+        payload.get("decision")
+        if isinstance(payload, dict)
+        and isinstance(payload.get("decision"), dict)
+        else {}
+    )
+    provenance = (
+        decision.get("decision_provenance")
+        if isinstance(decision.get("decision_provenance"), dict)
+        else {}
+    )
+    value = str(
+        provenance.get("capital_allocation_edge_basis") or ""
+    ).strip().upper()
+    return value if value in {
+        "EXACT_VEHICLE_ALL_EXIT_NET",
+        "EXACT_VEHICLE_TAKE_PROFIT",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "HEDGE_RISK_REDUCTION",
+    } else None
 
 
 def _numeric_predictive_scout_contract(intent: OrderIntent) -> bool:
@@ -6185,6 +6420,365 @@ def _numeric_predictive_scout_contract(intent: OrderIntent) -> bool:
         and metadata.get("attach_take_profit_on_fill") is True
         and str(metadata.get("tp_execution_mode") or "").strip().upper()
         == "ATTACHED_TECHNICAL_TP"
+    )
+
+
+def _range_tp_proven_prebounded_intent_claim(intent: OrderIntent) -> bool:
+    """Recognize—but do not authorize—the narrow passive RANGE claim."""
+
+    metadata = dict(intent.metadata or {})
+    method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else ""
+    )
+    expected_entry_side = (
+        "SUPPORT" if intent.side == Side.LONG else "RESISTANCE"
+    )
+    return bool(
+        intent.order_type == OrderType.LIMIT
+        and intent.entry is not None
+        and method in {"RANGE_ROTATION", "BREAKOUT_FAILURE"}
+        and str(metadata.get("forecast_direction") or "").strip().upper()
+        == "RANGE"
+        and str(
+            metadata.get("forecast_directional_calibration_name") or ""
+        ).strip().lower()
+        == "directional_forecast_range"
+        and str(metadata.get("position_intent") or "NEW").strip().upper()
+        != "HEDGE"
+        and metadata.get("attach_take_profit_on_fill") is True
+        and str(metadata.get("tp_execution_mode") or "").strip().upper()
+        == "ATTACHED_TECHNICAL_TP"
+        and str(metadata.get("tp_target_intent") or "").strip().upper()
+        == "HARVEST"
+        and str(metadata.get("opportunity_mode") or "").strip().upper()
+        == "HARVEST"
+        and str(metadata.get("positive_rotation_mode") or "").strip().upper()
+        == "TP_PROVEN_HARVEST"
+        and metadata.get("positive_rotation_live_ready") is True
+        and str(metadata.get("loss_asymmetry_guard_mode") or "").strip().upper()
+        == "TP_PROVEN_RELAXED"
+        and str(metadata.get("geometry_model") or "").strip().upper()
+        == "RANGE_RAIL_LIMIT"
+        and metadata.get("range_tp_is_inside_box") is True
+        and metadata.get("range_sl_outside_box") is True
+        and str(metadata.get("range_entry_side") or "").strip().upper()
+        == expected_entry_side
+    )
+
+
+def _post_s5_tp_proven_range_quote_fence(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    prior_snapshot: BrokerSnapshot | None,
+) -> tuple[dict[str, Any], RiskIssue | None]:
+    """Keep a frozen RANGE LIMIT passive and untouched after the final S5 read."""
+
+    if not _range_tp_proven_prebounded_intent_claim(intent):
+        return {"status": "NOT_APPLICABLE"}, None
+
+    def finished(material: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **material,
+            "proof_sha256": _canonical_json_sha256(material),
+        }
+
+    quote = snapshot.quotes.get(intent.pair)
+    prior_quote = (
+        prior_snapshot.quotes.get(intent.pair)
+        if prior_snapshot is not None
+        else None
+    )
+    target, invalidation, barrier_basis = _forecast_s5_barriers(intent)
+    quote_values = (
+        (quote.bid, quote.ask)
+        if quote is not None
+        else (None, None)
+    )
+    quote_valid = bool(
+        quote is not None
+        and all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(float(value))
+            and float(value) > 0.0
+            for value in quote_values
+        )
+        and float(quote.bid) <= float(quote.ask)
+    )
+    geometry_valid = bool(
+        barrier_basis == "RANGE_RAILS"
+        and intent.entry is not None
+        and target is not None
+        and invalidation is not None
+        and all(
+            math.isfinite(float(value)) and float(value) > 0.0
+            for value in (
+                intent.entry,
+                intent.tp,
+                intent.sl,
+                target,
+                invalidation,
+            )
+        )
+    )
+    quote_time_monotonic = bool(
+        quote is not None
+        and (
+            prior_quote is None
+            or quote.timestamp_utc.astimezone(timezone.utc)
+            >= prior_quote.timestamp_utc.astimezone(timezone.utc)
+        )
+    )
+    snapshot_time_monotonic = bool(
+        prior_snapshot is None
+        or snapshot.fetched_at_utc.astimezone(timezone.utc)
+        >= prior_snapshot.fetched_at_utc.astimezone(timezone.utc)
+    )
+    entry_touched = False
+    tp_touched = False
+    target_touched = False
+    invalidation_touched = False
+    sl_touched = False
+    if quote_valid and geometry_valid and quote is not None:
+        if intent.side == Side.LONG:
+            entry_touched = float(quote.ask) <= float(intent.entry)
+            tp_touched = float(quote.ask) >= float(intent.tp)
+            target_touched = float(quote.ask) >= float(target)
+            invalidation_touched = float(quote.bid) <= float(invalidation)
+            sl_touched = float(quote.bid) <= float(intent.sl)
+        else:
+            entry_touched = float(quote.bid) >= float(intent.entry)
+            tp_touched = float(quote.bid) <= float(intent.tp)
+            target_touched = float(quote.bid) <= float(target)
+            invalidation_touched = float(quote.ask) >= float(invalidation)
+            sl_touched = float(quote.ask) >= float(intent.sl)
+    passed = bool(
+        quote_valid
+        and geometry_valid
+        and quote_time_monotonic
+        and snapshot_time_monotonic
+        and not entry_touched
+        and not tp_touched
+        and not target_touched
+        and not invalidation_touched
+        and not sl_touched
+    )
+    reason = (
+        "POST_S5_RANGE_QUOTE_UNTOUCHED"
+        if passed
+        else "POST_S5_RANGE_QUOTE_INVALID"
+        if not quote_valid
+        else "POST_S5_RANGE_GEOMETRY_INVALID"
+        if not geometry_valid
+        else "POST_S5_RANGE_QUOTE_TIME_REGRESSED"
+        if not quote_time_monotonic or not snapshot_time_monotonic
+        else "POST_S5_RANGE_LIMIT_ENTRY_CROSSED"
+        if entry_touched
+        else "POST_S5_RANGE_TP_OR_TARGET_TOUCHED"
+        if tp_touched or target_touched
+        else "POST_S5_RANGE_INVALIDATION_OR_SL_TOUCHED"
+    )
+    material = {
+        "status": "PASSED" if passed else "BLOCKED",
+        "reason": reason,
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "order_type": intent.order_type.value,
+        "entry": intent.entry,
+        "tp": intent.tp,
+        "sl": intent.sl,
+        "forecast_target": target,
+        "forecast_invalidation": invalidation,
+        "barrier_basis": barrier_basis,
+        "quote_bid": float(quote.bid) if quote_valid and quote is not None else None,
+        "quote_ask": float(quote.ask) if quote_valid and quote is not None else None,
+        "quote_timestamp_utc": (
+            quote.timestamp_utc.astimezone(timezone.utc).isoformat()
+            if quote is not None
+            else None
+        ),
+        "prior_quote_timestamp_utc": (
+            prior_quote.timestamp_utc.astimezone(timezone.utc).isoformat()
+            if prior_quote is not None
+            else None
+        ),
+        "snapshot_fetched_at_utc": snapshot.fetched_at_utc.astimezone(
+            timezone.utc
+        ).isoformat(),
+        "prior_snapshot_fetched_at_utc": (
+            prior_snapshot.fetched_at_utc.astimezone(timezone.utc).isoformat()
+            if prior_snapshot is not None
+            else None
+        ),
+        "quote_valid": quote_valid,
+        "geometry_valid": geometry_valid,
+        "quote_time_monotonic": quote_time_monotonic,
+        "snapshot_time_monotonic": snapshot_time_monotonic,
+        "entry_touched": entry_touched,
+        "tp_touched": tp_touched,
+        "target_touched": target_touched,
+        "invalidation_touched": invalidation_touched,
+        "sl_touched": sl_touched,
+        "repriced": False,
+    }
+    evidence = finished(material)
+    if passed:
+        return evidence, None
+    issue_code = (
+        "FINAL_PRE_POST_TP_PROVEN_RANGE_TRIGGER_CROSSED"
+        if entry_touched
+        else "FINAL_PRE_POST_TP_PROVEN_RANGE_QUOTE_FENCE_FAILED"
+    )
+    return evidence, RiskIssue(
+        issue_code,
+        "the exact TP-proven RANGE LIMIT or one of its frozen rails was crossed "
+        "after the final S5 read; retain the reservation and expire the geometry "
+        "without repricing or broker POST",
+    )
+
+
+def _range_tp_proven_basis_from_fresh_edge(
+    intent: OrderIntent,
+    edge_recheck: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Rebuild the RANGE fixed-cap receipt from the just-synced cohort.
+
+    The original positive-rotation fields identify the reviewed contract, but
+    their counts and Wilson stress are never trusted at POST time.  Recompute
+    them from the fresh exact TP row carried by the edge recheck.
+    """
+
+    if not _range_tp_proven_prebounded_intent_claim(intent):
+        return None
+    edge = edge_recheck if isinstance(edge_recheck, dict) else {}
+    method = intent.market_context.method.value
+    expected_key = [
+        intent.pair.upper(),
+        intent.side.value.upper(),
+        method.upper(),
+        "LIMIT",
+    ]
+    current_tp = (
+        edge.get("current_tp")
+        if isinstance(edge.get("current_tp"), dict)
+        else {}
+    )
+    fresh_capture = (
+        edge.get("fresh_capture")
+        if isinstance(edge.get("fresh_capture"), dict)
+        else {}
+    )
+    ledger_sha = str(edge.get("ledger_surface_sha256") or "")
+    trades = current_tp.get("trades")
+    wins = current_tp.get("wins")
+    losses = current_tp.get("losses")
+    avg_win = current_tp.get("avg_win_jpy")
+    expectancy = current_tp.get("expectancy_jpy")
+    loss_proxy = fresh_capture.get("avg_loss_jpy")
+    if (
+        edge.get("status") != "PASSED"
+        or edge.get("basis") != "EXACT_VEHICLE_TAKE_PROFIT"
+        or edge.get("proof_key") != expected_key
+        or not re.fullmatch(r"[0-9a-f]{64}", ledger_sha)
+        or current_tp.get("arithmetic_consistent") is not True
+        or isinstance(trades, bool)
+        or not isinstance(trades, int)
+        or trades < 20
+        or isinstance(wins, bool)
+        or not isinstance(wins, int)
+        or wins < 0
+        or wins > trades
+        or isinstance(losses, bool)
+        or not isinstance(losses, int)
+        or losses != 0
+        or isinstance(avg_win, bool)
+        or not isinstance(avg_win, (int, float))
+        or not math.isfinite(float(avg_win))
+        or float(avg_win) <= 0.0
+        or isinstance(expectancy, bool)
+        or not isinstance(expectancy, (int, float))
+        or not math.isfinite(float(expectancy))
+        or float(expectancy) <= 0.0
+        or isinstance(loss_proxy, bool)
+        or not isinstance(loss_proxy, (int, float))
+        or not math.isfinite(float(loss_proxy))
+        or float(loss_proxy) <= 0.0
+    ):
+        return None
+    hit_rate = wins / trades
+    wilson_lower = hit_rate_wilson_lower(hit_rate, trades)
+    if wilson_lower is None:
+        return None
+    loss_proxy = float(loss_proxy)
+    pessimistic = (
+        wilson_lower * float(avg_win)
+        - (1.0 - wilson_lower) * loss_proxy
+    )
+    if pessimistic <= 0.0:
+        return None
+
+    fresh_metadata = dict(intent.metadata or {})
+    fresh_metadata.update(
+        {
+            "capture_take_profit_trades": trades,
+            "capture_take_profit_wins": wins,
+            "capture_take_profit_losses": losses,
+            "capture_take_profit_expectancy_jpy": float(expectancy),
+            "capture_take_profit_avg_win_jpy": float(avg_win),
+            "positive_rotation_tp_trades": trades,
+            "positive_rotation_tp_wins": wins,
+            "positive_rotation_loss_proxy_jpy": loss_proxy,
+            "positive_rotation_tp_win_rate_lower": round(
+                wilson_lower, 6
+            ),
+            "positive_rotation_pessimistic_expectancy_jpy": round(
+                pessimistic, 4
+            ),
+        }
+    )
+    from quant_rabbit.market_read_overlay import (
+        _tp_proven_harvest_range_economic_basis,
+    )
+
+    return _tp_proven_harvest_range_economic_basis(
+        intent={
+            "pair": intent.pair,
+            "side": intent.side.value,
+            "order_type": intent.order_type.value,
+            "units": intent.units,
+            "entry": intent.entry,
+            "tp": intent.tp,
+            "sl": intent.sl,
+        },
+        metadata=fresh_metadata,
+        method=method,
+        positive_tp_edge=True,
+        execution_ledger_surface_sha256=ledger_sha,
+    )
+
+
+def _forecast_s5_barriers(
+    intent: OrderIntent,
+) -> tuple[float | None, float | None, str]:
+    """Return side-aware barriers for directional or RANGE path reproof."""
+
+    metadata = dict(intent.metadata or {})
+    if _range_tp_proven_prebounded_intent_claim(intent):
+        low = _positive_float(metadata.get("forecast_range_low_price"))
+        high = _positive_float(metadata.get("forecast_range_high_price"))
+        if low is None or high is None or low >= high:
+            return None, None, "RANGE_RAILS_INVALID"
+        if intent.side == Side.LONG:
+            return high, low, "RANGE_RAILS"
+        return low, high, "RANGE_RAILS"
+    return (
+        _positive_float(metadata.get("forecast_target_price")),
+        _positive_float(metadata.get("forecast_invalidation_price")),
+        "DIRECTIONAL_FORECAST",
     )
 
 
@@ -6377,10 +6971,10 @@ def _forecast_s5_no_touch_proof(
         )
         and all(row[5] is True for row in parsed[:-1])
     )
-    forecast_target = _positive_float(metadata.get("forecast_target_price"))
-    forecast_invalidation = _positive_float(
-        metadata.get("forecast_invalidation_price")
+    forecast_target, forecast_invalidation, barrier_basis = (
+        _forecast_s5_barriers(intent)
     )
+    range_path = barrier_basis == "RANGE_RAILS"
     barriers_valid = bool(
         forecast_target is not None
         and forecast_invalidation is not None
@@ -6389,29 +6983,51 @@ def _forecast_s5_no_touch_proof(
     tp_touched = False
     target_touched = False
     invalidation_touched = False
+    order_entry_touched = False
+    order_sl_touched = False
     same_candle_both_touched = False
     first_tp_touch_utc: str | None = None
     first_target_touch_utc: str | None = None
     first_invalidation_touch_utc: str | None = None
+    first_order_entry_touch_utc: str | None = None
+    first_order_sl_touch_utc: str | None = None
     if coverage_ok and barriers_valid:
         for candle_ts, _, high, low, _, _ in parsed:
             if intent.side == Side.LONG:
                 candle_tp = high >= intent.tp
                 candle_target = high >= forecast_target
                 candle_invalidation = low <= forecast_invalidation
+                candle_entry = bool(
+                    range_path
+                    and intent.entry is not None
+                    and low <= intent.entry
+                )
+                candle_sl = bool(range_path and low <= intent.sl)
             else:
                 candle_tp = low <= intent.tp
                 candle_target = low <= forecast_target
                 candle_invalidation = high >= forecast_invalidation
+                candle_entry = bool(
+                    range_path
+                    and intent.entry is not None
+                    and high >= intent.entry
+                )
+                candle_sl = bool(range_path and high >= intent.sl)
             tp_touched = tp_touched or candle_tp
             target_touched = target_touched or candle_target
             invalidation_touched = invalidation_touched or candle_invalidation
+            order_entry_touched = order_entry_touched or candle_entry
+            order_sl_touched = order_sl_touched or candle_sl
             if candle_tp and first_tp_touch_utc is None:
                 first_tp_touch_utc = candle_ts.isoformat()
             if candle_target and first_target_touch_utc is None:
                 first_target_touch_utc = candle_ts.isoformat()
             if candle_invalidation and first_invalidation_touch_utc is None:
                 first_invalidation_touch_utc = candle_ts.isoformat()
+            if candle_entry and first_order_entry_touch_utc is None:
+                first_order_entry_touch_utc = candle_ts.isoformat()
+            if candle_sl and first_order_sl_touch_utc is None:
+                first_order_sl_touch_utc = candle_ts.isoformat()
             same_candle_both_touched = same_candle_both_touched or (
                 (candle_tp or candle_target) and candle_invalidation
             )
@@ -6421,6 +7037,8 @@ def _forecast_s5_no_touch_proof(
         and not tp_touched
         and not target_touched
         and not invalidation_touched
+        and not order_entry_touched
+        and not order_sl_touched
     )
     reason = (
         "FORECAST_S5_NO_TOUCH_PROVEN"
@@ -6435,6 +7053,8 @@ def _forecast_s5_no_touch_proof(
         if same_candle_both_touched
         else "FORECAST_S5_TP_OR_TARGET_TOUCHED"
         if tp_touched or target_touched
+        else "FORECAST_S5_RANGE_ENTRY_OR_SL_TOUCHED"
+        if order_entry_touched or order_sl_touched
         else "FORECAST_S5_INVALIDATION_TOUCHED"
     )
     candle_rows = [
@@ -6485,15 +7105,22 @@ def _forecast_s5_no_touch_proof(
         "coverage_ok": coverage_ok,
         "malformed_candle": malformed,
         "order_tp": intent.tp,
+        "order_entry": intent.entry,
+        "order_sl": intent.sl,
+        "barrier_basis": barrier_basis,
         "forecast_target": forecast_target,
         "forecast_invalidation": forecast_invalidation,
         "tp_touched": tp_touched,
         "target_touched": target_touched,
         "invalidation_touched": invalidation_touched,
+        "order_entry_touched": order_entry_touched,
+        "order_sl_touched": order_sl_touched,
         "same_candle_both_touched": same_candle_both_touched,
         "first_tp_touch_utc": first_tp_touch_utc,
         "first_target_touch_utc": first_target_touch_utc,
         "first_invalidation_touch_utc": first_invalidation_touch_utc,
+        "first_order_entry_touch_utc": first_order_entry_touch_utc,
+        "first_order_sl_touch_utc": first_order_sl_touch_utc,
         "no_touch": no_touch,
     }
     return finished(material)
@@ -6524,9 +7151,8 @@ def _forecast_s5_path_proof_valid(
     quote = snapshot.quotes.get(intent.pair)
     if quote is None:
         return False
-    expected_target = _positive_float(metadata.get("forecast_target_price"))
-    expected_invalidation = _positive_float(
-        metadata.get("forecast_invalidation_price")
+    expected_target, expected_invalidation, expected_barrier_basis = (
+        _forecast_s5_barriers(intent)
     )
     if expected_target is None or expected_invalidation is None:
         return False
@@ -6628,19 +7254,41 @@ def _forecast_s5_path_proof_valid(
         "target_touched": False,
         "invalidation_touched": False,
         "same_candle_both_touched": False,
+        "order_entry_touched": False,
+        "order_sl_touched": False,
         "first_tp_touch_utc": None,
         "first_target_touch_utc": None,
         "first_invalidation_touch_utc": None,
+        "first_order_entry_touch_utc": None,
+        "first_order_sl_touch_utc": None,
     }
     for candle_time, _, high, low, _, _ in parsed_rows:
         if intent.side == Side.LONG:
             candle_tp = high >= intent.tp
             candle_target = high >= float(expected_target)
             candle_invalidation = low <= float(expected_invalidation)
+            candle_entry = bool(
+                expected_barrier_basis == "RANGE_RAILS"
+                and intent.entry is not None
+                and low <= intent.entry
+            )
+            candle_sl = bool(
+                expected_barrier_basis == "RANGE_RAILS"
+                and low <= intent.sl
+            )
         else:
             candle_tp = low <= intent.tp
             candle_target = low <= float(expected_target)
             candle_invalidation = high >= float(expected_invalidation)
+            candle_entry = bool(
+                expected_barrier_basis == "RANGE_RAILS"
+                and intent.entry is not None
+                and high >= intent.entry
+            )
+            candle_sl = bool(
+                expected_barrier_basis == "RANGE_RAILS"
+                and high >= intent.sl
+            )
         for key, touched in (
             ("tp_touched", candle_tp),
             ("target_touched", candle_target),
@@ -6659,6 +7307,25 @@ def _forecast_s5_path_proof_valid(
             and recomputed_touch["first_invalidation_touch_utc"] is None
         ):
             recomputed_touch["first_invalidation_touch_utc"] = (
+                candle_time.isoformat()
+            )
+        for key, touched in (
+            ("order_entry_touched", candle_entry),
+            ("order_sl_touched", candle_sl),
+        ):
+            recomputed_touch[key] = recomputed_touch[key] or touched
+        if (
+            candle_entry
+            and recomputed_touch["first_order_entry_touch_utc"] is None
+        ):
+            recomputed_touch["first_order_entry_touch_utc"] = (
+                candle_time.isoformat()
+            )
+        if (
+            candle_sl
+            and recomputed_touch["first_order_sl_touch_utc"] is None
+        ):
+            recomputed_touch["first_order_sl_touch_utc"] = (
                 candle_time.isoformat()
             )
         recomputed_touch["same_candle_both_touched"] = bool(
@@ -6687,10 +7354,30 @@ def _forecast_s5_path_proof_valid(
         for actual, expected in numeric_fields
     ):
         return False
+    if expected_barrier_basis == "RANGE_RAILS":
+        for actual, expected in (
+            (proof.get("order_entry"), intent.entry),
+            (proof.get("order_sl"), intent.sl),
+        ):
+            if (
+                expected is None
+                or isinstance(actual, bool)
+                or not isinstance(actual, (int, float))
+                or not math.isfinite(float(actual))
+                or not math.isclose(
+                    float(actual),
+                    float(expected),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                return False
     return bool(
         str(proof.get("status") or "").upper() == "PASSED"
         and str(proof.get("reason") or "")
         == "FORECAST_S5_NO_TOUCH_PROVEN"
+        and str(proof.get("barrier_basis") or "")
+        == expected_barrier_basis
         and str(proof.get("side") or "").upper() == intent.side.value
         and str(proof.get("forecast_cycle_id") or "")
         == cycle_id
@@ -6741,6 +7428,8 @@ def _forecast_s5_path_proof_valid(
         and proof.get("tp_touched") is False
         and proof.get("target_touched") is False
         and proof.get("invalidation_touched") is False
+        and proof.get("order_entry_touched") is False
+        and proof.get("order_sl_touched") is False
         and proof.get("same_candle_both_touched") is False
         and str(proof.get("response_instrument") or "") == intent.pair
         and str(proof.get("response_granularity") or "").upper() == "S5"
@@ -6785,15 +7474,33 @@ def _capital_allocation_market_price_bound(
     metadata = dict(intent.metadata or {})
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
     scout = _numeric_predictive_scout_contract(intent)
-    if hedge or scout:
+    range_tp_prebounded = _range_tp_proven_prebounded_intent_claim(intent)
+    if hedge or scout or range_tp_prebounded:
+        bypass_reason = (
+            "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
+            if hedge
+            else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
+            if scout
+            else "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT"
+        )
+        if range_tp_prebounded and reserved_price_bound is not None:
+            evidence = finished(
+                {
+                    "status": "BLOCKED",
+                    "reason": "RANGE_LIMIT_PRICE_BOUND_FORBIDDEN",
+                    "pair": intent.pair,
+                    "side": intent.side.value,
+                    "price_bound_text": None,
+                }
+            )
+            return evidence, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_REPROOF_FAILED",
+                "passive RANGE LIMIT must not carry a MARKET priceBound",
+            )
         evidence = finished(
             {
                 "status": "BYPASSED",
-                "reason": (
-                    "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
-                    if hedge
-                    else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
-                ),
+                "reason": bypass_reason,
                 "pair": intent.pair,
                 "side": intent.side.value,
                 "price_bound_text": None,
@@ -7404,6 +8111,7 @@ def _capital_allocation_numeric_pre_post_recheck(
     required: bool,
     forecast_s5_path_proof: dict[str, Any] | None = None,
     execution_cost_floor: dict[str, Any] | None = None,
+    capital_allocation_edge_recheck: dict[str, Any] | None = None,
     market_entry_slippage_embedded: bool = False,
 ) -> tuple[dict[str, Any], RiskIssue | None]:
     """Recompute GPT's numeric ceiling from fresh broker truth at base units."""
@@ -7439,6 +8147,24 @@ def _capital_allocation_numeric_pre_post_recheck(
     metadata = dict(verified_intent.metadata or {})
     predictive_scout = _numeric_predictive_scout_contract(verified_intent)
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    range_tp_claim = _range_tp_proven_prebounded_intent_claim(
+        verified_intent
+    )
+    range_economic_basis = _range_tp_proven_basis_from_fresh_edge(
+        verified_intent,
+        capital_allocation_edge_recheck,
+    )
+    range_geometry_frozen = bool(
+        not range_tp_claim
+        or (
+            final_intent.pair == verified_intent.pair
+            and final_intent.side == verified_intent.side
+            and final_intent.order_type == verified_intent.order_type
+            and final_intent.entry == verified_intent.entry
+            and final_intent.tp == verified_intent.tp
+            and final_intent.sl == verified_intent.sl
+        )
+    )
     quote = fresh_snapshot.quotes.get(verified_intent.pair)
     account = fresh_snapshot.account
     quote_currency = (
@@ -7485,8 +8211,11 @@ def _capital_allocation_numeric_pre_post_recheck(
         broker_quote_to_jpy=quote_to_jpy,
         predictive_scout=predictive_scout,
         hedge=hedge,
+        range_economic_basis=range_economic_basis,
         forecast_current_binding_mode=(
-            "DIRECTIONAL_FRESH_MARKET_DRIFT"
+            "RANGE_FRESH_PASSIVE_RAIL"
+            if range_tp_claim
+            else "DIRECTIONAL_FRESH_MARKET_DRIFT"
         ),
         execution_cost_floor=execution_cost_floor,
         market_entry_slippage_embedded=(
@@ -7496,6 +8225,11 @@ def _capital_allocation_numeric_pre_post_recheck(
     proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
         "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
+        "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
+    }
+    path_proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
+        "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
+        "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
     }
     path_proof = (
         dict(forecast_s5_path_proof)
@@ -7503,7 +8237,9 @@ def _capital_allocation_numeric_pre_post_recheck(
         else {"status": "MISSING", "reason": "FORECAST_S5_PATH_PROOF_MISSING"}
     )
     bypass_reason = (
-        str(numeric_ceiling.get("reason") or "") if proof_is_bypass else None
+        str(numeric_ceiling.get("reason") or "")
+        if path_proof_is_bypass
+        else None
     )
     path_proof_passed = _forecast_s5_path_proof_valid(
         path_proof,
@@ -7522,6 +8258,7 @@ def _capital_allocation_numeric_pre_post_recheck(
         and math.isfinite(float(raw_fresh_max_multiple))
         and float(raw_fresh_max_multiple) > 0.0
         and path_proof_passed
+        and range_geometry_frozen
     )
     fresh_unit_cap = (
         math.floor(base_units * float(fresh_max_multiple) + 1e-12)
@@ -7570,6 +8307,9 @@ def _capital_allocation_numeric_pre_post_recheck(
             "LAZY_PURE_MATH_IMPORT:quant_rabbit.market_read_overlay."
             "_capital_allocation_numeric_ceiling;NO_EXECUTION_IMPORT_IN_OVERLAY"
         ),
+        "range_tp_prebounded_claimed": range_tp_claim,
+        "range_tp_geometry_frozen": range_geometry_frozen,
+        "range_tp_fresh_edge_basis": range_economic_basis,
         "forecast_s5_path_proof": path_proof,
         "forecast_s5_path_proof_passed": path_proof_passed,
         "numeric_ceiling": numeric_ceiling,
@@ -7579,6 +8319,11 @@ def _capital_allocation_numeric_pre_post_recheck(
         "proof_sha256": _canonical_json_sha256(material),
     }
     if not numeric_inputs_passed:
+        if not range_geometry_frozen:
+            return evidence, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_RANGE_GEOMETRY_MUTATED",
+                "TP-proven RANGE LIMIT entry/TP/SL/vehicle changed after the signed allocation; expire and rebuild the lane",
+            )
         if not path_proof_passed:
             return evidence, RiskIssue(
                 "PRE_POST_GPT_ALLOCATION_FORECAST_S5_PATH_REPROOF_FAILED",
@@ -7608,6 +8353,7 @@ def _capital_allocation_edge_pre_post_recheck(
     intent: OrderIntent,
     *,
     ledger_path: Path,
+    expected_edge_basis: str | None = None,
     expected_execution_cost_floor_sha256: str | None = None,
     execution_cost_floor_required: bool = False,
 ) -> tuple[dict[str, Any], RiskIssue | None]:
@@ -7635,10 +8381,66 @@ def _capital_allocation_edge_pre_post_recheck(
     )
     scope_key = "|".join(exact_key)
 
+    if execution_cost_floor_required and expected_edge_basis is None:
+        evidence = {
+            "status": "BLOCKED",
+            "issue_code": (
+                "PRE_POST_GPT_ALLOCATION_SIGNED_EDGE_BASIS_UNREADABLE"
+            ),
+            "basis": None,
+            "expected_basis": None,
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+        }
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_SIGNED_EDGE_BASIS_UNREADABLE",
+            "numeric GPT allocation must preserve the edge basis from the exact "
+            "receipt bytes frozen at gateway entry; missing, swapped, or unreadable "
+            "provenance cannot fall back to an intent-inferred basis",
+        )
+
+    if (
+        execution_cost_floor_required
+        and expected_edge_basis
+        in {
+            "EXACT_VEHICLE_ALL_EXIT_NET",
+            "EXACT_VEHICLE_TAKE_PROFIT",
+        }
+        and expected_execution_cost_floor_sha256 is None
+    ):
+        evidence = {
+            "status": "BLOCKED",
+            "issue_code": (
+                "PRE_POST_GPT_ALLOCATION_SIGNED_COST_FLOOR_UNREADABLE"
+            ),
+            "basis": expected_edge_basis,
+            "expected_basis": expected_edge_basis,
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+        }
+        return evidence, RiskIssue(
+            "PRE_POST_GPT_ALLOCATION_SIGNED_COST_FLOOR_UNREADABLE",
+            "numeric GPT allocation must preserve the execution-cost proof SHA "
+            "from the exact receipt bytes frozen at gateway entry; missing or "
+            "unreadable provenance cannot adopt a later ledger proof",
+        )
+
     if str(metadata.get("position_intent") or "").strip().upper() == "HEDGE":
+        if expected_edge_basis not in {None, "HEDGE_RISK_REDUCTION"}:
+            return {
+                "status": "BLOCKED",
+                "basis": "HEDGE_RISK_REDUCTION",
+                "expected_basis": expected_edge_basis,
+                "proof_key": list(exact_key),
+                "read_at_utc": read_at_utc,
+            }, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_MISMATCH",
+                "signed board edge basis does not match HEDGE risk reduction",
+            )
         return {
             "status": "BYPASSED",
             "basis": "HEDGE_RISK_REDUCTION",
+            "expected_basis": expected_edge_basis,
             "proof_key": list(exact_key),
             "read_at_utc": read_at_utc,
         }, None
@@ -7646,9 +8448,24 @@ def _capital_allocation_edge_pre_post_recheck(
         predictive_scout_intent_claimed(intent)
         and predictive_scout_metadata_supported(metadata)
     ):
+        if expected_edge_basis not in {
+            None,
+            "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        }:
+            return {
+                "status": "BLOCKED",
+                "basis": "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+                "expected_basis": expected_edge_basis,
+                "proof_key": list(exact_key),
+                "read_at_utc": read_at_utc,
+            }, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_MISMATCH",
+                "signed board edge basis does not match predictive scout evidence",
+            )
         return {
             "status": "BYPASSED",
             "basis": "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+            "expected_basis": expected_edge_basis,
             "proof_key": list(exact_key),
             "read_at_utc": read_at_utc,
         }, None
@@ -7722,10 +8539,19 @@ def _capital_allocation_edge_pre_post_recheck(
         and claimed_net_evaluation["blocks_tp_exception"] is not True
     )
     original_basis = (
-        "EXACT_VEHICLE_ALL_EXIT_NET"
-        if claimed_net_binding and claimed_net_evaluation["proven"] is True
+        expected_edge_basis
+        if expected_edge_basis == "EXACT_VEHICLE_ALL_EXIT_NET"
+        and claimed_net_binding
+        and claimed_net_evaluation["proven"] is True
+        else expected_edge_basis
+        if expected_edge_basis == "EXACT_VEHICLE_TAKE_PROFIT"
+        and claimed_tp_binding
+        else "EXACT_VEHICLE_ALL_EXIT_NET"
+        if expected_edge_basis is None
+        and claimed_net_binding
+        and claimed_net_evaluation["proven"] is True
         else "EXACT_VEHICLE_TAKE_PROFIT"
-        if claimed_tp_binding
+        if expected_edge_basis is None and claimed_tp_binding
         else None
     )
     if original_basis is None:
@@ -7733,6 +8559,7 @@ def _capital_allocation_edge_pre_post_recheck(
             "status": "BLOCKED",
             "issue_code": "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_UNPROVEN",
             "basis": None,
+            "expected_basis": expected_edge_basis,
             "proof_key": list(exact_key),
             "read_at_utc": read_at_utc,
             "claimed_all_exit": claimed_net_evaluation,
@@ -7832,16 +8659,19 @@ def _capital_allocation_edge_pre_post_recheck(
             failed_checks.append("ALL_EXIT_EVIDENCE_SUPPRESSES_TP_EXCEPTION")
     if not cost_floor_passed:
         failed_checks.append("EXECUTION_COST_FLOOR_STALE_OR_MISMATCHED")
+    fresh_capture = _fresh_capture_payoff_metrics(ledger_path)
 
     evidence = {
         "status": "PASSED" if passed else "BLOCKED",
         "issue_code": None if passed else "PRE_POST_GPT_ALLOCATION_EDGE_STALE",
         "basis": original_basis,
+        "expected_basis": expected_edge_basis,
         "proof_key": list(exact_key),
         "read_at_utc": read_at_utc,
         "ledger_surface_sha256": surface.get("allocation_surface_sha256"),
         "current_all_exit": current_net_evaluation,
         "current_tp": current_tp_evaluation,
+        "fresh_capture": fresh_capture,
         "execution_cost_floor": execution_cost_floor,
         "expected_execution_cost_floor_sha256": (
             expected_execution_cost_floor_sha256
@@ -8202,12 +9032,21 @@ def _repriced_crossed_passive_limit_intent(
         and "LIMIT_ENTRY_NOT_BELOW_MARKET" in issue_codes
         and original_entry >= quote.ask
     ):
-        if predictive_scout_intent_claimed(intent):
+        if (
+            predictive_scout_intent_claimed(intent)
+            or _range_tp_proven_prebounded_intent_claim(intent)
+        ):
+            range_contract = _range_tp_proven_prebounded_intent_claim(intent)
             return intent, RiskIssue(
-                "PREDICTIVE_SCOUT_TRIGGER_CROSSED",
                 (
-                    f"predictive SCOUT LONG trigger {original_entry:.{precision}f} is no longer passive "
-                    f"at ask={quote.ask:.{precision}f}; expire the exact replay geometry instead of repricing it"
+                    "TP_PROVEN_RANGE_TRIGGER_CROSSED"
+                    if range_contract
+                    else "PREDICTIVE_SCOUT_TRIGGER_CROSSED"
+                ),
+                (
+                    f"{'TP-proven RANGE' if range_contract else 'predictive SCOUT'} "
+                    f"LONG trigger {original_entry:.{precision}f} is no longer passive "
+                    f"at ask={quote.ask:.{precision}f}; expire the exact geometry instead of repricing it"
                 ),
             )
         candidate = float(_price(intent.pair, quote.ask - tick))
@@ -8222,12 +9061,21 @@ def _repriced_crossed_passive_limit_intent(
         and "LIMIT_ENTRY_NOT_ABOVE_MARKET" in issue_codes
         and original_entry <= quote.bid
     ):
-        if predictive_scout_intent_claimed(intent):
+        if (
+            predictive_scout_intent_claimed(intent)
+            or _range_tp_proven_prebounded_intent_claim(intent)
+        ):
+            range_contract = _range_tp_proven_prebounded_intent_claim(intent)
             return intent, RiskIssue(
-                "PREDICTIVE_SCOUT_TRIGGER_CROSSED",
                 (
-                    f"predictive SCOUT SHORT trigger {original_entry:.{precision}f} is no longer passive "
-                    f"at bid={quote.bid:.{precision}f}; expire the exact replay geometry instead of repricing it"
+                    "TP_PROVEN_RANGE_TRIGGER_CROSSED"
+                    if range_contract
+                    else "PREDICTIVE_SCOUT_TRIGGER_CROSSED"
+                ),
+                (
+                    f"{'TP-proven RANGE' if range_contract else 'predictive SCOUT'} "
+                    f"SHORT trigger {original_entry:.{precision}f} is no longer passive "
+                    f"at bid={quote.bid:.{precision}f}; expire the exact geometry instead of repricing it"
                 ),
             )
         candidate = float(_price(intent.pair, quote.bid + tick))
@@ -8376,19 +9224,119 @@ def _capital_allocation_numeric_proof_is_frozen(
     if price_bound_sha256 != _canonical_json_sha256(price_bound_material):
         return False
     price_bound_status = str(price_bound.get("status") or "").upper()
+    numeric_ceiling = (
+        evidence.get("numeric_ceiling")
+        if isinstance(evidence.get("numeric_ceiling"), dict)
+        else {}
+    )
     if status == "BYPASSED":
+        bypass_reason = str(numeric_ceiling.get("reason") or "")
         if (
             price_bound_status != "BYPASSED"
+            or str(price_bound.get("reason") or "") != bypass_reason
             or "priceBound" in order_request
+        ):
+            return False
+        if bypass_reason == "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT":
+            inputs = (
+                numeric_ceiling.get("inputs")
+                if isinstance(numeric_ceiling.get("inputs"), dict)
+                else {}
+            )
+            geometry = (
+                numeric_ceiling.get("geometry")
+                if isinstance(numeric_ceiling.get("geometry"), dict)
+                else {}
+            )
+            numeric_cost = (
+                numeric_ceiling.get("execution_cost_floor")
+                if isinstance(
+                    numeric_ceiling.get("execution_cost_floor"), dict
+                )
+                else {}
+            )
+            numeric_cost_sha = str(numeric_cost.get("proof_sha256") or "")
+            numeric_cost_material = dict(numeric_cost)
+            numeric_cost_material.pop("proof_sha256", None)
+            expected_method = (
+                expected_intent.market_context.method.value
+                if expected_intent is not None
+                and expected_intent.market_context is not None
+                and isinstance(
+                    expected_intent.market_context.method,
+                    TradeMethod,
+                )
+                else "UNKNOWN"
+            )
+            expected_scope = (
+                "|".join(
+                    (
+                        expected_intent.pair.upper(),
+                        expected_intent.side.value.upper(),
+                        expected_method.upper(),
+                        "LIMIT",
+                    )
+                )
+                if expected_intent is not None
+                else ""
+            )
+            path_range_valid = bool(
+                str(path_proof.get("status") or "").upper() == "PASSED"
+                and path_proof.get("reason")
+                == "FORECAST_S5_NO_TOUCH_PROVEN"
+                and path_proof.get("barrier_basis") == "RANGE_RAILS"
+                and path_proof.get("no_touch") is True
+                and path_proof.get("order_entry_touched") is False
+                and path_proof.get("order_sl_touched") is False
+            )
+            range_basis = inputs.get("range_trade_economic_basis")
+            fresh_basis = evidence.get("range_tp_fresh_edge_basis")
+            if not (
+                expected_intent is not None
+                and _range_tp_proven_prebounded_intent_claim(expected_intent)
+                and order_request.get("type") == "LIMIT"
+                and order_request.get("price")
+                == _price(expected_intent.pair, expected_intent.entry)
+                and evidence.get("range_tp_prebounded_claimed") is True
+                and evidence.get("range_tp_geometry_frozen") is True
+                and isinstance(range_basis, dict)
+                and isinstance(fresh_basis, dict)
+                and range_basis == fresh_basis
+                and inputs.get("range_trade_economic_basis_valid") is True
+                and geometry.get("range_rails_bound") is True
+                and geometry.get(
+                    "forecast_outcome_conservatively_contains_order"
+                )
+                is True
+                and geometry.get("range_risk_cap_passed") is True
+                and geometry.get("passed") is True
+                and numeric_ceiling.get("execution_cost_floor_valid") is True
+                and numeric_ceiling.get(
+                    "execution_cost_floor_digest_valid"
+                )
+                is True
+                and numeric_cost.get("status") == "PASSED"
+                and numeric_cost.get("contract")
+                == EXECUTION_COST_FLOOR_CONTRACT
+                and str(numeric_cost.get("scope_key") or "").upper()
+                == expected_scope
+                and numeric_cost_sha
+                == _canonical_json_sha256(numeric_cost_material)
+                and path_range_valid
+            ):
+                return False
+        elif bypass_reason not in {
+            "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
+            "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
+        }:
+            return False
+        elif not (
+            str(path_proof.get("status") or "").upper() == "BYPASSED"
+            and str(path_proof.get("reason") or "") == bypass_reason
         ):
             return False
     else:
         bound_text = str(price_bound.get("price_bound_text") or "")
-        numeric_ceiling = (
-            evidence.get("numeric_ceiling")
-            if isinstance(evidence.get("numeric_ceiling"), dict)
-            else {}
-        )
         numeric_cost = (
             numeric_ceiling.get("execution_cost_floor")
             if isinstance(
@@ -9015,6 +9963,18 @@ def _codex_capital_allocation_live_send_issues(
             RiskIssue(
                 "GPT_CAPITAL_ALLOCATION_SCHEMA_INVALID",
                 "CODEX market-read provenance must use schema_version 2",
+            )
+        )
+    if str(provenance.get("capital_allocation_edge_basis") or "") not in {
+        "EXACT_VEHICLE_ALL_EXIT_NET",
+        "EXACT_VEHICLE_TAKE_PROFIT",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "HEDGE_RISK_REDUCTION",
+    }:
+        issues.append(
+            RiskIssue(
+                "GPT_CAPITAL_ALLOCATION_EDGE_BASIS_MISSING",
+                "signed market-read provenance must freeze the board-selected edge basis",
             )
         )
     if str(decision.get("action") or "").upper() != "TRADE" or str(

@@ -8,8 +8,8 @@ scorer and the adaptive TP / position-manager logic can consume.
 User directive 2026-05-08「市況を読んでほしい」「足の形や、何回高値や
 底値をアタックしたかとか、フラッグかとか。いろいろみれるよね」.
 User directive 2026-05-11「TFの組み合わせってそのときの状況でかわる
-よね？手法のリサーチもあわせてやって」 — TF weighting for the PA
-aggregate is now situation-aware via `tf_weights.dynamic_tf_weights`.
+よね？手法のリサーチもあわせてやって」 — entry ranking receives the
+verified situation-aware regime-family receipt weights from its caller.
 
 The module is intentionally pure: every helper takes a per-TF view dict
 (the entries inside `pair_charts['charts'][N]['views']`) and returns a
@@ -18,10 +18,11 @@ typed result. No file I/O, no broker calls — caller wires the data in.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
-from quant_rabbit.strategy.tf_weights import dynamic_tf_weights
+from quant_rabbit.strategy.tf_weights import BASELINE_WEIGHTS
 
 
 # Swing pattern classifications. The series is read newest-first.
@@ -633,6 +634,10 @@ def aggregate_price_action_score(
     side: str,
     current_price: float,
     pip_factor: float,
+    *,
+    method: str | None = None,
+    receipt_weights: Mapping[str, float] | None = None,
+    receipt_label: str | None = None,
 ) -> tuple[float, list[str]]:
     """Multi-TF price-action read aggregated across H4/H1/M30/M15/M5.
 
@@ -651,26 +656,36 @@ def aggregate_price_action_score(
     """
     if not isinstance(pair_chart, dict):
         return 0.0, []
-    # Dynamic TF weights: situation × method × pair × ATR percentile ×
-    # news calendar (user 2026-05-11「TFの組み合わせは状況で変わる」+
-    # 残研究 1/2/3). Falls back to BASELINE_WEIGHTS internally when
-    # situation can't be classified.
-    session_obj = pair_chart.get("session")
-    session_str = ""
-    if isinstance(session_obj, dict):
-        session_str = str(session_obj.get("bucket") or session_obj.get("name") or "")
-    elif isinstance(session_obj, str):
-        session_str = session_obj
-    dominant_regime = pair_chart.get("dominant_regime")
-    chart_story = str(pair_chart.get("chart_story") or "")
-    pair_str = str(pair_chart.get("pair") or "")
-    weights, situation_label = dynamic_tf_weights(
-        session=session_str,
-        chart_story=chart_story,
-        dominant_regime=dominant_regime if isinstance(dominant_regime, str) else None,
-        pair=pair_str,
-        pair_chart=pair_chart,
-    )
+    # Entry ranking passes the already-verified, content-addressed regime-
+    # family receipt weights.  Never recalculate here from mutable calendar /
+    # profile files or the process clock: doing so let MTF and PA score a
+    # different situation from the receipt checked after lane selection.
+    # Position-management and historical display callers do not carry a fresh
+    # entry receipt, so they retain the deterministic baseline display only.
+    weights: dict[str, float]
+    situation_label = str(receipt_label or "baseline")
+    if isinstance(receipt_weights, Mapping) and set(receipt_weights) == set(
+        BASELINE_WEIGHTS
+    ):
+        try:
+            parsed_weights = {
+                timeframe: float(receipt_weights[timeframe])
+                for timeframe in BASELINE_WEIGHTS
+            }
+        except (TypeError, ValueError, OverflowError):
+            parsed_weights = {}
+        if (
+            parsed_weights
+            and all(math.isfinite(weight) and weight >= 0.0 for weight in parsed_weights.values())
+            and sum(parsed_weights.values()) > 0.0
+        ):
+            weights = parsed_weights
+        else:
+            weights = dict(BASELINE_WEIGHTS)
+            situation_label = "baseline"
+    else:
+        weights = dict(BASELINE_WEIGHTS)
+        situation_label = "baseline"
     # Restrict to the H4-M5 PA TF set (M1 excluded — too noisy for this
     # aggregate; the trader_brain micro override handles M1 directly).
     pa_tfs = {"H4", "H1", "M30", "M15", "M5"}

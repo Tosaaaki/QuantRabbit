@@ -9,8 +9,8 @@
 ## Decision Order
 
 1. Read `docs/trader_prompts/20_market_packet.md`.
-2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. Treat forecast target/invalidation levels inside current M1/M5 ATR/spread noise as non-structural. In an active range, lower-half price carries bounce/retest risk and upper-half price carries fade risk before a breakout is proved.
-3. Build the all-horizon opportunity map before deciding: M1/M5 for immediate execution, M15/M30/H1 for operating swing, and H4/D for anchor/bias. A valid trade may come from any horizon when entry, invalidation, TP, spread, and portfolio gates pass. Do not collapse the packet to a single short-term read.
+2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. First cite the verified exact-current regime-family receipt, confirm that its bounded raw policy evidence reproduces situation/news/edge/weights, and apply only its situation-selected family and D/H4/H1/M30/M15/M5/M1 weights; list the strongest suppressed-family counterargument. Treat forecast target/invalidation levels inside current M1/M5 ATR/spread noise as non-structural. In an active range, lower-half price carries bounce/retest risk and upper-half price carries fade risk before a breakout is proved.
+3. Build the all-horizon opportunity map before deciding, using the receipt's actual weights rather than a fixed hierarchy: M1/M5 for immediate execution, M15/M30/H1 for operating swing, and H4/D for anchor/bias remain semantic roles, not equal votes. A valid trade may come from any horizon when entry, invalidation, TP, spread, and portfolio gates pass. Do not collapse the packet to a single short-term read.
 4. Treat soft-only close sidecars without explicit Gate B as advisory for entries: keep the existing TP-managed runner under monitoring, but do not let that advisory block unrelated current `LIVE_READY` lanes on another pair or horizon. If `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false`, do not write `CLOSE` just to "test" the verifier; `CLOSE` is not a valid action in this branch. Hard close evidence or explicit Gate B still requires close-first discipline.
 5. Read `data/market_context_matrix.json` for every current candidate. Use it to raise confidence and expose the strongest counterargument, not to invent a new blocker or reduce trade count.
 6. Read `data/news_health.json` and current news refs before selecting `TRADE`. If news-health is missing, ERROR/BLOCK, or carries BLOCK issues, write WAIT / REQUEST_EVIDENCE with that named blocker; do not trade on a stale market story.
@@ -166,9 +166,17 @@ contradicts your chosen direction, downgrade size, switch method, or WAIT.
    is method-misuse.
 2. **Entry TF quality** — for each entry TF (M5/M15/M30) cite the
    `Read=` qualifier (TREND_FRESH / TREND_WEAK / TRANSITION /
-   BREAKOUT_PENDING / FAILURE_RISK). TREND_CONTINUATION method requires
-   FRESH, not WEAK. WEAK + TRANSITION means the move is dying — pick
-   BREAKOUT_FAILURE or wait for the next leg.
+   BREAKOUT_PENDING / FAILURE_RISK). `TREND_WEAK` remains in the TREND family
+   and may select TREND_CONTINUATION, but it is weaker evidence: require the
+   bound family direction and intact continuation structure, then reduce size
+   or WAIT when transition/exhaustion evidence dominates. Pick BREAKOUT_FAILURE
+   only when the last explicitly complete M5 candle plus exactly 20 continuous
+   prior complete M5 candles produce one unambiguous canonical failed-break /
+   reacceptance proof matching the forecast/order side, never from a WEAK or
+   BREAKOUT_PENDING label alone. Also cite the verified regime-family receipt
+   SHA, selected method, and all-seven dynamic weights. A `None` selected method,
+   receipt/lane method mismatch, or BREAKOUT_PENDING by itself is
+   WAIT/REQUEST_EVIDENCE.
 3. **Momentum / exhaustion read** — cite RSI, %R, MFI, AroonOsc on entry
    TFs. If multiple oscillators sit at the same extreme as your direction
    (SHORT into RSI floor + %R near −100 + MFI floor), you are entering at

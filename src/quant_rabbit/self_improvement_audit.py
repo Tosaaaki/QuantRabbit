@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -18,6 +19,16 @@ from quant_rabbit.forecast_precision import (
     projection_precision_edge_summary,
     projection_precision_gap_summary,
     support_signal_clears_live_precision,
+)
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
+from quant_rabbit.strategy.forecast_technical_context import (
+    verify_forecast_technical_context,
+)
+from quant_rabbit.strategy.projection_ledger import (
+    CONFIDENCE_MAX_MULTIPLIER,
+    DIRECTIONAL_FORECAST_CALIBRATION_TRIPLET_ABS_TOL,
+    DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN,
+    DIRECTIONAL_FORECAST_MIN_STORED_CALIBRATION_MULTIPLIER,
 )
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
@@ -49,6 +60,8 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.risk import DEFAULT_SPECS
 
+
+_SUPPORTED_DIRECTIONAL_CALIBRATION_PAIRS = frozenset(DEFAULT_TRADER_PAIRS)
 
 STATUS_OK = "SELF_IMPROVEMENT_OK"
 STATUS_ACTION_REQUIRED = "SELF_IMPROVEMENT_ACTION_REQUIRED"
@@ -258,7 +271,7 @@ def _read_int_file(path: Path) -> int | None:
         return None
     try:
         return int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -4228,24 +4241,133 @@ def _directional_forecast_quality_findings(
     rows: list[dict[str, Any]],
     now: datetime,
 ) -> list[dict[str, Any]]:
-    directional = [
+    source_directional = [
         row for row in rows
         if str(row.get("signal_name") or "").strip() == "directional_forecast"
     ]
+    invalid_range_emission_atr_context_rows = sum(
+        1
+        for row in source_directional
+        if _directional_forecast_calibration_schema_state(row) == "new"
+        and str(row.get("direction") or "").upper() == "RANGE"
+        and _directional_range_emission_atr_pips(row) is None
+    )
+    # Fix the new-schema trial population before observing status/outcome.
+    # This mirrors projection_ledger.compute_hit_rates: dedupe the raw-schema
+    # source, apply schema/ex-ante eligibility, then let the first eligible
+    # forecast own its pair clock through resolution-window end. A PENDING or
+    # truth-missing TIMEOUT therefore suppresses an overlapping later HIT.
+    raw_schema_clock_source = [
+        row
+        for row in source_directional
+        if _directional_forecast_calibration_schema_scoped(row)
+        and _directional_forecast_calibration_schema_state(row) != "legacy"
+    ]
+    deduped_raw_schema_clock_source = _deduped_directional_calibration_rows(
+        raw_schema_clock_source
+    )
+    independent_new_schema_rows, independence = (
+        _select_independent_directional_calibration_rows(
+            deduped_raw_schema_clock_source
+        )
+    )
+    independence["raw_schema_source_rows_before_dedupe"] = len(
+        raw_schema_clock_source
+    )
+    independence["deduped_raw_schema_rows"] = (
+        len(raw_schema_clock_source) - len(deduped_raw_schema_clock_source)
+    )
+    legacy_directional = [
+        row
+        for row in source_directional
+        if (
+            not _directional_forecast_calibration_schema_scoped(row)
+            or _directional_forecast_calibration_schema_state(row) == "legacy"
+        )
+    ]
+    independence["legacy_rows_unchanged"] = len(legacy_directional)
+    selected_ids = {
+        id(row) for row in legacy_directional + independent_new_schema_rows
+    }
+    directional = [
+        row for row in source_directional if id(row) in selected_ids
+    ]
+    selected_new_schema_ids = {
+        id(row) for row in independent_new_schema_rows
+    }
+    cohort_evidence = {
+        "entry_grade_confidence_basis": (
+            "raw_confidence_when_present_else_legacy_confidence"
+        ),
+        "independent_non_overlap_scope": (
+            "new_raw_schema_pair_until_resolution_window_end"
+        ),
+        "invalid_range_emission_atr_context_rows_excluded": (
+            invalid_range_emission_atr_context_rows
+        ),
+        **independence,
+    }
     if len(directional) < FORECAST_CALIBRATION_MIN_SAMPLES:
+        if (
+            len(source_directional) >= FORECAST_CALIBRATION_MIN_SAMPLES
+            and invalid_range_emission_atr_context_rows
+            >= FORECAST_CALIBRATION_MIN_SAMPLES
+        ):
+            source_status_counts: dict[str, int] = {}
+            for row in source_directional:
+                status = str(row.get("resolution_status") or "PENDING").upper()
+                source_status_counts[status] = source_status_counts.get(status, 0) + 1
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="forecast",
+                    code="DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED",
+                    message=(
+                        "directional_forecast RANGE rows lack a verified emission-time H1 ATR "
+                        "and cannot enter calibration"
+                    ),
+                    next_action=(
+                        "Keep technical_context_v1 with a positive H1 ATR on RANGE forecasts, "
+                        "then verify them only against complete candle truth."
+                    ),
+                    evidence={
+                        "rows": len(source_directional),
+                        "selected_trial_rows": len(directional),
+                        "scored_outcome_samples": 0,
+                        "calibrated_samples": 0,
+                        "calibration_coverage": 0.0,
+                        "status_counts": source_status_counts,
+                        "target_timeout_samples": 0,
+                        "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
+                        **cohort_evidence,
+                        "examples": [
+                            _projection_ref(row) for row in source_directional[:8]
+                        ],
+                    },
+                )
+            ]
         return []
     status_counts: dict[str, int] = {}
     calibrated: list[dict[str, Any]] = []
-    target_timeout_rows: list[dict[str, Any]] = []
+    legacy_target_timeout_rows: list[dict[str, Any]] = []
+    no_touch_timeout_rows: list[dict[str, Any]] = []
+    invalid_raw_schema_rows = int(
+        independence.get("invalid_raw_schema_rows_excluded") or 0
+    )
     for row in directional:
         status = str(row.get("resolution_status") or "PENDING").upper()
         status_counts[status] = status_counts.get(status, 0) + 1
+        if _directional_forecast_no_touch_timeout_like(row):
+            no_touch_timeout_rows.append(row)
+            continue
         if status in {"HIT", "MISS"} and _directional_forecast_has_target_invalidation(row):
             if _directional_forecast_target_timeout_like(row):
-                target_timeout_rows.append(row)
+                legacy_target_timeout_rows.append(row)
                 continue
             calibrated.append(row)
-    if not calibrated:
+    target_timeout_rows = legacy_target_timeout_rows + no_touch_timeout_rows
+    if not calibrated and not target_timeout_rows:
         return [
             _finding(
                 run_id=run_id,
@@ -4262,9 +4384,15 @@ def _directional_forecast_quality_findings(
                 ),
                 evidence={
                     "rows": len(directional),
+                    "selected_trial_rows": len(directional),
+                    "scored_outcome_samples": 0,
+                    "calibrated_samples": 0,
+                    "calibration_coverage": 0.0,
                     "status_counts": status_counts,
                     "target_timeout_samples": len(target_timeout_rows),
+                    "invalid_raw_schema_rows_excluded": invalid_raw_schema_rows,
                     "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
+                    **cohort_evidence,
                     "examples": [_projection_ref(row) for row in directional[:8]],
                 },
             )
@@ -4280,11 +4408,11 @@ def _directional_forecast_quality_findings(
     findings: list[dict[str, Any]] = []
     calibration_coverage = len(calibrated) / len(directional)
     target_timeout_count = len(target_timeout_rows)
-    timeout_count = int(status_counts.get("TIMEOUT") or 0) + target_timeout_count
+    timeout_count = int(status_counts.get("TIMEOUT") or 0) + len(legacy_target_timeout_rows)
     hit_miss_count = (
         int(status_counts.get("HIT") or 0)
         + int(status_counts.get("MISS") or 0)
-        - target_timeout_count
+        - len(legacy_target_timeout_rows)
     )
     missing_geometry_count = max(0, hit_miss_count - len(calibrated))
     recent_24h_directional = _directional_forecast_rows_since(directional, now=now, window=timedelta(hours=24))
@@ -4379,18 +4507,46 @@ def _directional_forecast_quality_findings(
                     },
                 )
             )
-    entry_grade_movement_calibrated = [
-        row for row in movement_calibrated
-        if _directional_forecast_entry_grade(row)
+    legacy_entry_grade_touch_candidates = [
+        row
+        for row in movement_calibrated
+        if _directional_forecast_calibration_schema_state(row) == "legacy"
+        and _directional_forecast_entry_grade(row)
     ]
     watch_only_movement_calibrated = [
         row for row in movement_calibrated
         if not _directional_forecast_entry_grade(row)
     ]
+    legacy_entry_grade_timeout_candidates = [
+        row
+        for row in target_timeout_rows
+        if _directional_forecast_is_movement_direction(row)
+        and _directional_forecast_calibration_schema_state(row) == "legacy"
+        and _directional_forecast_entry_grade(row)
+    ]
+    touch_candidate_ids = {
+        id(row)
+        for row in legacy_entry_grade_touch_candidates
+    } | {
+        id(row)
+        for row in movement_calibrated
+        if id(row) in selected_new_schema_ids
+    }
+    timeout_candidate_ids = {
+        id(row)
+        for row in legacy_entry_grade_timeout_candidates
+    } | {
+        id(row)
+        for row in target_timeout_rows
+        if id(row) in selected_new_schema_ids
+    }
+    entry_grade_movement_calibrated = [
+        row for row in movement_calibrated
+        if id(row) in touch_candidate_ids
+    ]
     movement_target_timeouts = [
         row for row in target_timeout_rows
-        if _directional_forecast_is_movement_direction(row)
-        and _directional_forecast_entry_grade(row)
+        if id(row) in timeout_candidate_ids
     ]
     touch_or_timeout_samples = len(entry_grade_movement_calibrated) + len(movement_target_timeouts)
     target_timeout_rate = (
@@ -4424,6 +4580,7 @@ def _directional_forecast_quality_findings(
                     "warn_above": FORECAST_TARGET_TIMEOUT_WARN_ABOVE,
                     "touch_calibrated_samples": len(entry_grade_movement_calibrated),
                     "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
+                    **cohort_evidence,
                     "examples": [_projection_ref(row) for row in movement_target_timeouts[:8]],
                 },
             )
@@ -4442,7 +4599,7 @@ def _directional_forecast_quality_findings(
                 message=(
                     "directional_forecast has too few entry-grade movement samples: "
                     f"{len(entry_grade_movement_calibrated)}/{len(movement_calibrated)} "
-                    "movement sample(s) cleared confidence >= "
+                    "independent movement sample(s) cleared raw confidence (legacy: confidence) >= "
                     f"{FORECAST_ENTRY_GRADE_CONFIDENCE_MIN:.2f}"
                 ),
                 next_action=(
@@ -4455,6 +4612,7 @@ def _directional_forecast_quality_findings(
                     "watch_only_movement_samples": len(watch_only_movement_calibrated),
                     "movement_samples": len(movement_calibrated),
                     "confidence_floor": FORECAST_ENTRY_GRADE_CONFIDENCE_MIN,
+                    **cohort_evidence,
                     "watch_only_hit_stats": _directional_forecast_hit_stats(
                         watch_only_movement_calibrated
                     ),
@@ -4536,6 +4694,7 @@ def _directional_forecast_quality_findings(
                     "recent_24h_weak_buckets": recent_24h_weak_buckets,
                     "recent_7d_weak_buckets": recent_7d_weak_buckets,
                     "window_hit_rates": window_stats,
+                    **cohort_evidence,
                 },
             )
         )
@@ -4582,6 +4741,7 @@ def _directional_forecast_quality_findings(
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
                     "recent_recovered": recent_recovered,
                     "window_hit_rates": window_stats,
+                    **cohort_evidence,
                     "worst_buckets": _directional_forecast_worst_buckets(
                         entry_grade_movement_calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
@@ -4614,6 +4774,7 @@ def _directional_forecast_quality_findings(
                     **invalidation_first_stats,
                     "warn_above": FORECAST_INVALIDATION_FIRST_WARN_ABOVE,
                     "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
+                    **cohort_evidence,
                     "worst_buckets": _directional_forecast_invalidation_first_buckets(
                         entry_grade_movement_calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
@@ -4631,13 +4792,280 @@ def _directional_forecast_is_movement_direction(row: dict[str, Any]) -> bool:
 def _directional_forecast_entry_grade(row: dict[str, Any]) -> bool:
     if not _directional_forecast_is_movement_direction(row):
         return True
-    if "confidence" not in row:
-        return True
-    try:
-        confidence = float(row.get("confidence"))
-    except (TypeError, ValueError):
+    schema_state = _directional_forecast_calibration_schema_state(row)
+    if schema_state == "invalid":
+        return False
+    raw_confidence = _finite_float(row.get("raw_confidence"))
+    confidence = (
+        raw_confidence
+        if schema_state == "new"
+        else _finite_float(row.get("confidence"))
+    )
+    if confidence is None:
         return True
     return confidence >= FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
+
+
+def _select_independent_directional_calibration_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
+    """Mirror replay non-overlap for new raw-confidence forecast rows.
+
+    Legacy rows retain their prior audit semantics. New rows are sorted by
+    emission time; after accepting one pair forecast, every later direction or
+    RANGE flip before that row's resolution-window end is excluded because it
+    shares future truth.
+    """
+
+    selected_indexes: set[int] = set()
+    raw_candidates: list[tuple[datetime, int, dict[str, Any], datetime]] = []
+    legacy_rows = 0
+    raw_schema_input_rows = 0
+    invalid_raw_schema_rows = 0
+    ex_ante_ineligible_rows = 0
+    for index, row in enumerate(rows):
+        if not _directional_forecast_calibration_schema_scoped(row):
+            selected_indexes.add(index)
+            legacy_rows += 1
+            continue
+        schema_state = _directional_forecast_calibration_schema_state(row)
+        if schema_state == "legacy":
+            selected_indexes.add(index)
+            legacy_rows += 1
+            continue
+        raw_schema_input_rows += 1
+        if schema_state == "invalid":
+            invalid_raw_schema_rows += 1
+            continue
+        if not _directional_forecast_ex_ante_calibration_eligible(row):
+            ex_ante_ineligible_rows += 1
+            continue
+        emitted_at = _parse_utc(row.get("timestamp_emitted_utc"))
+        window_min = _finite_float(row.get("resolution_window_min"))
+        window_end = (
+            _safe_directional_calibration_window_end(emitted_at, window_min)
+            if emitted_at is not None and window_min is not None
+            else None
+        )
+        if window_end is None:
+            invalid_raw_schema_rows += 1
+            continue
+        raw_candidates.append((emitted_at, index, row, window_end))
+
+    accepted_until: dict[str, datetime] = {}
+    skipped_overlapping_rows = 0
+    for emitted_at, index, row, window_end in sorted(
+        raw_candidates,
+        key=lambda item: (item[0], item[1]),
+    ):
+        pair = str(row.get("pair") or "").upper()
+        current_until = accepted_until.get(pair)
+        if current_until is not None and emitted_at < current_until:
+            skipped_overlapping_rows += 1
+            continue
+        selected_indexes.add(index)
+        accepted_until[pair] = window_end
+
+    selected = [row for index, row in enumerate(rows) if index in selected_indexes]
+    return selected, {
+        "independent_non_overlap": True,
+        "raw_schema_input_rows": raw_schema_input_rows,
+        "raw_schema_selected_rows": len(raw_candidates) - skipped_overlapping_rows,
+        "skipped_overlapping_raw_schema_rows": skipped_overlapping_rows,
+        "invalid_raw_schema_rows_excluded": invalid_raw_schema_rows,
+        "ex_ante_ineligible_raw_schema_rows_excluded": ex_ante_ineligible_rows,
+        "legacy_rows_unchanged": legacy_rows,
+    }
+
+
+def _directional_forecast_calibration_schema_scoped(row: dict[str, Any]) -> bool:
+    return (
+        str(row.get("signal_name") or "").strip() == "directional_forecast"
+        and str(row.get("direction") or "").upper() in {"UP", "DOWN", "RANGE"}
+    )
+
+
+def _safe_directional_calibration_window_end(
+    emitted_at: datetime,
+    window_min: float,
+) -> datetime | None:
+    if not math.isfinite(window_min) or not (
+        0.0 < window_min <= DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+    ):
+        return None
+    try:
+        return emitted_at + timedelta(minutes=window_min)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _directional_forecast_calibration_schema_state(row: dict[str, Any]) -> str:
+    """Detect new rows by field presence and reject partial/corrupt schemas."""
+
+    raw_present = "raw_confidence" in row
+    multiplier_present = "calibration_multiplier" in row
+    if not raw_present and not multiplier_present:
+        return "legacy"
+    raw_confidence = _finite_float(row.get("raw_confidence"))
+    calibration_multiplier = _finite_float(row.get("calibration_multiplier"))
+    lead_time_min = _finite_float(row.get("lead_time_min"))
+    confidence = _finite_float(row.get("confidence"))
+    resolution_window_min = _finite_float(row.get("resolution_window_min"))
+    if (
+        not raw_present
+        or not multiplier_present
+        or raw_confidence is None
+        or calibration_multiplier is None
+        or lead_time_min is None
+        or confidence is None
+        or resolution_window_min is None
+        or not 0.0 <= raw_confidence <= 1.0
+        or not 0.0 <= confidence <= 1.0
+        or not (
+            DIRECTIONAL_FORECAST_MIN_STORED_CALIBRATION_MULTIPLIER
+            <= calibration_multiplier
+            <= CONFIDENCE_MAX_MULTIPLIER
+        )
+    ):
+        return "invalid"
+    if (
+        _directional_forecast_complete_geometry(row)
+        and not _directional_forecast_confidence_triplet_valid(row)
+    ):
+        return "invalid"
+    return "new"
+
+
+def _directional_forecast_complete_geometry(row: dict[str, Any]) -> bool:
+    direction = str(row.get("direction") or "").upper()
+    entry_price = _finite_float(row.get("entry_price"))
+    if entry_price is None or entry_price <= 0.0:
+        return False
+    if direction in {"UP", "DOWN"}:
+        target = _finite_float(row.get("predicted_target_price"))
+        invalidation = _finite_float(row.get("predicted_invalidation_price"))
+        if target is None or invalidation is None:
+            return False
+        if direction == "UP":
+            return target > entry_price > invalidation
+        return target < entry_price < invalidation
+    if direction == "RANGE":
+        low = _finite_float(row.get("predicted_range_low_price"))
+        high = _finite_float(row.get("predicted_range_high_price"))
+        return low is not None and high is not None and low < entry_price < high
+    return False
+
+
+def _directional_forecast_confidence_triplet_valid(row: dict[str, Any]) -> bool:
+    confidence = _finite_float(row.get("confidence"))
+    raw_confidence = _finite_float(row.get("raw_confidence"))
+    calibration_multiplier = _finite_float(row.get("calibration_multiplier"))
+    if confidence is None or raw_confidence is None or calibration_multiplier is None:
+        return False
+    return math.isclose(
+        confidence,
+        min(1.0, raw_confidence * calibration_multiplier),
+        rel_tol=0.0,
+        abs_tol=DIRECTIONAL_FORECAST_CALIBRATION_TRIPLET_ABS_TOL,
+    )
+
+
+def _directional_forecast_ex_ante_calibration_eligible(row: dict[str, Any]) -> bool:
+    if _directional_forecast_calibration_schema_state(row) != "new":
+        return False
+    raw_confidence = _finite_float(row.get("raw_confidence"))
+    if (
+        raw_confidence is None
+        or raw_confidence < FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
+    ):
+        return False
+    if not _directional_forecast_complete_geometry(row):
+        return False
+    if (
+        str(row.get("direction") or "").upper() == "RANGE"
+        and _directional_range_emission_atr_pips(row) is None
+    ):
+        return False
+    pair = str(row.get("pair") or "")
+    if (
+        pair != pair.strip().upper()
+        or pair not in _SUPPORTED_DIRECTIONAL_CALIBRATION_PAIRS
+    ):
+        return False
+    resolution_window_min = _finite_float(row.get("resolution_window_min"))
+    return bool(
+        resolution_window_min is not None
+        and 0.0
+        < resolution_window_min
+        <= DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+    )
+
+
+def _directional_range_emission_atr_pips(
+    row: dict[str, Any],
+) -> float | None:
+    """Mirror the verifier's immutable emission-time RANGE ATR contract."""
+
+    context = row.get("technical_context_v1")
+    entry_price = _finite_float(row.get("entry_price"))
+    if not isinstance(context, dict) or entry_price is None or entry_price <= 0.0:
+        return None
+    try:
+        valid, _error = verify_forecast_technical_context(
+            context,
+            pair=str(row.get("pair") or ""),
+            current_price=entry_price,
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return None
+    if not valid:
+        return None
+    volatility = context.get("volatility")
+    if not isinstance(volatility, dict):
+        return None
+    by_timeframe = volatility.get("atr_pips_by_timeframe")
+    if not isinstance(by_timeframe, dict):
+        return None
+    atr_pips = _finite_float(by_timeframe.get("H1"))
+    return atr_pips if atr_pips is not None and atr_pips > 0.0 else None
+
+
+def _deduped_directional_calibration_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Dedupe before eligibility/clocking without changing the source ledger."""
+
+    latest: dict[tuple[Any, ...], tuple[int, dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        cycle_id = row.get("cycle_id")
+        if not cycle_id:
+            key: tuple[Any, ...] = ("no-cycle", index)
+        else:
+            key = (
+                cycle_id,
+                row.get("pair"),
+                row.get("signal_name"),
+                row.get("direction"),
+                _directional_calibration_key_price(row.get("entry_price")),
+                _directional_calibration_key_price(row.get("predicted_target_price")),
+            )
+        latest[key] = (index, row)
+    return [row for _index, row in sorted(latest.values(), key=lambda item: item[0])]
+
+
+def _directional_calibration_key_price(value: Any) -> float | None:
+    parsed = _finite_float(value)
+    return round(parsed, 8) if parsed is not None else None
+
+
+def _finite_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
@@ -4668,6 +5096,34 @@ def _directional_forecast_target_timeout_like(row: dict[str, Any]) -> bool:
     if "did not reach target" in evidence or "did not reach the target" in evidence:
         return True
     return False
+
+
+def _directional_forecast_no_touch_timeout_like(row: dict[str, Any]) -> bool:
+    if str(row.get("resolution_status") or "").upper() != "TIMEOUT":
+        return False
+    if str(row.get("direction") or "").upper() not in {"UP", "DOWN"}:
+        return False
+    if not _directional_forecast_has_target_invalidation(row):
+        return False
+    evidence = str(row.get("resolution_evidence") or "").lower()
+    if any(
+        marker in evidence
+        for marker in (
+            "no candle truth",
+            "no quote/candle truth",
+            "incomplete closed candle truth",
+            "market closed",
+            "missing entry_price",
+            "malformed",
+            "excluded from calibration",
+        )
+    ):
+        return False
+    return (
+        "both untouched" in evidence
+        or "neither target nor invalidation touched" in evidence
+        or "target and invalidation stayed untouched" in evidence
+    )
 
 
 def _directional_forecast_rows_since(
@@ -8682,6 +9138,9 @@ def _projection_ref(row: dict[str, Any]) -> dict[str, Any]:
         "cycle_id": row.get("cycle_id"),
         "timestamp_emitted_utc": row.get("timestamp_emitted_utc"),
         "resolution_window_min": row.get("resolution_window_min"),
+        "confidence": row.get("confidence"),
+        "raw_confidence": row.get("raw_confidence"),
+        "calibration_multiplier": row.get("calibration_multiplier"),
     }
 
 
@@ -9465,7 +9924,7 @@ def _maybe_float(value: Any) -> float | None:
         if value is None:
             return None
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -9518,9 +9977,9 @@ def _parse_utc(value: Any) -> datetime | None:
         text = f"{head}.{frac}{offset}"
     try:
         dt = datetime.fromisoformat(text)
-    except ValueError:
+        return _to_utc(dt)
+    except (ValueError, OverflowError, OSError):
         return None
-    return _to_utc(dt)
 
 
 def _to_utc(value: datetime) -> datetime:

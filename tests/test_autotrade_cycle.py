@@ -44,6 +44,10 @@ from quant_rabbit.market_read_overlay import (
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+    build_forecast_technical_context_evidence,
+)
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 from tests.support_bidask_rules import write_nonmatching_bidask_rules
 
@@ -102,6 +106,9 @@ class StaticTraderProvider(_ProductionStaticTraderProvider):
                     evidence_sources.get("order_intents"),
                     ledger_path=evidence_sources.get("execution_ledger"),
                     snapshot_path=evidence_sources.get("broker_snapshot"),
+                    pair_charts_path=evidence_sources.get("pair_charts"),
+                    calendar_path=evidence_sources.get("calendar"),
+                    strategy_profile_path=evidence_sources.get("strategy_profile"),
                     primary_lane_id=primary_lane_id,
                     base_units_override=self.test_base_units_override,
                 )
@@ -374,6 +381,9 @@ def _ensure_test_exact_vehicle_edge(
     *,
     ledger_path: Path | None,
     snapshot_path: Path | None,
+    pair_charts_path: Path | None,
+    calendar_path: Path | None,
+    strategy_profile_path: Path | None,
     primary_lane_id: str,
     base_units_override: int | None = None,
 ) -> dict[str, Any]:
@@ -420,6 +430,32 @@ def _ensure_test_exact_vehicle_edge(
         # that lets the original pending vehicle reach that boundary.
         metadata["position_intent"] = "HEDGE"
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    if hedge:
+        if snapshot_path is None or not snapshot_path.exists():
+            raise AssertionError("test HEDGE fixture has no broker-snapshot evidence source")
+        hedge_snapshot = json.loads(snapshot_path.read_text())
+        hedge_quotes = (
+            hedge_snapshot.get("quotes")
+            if isinstance(hedge_snapshot.get("quotes"), dict)
+            else {}
+        )
+        hedge_quote = hedge_quotes.get(pair)
+        if not isinstance(hedge_quote, dict):
+            raise AssertionError(f"test HEDGE fixture has no broker quote for {pair}")
+        hedge_bid = float(hedge_quote["bid"])
+        hedge_ask = float(hedge_quote["ask"])
+        if not (hedge_bid > 0.0 and hedge_ask > hedge_bid):
+            raise AssertionError(f"test HEDGE fixture has invalid broker quote for {pair}")
+        metadata["forecast_current_price"] = (hedge_bid + hedge_ask) / 2.0
+        hedge_risk_metrics = (
+            result.get("risk_metrics")
+            if isinstance(result.get("risk_metrics"), dict)
+            else {}
+        )
+        hedge_risk_metrics["spread_pips"] = (
+            hedge_ask - hedge_bid
+        ) * instrument_pip_factor(pair)
+        result["risk_metrics"] = hedge_risk_metrics
     if not hedge:
         if snapshot_path is None or not snapshot_path.exists():
             raise AssertionError("test TRADE fixture has no broker-snapshot evidence source")
@@ -555,6 +591,29 @@ def _ensure_test_exact_vehicle_edge(
                 ),
             }
         )
+    if snapshot_path is None or not snapshot_path.exists():
+        raise AssertionError("test forecast context has no broker-snapshot clock")
+    snapshot_clock = json.loads(snapshot_path.read_text())
+    try:
+        forecast_context_now_utc = datetime.fromisoformat(
+            str(snapshot_clock["fetched_at_utc"]).replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AssertionError(
+            "test forecast context has no valid broker-snapshot clock"
+        ) from exc
+    _ensure_test_forecast_technical_context(
+        intent=intent,
+        risk_metrics=(
+            result.get("risk_metrics")
+            if isinstance(result.get("risk_metrics"), dict)
+            else {}
+        ),
+        now_utc=forecast_context_now_utc,
+        pair_charts_path=pair_charts_path,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+    )
     order_type = str(intent.get("order_type") or "").upper()
     vehicle = {
         "STOP_ENTRY": "STOP",
@@ -624,6 +683,211 @@ def _ensure_test_exact_vehicle_edge(
         vehicle=vehicle,
     )
     return result
+
+
+def _ensure_test_forecast_technical_context(
+    *,
+    intent: dict[str, Any],
+    risk_metrics: dict[str, Any],
+    now_utc: datetime,
+    pair_charts_path: Path | None,
+    calendar_path: Path | None,
+    strategy_profile_path: Path | None,
+) -> None:
+    """Attach the production context contract to legacy cycle fixtures.
+
+    These tests synthesize a selected lane after intent generation, so they do
+    not pass through ``_forecast_context_payload``. Keep production fail-closed
+    semantics intact by building the same content-addressed evidence envelope
+    from the fixture's own forecast price and side.
+    """
+
+    metadata = intent.setdefault("metadata", {})
+    market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), dict)
+        else {}
+    )
+    method = str(
+        market_context.get("method") or metadata.get("method") or ""
+    ).strip().upper()
+    pair = str(intent.get("pair") or "").strip().upper()
+    side = str(intent.get("side") or "").strip().upper()
+    direction = "UP" if side == "LONG" else "DOWN" if side == "SHORT" else ""
+    if not pair or not direction:
+        raise AssertionError("test forecast context requires a pair and directional side")
+    current_price = float(
+        metadata.get("forecast_current_price")
+        if metadata.get("forecast_current_price") is not None
+        else intent.get("entry")
+    )
+    spread_pips = max(0.1, float(risk_metrics.get("spread_pips") or 0.1))
+    m5_atr_pips = max(1.0, spread_pips * 4.0)
+    structure_kind = "BOS_UP" if direction == "UP" else "BOS_DOWN"
+    directional_score = 1.0 if direction == "UP" else -1.0
+    if method == "TREND_CONTINUATION":
+        regime_state = "TREND_WEAK"
+        dominant_regime = "TREND_UP" if direction == "UP" else "TREND_DOWN"
+        trend_score = directional_score
+        mean_reversion_score = 0.0
+        breakout_score = 0.0
+    elif method == "RANGE_ROTATION":
+        regime_state = "RANGE"
+        dominant_regime = "RANGE"
+        trend_score = 0.0
+        mean_reversion_score = directional_score
+        breakout_score = 0.0
+    elif method == "BREAKOUT_FAILURE":
+        # v1 deliberately has no method-specific failed-break proof. Preserve
+        # that production fail-close instead of disguising this fixture as a
+        # trend lane; tests exercising this method must expect rejection.
+        regime_state = "BREAKOUT_PENDING"
+        dominant_regime = "BREAKOUT_PENDING"
+        trend_score = 0.0
+        mean_reversion_score = 0.0
+        breakout_score = 1.0
+    else:
+        regime_state = "TRANSITION"
+        dominant_regime = "TRANSITION"
+        trend_score = 0.0
+        mean_reversion_score = 0.0
+        breakout_score = 0.0
+    family_scores = {
+        "trend_score": trend_score,
+        "mean_rev_score": mean_reversion_score,
+        "breakout_score": breakout_score,
+        "disagreement": 0.0,
+    }
+    pair_chart = {
+        "pair": pair,
+        "session": {"current_tag": "TEST"},
+        "confluence": {
+            "dominant_regime": dominant_regime,
+            "atr_percentile_24h": 50.0,
+            "price_percentile_24h": 0.5,
+            "price_percentile_7d": 0.5,
+        },
+        "views": [
+            {
+                "granularity": "M5",
+                "regime_reading": {
+                    "state": regime_state,
+                    "atr_percentile": 50.0,
+                },
+                "family_scores": dict(family_scores),
+                "indicators": {"atr_pips": m5_atr_pips},
+                "structure": {
+                    "structure_events": [
+                        {
+                            "kind": structure_kind,
+                            "index": 1,
+                            "close_confirmed": True,
+                        }
+                    ]
+                },
+            },
+            {
+                "granularity": "H1",
+                "regime_reading": {
+                    "state": regime_state,
+                    "atr_percentile": 50.0,
+                },
+                "family_scores": dict(family_scores),
+                "indicators": {"atr_pips": m5_atr_pips * 4.0},
+                "structure": {
+                    "structure_events": [
+                        {
+                            "kind": structure_kind,
+                            "index": 1,
+                            "close_confirmed": True,
+                        }
+                    ]
+                },
+            },
+        ],
+    }
+    if pair_charts_path is None or not pair_charts_path.exists():
+        raise AssertionError("test forecast context has no pair-charts source")
+    pair_charts_payload = json.loads(pair_charts_path.read_text())
+    charts = pair_charts_payload.get("charts")
+    if not isinstance(charts, list):
+        raise AssertionError("test pair-charts source has no charts list")
+    matching_indexes = [
+        index
+        for index, row in enumerate(charts)
+        if isinstance(row, dict) and str(row.get("pair") or "").upper() == pair
+    ]
+    if len(matching_indexes) > 1:
+        raise AssertionError("test pair-charts source contains duplicate selected pair rows")
+    pair_chart.setdefault(
+        "generated_at_utc",
+        pair_charts_payload.get("generated_at_utc"),
+    )
+    if matching_indexes:
+        charts[matching_indexes[0]] = pair_chart
+    else:
+        charts.append(pair_chart)
+    pair_charts_path.write_text(
+        json.dumps(pair_charts_payload, ensure_ascii=False, sort_keys=True) + "\n"
+    )
+    context = build_forecast_technical_context(
+        pair_chart,
+        pair=pair,
+        current_price=current_price,
+        spread_pips=spread_pips,
+        now_utc=now_utc,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+    )
+    evidence = build_forecast_technical_context_evidence(
+        context,
+        pair=pair,
+        current_price=current_price,
+    )
+    if evidence.get("status") != "VALID":
+        raise AssertionError(
+            f"test forecast technical context is not valid: {evidence.get('reason')}"
+        )
+    # Legacy IntentGenerator fixtures carry these keys explicitly as null.
+    # ``setdefault`` would preserve the null and make the otherwise-valid
+    # receipt contradict its own side at ranking time, so upgrade nulls to the
+    # same deterministic forecast values used by the fixture receipt.
+    metadata["forecast_direction"] = direction
+    for key, value in (
+        ("forecast_confidence", 0.8),
+        ("forecast_raw_confidence", 0.8),
+        ("forecast_calibration_multiplier", 1.0),
+        ("forecast_horizon_min", 120),
+        (
+            "forecast_directional_calibration_name",
+            "directional_forecast_up"
+            if direction == "UP"
+            else "directional_forecast_down",
+        ),
+        ("forecast_directional_economic_hit_rate", 1.0),
+        ("forecast_directional_economic_samples", 100),
+        ("forecast_directional_hit_rate", 1.0),
+        ("forecast_directional_samples", 100),
+        ("forecast_directional_timeout_rate", 0.1),
+    ):
+        if metadata.get(key) is None:
+            metadata[key] = value
+    metadata["forecast_current_price"] = current_price
+    if metadata.get("forecast_target_price") is None:
+        metadata["forecast_target_price"] = intent.get("tp")
+    if metadata.get("forecast_invalidation_price") is None:
+        metadata["forecast_invalidation_price"] = intent.get("sl")
+    metadata["forecast_technical_context"] = evidence
+    receipt = context["regime_family_weighting"]
+    metadata["forecast_regime_family_weighting_sha256"] = receipt[
+        "receipt_sha256"
+    ]
+    metadata["forecast_regime_family_selected_method"] = receipt[
+        "source_identity"
+    ]["selected_method"]
+    metadata["forecast_regime_family_direction"] = receipt["aggregate"][
+        "direction"
+    ]
 
 
 def _ensure_test_exact_vehicle_ledger(
@@ -998,6 +1262,52 @@ def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     return paths
+
+
+class _ForecastReceiptFixtureCycle(AutoTradeCycle):
+    """Upgrade legacy LIVE_READY fixtures before the real ranking boundary.
+
+    The production generator now requires a content-addressed forecast-time
+    regime-family receipt.  A few cycle tests intentionally keep their old,
+    minimal campaign chart fixture because they exercise unrelated lifecycle
+    behavior (manual exposure, quote refresh, or GPT rejection).  Materialize
+    the real receipt from each fixture's own snapshot and intent instead of
+    weakening TraderBrain's production fail-close contract.
+    """
+
+    def _brain(self) -> Any:
+        payload = json.loads(self.intents_path.read_text())
+        snapshot = json.loads(self.snapshot_path.read_text())
+        try:
+            now_utc = datetime.fromisoformat(
+                str(snapshot["fetched_at_utc"]).replace("Z", "+00:00")
+            ).astimezone(timezone.utc)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AssertionError(
+                "test forecast receipt requires a valid broker-snapshot clock"
+            ) from exc
+        for result in payload.get("results", []) or []:
+            if not isinstance(result, dict) or result.get("status") != "LIVE_READY":
+                continue
+            intent = result.get("intent")
+            if not isinstance(intent, dict):
+                continue
+            _ensure_test_forecast_technical_context(
+                intent=intent,
+                risk_metrics=(
+                    result.get("risk_metrics")
+                    if isinstance(result.get("risk_metrics"), dict)
+                    else {}
+                ),
+                now_utc=now_utc,
+                pair_charts_path=self.pair_charts_path,
+                calendar_path=self.intents_path.parent / "economic_calendar.json",
+                strategy_profile_path=self.strategy_profile_path,
+            )
+        self.intents_path.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+        )
+        return super()._brain()
 
 
 class AutoTradeCycleTest(unittest.TestCase):
@@ -4952,7 +5262,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             profile = _repair_profile(root)
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -5008,7 +5318,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             news_root = root / "news"
             news_root.mkdir()
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -5243,7 +5553,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -5345,7 +5655,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -5398,7 +5708,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -6442,7 +6752,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             decision = _gpt_trade_decision()
             decision["evidence_refs"] = ["broker:snapshot", "legacy:invented"]
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -7802,7 +8112,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertFalse((root / "live_order.json").exists())
 
-    def test_gpt_can_select_prefiltered_discretionary_penalty_lane(self) -> None:
+    def test_gpt_cannot_select_breakout_failure_without_method_specific_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             # This test exercises GPT selection of a prefiltered discretionary
@@ -7821,7 +8131,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             rejected_lane = "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE"
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -7857,13 +8167,16 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.status, "GPT_REJECTED")
             self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
-            self.assertEqual(summary.selected_lane_id, rejected_lane)
-            self.assertEqual(summary.decision_source, "gpt_trader")
-            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertEqual(summary.gpt_status, "ERROR")
+            self.assertIn(
+                "selected lane method contradicts the regime-family receipt",
+                summary.gpt_error or "",
+            )
             self.assertEqual(client.orders_sent, [])
-            self.assertTrue((root / "live_order.json").exists())
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_gpt_recovery_hedge_can_bypass_open_position_prefilter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8546,14 +8859,19 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             intents_path = root / "intents.json"
             _write_live_ready_intents(intents_path)
+            profile = _repair_then_candidate_profile(root)
+            campaign = _campaign(root)
+            stories = _stories(root)
             _ensure_test_exact_vehicle_edge(
                 intents_path,
                 ledger_path=root / "execution_ledger.db",
                 snapshot_path=snapshot_path,
+                pair_charts_path=root / "pair_charts.json",
+                calendar_path=root / "economic_calendar.json",
+                strategy_profile_path=profile,
                 primary_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
             )
             pinned_intents = intents_path.read_text()
-            profile = _repair_then_candidate_profile(root)
             target_state = _open_target_state(root)
             client = FakeCycleClient(
                 BrokerSnapshot(
@@ -8582,9 +8900,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_order_output_path=root / "live_order.json",
                 live_order_report_path=root / "live_order.md",
                 report_path=root / "report.md",
-                campaign_plan_path=_campaign(root),
+                campaign_plan_path=campaign,
                 strategy_profile_path=profile,
-                market_story_profile_path=_stories(root),
+                market_story_profile_path=stories,
                 receipt_promotion_report_path=root / "promotion.md",
                 target_state_path=target_state,
                 target_report_path=root / "target.md",

@@ -7,7 +7,16 @@ import re
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from quant_rabbit.strategy.forecast_technical_context import (
+    forecast_technical_context_is_current_for_allocation,
+    verify_forecast_technical_context_evidence,
+)
+from quant_rabbit.strategy.failed_break_evidence import failed_break_direction
+from quant_rabbit.strategy.regime_family_weighting import (
+    verify_regime_family_weighting_receipt,
+)
 
 
 # Short-term momentum thresholds (M1/M5 ADX). Above HIGH the move is live and
@@ -66,6 +75,302 @@ _LENS_PATTERNS: dict[str, "re.Pattern[str]"] = {
 _REGIME_UP_TOKENS = {"TREND_UP", "IMPULSE_UP", "BULL"}
 _REGIME_DOWN_TOKENS = {"TREND_DOWN", "IMPULSE_DOWN", "BEAR", "FAILURE_RISK"}
 _REGIME_NEUTRAL_TOKENS = {"RANGE", "UNCLEAR", "TRANSITION"}
+
+
+@dataclass(frozen=True)
+class _RegimeFamilyScoringContext:
+    """One verified causal input shared by lane filtering, MTF, and PA."""
+
+    valid: bool
+    weights: dict[str, float]
+    label: str
+    selected_method: str | None
+    receipt_sha256: str | None
+    error: str | None = None
+
+
+def _invalid_regime_family_scoring_context(
+    error: str,
+) -> _RegimeFamilyScoringContext:
+    return _RegimeFamilyScoringContext(
+        valid=False,
+        weights=dict(MTF_TF_WEIGHTS),
+        label="baseline",
+        selected_method=None,
+        receipt_sha256=None,
+        error=error,
+    )
+
+
+def _range_forecast_tp_proven_breakout_failure_ready(
+    intent: Mapping[str, Any],
+) -> bool:
+    """Match the existing live contract for a RANGE failed-break fade.
+
+    RANGE is non-directional, so it may authorize BREAKOUT_FAILURE only when
+    the lane is the already-supported passive, attached-TP HARVEST exception.
+    The independently verified M5 failed-break receipt still supplies the
+    actual LONG/SHORT direction at the caller.
+    """
+
+    metadata = intent.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    order_type = str(intent.get("order_type") or "").strip().upper()
+    if order_type in {"", "MARKET", "MARKET_ORDER"}:
+        return False
+    if str(metadata.get("position_intent") or "NEW").strip().upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").strip().upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").strip().upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").strip().upper() != "HARVEST":
+        return False
+    if str(metadata.get("positive_rotation_mode") or "").strip().upper() != "TP_PROVEN_HARVEST":
+        return False
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return False
+    pair = str(intent.get("pair") or "").strip().upper()
+    side = str(intent.get("side") or "").strip().upper()
+    scope = str(metadata.get("capture_take_profit_scope") or "").strip().upper()
+    if scope == "PAIR_SIDE_METHOD":
+        expected_scope_key = (
+            f"{pair}|{side}|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+        )
+    elif scope == "PAIR_SIDE_METHOD_VEHICLE":
+        vehicle = {
+            "LIMIT": "LIMIT",
+            "LIMIT_ORDER": "LIMIT",
+            "STOP": "STOP",
+            "STOP_ENTRY": "STOP",
+            "STOP-ENTRY": "STOP",
+            "STOP_ORDER": "STOP",
+        }.get(order_type)
+        if vehicle is None:
+            return False
+        expected_scope_key = (
+            f"{pair}|{side}|BREAKOUT_FAILURE|{vehicle}|TAKE_PROFIT_ORDER"
+        )
+    else:
+        return False
+    if (
+        str(metadata.get("capture_take_profit_scope_key") or "").strip().upper()
+        != expected_scope_key
+    ):
+        return False
+    try:
+        tp_trades = float(metadata.get("capture_take_profit_trades"))
+        tp_losses = float(metadata.get("capture_take_profit_losses"))
+        tp_expectancy = float(metadata.get("capture_take_profit_expectancy_jpy"))
+        pessimistic_expectancy = float(
+            metadata.get("positive_rotation_pessimistic_expectancy_jpy")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return bool(
+        all(
+            math.isfinite(value)
+            for value in (
+                tp_trades,
+                tp_losses,
+                tp_expectancy,
+                pessimistic_expectancy,
+            )
+        )
+        and tp_trades >= 20.0
+        and tp_losses == 0.0
+        and tp_expectancy > 0.0
+        and pessimistic_expectancy > 0.0
+    )
+
+
+def _verified_regime_family_scoring_context(
+    intent: Mapping[str, Any],
+) -> _RegimeFamilyScoringContext:
+    """Verify the frozen forecast receipt without consulting mutable sources.
+
+    Historical/legacy intents remain renderable with deterministic baseline
+    weights.  A caller deciding a fresh entry must inspect ``valid`` and the
+    selected method and fail closed when either is unavailable or mismatched.
+    """
+
+    metadata = intent.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_RECEIPT_MISSING"
+        )
+    evidence = metadata.get("forecast_technical_context")
+    pair = str(intent.get("pair") or "").strip().upper()
+    current_price = metadata.get("forecast_current_price")
+    evidence_valid, evidence_error = verify_forecast_technical_context_evidence(
+        evidence,
+        pair=pair or None,
+        current_price=current_price,
+    )
+    if not evidence_valid:
+        return _invalid_regime_family_scoring_context(
+            evidence_error or "TECHNICAL_CONTEXT_EVIDENCE_INVALID"
+        )
+    if not isinstance(evidence, Mapping) or evidence.get("status") != "VALID":
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_RECEIPT_UNAVAILABLE"
+        )
+    technical_context = evidence.get("technical_context_v1")
+    if not forecast_technical_context_is_current_for_allocation(
+        technical_context
+    ):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_RECEIPT_LEGACY_OR_INCOMPLETE"
+        )
+    if not isinstance(technical_context, Mapping):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_RECEIPT_MISSING"
+        )
+    receipt = technical_context.get("regime_family_weighting")
+    receipt_valid, receipt_error = verify_regime_family_weighting_receipt(
+        receipt,
+        pair=pair or None,
+    )
+    if not receipt_valid or not isinstance(receipt, Mapping):
+        return _invalid_regime_family_scoring_context(
+            receipt_error or "REGIME_FAMILY_WEIGHTING_INVALID"
+        )
+    source = receipt.get("source_identity")
+    aggregate = receipt.get("aggregate")
+    weights = receipt.get("weights")
+    if not all(
+        isinstance(item, Mapping)
+        for item in (source, aggregate, weights)
+    ):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_SCHEMA_INVALID"
+        )
+    receipt_sha256 = str(receipt.get("receipt_sha256") or "")
+    selected_method = source.get("selected_method")
+    if selected_method is not None and not isinstance(selected_method, str):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_METHOD_INVALID"
+        )
+    if (
+        "forecast_direction" not in metadata
+        or "forecast_regime_family_weighting_sha256" not in metadata
+        or "forecast_regime_family_selected_method" not in metadata
+        or "forecast_regime_family_direction" not in metadata
+        or metadata.get("forecast_regime_family_weighting_sha256")
+        != receipt_sha256
+        or metadata.get("forecast_regime_family_selected_method")
+        != selected_method
+        or metadata.get("forecast_regime_family_direction")
+        != aggregate.get("direction")
+    ):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_METADATA_MISMATCH"
+        )
+    side = str(intent.get("side") or "").strip().upper()
+    expected_direction = (
+        "UP" if side == "LONG" else "DOWN" if side == "SHORT" else None
+    )
+    forecast_direction = str(metadata.get("forecast_direction") or "").strip().upper()
+    family_direction = str(aggregate.get("direction") or "").strip().upper()
+    method = str(
+        (
+            intent.get("market_context")
+            if isinstance(intent.get("market_context"), Mapping)
+            else {}
+        ).get("method")
+        or ""
+    ).strip().upper()
+    # A valid NONE selection is intentionally non-executable and is surfaced
+    # to the caller as ``selected_method=None``.  Direction has no actionable
+    # meaning in BREAKOUT_PENDING / TRANSITION, so do not turn that explicit
+    # wait receipt into a generic corruption error.
+    if selected_method is not None:
+        if expected_direction is None:
+            return _invalid_regime_family_scoring_context(
+                "REGIME_FAMILY_FORECAST_DIRECTION_MISMATCH"
+            )
+        if method == "BREAKOUT_FAILURE":
+            range_failure_ready = bool(
+                forecast_direction == "RANGE"
+                and _range_forecast_tp_proven_breakout_failure_ready(intent)
+            )
+            if forecast_direction != expected_direction and not range_failure_ready:
+                return _invalid_regime_family_scoring_context(
+                    "REGIME_FAMILY_FORECAST_DIRECTION_MISMATCH"
+                )
+            proof_side = failed_break_direction(
+                technical_context.get("m5_failed_break_evidence")
+            )
+            opposite_direction = "DOWN" if expected_direction == "UP" else "UP"
+            if (
+                proof_side != side
+                or family_direction == opposite_direction
+            ):
+                return _invalid_regime_family_scoring_context(
+                    "REGIME_FAMILY_ACTIONABLE_DIRECTION_MISMATCH"
+                )
+        else:
+            if method == "RANGE_ROTATION":
+                forecast_direction_valid = forecast_direction in {
+                    expected_direction,
+                    "RANGE",
+                }
+            else:
+                forecast_direction_valid = forecast_direction == expected_direction
+            if not forecast_direction_valid:
+                return _invalid_regime_family_scoring_context(
+                    "REGIME_FAMILY_FORECAST_DIRECTION_MISMATCH"
+                )
+            directional_coverage = aggregate.get("directional_coverage_weight")
+            if (
+                family_direction != expected_direction
+                or isinstance(directional_coverage, bool)
+                or not isinstance(directional_coverage, (int, float))
+                or not math.isfinite(float(directional_coverage))
+                or float(directional_coverage) <= 0.0
+            ):
+                return _invalid_regime_family_scoring_context(
+                    "REGIME_FAMILY_ACTIONABLE_DIRECTION_MISMATCH"
+                )
+    if set(weights) != set(MTF_TF_WEIGHTS):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_WEIGHTS_INVALID"
+        )
+    try:
+        parsed_weights = {
+            timeframe: float(weights[timeframe])
+            for timeframe in MTF_TF_WEIGHTS
+        }
+    except (TypeError, ValueError, OverflowError):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_WEIGHTS_INVALID"
+        )
+    if (
+        any(
+            not math.isfinite(weight) or weight < 0.0
+            for weight in parsed_weights.values()
+        )
+        or not math.isclose(
+            sum(parsed_weights.values()),
+            1.0,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+    ):
+        return _invalid_regime_family_scoring_context(
+            "REGIME_FAMILY_WEIGHTING_WEIGHTS_INVALID"
+        )
+    return _RegimeFamilyScoringContext(
+        valid=True,
+        weights=parsed_weights,
+        label=str(source.get("situation_label") or "receipt"),
+        selected_method=selected_method,
+        receipt_sha256=receipt_sha256,
+        error=None,
+    )
 
 # TraderBrain spread bands are ranking hints only. The executable spread gate is
 # already enforced earlier by RiskEngine / IntentGenerator and again by
@@ -282,6 +587,9 @@ def _mtf_confluence_score(
     intent: dict[str, Any],
     rationale: list[str],
     blockers: list[str],
+    *,
+    receipt_weights: Mapping[str, float] | None = None,
+    receipt_label: str | None = None,
 ) -> float:
     """7-TF × 5-lens confluence scoring with positive bias.
 
@@ -304,32 +612,32 @@ def _mtf_confluence_score(
         return 0.0
     opposite = "SHORT" if direction == "LONG" else "LONG"
 
-    # Dynamic TF weights (user 2026-05-11「TFの組み合わせは状況で変わる」+
-    # 残研究 1/2/3): session × method × pair × ATR percentile × news
-    # calendar weighting overrides the legacy MTF_TF_WEIGHTS literal.
-    # Falls back to the literal when no situation context is available
-    # so existing tests stay stable.
-    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
-    session_str = str(market_context.get("session") or metadata.get("session_bucket") or "")
-    dominant_regime = str(market_context.get("regime") or "")
-    method_str = str(market_context.get("method") or "")
-    pair_str = str(intent.get("pair") or "")
-    try:
-        from quant_rabbit.strategy.tf_weights import dynamic_tf_weights
-        weights, situation_label = dynamic_tf_weights(
-            session=session_str,
-            chart_story=chart_story,
-            dominant_regime=dominant_regime,
-            method=method_str,
-            pair=pair_str,
-            # pair_chart not available here cheaply; ATR percentile boost
-            # therefore relies on chart_story_structural ADX values via
-            # the situation classifier. Acceptable: PA aggregate (which
-            # has pair_chart) gets the full ATR percentile boost.
-        )
-    except Exception:
-        weights, situation_label = dict(MTF_TF_WEIGHTS), "baseline"
+    # Use the same verified content-addressed receipt as the PA lens.  This
+    # scorer must never re-open calendar/profile sources or evaluate a new
+    # process timestamp after the forecast has frozen its causal evidence.
+    weights = dict(MTF_TF_WEIGHTS)
+    situation_label = str(receipt_label or "baseline")
+    if isinstance(receipt_weights, Mapping) and set(receipt_weights) == set(
+        MTF_TF_WEIGHTS
+    ):
+        try:
+            parsed_weights = {
+                timeframe: float(receipt_weights[timeframe])
+                for timeframe in MTF_TF_WEIGHTS
+            }
+        except (TypeError, ValueError, OverflowError):
+            parsed_weights = {}
+        if (
+            parsed_weights
+            and all(
+                math.isfinite(weight) and weight >= 0.0
+                for weight in parsed_weights.values()
+            )
+            and sum(parsed_weights.values()) > 0.0
+        ):
+            weights = parsed_weights
+        else:
+            situation_label = "baseline"
 
     aligned_weighted = 0.0
     opposed_weighted = 0.0
@@ -634,10 +942,13 @@ def _load_full_pair_charts_for_brain(pair_charts_path: Path = DEFAULT_PAIR_CHART
     except (OSError, json.JSONDecodeError):
         return {}
     out: dict[str, dict[str, Any]] = {}
+    generated_at_utc = payload.get("generated_at_utc")
     for chart in payload.get("charts", []) or []:
         pair = chart.get("pair")
         if isinstance(pair, str):
-            out[pair] = chart
+            chart_copy = dict(chart)
+            chart_copy.setdefault("generated_at_utc", generated_at_utc)
+            out[pair] = chart_copy
     return out
 
 
@@ -816,6 +1127,13 @@ def _pair_forecast(
         hit_rates=hit_rates,
         regime=regime_label,
         spread_pips=current_spread_pips,
+        calendar_path=_data_artifact_path(
+            effective_data_root, DEFAULT_CALENDAR_SNAPSHOT
+        ),
+        strategy_profile_path=_data_artifact_path(
+            effective_data_root, DEFAULT_STRATEGY_PROFILE
+        ),
+        now_utc=getattr(snapshot, "fetched_at_utc", None),
     )
     if (
         forecast.direction == "UNCLEAR"
@@ -926,6 +1244,14 @@ def _forecast_lane_gate(
                 "forecast RANGE supports range rotation "
                 f"({metadata.get('geometry_model')}, rails="
                 f"{metadata.get('range_support')}–{metadata.get('range_resistance')})",
+            )
+        if (
+            method == TradeMethod.BREAKOUT_FAILURE.value
+            and _range_forecast_tp_proven_breakout_failure_ready(intent)
+        ):
+            return (
+                True,
+                "forecast RANGE supports the exact TP-proven passive BREAKOUT_FAILURE fade",
             )
         return (
             False,
@@ -1336,6 +1662,33 @@ class TraderBrain:
         rationale: list[str] = []
         score = 0.0
 
+        # Freeze candidate eligibility and both technical scorers to the one
+        # forecast-time, content-addressed regime-family receipt.  A legacy or
+        # malformed receipt remains visible with baseline display weights, but
+        # it cannot enter the SEND_ENTRY candidate set.  Method mismatch is a
+        # per-candidate block, so a lower-ranked compatible lane can still be
+        # selected instead of failing only after the top lane reaches GPT.
+        regime_family_context = _verified_regime_family_scoring_context(intent)
+        if status == "LIVE_READY":
+            selected_method = regime_family_context.selected_method
+            if not regime_family_context.valid:
+                blockers.insert(
+                    0,
+                    "regime_family_receipt_invalid: "
+                    f"{regime_family_context.error or 'UNKNOWN'}",
+                )
+            elif selected_method is None:
+                blockers.insert(
+                    0,
+                    "regime_family_method_unavailable: selected_method=NONE",
+                )
+            elif method.strip().upper() != selected_method:
+                blockers.insert(
+                    0,
+                    "regime_family_method_mismatch: "
+                    f"receipt={selected_method}, lane={method.strip().upper() or 'MISSING'}",
+                )
+
         if status == "LIVE_READY":
             score += 100.0
             rationale.append("live-ready risk/profile receipt")
@@ -1431,7 +1784,21 @@ class TraderBrain:
             blockers=blockers,
         )
         score += _direction_conflict_penalty(result, rationale)
-        score += _mtf_confluence_score(intent, rationale, blockers)
+        score += _mtf_confluence_score(
+            intent,
+            rationale,
+            blockers,
+            receipt_weights=(
+                regime_family_context.weights
+                if regime_family_context.valid
+                else None
+            ),
+            receipt_label=(
+                regime_family_context.label
+                if regime_family_context.valid
+                else None
+            ),
+        )
         score += _technical_harvest_precision_score(
             intent=intent,
             pair=pair,
@@ -1517,7 +1884,21 @@ class TraderBrain:
         if pa_chart and pa_price and pa_side in {"LONG", "SHORT"}:
             pa_pip_factor = 100.0 if pa_pair.endswith("_JPY") else 10000.0
             pa_delta, pa_reasons = aggregate_price_action_score(
-                pa_chart, pa_side, pa_price, pa_pip_factor
+                pa_chart,
+                pa_side,
+                pa_price,
+                pa_pip_factor,
+                method=method,
+                receipt_weights=(
+                    regime_family_context.weights
+                    if regime_family_context.valid
+                    else None
+                ),
+                receipt_label=(
+                    regime_family_context.label
+                    if regime_family_context.valid
+                    else None
+                ),
             )
             score += pa_delta
             if pa_reasons:

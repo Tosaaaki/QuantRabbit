@@ -18,6 +18,7 @@ from quant_rabbit.strategy.forecast_technical_context import build_forecast_tech
 from quant_rabbit.strategy.projection_ledger import (
     CONFIDENCE_MAX_MULTIPLIER,
     CONFIDENCE_MIN_MULTIPLIER,
+    DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN,
     IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN,
     LedgerEntry,
     compute_hit_rates,
@@ -25,6 +26,7 @@ from quant_rabbit.strategy.projection_ledger import (
     load_ledger,
     record_directional_forecast,
     record_projections,
+    retryable_truth_timeout_pairs,
     select_calibration_signal_name,
     setup_grade,
     verify_pending,
@@ -39,6 +41,46 @@ class _Sig:
     confidence: float
     bonus_magnitude: float
     rationale: str = ""
+
+
+def _range_emission_context(
+    *,
+    pair: str = "EUR_USD",
+    current_price: float = 1.1050,
+    h1_atr_pips: object = 20.0,
+) -> dict[str, object]:
+    return build_forecast_technical_context(
+        {
+            "confluence": {
+                "dominant_regime": "RANGE",
+                "price_percentile_24h": 0.5,
+            },
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "indicators": {"atr_pips": 5.0},
+                },
+                {
+                    "granularity": "M15",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "BOS_UP", "index": 5, "close_confirmed": True}
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "indicators": {"atr_pips": h1_atr_pips},
+                },
+            ],
+        },
+        pair=pair,
+        current_price=current_price,
+        spread_pips=0.5,
+    )
 
 
 class RecordTest(unittest.TestCase):
@@ -99,6 +141,76 @@ class RecordTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             n = record_projections([], pair="EUR_USD", current_price=1.0, data_root=Path(tmp))
             self.assertEqual(n, 0)
+
+    def test_append_recorders_skip_nonobject_json_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "projection_ledger.jsonl"
+            path.write_text("[]\nnull\n1\n{malformed-json\n", encoding="utf-8")
+            sig = _Sig("bb_squeeze", "EITHER", 15, 0.7, 8.0)
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.24,
+                raw_confidence=0.80,
+                calibration_multiplier=0.30,
+                current_price=1.1000,
+                target_price=1.1020,
+                invalidation_price=1.0990,
+                horizon_min=60,
+            )
+
+            self.assertEqual(
+                record_projections(
+                    [sig],
+                    pair="EUR_USD",
+                    current_price=1.1000,
+                    data_root=root,
+                    cycle_id="nonobject-projection",
+                ),
+                1,
+            )
+            self.assertEqual(
+                record_directional_forecast(
+                    forecast,
+                    pair="EUR_USD",
+                    current_price=None,
+                    data_root=root,
+                    cycle_id="nonobject-directional",
+                ),
+                1,
+            )
+            self.assertEqual(len(load_ledger(root)), 2)
+
+    def test_record_directional_forecast_normalises_naive_now_to_utc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.24,
+                raw_confidence=0.80,
+                calibration_multiplier=0.30,
+                current_price=1.1000,
+                target_price=1.1020,
+                invalidation_price=1.0990,
+                horizon_min=60,
+            )
+
+            self.assertEqual(
+                record_directional_forecast(
+                    forecast,
+                    pair="EUR_USD",
+                    current_price=None,
+                    data_root=root,
+                    cycle_id="naive-now",
+                    now=datetime(2026, 7, 13, 12, 34, 56),
+                ),
+                1,
+            )
+
+            self.assertEqual(
+                load_ledger(root)[0].timestamp_emitted_utc,
+                "2026-07-13T12:34:56Z",
+            )
 
     def test_record_dedupes_same_cycle_pair_signal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -321,6 +433,8 @@ class RecordTest(unittest.TestCase):
                 {
                     "direction": "DOWN",
                     "confidence": 0.73,
+                    "raw_confidence": 0.81,
+                    "calibration_multiplier": 0.901234,
                     "current_price": 1.1000,
                     "target_price": 1.0950,
                     "invalidation_price": 1.1030,
@@ -354,6 +468,50 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].entry_price, 1.1000)
             self.assertEqual(entries[0].predicted_target_price, 1.0950)
             self.assertEqual(entries[0].predicted_invalidation_price, 1.1030)
+            self.assertEqual(entries[0].confidence, 0.73)
+            self.assertEqual(entries[0].raw_confidence, 0.81)
+            self.assertEqual(entries[0].calibration_multiplier, 0.901234)
+
+    def test_record_directional_forecast_missing_raw_schema_stays_explicitly_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = type(
+                "Forecast",
+                (),
+                {
+                    "direction": "UP",
+                    "confidence": 0.99,
+                    "current_price": 1.1000,
+                    "target_price": 1.1020,
+                    "invalidation_price": 1.0990,
+                    "horizon_min": 60,
+                },
+            )()
+
+            self.assertEqual(
+                record_directional_forecast(
+                    forecast,
+                    pair="EUR_USD",
+                    current_price=None,
+                    data_root=root,
+                    regime_at_emission="TREND",
+                    cycle_id="missing-raw-schema",
+                ),
+                1,
+            )
+            payload = json.loads((root / "projection_ledger.jsonl").read_text())
+            self.assertIn("raw_confidence", payload)
+            self.assertIn("calibration_multiplier", payload)
+            self.assertIsNone(payload["raw_confidence"])
+            self.assertIsNone(payload["calibration_multiplier"])
+
+            entries = load_ledger(root)
+            entries[0].resolution_status = "HIT"
+            entries[0].resolution_evidence = "target touched before invalidation"
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            write_ledger(entries, root)
+            self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
 
     def test_directional_forecast_context_survives_ledger_resolution_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -551,6 +709,64 @@ class VerifyTest(unittest.TestCase):
         write_ledger([entry], root)
         return tmp, root
 
+    def _mark_new_schema_directional(
+        self,
+        root: Path,
+        *,
+        emitted: datetime,
+        direction: str = "UP",
+        window_min: float = 10.0,
+        target: float | None = 1.1020,
+        invalidation: float | None = 1.0990,
+        range_low: float | None = None,
+        range_high: float | None = None,
+        technical_context_v1: dict[str, object] | None = None,
+    ) -> None:
+        from quant_rabbit.strategy.projection_ledger import write_ledger
+
+        entry = load_ledger(root)[0]
+        entry.timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+        entry.signal_name = "directional_forecast"
+        entry.direction = direction
+        entry.lead_time_min = window_min
+        entry.resolution_window_min = window_min
+        entry.confidence = 0.24
+        entry.raw_confidence = 0.80
+        entry.calibration_multiplier = 0.30
+        entry.entry_price = 1.1000 if direction != "RANGE" else 1.1050
+        entry.predicted_target_price = target if direction != "RANGE" else None
+        entry.predicted_invalidation_price = invalidation if direction != "RANGE" else None
+        entry.predicted_range_low_price = range_low
+        entry.predicted_range_high_price = range_high
+        entry.pre_emission_range_pips = (
+            (range_high - range_low) * 10_000
+            if range_low is not None and range_high is not None
+            else None
+        )
+        entry.technical_context_v1 = technical_context_v1
+        write_ledger([entry], root)
+
+    @staticmethod
+    def _closed_candles(
+        emitted: datetime,
+        *,
+        count: int,
+        step_min: int = 1,
+        high: float = 1.1010,
+        low: float = 1.0995,
+        close: float = 1.1002,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "timestamp": (emitted + timedelta(minutes=step_min * index)).isoformat(),
+                "high": high,
+                "low": low,
+                "close": close,
+                "complete": True,
+            }
+            for index in range(count)
+        ]
+
     def test_directional_up_hit(self) -> None:
         tmp, root = self._setup({"direction": "UP", "lead_time_min": 5, "window": 10, "entry_price": 1.1700})
         with tmp:
@@ -708,6 +924,814 @@ class VerifyTest(unittest.TestCase):
             )
             self.assertEqual(counts["TIMEOUT"], 1)
             self.assertEqual(load_ledger(root)[0].resolution_status, "TIMEOUT")
+
+    def test_new_directional_quote_only_never_scores_target_miss(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1001, "ask": 1.1002}},
+                now=emitted + timedelta(minutes=20),
+            )
+
+            entry = load_ledger(root)[0]
+            self.assertEqual(counts["TIMEOUT"], 1)
+            self.assertEqual(counts["MISS"], 0)
+            self.assertEqual(entry.resolution_status, "TIMEOUT")
+            self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+            self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_new_directional_partial_candle_windows_are_retryable_not_scored(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        complete = self._closed_candles(emitted, count=10)
+        variants = {
+            "single": complete[:1],
+            "leading_gap": complete[1:],
+            "trailing_gap": complete[:-1],
+            "internal_gap": complete[:5] + complete[6:],
+            "explicit_incomplete": [
+                {**item, "complete": False if index == 5 else True}
+                for index, item in enumerate(complete)
+            ],
+            "high_below_low": [
+                {**item, "high": 1.0990 if index == 5 else item["high"]}
+                for index, item in enumerate(complete)
+            ],
+            "close_above_high": [
+                {**item, "close": 1.1020 if index == 5 else item["close"]}
+                for index, item in enumerate(complete)
+            ],
+            "close_below_low": [
+                {**item, "close": 1.0990 if index == 5 else item["close"]}
+                for index, item in enumerate(complete)
+            ],
+            "boolean_high": [
+                {**item, "high": True if index == 5 else item["high"]}
+                for index, item in enumerate(complete)
+            ],
+            "boolean_low": [
+                {**item, "low": True if index == 5 else item["low"]}
+                for index, item in enumerate(complete)
+            ],
+            "boolean_close": [
+                {**item, "close": True if index == 5 else item["close"]}
+                for index, item in enumerate(complete)
+            ],
+        }
+        for label, candles in variants.items():
+            with self.subTest(label=label):
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": 10,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(root, emitted=emitted)
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={"EUR_USD": {"M1": candles}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertEqual(counts["HIT"], 0)
+                self.assertEqual(counts["MISS"], 0)
+                self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+                self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_new_directional_noniterable_candle_bucket_fails_closed(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        for bucket in (7, True):
+            with self.subTest(bucket=bucket):
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": 10,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(root, emitted=emitted)
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={"EUR_USD": {"M1": bucket}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+                self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_new_directional_complete_m1_scores_target_invalidation_and_no_touch(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        cases = (
+            ("target", "HIT"),
+            ("invalidation", "MISS"),
+            ("no_touch", "TIMEOUT"),
+        )
+        for label, expected_status in cases:
+            with self.subTest(label=label):
+                candles = self._closed_candles(emitted, count=10)
+                if label == "target":
+                    candles[3]["high"] = 1.1022
+                elif label == "invalidation":
+                    candles[3]["low"] = 1.0988
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": 10,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(root, emitted=emitted)
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={"EUR_USD": {"M1": candles}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts[expected_status], 1)
+                self.assertEqual(entry.resolution_status, expected_status)
+                if label == "no_touch":
+                    self.assertIn("both untouched", entry.resolution_evidence)
+
+    def test_new_directional_partial_m1_falls_back_to_complete_m5(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        partial_m1 = self._closed_candles(emitted, count=5)
+        partial_m1[2]["low"] = 1.0988
+        complete_m5 = self._closed_candles(
+            emitted,
+            count=2,
+            step_min=5,
+            high=1.1010,
+            low=1.0995,
+        )
+        complete_m5[1]["high"] = 1.1022
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": {"M1": partial_m1, "M5": complete_m5}
+                },
+                now=emitted + timedelta(minutes=20),
+            )
+            entry = load_ledger(root)[0]
+
+        self.assertEqual(counts["HIT"], 1)
+        self.assertEqual(entry.resolution_status, "HIT")
+        self.assertNotIn("invalidation", entry.resolution_evidence.split(" touched before ")[0])
+
+    def test_new_directional_rejects_coarse_bars_straddling_truth_boundaries(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 4, tzinfo=timezone.utc)
+        partial_m1 = self._closed_candles(emitted, count=5)
+        variants = {
+            "M5": [
+                {
+                    "timestamp": (datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc) + timedelta(minutes=5 * index)).isoformat(),
+                    "high": 1.1025,
+                    "low": 1.0995,
+                    "close": 1.1002,
+                    "complete": True,
+                }
+                for index in range(3)
+            ],
+            "H1": [
+                {
+                    "timestamp": datetime(2026, 7, 13, hour, 0, tzinfo=timezone.utc).isoformat(),
+                    "high": 1.1025,
+                    "low": 1.0995,
+                    "close": 1.1002,
+                    "complete": True,
+                }
+                for hour in (12, 13)
+            ],
+        }
+        for label, coarse in variants.items():
+            with self.subTest(label=label):
+                window_min = 10 if label == "M5" else 60
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": window_min,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=emitted,
+                        window_min=window_min,
+                    )
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={
+                            "EUR_USD": {"M1": partial_m1, label: coarse},
+                        },
+                        now=emitted + timedelta(minutes=130),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertEqual(counts["HIT"], 0)
+                self.assertEqual(counts["MISS"], 0)
+                self.assertEqual(entry.resolution_status, "TIMEOUT")
+                self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+
+    def test_new_directional_accepts_second_stamped_complete_m1_truth(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 4, 24, tzinfo=timezone.utc)
+        first_open = emitted.replace(second=0)
+        candles = self._closed_candles(first_open, count=11)
+        candles[4]["high"] = 1.1025
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+            counts = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M1": candles}},
+                now=emitted + timedelta(minutes=20),
+            )
+
+        self.assertEqual(counts["HIT"], 1)
+
+    def test_new_directional_accepts_coarse_truth_with_subminute_endpoint_overhang(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, 30, tzinfo=timezone.utc)
+        candles = [
+            {
+                "timestamp": emitted.replace(second=0).isoformat(),
+                "high": 1.1025,
+                "low": 1.0995,
+                "close": 1.1002,
+                "complete": True,
+            }
+        ]
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 4,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted, window_min=4)
+            counts = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M5": candles}},
+                now=emitted + timedelta(minutes=10),
+            )
+
+        self.assertEqual(counts["HIT"], 1)
+
+    def test_new_directional_rejects_duplicate_and_overlapping_candles(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        complete = self._closed_candles(emitted, count=10)
+        variants = {
+            "duplicate": complete + [{**complete[4]}],
+            "overlap": complete[:5]
+            + [{**complete[5], "timestamp": (emitted + timedelta(minutes=4, seconds=30)).isoformat()}]
+            + complete[5:],
+        }
+        for label, candles in variants.items():
+            with self.subTest(label=label):
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": 10,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(root, emitted=emitted)
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={"EUR_USD": {"M1": candles}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+
+    def test_new_directional_retry_resolves_only_after_complete_truth_arrives(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        partial = self._closed_candles(emitted, count=4)
+        complete = self._closed_candles(emitted, count=10)
+        complete[4]["high"] = 1.1022
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+            first = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M1": partial}},
+                now=emitted + timedelta(minutes=20),
+            )
+            second = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M1": complete}},
+                now=emitted + timedelta(minutes=21),
+            )
+            entry = load_ledger(root)[0]
+
+        self.assertEqual(first["TIMEOUT"], 1)
+        self.assertEqual(second["HIT"], 1)
+        self.assertEqual(entry.resolution_status, "HIT")
+
+    def test_verify_pending_normalises_naive_now_to_utc(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        candles = self._closed_candles(emitted, count=10)
+        candles[4]["high"] = 1.1022
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+            counts = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M1": candles}},
+                now=datetime(2026, 7, 13, 12, 20),
+            )
+
+        self.assertEqual(counts["HIT"], 1)
+
+    def test_new_directional_expiry_open_bar_is_outside_truth_window(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        candles = self._closed_candles(emitted, count=11)
+        candles[10]["high"] = 1.1025
+        tmp, root = self._setup(
+            {
+                "name": "directional_forecast",
+                "direction": "UP",
+                "window": 10,
+                "entry_price": 1.1000,
+                "target": 1.1020,
+                "invalidation": 1.0990,
+            }
+        )
+        with tmp:
+            self._mark_new_schema_directional(root, emitted=emitted)
+            counts = verify_pending(
+                root,
+                candles_by_pair={"EUR_USD": {"M1": candles}},
+                now=emitted + timedelta(minutes=20),
+            )
+            entry = load_ledger(root)[0]
+
+        self.assertEqual(counts["TIMEOUT"], 1)
+        self.assertEqual(entry.resolution_status, "TIMEOUT")
+        self.assertIn("both untouched", entry.resolution_evidence)
+
+    def test_new_directional_invalid_time_window_and_pair_fail_closed_not_retryable(self) -> None:
+        now = datetime.now(timezone.utc)
+        variants = (
+            ("huge_window", "resolution window exceeds"),
+            ("future_timestamp", "future emission timestamp"),
+            ("invalid_timestamp", "invalid emission timestamp"),
+            ("unsupported_pair", "unsupported or noncanonical pair"),
+        )
+        for label, evidence_fragment in variants:
+            with self.subTest(label=label):
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "UP",
+                        "window": 10,
+                        "entry_price": 1.1000,
+                        "target": 1.1020,
+                        "invalidation": 1.0990,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=now - timedelta(minutes=30),
+                    )
+                    entry = load_ledger(root)[0]
+                    if label == "huge_window":
+                        entry.resolution_window_min = 1e300
+                    elif label == "future_timestamp":
+                        entry.timestamp_emitted_utc = (
+                            now + timedelta(days=1)
+                        ).isoformat()
+                    elif label == "invalid_timestamp":
+                        entry.timestamp_emitted_utc = "not-a-timestamp"
+                    else:
+                        entry.pair = "XAU_USD"
+                    from quant_rabbit.strategy.projection_ledger import write_ledger
+
+                    write_ledger([entry], root)
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={},
+                        now=now,
+                    )
+                    resolved = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertEqual(counts["PENDING"], 0)
+                self.assertIn(evidence_fragment, resolved.resolution_evidence)
+                self.assertEqual(retryable_truth_timeout_pairs([resolved]), set())
+
+    def test_malicious_optional_numeric_and_candle_do_not_stop_other_verification(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        now = emitted + timedelta(minutes=20)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "projection_ledger.jsonl"
+
+            def payload(pair: str, cycle_id: str) -> dict[str, object]:
+                return {
+                    "timestamp_emitted_utc": emitted.isoformat(),
+                    "pair": pair,
+                    "signal_name": "directional_forecast",
+                    "direction": "UP",
+                    "lead_time_min": 10.0,
+                    "confidence": 0.24,
+                    "raw_confidence": 0.80,
+                    "calibration_multiplier": 0.30,
+                    "entry_price": 1.100,
+                    "predicted_target_price": 1.102,
+                    "predicted_invalidation_price": 1.099,
+                    "resolution_window_min": 10.0,
+                    "resolution_status": "PENDING",
+                    "cycle_id": cycle_id,
+                }
+
+            bad_optional = {
+                **payload("AUD_USD", "bad-optional-target"),
+                "predicted_target_price": 10**400,
+            }
+            path.write_text(
+                "\n".join(
+                    json.dumps(item)
+                    for item in (
+                        payload("EUR_USD", "bad-candle"),
+                        bad_optional,
+                        payload("GBP_USD", "valid-candle"),
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            bad_candles = self._closed_candles(emitted, count=10)
+            bad_candles[5]["high"] = 10**400
+            valid_candles = self._closed_candles(emitted, count=10)
+            valid_candles[5]["high"] = 1.1022
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": {"M1": bad_candles},
+                    "AUD_USD": {"M1": self._closed_candles(emitted, count=10)},
+                    "GBP_USD": {"M1": valid_candles},
+                },
+                now=now,
+            )
+            by_cycle = {entry.cycle_id: entry for entry in load_ledger(root)}
+
+        self.assertEqual(counts["HIT"], 1)
+        self.assertEqual(by_cycle["valid-candle"].resolution_status, "HIT")
+        self.assertEqual(by_cycle["bad-candle"].resolution_status, "TIMEOUT")
+        self.assertIn(
+            "incomplete closed candle truth",
+            by_cycle["bad-candle"].resolution_evidence,
+        )
+        self.assertEqual(by_cycle["bad-optional-target"].resolution_status, "TIMEOUT")
+
+    def test_malformed_atr_is_local_timeout_and_does_not_stop_verification(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        pairs = ("EUR_USD", "AUD_USD", "NZD_USD", "GBP_USD")
+        atr_by_pair = {
+            "EUR_USD": "bad",
+            "AUD_USD": float("nan"),
+            "NZD_USD": 10**400,
+            "GBP_USD": 10.0,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            write_ledger(
+                [
+                    LedgerEntry(
+                        timestamp_emitted_utc=emitted.isoformat(),
+                        pair=pair,
+                        signal_name="legacy_movement",
+                        direction="UP",
+                        lead_time_min=10,
+                        confidence=0.7,
+                        entry_price=1.1000,
+                        predicted_target_price=None,
+                        resolution_window_min=10,
+                        resolution_status="PENDING",
+                        cycle_id=f"atr-{pair}",
+                    )
+                    for pair in pairs
+                ],
+                root,
+            )
+            counts = verify_pending(
+                root,
+                quotes_by_pair={
+                    pair: {"bid": 1.1009, "ask": 1.1011}
+                    for pair in pairs
+                },
+                atr_pips_by_pair=atr_by_pair,
+                now=emitted + timedelta(minutes=20),
+            )
+            statuses = {
+                entry.pair: entry.resolution_status
+                for entry in load_ledger(root)
+            }
+
+        self.assertEqual(counts["TIMEOUT"], 3)
+        self.assertEqual(counts["HIT"], 1)
+        self.assertEqual(statuses["GBP_USD"], "HIT")
+
+    def test_new_range_requires_complete_truth_for_hold_and_break(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=150)
+        for label, high in (("hold", 1.1090), ("break", 1.1125)):
+            with self.subTest(label=label):
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "RANGE",
+                        "window": 120,
+                        "entry_price": 1.1050,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=emitted,
+                        direction="RANGE",
+                        window_min=120,
+                        target=None,
+                        invalidation=None,
+                        range_low=1.1000,
+                        range_high=1.1100,
+                        technical_context_v1=_range_emission_context(
+                            current_price=1.1050,
+                            h1_atr_pips=4.0,
+                        ),
+                    )
+                    partial = [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=30)).isoformat(),
+                            "high": high,
+                            "low": 1.1005,
+                            "close": 1.1050,
+                            "complete": True,
+                        }
+                    ]
+                    counts = verify_pending(
+                        root,
+                        candles_by_pair={"EUR_USD": {"M1": partial}},
+                        now=emitted + timedelta(minutes=140),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertEqual(entry.resolution_status, "TIMEOUT")
+                self.assertIn("incomplete closed candle truth", entry.resolution_evidence)
+
+    def test_new_range_complete_window_scores_hold_and_break(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=150)
+        for label, expected_status in (("hold", "HIT"), ("break", "MISS")):
+            with self.subTest(label=label):
+                candles = self._closed_candles(
+                    emitted,
+                    count=24,
+                    step_min=5,
+                    high=1.1090,
+                    low=1.1005,
+                    close=1.1050,
+                )
+                if label == "break":
+                    candles[10]["high"] = 1.1125
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "RANGE",
+                        "window": 120,
+                        "entry_price": 1.1050,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=emitted,
+                        direction="RANGE",
+                        window_min=120,
+                        target=None,
+                        invalidation=None,
+                        range_low=1.1000,
+                        range_high=1.1100,
+                        technical_context_v1=_range_emission_context(
+                            current_price=1.1050,
+                            h1_atr_pips=4.0,
+                        ),
+                    )
+                    counts = verify_pending(
+                        root,
+                        atr_pips_by_pair={"EUR_USD": 4.0},
+                        candles_by_pair={"EUR_USD": {"M5": candles}},
+                        now=emitted + timedelta(minutes=140),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts[expected_status], 1)
+                self.assertEqual(entry.resolution_status, expected_status)
+
+    def test_new_range_uses_only_emission_h1_atr_for_reproducible_outcome(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        external_atr_variants = (None, 10.0, 20.0, 50.0, float("nan"))
+        for external_atr in external_atr_variants:
+            with self.subTest(external_atr=external_atr):
+                candles = self._closed_candles(
+                    emitted,
+                    count=10,
+                    high=1.1090,
+                    low=1.1005,
+                    close=1.1050,
+                )
+                # 15 pips above the emitted box: MISS with the immutable
+                # emission H1 ATR=20 (10-pip tolerance), but the old verifier
+                # flipped this to HIT when the later ATR map contained 50.
+                candles[4]["high"] = 1.1115
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "RANGE",
+                        "window": 10,
+                        "entry_price": 1.1050,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=emitted,
+                        direction="RANGE",
+                        window_min=10,
+                        target=None,
+                        invalidation=None,
+                        range_low=1.1000,
+                        range_high=1.1100,
+                        technical_context_v1=_range_emission_context(
+                            current_price=1.1050,
+                            h1_atr_pips=20.0,
+                        ),
+                    )
+                    external = (
+                        {}
+                        if external_atr is None
+                        else {"EUR_USD": external_atr}
+                    )
+                    counts = verify_pending(
+                        root,
+                        atr_pips_by_pair=external,
+                        candles_by_pair={"EUR_USD": {"M1": candles}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+
+                self.assertEqual(counts["MISS"], 1)
+                self.assertEqual(entry.resolution_status, "MISS")
+                self.assertIn("plus 10.0pip ATR tolerance", entry.resolution_evidence)
+
+    def test_new_range_invalid_emission_atr_context_is_retryable_zero_learning(self) -> None:
+        emitted = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+        valid_context = _range_emission_context(
+            current_price=1.1050,
+            h1_atr_pips=20.0,
+        )
+        invalid_parent = json.loads(json.dumps(valid_context))
+        invalid_parent["identity"]["pair"] = "GBP_USD"
+        contexts = {
+            "missing": None,
+            "nonfinite": _range_emission_context(
+                current_price=1.1050,
+                h1_atr_pips=float("nan"),
+            ),
+            "nonpositive": _range_emission_context(
+                current_price=1.1050,
+                h1_atr_pips=0.0,
+            ),
+            "invalid_parent": invalid_parent,
+        }
+        for label, context in contexts.items():
+            with self.subTest(label=label):
+                candles = self._closed_candles(
+                    emitted,
+                    count=10,
+                    high=1.1090,
+                    low=1.1005,
+                    close=1.1050,
+                )
+                tmp, root = self._setup(
+                    {
+                        "name": "directional_forecast",
+                        "direction": "RANGE",
+                        "window": 10,
+                        "entry_price": 1.1050,
+                    }
+                )
+                with tmp:
+                    self._mark_new_schema_directional(
+                        root,
+                        emitted=emitted,
+                        direction="RANGE",
+                        window_min=10,
+                        target=None,
+                        invalidation=None,
+                        range_low=1.1000,
+                        range_high=1.1100,
+                        technical_context_v1=context,
+                    )
+                    counts = verify_pending(
+                        root,
+                        atr_pips_by_pair={"EUR_USD": 50.0},
+                        candles_by_pair={"EUR_USD": {"M1": candles}},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                    entry = load_ledger(root)[0]
+                    hit_rates = compute_hit_rates(root)
+
+                self.assertEqual(counts["TIMEOUT"], 1)
+                self.assertEqual(entry.resolution_status, "TIMEOUT")
+                self.assertIn("range emission ATR truth unavailable", entry.resolution_evidence)
+                self.assertEqual(retryable_truth_timeout_pairs([entry]), {"EUR_USD"})
+                self.assertNotIn("directional_forecast_range", hit_rates)
 
     def test_directional_forecast_invalidation_before_target_is_miss(self) -> None:
         emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -1567,6 +2591,1143 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(bucket["hit_rate"], 0.25)
             self.assertEqual(bucket["invalidation_first_count"], 3)
             self.assertAlmostEqual(bucket["invalidation_first_rate"], 0.75)
+
+    def test_raw_confidence_keeps_calibration_learning_after_multiplier_dampening(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+            entries = []
+            for index in range(12):
+                entries.append(
+                    LedgerEntry(
+                        timestamp_emitted_utc=(base + timedelta(hours=index)).isoformat(),
+                        pair="EUR_USD",
+                        signal_name="directional_forecast",
+                        direction="UP",
+                        lead_time_min=60,
+                        confidence=0.24,
+                        raw_confidence=0.80,
+                        calibration_multiplier=0.30,
+                        entry_price=1.1,
+                        predicted_target_price=1.102,
+                        predicted_invalidation_price=1.099,
+                        resolution_window_min=60,
+                        resolution_status="HIT",
+                        resolution_evidence="target 1.10200 touched before invalidation 1.09900",
+                        regime_at_emission="TREND",
+                        cycle_id=f"raw-grade-{index}",
+                    )
+                )
+            # A high calibrated number cannot admit genuinely weak raw evidence.
+            entries.append(
+                LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(hours=12)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.30,
+                    raw_confidence=0.20,
+                    calibration_multiplier=1.50,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    resolution_evidence="invalidation 1.09900 touched before target 1.10200",
+                    regime_at_emission="TREND",
+                    cycle_id="low-raw",
+                )
+            )
+            write_ledger(entries, root)
+
+            bucket = compute_hit_rates(root)["directional_forecast_up"]["EUR_USD:TREND"]
+
+            self.assertEqual(bucket["samples"], 12)
+            self.assertEqual(bucket["calibration_samples"], 12)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_raw_schema_directional_calibration_uses_pair_wide_non_overlap_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def directional(
+                *,
+                minute: int,
+                direction: str,
+                status: str,
+                cycle_id: str,
+                pair: str = "EUR_USD",
+            ) -> LedgerEntry:
+                is_range = direction == "RANGE"
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair=pair,
+                    signal_name="directional_forecast",
+                    direction=direction,
+                    lead_time_min=60,
+                    confidence=0.25,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.3125,
+                    entry_price=1.1,
+                    predicted_target_price=None if is_range else (1.102 if direction == "UP" else 1.098),
+                    predicted_invalidation_price=None if is_range else (1.099 if direction == "UP" else 1.101),
+                    predicted_range_low_price=1.098 if is_range else None,
+                    predicted_range_high_price=1.102 if is_range else None,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "range held"
+                        if is_range
+                        else (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        )
+                    ),
+                    regime_at_emission="RANGE" if is_range else "TREND",
+                    cycle_id=cycle_id,
+                    technical_context_v1=(
+                        _range_emission_context(
+                            current_price=1.1,
+                            h1_atr_pips=20.0,
+                        )
+                        if is_range
+                        else None
+                    ),
+                )
+
+            write_ledger(
+                [
+                    directional(minute=0, direction="RANGE", status="HIT", cycle_id="range-zero"),
+                    # Shares the RANGE truth window and must not become a second trial.
+                    directional(minute=5, direction="UP", status="HIT", cycle_id="up-overlap"),
+                    # Same timestamp conflict is also one trial, never two.
+                    directional(minute=60, direction="DOWN", status="MISS", cycle_id="down-boundary-a"),
+                    directional(minute=60, direction="UP", status="HIT", cycle_id="down-boundary-b"),
+                    # Exact prior truth-end is an admissible new boundary.
+                    directional(minute=120, direction="UP", status="HIT", cycle_id="up-next-boundary"),
+                    # Pair clocks are independent.
+                    directional(
+                        minute=5,
+                        direction="UP",
+                        status="HIT",
+                        cycle_id="gbp-independent",
+                        pair="GBP_USD",
+                    ),
+                ],
+                root,
+            )
+
+            hit_rates = compute_hit_rates(root)
+
+            self.assertEqual(hit_rates["directional_forecast"]["EUR_USD:_all_regimes"]["samples"], 3)
+            self.assertEqual(hit_rates["directional_forecast_range"]["EUR_USD:RANGE"]["samples"], 1)
+            self.assertEqual(hit_rates["directional_forecast_down"]["EUR_USD:TREND"]["samples"], 1)
+            self.assertEqual(hit_rates["directional_forecast_up"]["EUR_USD:TREND"]["samples"], 1)
+            self.assertEqual(hit_rates["directional_forecast_up"]["GBP_USD:TREND"]["samples"], 1)
+
+    def test_pending_first_raw_trial_suppresses_overlapping_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(*, minute: int, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation" if status == "HIT" else ""
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(minute=0, status="PENDING", cycle_id="pending-first"),
+                    trial(minute=5, status="HIT", cycle_id="overlapping-hit"),
+                ],
+                root,
+            )
+
+            self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_truth_missing_timeout_first_raw_trial_suppresses_overlapping_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+            common = {
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": "UP",
+                "lead_time_min": 60,
+                "confidence": 0.24,
+                "raw_confidence": 0.80,
+                "calibration_multiplier": 0.30,
+                "entry_price": 1.1,
+                "predicted_target_price": 1.102,
+                "predicted_invalidation_price": 1.099,
+                "resolution_window_min": 60,
+                "regime_at_emission": "TREND",
+            }
+            write_ledger(
+                [
+                    LedgerEntry(
+                        timestamp_emitted_utc=base.isoformat(),
+                        resolution_status="TIMEOUT",
+                        resolution_evidence="no candle truth for projection window",
+                        cycle_id="truth-missing-first",
+                        **common,
+                    ),
+                    LedgerEntry(
+                        timestamp_emitted_utc=(base + timedelta(minutes=5)).isoformat(),
+                        resolution_status="HIT",
+                        resolution_evidence="target touched before invalidation",
+                        cycle_id="overlapping-hit",
+                        **common,
+                    ),
+                ],
+                root,
+            )
+
+            self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_low_raw_first_trial_does_not_suppress_overlapping_entry_grade_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(*, minute: int, raw_confidence: float, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=raw_confidence * 0.30,
+                    raw_confidence=raw_confidence,
+                    calibration_multiplier=0.30,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence="target touched before invalidation",
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=0,
+                        raw_confidence=0.20,
+                        status="HIT",
+                        cycle_id="low-raw-first",
+                    ),
+                    trial(
+                        minute=5,
+                        raw_confidence=0.80,
+                        status="HIT",
+                        cycle_id="entry-grade-overlap",
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_low_raw_range_does_not_suppress_overlapping_entry_grade_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+            write_ledger(
+                [
+                    LedgerEntry(
+                        timestamp_emitted_utc=base.isoformat(),
+                        pair="EUR_USD",
+                        signal_name="directional_forecast",
+                        direction="RANGE",
+                        lead_time_min=60,
+                        confidence=0.06,
+                        raw_confidence=0.20,
+                        calibration_multiplier=0.30,
+                        entry_price=1.100,
+                        predicted_target_price=None,
+                        predicted_range_low_price=1.098,
+                        predicted_range_high_price=1.102,
+                        resolution_window_min=60,
+                        resolution_status="HIT",
+                        regime_at_emission="RANGE",
+                        cycle_id="low-raw-range-first",
+                    ),
+                    LedgerEntry(
+                        timestamp_emitted_utc=(base + timedelta(minutes=5)).isoformat(),
+                        pair="EUR_USD",
+                        signal_name="directional_forecast",
+                        direction="UP",
+                        lead_time_min=60,
+                        confidence=0.24,
+                        raw_confidence=0.80,
+                        calibration_multiplier=0.30,
+                        entry_price=1.100,
+                        predicted_target_price=1.102,
+                        predicted_invalidation_price=1.099,
+                        resolution_window_min=60,
+                        resolution_status="HIT",
+                        resolution_evidence="target touched before invalidation",
+                        regime_at_emission="TREND",
+                        cycle_id="entry-grade-up-overlap",
+                    ),
+                ],
+                root,
+            )
+
+            hit_rates = compute_hit_rates(root)
+            self.assertNotIn("directional_forecast_range", hit_rates)
+            bucket = hit_rates["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_malformed_ex_ante_geometry_does_not_occupy_pair_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                minute: int,
+                direction: str,
+                entry_price: float | None,
+                target: float,
+                invalidation: float,
+                cycle_id: str,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction=direction,
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=entry_price,
+                    predicted_target_price=target,
+                    predicted_invalidation_price=invalidation,
+                    resolution_window_min=60,
+                    resolution_status="HIT",
+                    resolution_evidence="target touched before invalidation",
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=0,
+                        direction="UP",
+                        entry_price=None,
+                        target=1.102,
+                        invalidation=1.099,
+                        cycle_id="missing-entry",
+                    ),
+                    trial(
+                        minute=1,
+                        direction="UP",
+                        entry_price=0.0,
+                        target=1.102,
+                        invalidation=1.099,
+                        cycle_id="nonpositive-entry",
+                    ),
+                    trial(
+                        minute=2,
+                        direction="UP",
+                        entry_price=1.100,
+                        target=1.098,
+                        invalidation=1.099,
+                        cycle_id="up-wrong-side",
+                    ),
+                    trial(
+                        minute=3,
+                        direction="DOWN",
+                        entry_price=1.100,
+                        target=1.102,
+                        invalidation=1.099,
+                        cycle_id="down-wrong-side",
+                    ),
+                    trial(
+                        minute=5,
+                        direction="UP",
+                        entry_price=1.100,
+                        target=1.102,
+                        invalidation=1.099,
+                        cycle_id="valid-overlap",
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_invalid_or_overflowing_horizons_do_not_occupy_pair_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                emitted_at: str,
+                pair: str,
+                window_min: float,
+                status: str,
+                cycle_id: str,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=emitted_at,
+                    pair=pair,
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=min(window_min, 60.0),
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=window_min,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        emitted_at=base.isoformat(),
+                        pair="EUR_USD",
+                        window_min=1e300,
+                        status="HIT",
+                        cycle_id="huge-window",
+                    ),
+                    trial(
+                        emitted_at="9999-12-31T23:59:59+00:00",
+                        pair="EUR_USD",
+                        window_min=60.0,
+                        status="HIT",
+                        cycle_id="year-9999-overflow",
+                    ),
+                    trial(
+                        emitted_at=(base + timedelta(minutes=5)).isoformat(),
+                        pair="EUR_USD",
+                        window_min=60.0,
+                        status="HIT",
+                        cycle_id="valid-after-invalid",
+                    ),
+                    trial(
+                        emitted_at=base.isoformat(),
+                        pair="GBP_USD",
+                        window_min=DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN,
+                        status="MISS",
+                        cycle_id="max-boundary-a",
+                    ),
+                    trial(
+                        emitted_at=(
+                            base
+                            + timedelta(
+                                minutes=DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+                            )
+                        ).isoformat(),
+                        pair="GBP_USD",
+                        window_min=DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN,
+                        status="HIT",
+                        cycle_id="max-boundary-b",
+                    ),
+                ],
+                root,
+            )
+
+            hit_rates = compute_hit_rates(root)
+            self.assertEqual(
+                hit_rates["directional_forecast_up"]["EUR_USD:TREND"]["samples"],
+                1,
+            )
+            self.assertEqual(
+                hit_rates["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"],
+                1.0,
+            )
+            self.assertEqual(
+                hit_rates["directional_forecast_up"]["GBP_USD:TREND"]["samples"],
+                2,
+            )
+
+    def test_invalid_pairs_cannot_poison_global_directional_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 1, tzinfo=timezone.utc)
+            entries: list[LedgerEntry] = []
+
+            def trial(*, index: int, pair: str, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(hours=index)).isoformat(),
+                    pair=pair,
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            for index in range(30):
+                entries.append(
+                    trial(
+                        index=index,
+                        pair="EUR_USD",
+                        status="MISS",
+                        cycle_id=f"valid-miss-{index}",
+                    )
+                )
+            invalid_pairs = ("", " ", "eur_usd", "XAU_USD")
+            for index in range(40):
+                entries.append(
+                    trial(
+                        index=100 + index,
+                        pair=invalid_pairs[index % len(invalid_pairs)],
+                        status="HIT",
+                        cycle_id=f"invalid-pair-hit-{index}",
+                    )
+                )
+            write_ledger(entries, root)
+
+            hit_rates = compute_hit_rates(root)
+            global_bucket = hit_rates["directional_forecast_up"][
+                "_all_pairs:TREND"
+            ]
+            multiplier = confidence_calibration(
+                "directional_forecast_up",
+                "GBP_USD",
+                hit_rates=hit_rates,
+                regime="TREND",
+            )
+
+            self.assertEqual(global_bucket["samples"], 30)
+            self.assertEqual(global_bucket["hit_rate"], 0.0)
+            self.assertEqual(multiplier, CONFIDENCE_MIN_MULTIPLIER)
+
+    def test_backfilled_old_new_schema_row_does_not_steal_lookback_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(*, minute: int, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            # The older MISS arrived late and is physically last in JSONL.
+            write_ledger(
+                [
+                    trial(minute=60, status="HIT", cycle_id="newer-first-write"),
+                    trial(minute=0, status="MISS", cycle_id="older-backfill"),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root, lookback=1)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_equal_timestamp_new_schema_lookback_keeps_source_tie_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            emitted_at = "2026-07-13T00:00:00+00:00"
+
+            def trial(*, pair: str, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=emitted_at,
+                    pair=pair,
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(pair="EUR_USD", status="HIT", cycle_id="tie-first"),
+                    trial(pair="GBP_USD", status="MISS", cycle_id="tie-second"),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root, lookback=1)["directional_forecast_up"][
+                "_all_pairs:TREND"
+            ]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 0.0)
+
+    def test_mixed_legacy_slots_stay_fixed_while_new_rows_are_chronologized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                minute: int,
+                status: str,
+                cycle_id: str,
+                new_schema: bool,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.80,
+                    raw_confidence=0.80 if new_schema else None,
+                    calibration_multiplier=1.0 if new_schema else None,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=60,
+                        status="HIT",
+                        cycle_id="new-newer-source-slot-0",
+                        new_schema=True,
+                    ),
+                    trial(
+                        minute=180,
+                        status="MISS",
+                        cycle_id="legacy-late-source-slot-1",
+                        new_schema=False,
+                    ),
+                    trial(
+                        minute=0,
+                        status="MISS",
+                        cycle_id="new-older-source-slot-2",
+                        new_schema=True,
+                    ),
+                    trial(
+                        minute=-60,
+                        status="HIT",
+                        cycle_id="legacy-early-source-slot-3",
+                        new_schema=False,
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root, lookback=2)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(bucket["samples"], 2)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_legacy_and_non_directional_lookback_remain_source_ordered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = [
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-07-13T01:00:00+00:00",
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.80,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status="HIT",
+                    regime_at_emission="TREND",
+                    cycle_id="legacy-newer-first",
+                ),
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-07-13T00:00:00+00:00",
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.80,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    regime_at_emission="TREND",
+                    cycle_id="legacy-older-last",
+                ),
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-07-13T01:00:00+00:00",
+                    pair="EUR_USD",
+                    signal_name="sig_x",
+                    direction="EITHER",
+                    lead_time_min=60,
+                    confidence=0.80,
+                    entry_price=1.100,
+                    predicted_target_price=None,
+                    resolution_window_min=60,
+                    resolution_status="HIT",
+                    regime_at_emission="TREND",
+                    cycle_id="signal-newer-first",
+                ),
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-07-13T00:00:00+00:00",
+                    pair="EUR_USD",
+                    signal_name="sig_x",
+                    direction="EITHER",
+                    lead_time_min=60,
+                    confidence=0.80,
+                    entry_price=1.100,
+                    predicted_target_price=None,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    regime_at_emission="TREND",
+                    cycle_id="signal-older-last",
+                ),
+            ]
+            write_ledger(entries, root)
+
+            hit_rates = compute_hit_rates(root, lookback=1)
+            self.assertEqual(
+                hit_rates["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"],
+                0.0,
+            )
+            self.assertEqual(hit_rates["sig_x"]["EUR_USD:TREND"]["hit_rate"], 0.0)
+
+    def test_invalid_or_partial_raw_schema_never_falls_back_to_legacy_confidence(self) -> None:
+        base_payload = {
+            "timestamp_emitted_utc": "2026-07-13T00:00:00+00:00",
+            "pair": "EUR_USD",
+            "signal_name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 60,
+            "confidence": 0.99,
+            "entry_price": 1.1,
+            "predicted_target_price": 1.102,
+            "predicted_invalidation_price": 1.099,
+            "resolution_window_min": 60,
+            "resolution_status": "HIT",
+            "resolution_evidence": "target touched before invalidation",
+            "regime_at_emission": "TREND",
+            "cycle_id": "invalid-schema",
+        }
+        variants = (
+            {"raw_confidence": "corrupt", "calibration_multiplier": 0.30},
+            {"raw_confidence": 0.80},
+            {"raw_confidence": 0.80, "calibration_multiplier": "corrupt"},
+        )
+        for variant in variants:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                ledger_path = root / "projection_ledger.jsonl"
+                ledger_path.write_text(
+                    json.dumps({**base_payload, **variant}) + "\n",
+                    encoding="utf-8",
+                )
+
+                loaded = load_ledger(root)[0]
+                self.assertTrue(loaded.raw_confidence_field_present)
+                self.assertIn("raw_confidence", loaded.to_dict())
+                self.assertNotIn("directional_forecast_up", compute_hit_rates(root))
+
+    def test_forged_confidence_triplet_does_not_occupy_pair_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                minute: int,
+                confidence: float,
+                raw_confidence: float,
+                multiplier: float,
+                status: str,
+                cycle_id: str,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=confidence,
+                    raw_confidence=raw_confidence,
+                    calibration_multiplier=multiplier,
+                    entry_price=1.100,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=0,
+                        confidence=0.06,
+                        raw_confidence=0.80,
+                        multiplier=0.30,
+                        status="MISS",
+                        cycle_id="forged-triplet",
+                    ),
+                    trial(
+                        minute=1,
+                        confidence=0.04,
+                        raw_confidence=0.80,
+                        multiplier=0.05,
+                        status="MISS",
+                        cycle_id="multiplier-below-contract",
+                    ),
+                    trial(
+                        minute=2,
+                        confidence=1.0,
+                        raw_confidence=0.80,
+                        multiplier=1.60,
+                        status="MISS",
+                        cycle_id="multiplier-above-contract",
+                    ),
+                    trial(
+                        minute=5,
+                        confidence=0.24,
+                        raw_confidence=0.80,
+                        multiplier=0.30,
+                        status="HIT",
+                        cycle_id="valid-after-forgeries",
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 1.0)
+
+    def test_malformed_json_and_numeric_rows_do_not_stop_later_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "projection_ledger.jsonl"
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+
+            def payload(*, minute: int, status: str, cycle_id: str) -> dict[str, object]:
+                return {
+                    "timestamp_emitted_utc": (base + timedelta(minutes=minute)).isoformat(),
+                    "pair": "EUR_USD",
+                    "signal_name": "directional_forecast",
+                    "direction": "UP",
+                    "lead_time_min": 60.0,
+                    "confidence": 0.24,
+                    "raw_confidence": 0.80,
+                    "calibration_multiplier": 0.30,
+                    "entry_price": 1.100,
+                    "predicted_target_price": 1.102,
+                    "predicted_invalidation_price": 1.099,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": status,
+                    "resolution_evidence": (
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    "regime_at_emission": "TREND",
+                    "cycle_id": cycle_id,
+                }
+
+            bad_lead = {**payload(minute=5, status="HIT", cycle_id="bad-lead"), "lead_time_min": "bad"}
+            bad_confidence = {
+                **payload(minute=6, status="HIT", cycle_id="bad-confidence"),
+                "confidence": float("inf"),
+            }
+            bad_window = {
+                **payload(minute=7, status="HIT", cycle_id="bad-window"),
+                "resolution_window_min": 10**400,
+            }
+            bad_entry = {
+                **payload(minute=8, status="HIT", cycle_id="bad-entry"),
+                "entry_price": ["not", "numeric"],
+            }
+            bad_target = {
+                **payload(minute=9, status="HIT", cycle_id="bad-target"),
+                "predicted_target_price": 10**400,
+            }
+            lines = [
+                json.dumps(payload(minute=0, status="MISS", cycle_id="valid-miss")),
+                json.dumps(7),
+                json.dumps([{"not": "an object row"}]),
+                "{malformed-json",
+                *(json.dumps(item) for item in (
+                    bad_lead,
+                    bad_confidence,
+                    bad_window,
+                    bad_entry,
+                    bad_target,
+                )),
+                json.dumps(payload(minute=60, status="HIT", cycle_id="valid-hit")),
+            ]
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            entries = load_ledger(root)
+            first_bucket = compute_hit_rates(root)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(first_bucket["samples"], 2)
+            self.assertEqual(first_bucket["hit_rate"], 0.5)
+
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            write_ledger(entries, root)
+            rewritten = load_ledger(root)
+            second_bucket = compute_hit_rates(root)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            rewritten_bad_lead = next(
+                entry for entry in rewritten if entry.cycle_id == "bad-lead"
+            )
+
+            self.assertEqual(second_bucket["samples"], 2)
+            self.assertEqual(second_bucket["hit_rate"], 0.5)
+            self.assertFalse(rewritten_bad_lead.lead_time_min_valid)
+            self.assertIsNone(rewritten_bad_lead.to_dict()["lead_time_min"])
+            self.assertIn("raw_confidence", rewritten_bad_lead.to_dict())
+            self.assertIn("calibration_multiplier", rewritten_bad_lead.to_dict())
+
+    def test_directional_timeout_penalty_requires_scored_no_touch_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+            common = {
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": "UP",
+                "lead_time_min": 60,
+                "confidence": 0.22,
+                "raw_confidence": 0.80,
+                "calibration_multiplier": 0.275,
+                "entry_price": 1.1,
+                "predicted_target_price": 1.102,
+                "predicted_invalidation_price": 1.099,
+                "resolution_window_min": 60,
+                "resolution_status": "TIMEOUT",
+                "regime_at_emission": "TREND",
+            }
+            write_ledger(
+                [
+                    LedgerEntry(
+                        timestamp_emitted_utc=base.isoformat(),
+                        resolution_evidence=(
+                            "target 1.10200 and invalidation 1.09900 both untouched in forecast window"
+                        ),
+                        cycle_id="scored-no-touch",
+                        **common,
+                    ),
+                    LedgerEntry(
+                        timestamp_emitted_utc=(base + timedelta(hours=1)).isoformat(),
+                        resolution_evidence="no candle truth for projection window",
+                        cycle_id="truth-missing",
+                        **common,
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["directional_forecast_up"]["EUR_USD:TREND"]
+
+            self.assertEqual(bucket["samples"], 0)
+            self.assertEqual(bucket["calibration_samples"], 1)
+            self.assertEqual(bucket["target_timeout_count"], 1)
+
+    def test_new_range_truth_gap_timeouts_contribute_zero_learning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 7, 13, tzinfo=timezone.utc)
+            evidence_variants = (
+                "incomplete closed candle truth for full projection window; retryable",
+                "no candle truth for projection window",
+                "market closed at projection emission; excluded from calibration",
+                "malformed candle truth",
+            )
+            entries = [
+                LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(hours=2 * index)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="RANGE",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.1000,
+                    predicted_target_price=None,
+                    predicted_invalidation_price=None,
+                    predicted_range_low_price=1.0990,
+                    predicted_range_high_price=1.1010,
+                    resolution_window_min=60,
+                    resolution_status="TIMEOUT",
+                    resolution_evidence=evidence,
+                    regime_at_emission="RANGE",
+                    cycle_id=f"range-timeout-{index}",
+                )
+                for index, evidence in enumerate(evidence_variants)
+            ]
+            entries.append(
+                LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(hours=10)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="RANGE",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.1000,
+                    predicted_target_price=None,
+                    predicted_invalidation_price=None,
+                    predicted_range_low_price=1.0990,
+                    predicted_range_high_price=1.1010,
+                    resolution_window_min=60,
+                    resolution_status="HIT",
+                    resolution_evidence="range held inside forecast box",
+                    regime_at_emission="RANGE",
+                    cycle_id="range-valid-hit",
+                    technical_context_v1=_range_emission_context(
+                        current_price=1.1000,
+                        h1_atr_pips=20.0,
+                    ),
+                )
+            )
+            write_ledger(entries, root)
+
+            bucket = compute_hit_rates(root)["directional_forecast_range"][
+                "EUR_USD:RANGE"
+            ]
+
+        self.assertEqual(bucket["samples"], 1)
+        self.assertEqual(bucket["calibration_samples"], 1)
+        self.assertEqual(bucket["target_timeout_count"], 0)
+        self.assertEqual(bucket["economic_hit_rate"], 1.0)
 
     def test_low_confidence_directional_forecasts_do_not_train_entry_grade_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -87,6 +87,10 @@ from quant_rabbit.strategy.lane_history_ledger import (
     compute_same_day_lane_loss_streaks,
     compute_same_day_loss_streaks,
 )
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context_evidence,
+)
+from quant_rabbit.strategy.failed_break_evidence import failed_break_for_side
 from quant_rabbit.strategy.price_action import structural_tp_target
 from quant_rabbit.strategy.profile import StrategyProfile, issues_to_dicts
 
@@ -1601,31 +1605,9 @@ def _oanda_m5_failed_break_evidence(
     *,
     side: str,
 ) -> tuple[bool, float | None]:
-    """Return the side-specific failed-break predicate and reclaimed boundary."""
+    """Return the canonical side-specific predicate and reclaimed boundary."""
 
-    range_lookback = 20
-    idx = len(candles) - 1
-    if idx < range_lookback + 1:
-        return False, None
-    prev_window = candles[idx - range_lookback:idx]
-    try:
-        prior_high = max(float(item["h"]) for item in prev_window)
-        prior_low = min(float(item["l"]) for item in prev_window)
-        current_high = float(candles[idx]["h"])
-        current_low = float(candles[idx]["l"])
-        current_close = float(candles[idx]["c"])
-    except (KeyError, TypeError, ValueError):
-        return False, None
-    width = max(prior_high - prior_low, 1e-12)
-    inside_buffer = width * 0.05
-    normalized_side = str(side or "").upper()
-    if normalized_side == Side.LONG.value:
-        matched = current_low < prior_low and current_close > prior_low + inside_buffer
-        return matched, prior_low if matched else None
-    if normalized_side == Side.SHORT.value:
-        matched = current_high > prior_high and current_close < prior_high - inside_buffer
-        return matched, prior_high if matched else None
-    return False, None
+    return failed_break_for_side(candles, side=side)
 
 
 def _oanda_m5_failed_break(candles: list[dict[str, Any]], *, side: str) -> bool:
@@ -2414,7 +2396,7 @@ def _range_indicators_for_lane(
 ) -> dict[str, Any] | None:
     del current_price  # Box selection is a source contract, not a location fallback.
     forecast_range_authoritative = (
-        method == TradeMethod.RANGE_ROTATION
+        method in {TradeMethod.RANGE_ROTATION, TradeMethod.BREAKOUT_FAILURE}
         and str(lane.get("forecast_direction") or "").upper() == "RANGE"
     )
     return _canonical_range_indicators(
@@ -3641,6 +3623,8 @@ def _forecast_seed_for_pair(
     quote = snapshot.quotes.get(pair) if snapshot is not None else None
     if not isinstance(raw_chart, dict) or quote is None:
         return None
+    raw_chart = dict(raw_chart)
+    raw_chart.setdefault("generated_at_utc", per_tf.get("generated_at_utc"))
     if not _forecast_seed_has_rich_chart_context(raw_chart):
         return None
     try:
@@ -3734,6 +3718,9 @@ def _forecast_seed_for_pair(
             hit_rates=hit_rates,
             regime=regime_label,
             spread_pips=spread_pips,
+            calendar_path=artifact_root / "economic_calendar.json",
+            strategy_profile_path=artifact_root / "strategy_profile.json",
+            now_utc=getattr(snapshot, "fetched_at_utc", None),
         )
     except Exception:
         return None
@@ -4249,7 +4236,7 @@ def _forecast_directional_calibration_for_forecast(
         "directional_invalidation_first_count": 0,
     }
     direction = str(direction or "").upper()
-    if direction not in {"UP", "DOWN"} or not isinstance(hit_rates, dict):
+    if direction not in {"UP", "DOWN", "RANGE"} or not isinstance(hit_rates, dict):
         return payload
     try:
         from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
@@ -4844,6 +4831,32 @@ def _lane_with_forecast_context(
 
 def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> dict[str, Any]:
     confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
+    current_price = _optional_float(getattr(forecast, "current_price", None))
+    technical_context = build_forecast_technical_context_evidence(
+        getattr(forecast, "technical_context_v1", None),
+        pair=str(getattr(forecast, "pair", "") or "").strip().upper() or None,
+        current_price=current_price,
+    )
+    technical_context_body = (
+        technical_context.get("technical_context_v1")
+        if isinstance(technical_context.get("technical_context_v1"), dict)
+        else {}
+    )
+    regime_family_weighting = (
+        technical_context_body.get("regime_family_weighting")
+        if isinstance(technical_context_body.get("regime_family_weighting"), dict)
+        else {}
+    )
+    weighting_source = (
+        regime_family_weighting.get("source_identity")
+        if isinstance(regime_family_weighting.get("source_identity"), dict)
+        else {}
+    )
+    weighting_aggregate = (
+        regime_family_weighting.get("aggregate")
+        if isinstance(regime_family_weighting.get("aggregate"), dict)
+        else {}
+    )
     market_support = _forecast_market_support_payload(getattr(forecast, "market_support", None))
     component_scores = getattr(forecast, "component_scores", None)
     if not isinstance(component_scores, dict):
@@ -4854,7 +4867,7 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_confidence": round(confidence, 4),
         "forecast_raw_confidence": getattr(forecast, "raw_confidence", None),
         "forecast_calibration_multiplier": getattr(forecast, "calibration_multiplier", None),
-        "forecast_current_price": getattr(forecast, "current_price", None),
+        "forecast_current_price": current_price,
         "forecast_target_price": getattr(forecast, "target_price", None),
         "forecast_invalidation_price": getattr(forecast, "invalidation_price", None),
         "forecast_range_low_price": getattr(forecast, "range_low_price", None),
@@ -4869,6 +4882,14 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
             for key, value in component_scores.items()
             if _optional_float(value) is not None
         },
+        "forecast_technical_context": technical_context,
+        "forecast_regime_family_weighting_sha256": (
+            regime_family_weighting.get("receipt_sha256")
+        ),
+        "forecast_regime_family_selected_method": weighting_source.get(
+            "selected_method"
+        ),
+        "forecast_regime_family_direction": weighting_aggregate.get("direction"),
         "forecast_market_support": market_support,
         "forecast_market_support_ok": bool(market_support.get("ok")),
         "forecast_market_support_reason": market_support.get("reason"),
@@ -9139,6 +9160,19 @@ def _intent_from_lane(
     side = Side.parse(str(lane["direction"]))
     method = TradeMethod.parse(str(lane["method"]))
     order_type = order_type_override or _order_type_for(method)
+    range_forecast_limit_geometry = bool(
+        method == TradeMethod.RANGE_ROTATION
+        or (
+            order_type == OrderType.LIMIT
+            and (
+                method == TradeMethod.BREAKOUT_FAILURE
+                and str(lane.get("forecast_direction") or "")
+                .strip()
+                .upper()
+                == "RANGE"
+            )
+        )
+    )
     base_reward_risk = _target_reward_risk(lane)
     # Regime-derived reward_risk per AGENT_CONTRACT §3.5: range → close TP for
     # rotation, trend → wider TP to ride. The lane's base value is preserved
@@ -9161,7 +9195,9 @@ def _intent_from_lane(
         quote,
         reward_risk=target_reward_risk,
         atr_pips=atr_pips,
-        range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+        range_indicators=(
+            range_indicators if range_forecast_limit_geometry else None
+        ),
         chart_indicators=range_indicators,
         stop_widen_mult=stop_widen_mult,
         chart_context=chart_context,
@@ -9365,13 +9401,15 @@ def _intent_from_lane(
                 entry=entry,
                 tp=tp,
                 sl=sl,
-                range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+                range_indicators=(
+                    range_indicators if range_forecast_limit_geometry else None
+                ),
                 chart_indicators=range_indicators,
                 chart_context=chart_context,
                 atr_pips=atr_pips,
             )
             range_box_ok = (
-                method != TradeMethod.RANGE_ROTATION
+                not range_forecast_limit_geometry
                 or (
                     confirmed_range_metadata.get("range_tp_is_inside_box") is True
                     and confirmed_range_metadata.get("range_sl_outside_box") is True
@@ -9549,7 +9587,9 @@ def _intent_from_lane(
         entry=entry,
         tp=tp,
         sl=sl,
-        range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+        range_indicators=(
+            range_indicators if range_forecast_limit_geometry else None
+        ),
         chart_indicators=range_indicators,
         chart_context=chart_context,
         atr_pips=atr_pips,
@@ -9733,6 +9773,16 @@ def _intent_from_lane(
             "forecast_drivers_for": lane.get("forecast_drivers_for"),
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
             "forecast_component_scores": lane.get("forecast_component_scores"),
+            "forecast_technical_context": lane.get("forecast_technical_context"),
+            "forecast_regime_family_weighting_sha256": lane.get(
+                "forecast_regime_family_weighting_sha256"
+            ),
+            "forecast_regime_family_selected_method": lane.get(
+                "forecast_regime_family_selected_method"
+            ),
+            "forecast_regime_family_direction": lane.get(
+                "forecast_regime_family_direction"
+            ),
             "forecast_market_support": lane.get("forecast_market_support"),
             "forecast_market_support_ok": lane.get("forecast_market_support_ok"),
             "forecast_market_support_reason": lane.get("forecast_market_support_reason"),
@@ -12014,7 +12064,51 @@ def _range_forecast_tp_proven_breakout_failure_allowed(
 
     if method != TradeMethod.BREAKOUT_FAILURE:
         return False
-    if intent.order_type == OrderType.MARKET:
+    # The RANGE exception is a passive rail fade.  STOP_ENTRY is a momentum
+    # trigger, and MARKET can chase away from the reviewed rail; neither has a
+    # canonical RANGE TP-proven geometry in the allocation/gateway contract.
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    if str(metadata.get("geometry_model") or "").upper() != "RANGE_RAIL_LIMIT":
+        return False
+    if str(metadata.get("range_indicator_source") or "").lower() != "forecast_range_box":
+        return False
+    if not _range_forecast_box_present(metadata):
+        return False
+    if not _range_rotation_rail_side_matches_metadata(
+        side=intent.side,
+        metadata=metadata,
+    ):
+        return False
+    if metadata.get("range_tp_is_inside_box") is not True:
+        return False
+    if metadata.get("range_sl_outside_box") is not True:
+        return False
+    forecast_low = _optional_float(metadata.get("forecast_range_low_price"))
+    forecast_high = _optional_float(metadata.get("forecast_range_high_price"))
+    support = _optional_float(metadata.get("range_support"))
+    resistance = _optional_float(metadata.get("range_resistance"))
+    entry = _optional_float(intent.entry)
+    take_profit = _optional_float(intent.tp)
+    stop_loss = _optional_float(intent.sl)
+    if (
+        forecast_low is None
+        or forecast_high is None
+        or support is None
+        or resistance is None
+        or entry is None
+        or take_profit is None
+        or stop_loss is None
+        or forecast_high <= forecast_low
+        or not math.isclose(support, forecast_low, rel_tol=0.0, abs_tol=1e-12)
+        or not math.isclose(resistance, forecast_high, rel_tol=0.0, abs_tol=1e-12)
+    ):
+        return False
+    if intent.side == Side.LONG:
+        geometry_bound = stop_loss < support <= entry < take_profit < resistance
+    else:
+        geometry_bound = stop_loss > resistance >= entry > take_profit > support
+    if not geometry_bound:
         return False
     if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return False

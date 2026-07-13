@@ -29,10 +29,162 @@ from quant_rabbit.market_read_overlay import (
     revalidate_codex_market_read_artifacts,
     validate_codex_market_read_provenance,
 )
+from quant_rabbit.strategy.forecast_technical_context import (
+    CONFIDENCE_SEMANTICS,
+    MAX_EVIDENCE_BYTES,
+    build_forecast_technical_context,
+    build_forecast_technical_context_evidence,
+    technical_context_sha256,
+)
 
 
 NOW = datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc)
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+
+
+def _forecast_context_evidence(
+    pair: str,
+    current_price: float,
+    *,
+    direction: str = "UP",
+    family_score: float | None = None,
+    failed_break_long: bool = False,
+    now_utc: datetime = NOW,
+    pair_charts_path: Path | None = None,
+    session_tag: str | None = None,
+    chart_story: str = "",
+    calendar_path: Path | None = None,
+    strategy_profile_path: Path | None = None,
+) -> dict:
+    direction_text = str(direction).upper()
+    range_regime = direction_text == "RANGE"
+    up = direction_text != "DOWN"
+    selected_family_score = (
+        family_score if family_score is not None else (1.0 if up else -1.0)
+    )
+    chart = {
+            "pair": pair,
+            "confluence": {
+                "dominant_regime": (
+                    "RANGE"
+                    if range_regime
+                    else "TREND_UP"
+                    if up
+                    else "TREND_DOWN"
+                ),
+                "price_percentile_24h": 0.7 if up else 0.3,
+                "price_percentile_7d": 0.6 if up else 0.4,
+            },
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime_reading": {
+                        "state": "RANGE" if range_regime else "TREND_STRONG",
+                        "atr_percentile": 60.0,
+                    },
+                    "indicators": {"atr_pips": 2.0},
+                    "family_scores": {
+                        "trend_score": (
+                            0.0 if range_regime else selected_family_score
+                        ),
+                        "mean_rev_score": (
+                            selected_family_score if range_regime else 0.0
+                        ),
+                        "breakout_score": 0.0,
+                        "disagreement": 0.0,
+                    },
+                    "structure": {
+                        "structure_events": [
+                            {
+                                "kind": "BOS_UP" if up else "BOS_DOWN",
+                                "index": 1,
+                                "close_confirmed": True,
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    if session_tag is not None:
+        chart["session"] = {"current_tag": session_tag}
+    if chart_story:
+        chart["chart_story"] = chart_story
+    if failed_break_long:
+        start = datetime(2026, 7, 13, tzinfo=timezone.utc)
+        prior = [
+            {
+                "t": (start + timedelta(minutes=5 * index)).isoformat(),
+                "o": 1.1000,
+                "h": 1.1010,
+                "l": 1.0990,
+                "c": 1.1000,
+                "complete": True,
+            }
+            for index in range(20)
+        ]
+        chart["views"][0]["recent_candles"] = [
+            *prior,
+            {
+                "t": (start + timedelta(minutes=100)).isoformat(),
+                "o": 1.0995,
+                "h": 1.1005,
+                "l": 1.0985,
+                "c": 1.0992,
+                "complete": True,
+            },
+        ]
+    if pair_charts_path is not None:
+        pair_charts_path.write_text(
+            json.dumps({"charts": [chart]})
+        )
+    context = build_forecast_technical_context(
+        chart,
+        pair=pair,
+        current_price=current_price,
+        spread_pips=2.0,
+        now_utc=now_utc,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+    )
+    return build_forecast_technical_context_evidence(
+        context,
+        pair=pair,
+        current_price=current_price,
+    )
+
+
+def _forecast_weighting_metadata(evidence: dict) -> dict:
+    body = evidence.get("technical_context_v1") or {}
+    receipt = body.get("regime_family_weighting") or {}
+    source = receipt.get("source_identity") or {}
+    aggregate = receipt.get("aggregate") or {}
+    return {
+        "forecast_regime_family_weighting_sha256": receipt.get("receipt_sha256"),
+        "forecast_regime_family_selected_method": source.get("selected_method"),
+        "forecast_regime_family_direction": aggregate.get("direction"),
+    }
+
+
+def _forecast_policy_source_descriptors(evidence: dict) -> dict:
+    body = evidence.get("technical_context_v1") or {}
+    source_context = body.get("dynamic_tf_policy_source_context") or {}
+
+    def packet_source(source: dict) -> dict:
+        status = source.get("status")
+        exists = status not in {"MISSING", "READ_ERROR"}
+        return {
+            "path": source.get("path"),
+            "exists": exists,
+            "sha256": source.get("sha256"),
+            "size_bytes": source.get("byte_length"),
+        }
+
+    return {
+        "calendar": packet_source(source_context.get("news_source") or {}),
+        "strategy_profile": packet_source(
+            source_context.get("strategy_profile_source") or {}
+        ),
+    }
 
 
 class MarketReadOverlayTest(unittest.TestCase):
@@ -221,7 +373,10 @@ class MarketReadOverlayTest(unittest.TestCase):
                 "capital_allocation_board"
             ]["selected_lane"]
 
-            self.assertTrue(lane["allocation_eligible"])
+            self.assertTrue(
+                lane["allocation_eligible"],
+                json.dumps(lane, sort_keys=True),
+            )
             self.assertEqual(lane["edge_basis"], "EXACT_VEHICLE_TAKE_PROFIT")
             self.assertEqual(
                 lane["capture"]["exact_vehicle_all_exit"]["net_jpy"],
@@ -371,6 +526,8 @@ class MarketReadOverlayTest(unittest.TestCase):
     def test_stored_allocation_board_and_prediction_body_tampering_is_rejected(self) -> None:
         for mutation, expected_code in (
             ("board", "MARKET_READ_CAPITAL_ALLOCATION_BOARD_STALE"),
+            ("board_context", "MARKET_READ_CAPITAL_ALLOCATION_BOARD_STALE"),
+            ("packet_context", "MARKET_READ_EVIDENCE_PACKET_BODY_STALE"),
             ("resolved_predictions", "MARKET_READ_EVIDENCE_PACKET_BODY_STALE"),
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
@@ -381,6 +538,14 @@ class MarketReadOverlayTest(unittest.TestCase):
                     packet["capital_allocation_board"]["selected_lane"]["capture"][
                         "take_profit_expectancy_jpy"
                     ] = 999_999.0
+                elif mutation == "board_context":
+                    packet["capital_allocation_board"]["forecast_context"][
+                        "technical_context"
+                    ]["technical_context_v1"]["regime"]["dominant"] = "RANGE"
+                elif mutation == "packet_context":
+                    packet["forecast_context"]["technical_context"][
+                        "technical_context_v1"
+                    ]["regime"]["dominant"] = "RANGE"
                 else:
                     packet["recent_resolved_predictions"].append(
                         {"prediction_id": "mr2:" + "f" * 64, "verdict": "FORGED"}
@@ -680,6 +845,236 @@ class MarketReadOverlayTest(unittest.TestCase):
                 {code for code, _ in artifact_issues},
             )
 
+    def test_breakout_failure_allocation_requires_proof_and_blocks_family_conflict(self) -> None:
+        aligned = _forecast_context_evidence(
+            "EUR_USD",
+            1.1001,
+            direction="UP",
+            family_score=1.0,
+            failed_break_long=True,
+        )
+        aligned_metadata = _forecast_weighting_metadata(aligned)
+        aligned_binding = market_read_overlay_module._regime_family_allocation_binding(
+            technical_context=aligned,
+            pair="EUR_USD",
+            side="LONG",
+            method="BREAKOUT_FAILURE",
+            forecast_direction="UP",
+            explicit_receipt_sha256=aligned_metadata[
+                "forecast_regime_family_weighting_sha256"
+            ],
+            explicit_selected_method=aligned_metadata[
+                "forecast_regime_family_selected_method"
+            ],
+            explicit_family_direction=aligned_metadata[
+                "forecast_regime_family_direction"
+            ],
+            canonical_policy_sources=_forecast_policy_source_descriptors(
+                aligned
+            ),
+            canonical_forecast_context_sha256=aligned["context_sha256"],
+        )
+        self.assertTrue(aligned_binding["passed"])
+        self.assertTrue(aligned_binding["failed_break_direction_bound"])
+        self.assertEqual(aligned_binding["failed_break_side"], "LONG")
+
+        intermediate_body = json.loads(
+            json.dumps(aligned["technical_context_v1"])
+        )
+        intermediate_body.pop("dynamic_tf_policy_evidence")
+        intermediate_body.pop("dynamic_tf_policy_source_context")
+        intermediate_body["context_sha256"] = technical_context_sha256(
+            intermediate_body
+        )
+        intermediate = build_forecast_technical_context_evidence(
+            intermediate_body,
+            pair="EUR_USD",
+            current_price=1.1001,
+        )
+        self.assertEqual(intermediate["status"], "VALID")
+        intermediate_metadata = _forecast_weighting_metadata(intermediate)
+        intermediate_binding = (
+            market_read_overlay_module._regime_family_allocation_binding(
+                technical_context=intermediate,
+                pair="EUR_USD",
+                side="LONG",
+                method="BREAKOUT_FAILURE",
+                forecast_direction="UP",
+                explicit_receipt_sha256=intermediate_metadata[
+                    "forecast_regime_family_weighting_sha256"
+                ],
+                explicit_selected_method=intermediate_metadata[
+                    "forecast_regime_family_selected_method"
+                ],
+                explicit_family_direction=intermediate_metadata[
+                    "forecast_regime_family_direction"
+                ],
+                canonical_policy_sources=_forecast_policy_source_descriptors(
+                    aligned
+                ),
+                canonical_forecast_context_sha256=aligned["context_sha256"],
+            )
+        )
+        self.assertTrue(intermediate_binding["receipt_valid"])
+        self.assertFalse(intermediate_binding["current_context_bound"])
+        self.assertFalse(intermediate_binding["passed"])
+
+        conflicting = _forecast_context_evidence(
+            "EUR_USD",
+            1.1001,
+            direction="UP",
+            family_score=-1.0,
+            failed_break_long=True,
+        )
+        conflicting_metadata = _forecast_weighting_metadata(conflicting)
+        conflict_binding = market_read_overlay_module._regime_family_allocation_binding(
+            technical_context=conflicting,
+            pair="EUR_USD",
+            side="LONG",
+            method="BREAKOUT_FAILURE",
+            forecast_direction="UP",
+            explicit_receipt_sha256=conflicting_metadata[
+                "forecast_regime_family_weighting_sha256"
+            ],
+            explicit_selected_method=conflicting_metadata[
+                "forecast_regime_family_selected_method"
+            ],
+            explicit_family_direction=conflicting_metadata[
+                "forecast_regime_family_direction"
+            ],
+            canonical_policy_sources=_forecast_policy_source_descriptors(
+                conflicting
+            ),
+            canonical_forecast_context_sha256=conflicting["context_sha256"],
+        )
+        self.assertFalse(conflict_binding["passed"])
+        self.assertFalse(conflict_binding["direction_consistent"])
+        self.assertFalse(conflict_binding["actionable_direction_bound"])
+
+        missing = _forecast_context_evidence("EUR_USD", 1.1001, direction="UP")
+        missing_metadata = _forecast_weighting_metadata(missing)
+        missing_binding = market_read_overlay_module._regime_family_allocation_binding(
+            technical_context=missing,
+            pair="EUR_USD",
+            side="LONG",
+            method="BREAKOUT_FAILURE",
+            forecast_direction="UP",
+            explicit_receipt_sha256=missing_metadata[
+                "forecast_regime_family_weighting_sha256"
+            ],
+            explicit_selected_method=missing_metadata[
+                "forecast_regime_family_selected_method"
+            ],
+            explicit_family_direction=missing_metadata[
+                "forecast_regime_family_direction"
+            ],
+            canonical_policy_sources=_forecast_policy_source_descriptors(
+                missing
+            ),
+            canonical_forecast_context_sha256=missing["context_sha256"],
+        )
+        self.assertFalse(missing_binding["passed"])
+        self.assertFalse(missing_binding["executable_method_bound"])
+
+    def test_packet_canonical_rebuild_rejects_fully_rehashed_alternate_contexts(self) -> None:
+        for mutation in (
+            "session_classifier",
+            "calendar_profile",
+            "evaluated_at",
+            "failed_break_proof",
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                paths = _prepared_paths(root)
+                kwargs: dict = {
+                    "now_utc": NOW,
+                    "session_tag": "ASIA",
+                    "chart_story": (
+                        "M5(TREND_STRONG ADX=35) M15(TREND_STRONG ADX=35) "
+                        "H1(TREND_STRONG ADX=35) H4(TREND_STRONG ADX=35)"
+                    ),
+                }
+                if mutation == "calendar_profile":
+                    calendar = root / "alternate_calendar.json"
+                    profile = root / "alternate_profile.json"
+                    calendar.write_text(
+                        json.dumps(
+                            {
+                                "events": [
+                                    {
+                                        "timestamp_utc": (
+                                            NOW + timedelta(minutes=10)
+                                        ).isoformat(),
+                                        "currency": "USD",
+                                        "impact": "HIGH",
+                                        "title": "Alternate high event",
+                                    }
+                                ]
+                            }
+                        )
+                    )
+                    profile.write_text(
+                        json.dumps(
+                            {
+                                "profiles": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "method": "TREND_CONTINUATION",
+                                        "positive_evidence_n": 1,
+                                        "live_net_jpy": -1.0,
+                                    }
+                                ]
+                            }
+                        )
+                    )
+                    kwargs.update(
+                        calendar_path=calendar,
+                        strategy_profile_path=profile,
+                    )
+                if mutation == "failed_break_proof":
+                    kwargs["failed_break_long"] = True
+                if mutation == "evaluated_at":
+                    kwargs.update(
+                        now_utc=NOW - timedelta(days=1),
+                        session_tag="ROLLOVER",
+                        chart_story=(
+                            "M5(TREND_STRONG ADX=31) M15(TREND_WEAK ADX=24) "
+                            "H1(TREND_STRONG ADX=30) H4(TREND_STRONG ADX=30)"
+                        ),
+                    )
+
+                forged = _forecast_context_evidence(
+                    "EUR_USD",
+                    1.1001,
+                    **kwargs,
+                )
+                self.assertEqual(forged["status"], "VALID")
+                intents = json.loads(paths["intents"].read_text())
+                result = intents["results"][0]
+                metadata = result["intent"]["metadata"]
+                metadata["forecast_technical_context"] = forged
+                metadata.update(_forecast_weighting_metadata(forged))
+                if mutation == "failed_break_proof":
+                    result["intent"]["market_context"][
+                        "method"
+                    ] = "BREAKOUT_FAILURE"
+                paths["intents"].write_text(json.dumps(intents))
+
+                _reprepare(paths)
+
+                lane = json.loads(paths["packet"].read_text())[
+                    "capital_allocation_board"
+                ]["selected_lane"]
+                binding = lane["forecast"]["regime_family_binding"]
+                self.assertTrue(binding["current_context_bound"])
+                self.assertFalse(binding["canonical_forecast_context_bound"])
+                self.assertFalse(binding["passed"])
+                self.assertFalse(lane["allocation_eligible"])
+                self.assertIn(
+                    "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH",
+                    lane["live_blocker_codes"],
+                )
+
     def test_trade_allocation_is_bound_to_numeric_lane_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
@@ -710,6 +1105,280 @@ class MarketReadOverlayTest(unittest.TestCase):
                 final["decision_provenance"]["authorized_units"],
                 900,
             )
+
+    def test_selected_lane_context_is_content_addressed_into_gpt_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            packet = json.loads(paths["packet"].read_text())
+            board = packet["capital_allocation_board"]
+            forecast_context = board["forecast_context"]
+            lane_context = board["selected_lane"]["forecast"]["technical_context"]
+
+            self.assertEqual(board["forecast_context_scope"], "SELECTED_LANE")
+            self.assertEqual(forecast_context["technical_context"], lane_context)
+            self.assertEqual(lane_context["status"], "VALID")
+            self.assertEqual(
+                lane_context["confidence_semantics"],
+                CONFIDENCE_SEMANTICS,
+            )
+            self.assertEqual(forecast_context["candidate_count"], 1)
+            self.assertEqual(forecast_context["valid_candidate_count"], 1)
+            self.assertEqual(forecast_context["invalid_candidate_count"], 0)
+            self.assertEqual(packet["forecast_context_scope"], "SELECTED_LANE")
+            self.assertEqual(packet["forecast_context"], forecast_context)
+            self.assertEqual(
+                packet["capital_allocation_board_sha256"],
+                canonical_json_sha256(board),
+            )
+            receipt = lane_context["technical_context_v1"][
+                "regime_family_weighting"
+            ]
+            self.assertEqual(
+                board["selected_lane"]["forecast"][
+                    "regime_family_weighting_sha256"
+                ],
+                receipt["receipt_sha256"],
+            )
+
+    def test_fresh_allocation_requires_bound_actionable_family_receipt(self) -> None:
+        for mutation, blocker in (
+            ("missing_sha", "REGIME_FAMILY_WEIGHTING_SHA_UNBOUND"),
+            (
+                "reverse_direction",
+                "REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION",
+            ),
+            (
+                "non_directional",
+                "REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE",
+            ),
+            (
+                "legacy_display",
+                "REGIME_FAMILY_WEIGHTING_MISSING_OR_INVALID",
+            ),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                intents = json.loads(paths["intents"].read_text())
+                metadata = intents["results"][0]["intent"]["metadata"]
+                if mutation == "missing_sha":
+                    metadata.pop("forecast_regime_family_weighting_sha256")
+                elif mutation in {"reverse_direction", "non_directional"}:
+                    evidence = _forecast_context_evidence(
+                        "EUR_USD",
+                        1.1001,
+                        direction=("DOWN" if mutation == "reverse_direction" else "UP"),
+                        family_score=(0.0 if mutation == "non_directional" else None),
+                    )
+                    metadata["forecast_technical_context"] = evidence
+                    metadata.update(_forecast_weighting_metadata(evidence))
+                else:
+                    evidence = metadata["forecast_technical_context"]
+                    legacy_body = evidence["technical_context_v1"]
+                    legacy_body.pop("regime_family_weighting")
+                    legacy_body["context_sha256"] = technical_context_sha256(
+                        legacy_body
+                    )
+                    metadata["forecast_technical_context"] = (
+                        build_forecast_technical_context_evidence(
+                            legacy_body,
+                            pair="EUR_USD",
+                            current_price=1.1001,
+                        )
+                    )
+                    metadata.pop("forecast_regime_family_weighting_sha256")
+                    metadata.pop("forecast_regime_family_selected_method")
+                    metadata.pop("forecast_regime_family_direction")
+                paths["intents"].write_text(json.dumps(intents))
+                _reprepare(paths)
+
+                lane = json.loads(paths["packet"].read_text())[
+                    "capital_allocation_board"
+                ]["selected_lane"]
+                self.assertEqual(
+                    lane["forecast"]["technical_context"]["status"],
+                    "VALID",
+                )
+                self.assertFalse(lane["allocation_eligible"])
+                self.assertEqual(lane["allowed_size_multiples"], [])
+                self.assertIn(blocker, lane["live_blocker_codes"])
+
+    def test_duplicate_selected_lane_id_is_ambiguous_and_cannot_allocate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            intents = json.loads(paths["intents"].read_text())
+            duplicate = json.loads(json.dumps(intents["results"][0]))
+            duplicate["intent"]["metadata"].pop("forecast_technical_context")
+            intents["results"].append(duplicate)
+            paths["intents"].write_text(json.dumps(intents))
+            _reprepare(paths)
+
+            packet = json.loads(paths["packet"].read_text())
+            board = packet["capital_allocation_board"]
+            context = board["forecast_context"]["technical_context"]
+            self.assertEqual(board["selected_lane_match_count"], 2)
+            self.assertFalse(board["selected_lane_unique"])
+            self.assertIsNone(board["selected_lane"])
+            self.assertEqual(board["forecast_context_scope"], "SELECTED_LANE_INVALID")
+            self.assertEqual(context["status"], "UNKNOWN")
+            self.assertEqual(
+                context["reason"],
+                "FORECAST_TECHNICAL_CONTEXT_SELECTED_LANE_DUPLICATE",
+            )
+
+            _write_overlay(paths)
+            with self.assertRaises(MarketReadOverlayError) as caught:
+                _apply(paths)
+            self.assertEqual(
+                caught.exception.code,
+                "MARKET_READ_CAPITAL_ALLOCATION_LANE_MISSING",
+            )
+
+    def test_missing_invalid_or_mismatched_selected_context_blocks_allocation(self) -> None:
+        for mutation, expected_reason in (
+            ("missing", "TECHNICAL_CONTEXT_EVIDENCE_MISSING"),
+            ("missing_price", "TECHNICAL_CONTEXT_EVIDENCE_PRICE_MISSING"),
+            ("body_tamper", "TECHNICAL_CONTEXT_EVIDENCE_HASH_MISMATCH"),
+            ("pair_mismatch", "TECHNICAL_CONTEXT_PAIR_MISMATCH"),
+            ("price_mismatch", "TECHNICAL_CONTEXT_PRICE_MISMATCH"),
+            ("oversized_unknown", "TECHNICAL_CONTEXT_EVIDENCE_TOO_LARGE"),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                intents = json.loads(paths["intents"].read_text())
+                metadata = intents["results"][0]["intent"]["metadata"]
+                if mutation == "missing":
+                    metadata.pop("forecast_technical_context")
+                elif mutation == "missing_price":
+                    metadata.pop("forecast_current_price")
+                elif mutation == "body_tamper":
+                    metadata["forecast_technical_context"]["technical_context_v1"][
+                        "regime"
+                    ]["dominant"] = "RANGE"
+                elif mutation == "pair_mismatch":
+                    metadata["forecast_technical_context"] = (
+                        _forecast_context_evidence("GBP_USD", 1.1001)
+                    )
+                elif mutation == "oversized_unknown":
+                    marker = "DO_NOT_FORWARD_TO_BOARD"
+                    oversized = metadata["forecast_technical_context"]
+                    oversized.update(
+                        {
+                            "status": "UNKNOWN",
+                            "reason": marker * MAX_EVIDENCE_BYTES,
+                            "technical_context_v1": None,
+                            "context_sha256": None,
+                        }
+                    )
+                    oversized["evidence_sha256"] = canonical_json_sha256(
+                        {
+                            key: item
+                            for key, item in oversized.items()
+                            if key != "evidence_sha256"
+                        }
+                    )
+                else:
+                    metadata["forecast_technical_context"] = (
+                        _forecast_context_evidence("EUR_USD", 1.2001)
+                    )
+                paths["intents"].write_text(json.dumps(intents))
+                _reprepare(paths)
+
+                board = json.loads(paths["packet"].read_text())[
+                    "capital_allocation_board"
+                ]
+                lane = board["selected_lane"]
+                context = lane["forecast"]["technical_context"]
+                self.assertFalse(lane["allocation_eligible"])
+                self.assertFalse(lane["positive_edge_proven"])
+                self.assertEqual(lane["allowed_size_multiples"], [])
+                self.assertEqual(
+                    lane["edge_basis"],
+                    "FORECAST_TECHNICAL_CONTEXT_UNKNOWN",
+                )
+                self.assertIn(
+                    "FORECAST_TECHNICAL_CONTEXT_UNKNOWN_FOR_ALLOCATION",
+                    lane["live_blocker_codes"],
+                )
+                self.assertEqual(context["status"], "UNKNOWN")
+                self.assertEqual(context["reason"], expected_reason)
+                self.assertIsNone(context["technical_context_v1"])
+                self.assertFalse(context["live_permission"])
+                self.assertEqual(board["forecast_context_scope"], "SELECTED_LANE")
+                self.assertEqual(
+                    board["forecast_context"]["invalid_candidate_count"],
+                    1,
+                )
+                if mutation == "oversized_unknown":
+                    self.assertNotIn(marker, json.dumps(board))
+
+    def test_forced_prediction_context_requires_valid_unambiguous_candidates(self) -> None:
+        for mutation, expected_status, expected_reason in (
+            ("none", "VALID", None),
+            (
+                "one_invalid",
+                "UNKNOWN",
+                "FORECAST_TECHNICAL_CONTEXT_CANDIDATE_INVALID",
+            ),
+            (
+                "ambiguous",
+                "UNKNOWN",
+                "FORECAST_TECHNICAL_CONTEXT_AMBIGUOUS",
+            ),
+            (
+                "side_mismatch",
+                "UNKNOWN",
+                "FORECAST_TECHNICAL_CONTEXT_CANDIDATE_INVALID",
+            ),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(
+                    Path(tmp),
+                    baseline=_baseline(action="REQUEST_EVIDENCE", lane_ids=[]),
+                )
+                if mutation != "none":
+                    intents = json.loads(paths["intents"].read_text())
+                    duplicate = json.loads(json.dumps(intents["results"][0]))
+                    duplicate["lane_id"] = f"{LANE_ID}:{mutation}"
+                    metadata = duplicate["intent"]["metadata"]
+                    if mutation == "one_invalid":
+                        metadata["forecast_technical_context"] = (
+                            _forecast_context_evidence("GBP_USD", 1.1001)
+                        )
+                    elif mutation == "side_mismatch":
+                        duplicate["intent"]["side"] = "SHORT"
+                    else:
+                        metadata["forecast_technical_context"] = (
+                            _forecast_context_evidence(
+                                "EUR_USD",
+                                1.1001,
+                                direction="DOWN",
+                            )
+                        )
+                    intents["results"].append(duplicate)
+                    paths["intents"].write_text(json.dumps(intents))
+                    _reprepare(paths)
+
+                board = json.loads(paths["packet"].read_text())[
+                    "capital_allocation_board"
+                ]
+                context = board["forecast_context"]
+                technical_context = context["technical_context"]
+                self.assertEqual(board["forecast_context_scope"], "FORCED_PREDICTION")
+                self.assertEqual(technical_context["status"], expected_status)
+                self.assertEqual(technical_context["reason"], expected_reason)
+                if mutation == "none":
+                    self.assertEqual(context["candidate_count"], 1)
+                    self.assertEqual(context["valid_candidate_count"], 1)
+                    self.assertEqual(context["invalid_candidate_count"], 0)
+                elif mutation in {"one_invalid", "side_mismatch"}:
+                    self.assertEqual(context["candidate_count"], 2)
+                    self.assertEqual(context["valid_candidate_count"], 1)
+                    self.assertEqual(context["invalid_candidate_count"], 1)
+                else:
+                    self.assertEqual(context["candidate_count"], 2)
+                    self.assertEqual(context["valid_candidate_count"], 2)
+                    self.assertEqual(context["invalid_candidate_count"], 0)
+                    self.assertEqual(context["distinct_context_sha256_count"], 2)
 
     def test_numeric_ceiling_fails_closed_on_missing_or_invalid_inputs(self) -> None:
         cases = (
@@ -766,7 +1435,10 @@ class MarketReadOverlayTest(unittest.TestCase):
                 lane = json.loads(paths["packet"].read_text())[
                     "capital_allocation_board"
                 ]["selected_lane"]
-                self.assertTrue(lane["positive_edge_proven"])
+                self.assertEqual(
+                    lane["positive_edge_proven"],
+                    mutation != "wrong_calibration",
+                )
                 self.assertFalse(lane["allocation_eligible"])
                 self.assertEqual(lane["allowed_size_multiples"], [])
                 self.assertEqual(lane["numeric_ceiling"]["reason"], expected_reason)
@@ -1112,6 +1784,414 @@ class MarketReadOverlayTest(unittest.TestCase):
         self.assertFalse(evidence["geometry"]["passed"])
         self.assertEqual(max_multiple, 0.0)
 
+    def test_range_tp_prebounded_numeric_contract_is_rail_cost_and_side_bound(self) -> None:
+        def fixture(
+            side: str,
+            *,
+            entry_override: float | None = None,
+            financing_per_unit: float = 0.0,
+        ) -> tuple[dict, dict, dict, dict, dict]:
+            low = 1.0990
+            high = 1.1012
+            long = side == "LONG"
+            entry = entry_override if entry_override is not None else (
+                1.0991 if long else 1.1011
+            )
+            tp = 1.1009 if long else 1.0993
+            sl = 1.0988 if long else 1.1014
+            loss_pips = abs(entry - sl) * 10_000.0
+            reward_pips = abs(tp - entry) * 10_000.0
+            jpy_per_pip = 12.0
+            trades = 20
+            wins = 20
+            wilson = hit_rate_wilson_lower(wins / trades, trades)
+            self.assertIsNotNone(wilson)
+            assert wilson is not None
+            basis = {
+                "basis": "EXACT_TP_PROVEN_HARVEST",
+                "conditional_tp_exit_win_rate": wins / trades,
+                "tp_exit_samples": trades,
+                "minimum_tp_exit_samples": 20,
+                "conditional_tp_exit_wilson95_lower": wilson,
+                "stressed_harvest_expectancy_jpy": (
+                    wilson * 320.0 - (1.0 - wilson) * 300.0
+                ),
+                "execution_ledger_surface_sha256": "a" * 64,
+            }
+            intent = {
+                "pair": "EUR_USD",
+                "side": side,
+                "order_type": "LIMIT",
+                "units": 1200,
+                "entry": entry,
+                "tp": tp,
+                "sl": sl,
+                "market_context": {"method": "RANGE_ROTATION"},
+            }
+            metadata = {
+                "method": "RANGE_ROTATION",
+                "forecast_direction": "RANGE",
+                "forecast_directional_calibration_name": (
+                    "directional_forecast_range"
+                ),
+                "forecast_current_price": 1.1001,
+                "forecast_range_low_price": low,
+                "forecast_range_high_price": high,
+                "range_support": low,
+                "range_resistance": high,
+                "range_entry_side": "support" if long else "resistance",
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                # These describe box integrity only and must never become the
+                # side probability/Kelly input for this exception.
+                "forecast_directional_economic_hit_rate": 1.0,
+                "forecast_directional_economic_samples": 1000,
+                "max_loss_jpy": 400.0,
+            }
+            risk = {
+                "entry_price": entry,
+                "risk_jpy": loss_pips * jpy_per_pip,
+                "reward_jpy": reward_pips * jpy_per_pip,
+                "loss_pips": loss_pips,
+                "reward_pips": reward_pips,
+                "jpy_per_pip": jpy_per_pip,
+                "reward_risk": reward_pips / loss_pips,
+                "spread_pips": 2.0,
+            }
+            cost_material = {
+                "contract": "QR_NET_EXECUTION_COST_FLOOR_V1",
+                "status": "PASSED",
+                "market_entry_adverse_p95_pips": 0.0,
+                "audited_protected_exit_adverse_p95_pips": 0.0,
+                "financing_adverse_stress_jpy_per_unit": financing_per_unit,
+                "scope_key": f"EUR_USD|{side}|RANGE_ROTATION|LIMIT",
+                "spread_double_count_forbidden": True,
+            }
+            cost = {
+                **cost_material,
+                "proof_sha256": canonical_json_sha256(cost_material),
+            }
+            return intent, metadata, risk, basis, cost
+
+        for side in ("LONG", "SHORT"):
+            with self.subTest(side=side):
+                intent, metadata, risk, basis, cost = fixture(side)
+                evidence, maximum = (
+                    market_read_overlay_module
+                    ._capital_allocation_numeric_ceiling(
+                        intent=intent,
+                        metadata=metadata,
+                        risk_metrics=risk,
+                        account_nav_jpy=100_000.0,
+                        broker_bid=1.1000,
+                        broker_ask=1.1002,
+                        broker_quote_to_jpy=100.0,
+                        predictive_scout=False,
+                        hedge=False,
+                        range_economic_basis=basis,
+                        execution_cost_floor=cost,
+                    )
+                )
+                self.assertEqual(maximum, 1.0)
+                self.assertEqual(
+                    evidence["reason"],
+                    "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
+                )
+                self.assertTrue(evidence["geometry"]["range_rails_bound"])
+                self.assertTrue(
+                    evidence["geometry"]["range_entry_exact_rail_bound"]
+                )
+                self.assertIsNone(evidence["inputs"]["economic_hit_rate"])
+                self.assertIsNone(
+                    evidence["probability"]["economic_wilson95_lower"]
+                )
+                self.assertIsNone(evidence["ev_lower"]["formula"])
+                self.assertIsNone(evidence["kelly"]["formula"])
+
+        intent, metadata, risk, basis, cost = fixture(
+            "LONG", entry_override=1.1000
+        )
+        evidence, maximum = (
+            market_read_overlay_module._capital_allocation_numeric_ceiling(
+                intent=intent,
+                metadata=metadata,
+                risk_metrics=risk,
+                account_nav_jpy=100_000.0,
+                broker_bid=1.1000,
+                broker_ask=1.1002,
+                broker_quote_to_jpy=100.0,
+                predictive_scout=False,
+                hedge=False,
+                range_economic_basis=basis,
+                execution_cost_floor=cost,
+            )
+        )
+        self.assertEqual(maximum, 0.0)
+        self.assertFalse(evidence["geometry"]["range_entry_exact_rail_bound"])
+
+        for mutation in ("side_label", "stop_vehicle", "legacy_basis"):
+            intent, metadata, risk, basis, cost = fixture("LONG")
+            if mutation == "side_label":
+                metadata["range_entry_side"] = "resistance"
+            elif mutation == "stop_vehicle":
+                intent["order_type"] = "STOP"
+                cost = _synthetic_execution_cost_floor(
+                    scope_key="EUR_USD|LONG|RANGE_ROTATION|STOP"
+                )
+            else:
+                basis = {
+                    "basis": "EXACT_TP_PROVEN_HARVEST",
+                    "hit_rate": 1.0,
+                    "samples": 20,
+                    "wilson95_lower": 0.8,
+                    "stressed_expectancy_jpy": 100.0,
+                    "execution_ledger_surface_sha256": "a" * 64,
+                }
+            evidence, maximum = (
+                market_read_overlay_module
+                ._capital_allocation_numeric_ceiling(
+                    intent=intent,
+                    metadata=metadata,
+                    risk_metrics=risk,
+                    account_nav_jpy=100_000.0,
+                    broker_bid=1.1000,
+                    broker_ask=1.1002,
+                    broker_quote_to_jpy=100.0,
+                    predictive_scout=False,
+                    hedge=False,
+                    range_economic_basis=basis,
+                    execution_cost_floor=cost,
+                )
+            )
+            with self.subTest(mutation=mutation):
+                self.assertEqual(maximum, 0.0)
+
+        intent, metadata, risk, basis, cost = fixture(
+            "LONG", financing_per_unit=0.5
+        )
+        evidence, maximum = (
+            market_read_overlay_module._capital_allocation_numeric_ceiling(
+                intent=intent,
+                metadata=metadata,
+                risk_metrics=risk,
+                account_nav_jpy=100_000.0,
+                broker_bid=1.1000,
+                broker_ask=1.1002,
+                broker_quote_to_jpy=100.0,
+                predictive_scout=False,
+                hedge=False,
+                range_economic_basis=basis,
+                execution_cost_floor=cost,
+            )
+        )
+        self.assertEqual(maximum, 0.0)
+        self.assertEqual(
+            evidence["reason"],
+            "TP_PROVEN_RANGE_PREBOUNDED_RISK_CAP_INVALID",
+        )
+
+    def test_range_rotation_generated_board_uses_tp_basis_not_box_precision(self) -> None:
+        range_lane_id = (
+            "range_trader:EUR_USD:LONG:RANGE_ROTATION:LIMIT"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=_baseline(lane_ids=[range_lane_id]),
+            )
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline["method"] = "RANGE_ROTATION"
+            baseline["evidence_refs"] = [
+                f"intent:{range_lane_id}",
+                "broker:snapshot",
+            ]
+            paths["baseline"].write_text(json.dumps(baseline))
+
+            context = _forecast_context_evidence(
+                "EUR_USD",
+                1.1001,
+                direction="RANGE",
+                family_score=1.0,
+                now_utc=NOW,
+                pair_charts_path=paths["pair_charts"],
+                session_tag="LONDON",
+                chart_story=(
+                    "M5(RANGE ADX=16) M15(RANGE ADX=17) "
+                    "H1(RANGE ADX=18) H4(RANGE ADX=19)"
+                ),
+            )
+            wilson = hit_rate_wilson_lower(1.0, 20)
+            self.assertIsNotNone(wilson)
+            assert wilson is not None
+            metadata = {
+                "method": "RANGE_ROTATION",
+                "position_intent": "NEW",
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+                "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_tp_trades": 20,
+                "positive_rotation_tp_wins": 20,
+                "positive_rotation_loss_proxy_jpy": 300.0,
+                "positive_rotation_tp_win_rate_lower": round(wilson, 6),
+                "positive_rotation_pessimistic_expectancy_jpy": round(
+                    wilson * 320.0 - (1.0 - wilson) * 300.0,
+                    4,
+                ),
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_expectancy_jpy": -50.0,
+                "capture_avg_win_jpy": 320.0,
+                "capture_avg_loss_jpy": 300.0,
+                "capture_take_profit_exact_vehicle_required": True,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                "capture_take_profit_scope_key": (
+                    "EUR_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER"
+                ),
+                "capture_take_profit_vehicle": "LIMIT",
+                "capture_take_profit_metrics_source": (
+                    "data/execution_ledger.db:exact_vehicle_take_profit"
+                ),
+                "capture_take_profit_expectancy_jpy": 320.0,
+                "capture_take_profit_net_jpy": 6400.0,
+                "capture_take_profit_trades": 20,
+                "capture_take_profit_wins": 20,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_avg_win_jpy": 320.0,
+                "capture_take_profit_avg_loss_jpy": 0.0,
+                "capture_exact_vehicle_net_scope": (
+                    "PAIR_SIDE_METHOD_VEHICLE"
+                ),
+                "capture_exact_vehicle_net_scope_key": (
+                    "EUR_USD|LONG|RANGE_ROTATION|LIMIT|ALL_AUDITED_EXITS"
+                ),
+                "capture_exact_vehicle_net_vehicle": "LIMIT",
+                "capture_exact_vehicle_net_metrics_source": (
+                    "data/execution_ledger.db:exact_vehicle_net"
+                ),
+                "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+                "capture_exact_vehicle_net_trades": 20,
+                "capture_exact_vehicle_net_wins": 20,
+                "capture_exact_vehicle_net_losses": 0,
+                "capture_exact_vehicle_net_jpy": 6400.0,
+                "capture_exact_vehicle_net_expectancy_jpy": 320.0,
+                "capture_exact_vehicle_net_avg_win_jpy": 320.0,
+                "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+                "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+                "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+                "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+                    hashlib.sha256(b"[]").hexdigest()
+                ),
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.80,
+                "forecast_current_price": 1.1001,
+                "forecast_range_low_price": 1.0990,
+                "forecast_range_high_price": 1.1012,
+                "forecast_target_price": 1.1012,
+                "forecast_invalidation_price": 1.0990,
+                "forecast_directional_calibration_name": (
+                    "directional_forecast_range"
+                ),
+                "forecast_directional_economic_hit_rate": 1.0,
+                "forecast_directional_economic_samples": 1000,
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 1000,
+                "forecast_directional_timeout_rate": 0.0,
+                "forecast_technical_context": context,
+                **_forecast_weighting_metadata(context),
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_support": 1.0990,
+                "range_resistance": 1.1012,
+                "range_entry_side": "support",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "max_loss_jpy": 400.0,
+            }
+            paths["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": range_lane_id,
+                                "status": "LIVE_READY",
+                                "risk_allowed": True,
+                                "live_blocker_codes": [],
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "units": 1200,
+                                    "entry": 1.0991,
+                                    "tp": 1.1009,
+                                    "sl": 1.0988,
+                                    "market_context": {
+                                        "method": "RANGE_ROTATION"
+                                    },
+                                    "metadata": metadata,
+                                },
+                                "risk_metrics": {
+                                    "entry_price": 1.0991,
+                                    "loss_pips": 3.0,
+                                    "reward_pips": 18.0,
+                                    "risk_jpy": 36.0,
+                                    "reward_jpy": 216.0,
+                                    "reward_risk": 6.0,
+                                    "spread_pips": 2.0,
+                                    "jpy_per_pip": 12.0,
+                                    "estimated_margin_jpy": 1200.0,
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            _write_exact_vehicle_ledger(paths["execution_ledger"], [])
+            for index in range(20):
+                _append_vehicle_trade(
+                    paths["execution_ledger"],
+                    pair="EUR_USD",
+                    side="LONG",
+                    method="RANGE_ROTATION",
+                    vehicle="LIMIT",
+                    realized=320.0,
+                    index=500 + index,
+                )
+            _reprepare(paths)
+
+            packet = json.loads(paths["packet"].read_text())
+            lane = packet["capital_allocation_board"]["selected_lane"]
+            self.assertTrue(
+                lane["allocation_eligible"],
+                json.dumps(lane, sort_keys=True),
+            )
+            self.assertEqual(
+                lane["edge_basis"], "EXACT_VEHICLE_TAKE_PROFIT"
+            )
+            self.assertEqual(
+                lane["numeric_ceiling"]["reason"],
+                "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
+            )
+            self.assertIsNone(
+                lane["numeric_ceiling"]["inputs"]["economic_hit_rate"]
+            )
+            self.assertEqual(
+                lane["forecast"]["range_trade_economic_basis"]["basis"],
+                "EXACT_TP_PROVEN_HARVEST",
+            )
+            _write_overlay(paths)
+            self.assertEqual(_apply(paths).action, "TRADE")
+            final = json.loads(paths["output"].read_text())
+            self.assertEqual(
+                final["decision_provenance"][
+                    "capital_allocation_edge_basis"
+                ],
+                "EXACT_VEHICLE_TAKE_PROFIT",
+            )
+
     def test_quarter_kelly_nav_ratio_can_cap_lane_at_half_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
@@ -1187,7 +2267,7 @@ class MarketReadOverlayTest(unittest.TestCase):
             _write_overlay(paths, size_multiple=1.0)
             self.assertEqual(_apply(paths).action, "TRADE")
 
-    def test_hedge_and_valid_predictive_scout_keep_prebounded_full_size(self) -> None:
+    def test_hedge_keeps_prebounded_size_but_scout_cannot_bypass_method_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
             intents = json.loads(paths["intents"].read_text())
@@ -1266,12 +2346,124 @@ class MarketReadOverlayTest(unittest.TestCase):
                 "capital_allocation_board"
             ]["selected_lane"]
             self.assertTrue(lane["predictive_scout"])
-            self.assertEqual(lane["allowed_size_multiples"], [1.0])
-            self.assertTrue(lane["allocation_eligible"])
+            self.assertEqual(lane["allowed_size_multiples"], [])
+            self.assertFalse(lane["allocation_eligible"])
+            self.assertIn(
+                "REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH",
+                lane["live_blocker_codes"],
+            )
             self.assertEqual(
                 lane["numeric_ceiling"]["reason"],
                 "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
             )
+
+    def test_hedge_and_predictive_scout_cannot_bypass_invalid_forecast_binding(self) -> None:
+        for mode in ("HEDGE", "PREDICTIVE_SCOUT"):
+            for failure in ("DIRECTION", "CALIBRATION"):
+                with self.subTest(mode=mode, failure=failure), tempfile.TemporaryDirectory() as tmp:
+                    paths = _prepared_paths(Path(tmp))
+                    intents = json.loads(paths["intents"].read_text())
+                    intent = intents["results"][0]["intent"]
+                    metadata = intent["metadata"]
+                    if mode == "HEDGE":
+                        metadata["position_intent"] = "HEDGE"
+                    else:
+                        rule_name = (
+                            "USD_CAD_DOWN_H31_60m_C0p50_0p65_FADE_TO_UP_S5_"
+                            "BIDASK_CONTRARIAN_HARVEST_TP10_SL7"
+                        )
+                        rule = canonical_bidask_replay_precision_rule(rule_name)
+                        self.assertIsNotNone(rule)
+                        assert rule is not None
+                        intent["order_type"] = "LIMIT"
+                        intent["market_context"]["method"] = "BREAKOUT_FAILURE"
+                        metadata.update(
+                            {
+                                "predictive_scout": True,
+                                "predictive_scout_source": "BIDASK_REPLAY_PRECISION",
+                                "predictive_scout_hypothesis": (
+                                    "REPRODUCIBLE_FORECAST_FAILURE_CONTRARIAN"
+                                ),
+                                "predictive_scout_vehicle_proof_status": (
+                                    "UNPROVEN_PASSIVE_LIMIT"
+                                ),
+                                "predictive_scout_rule_is_vehicle_proof": False,
+                                "predictive_scout_rule_digest": (
+                                    bidask_replay_precision_rule_digest(rule)
+                                ),
+                                "bidask_replay_precision_seed_rule": rule,
+                                "desk": "failure_trader",
+                                "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT",
+                                "attach_take_profit_on_fill": True,
+                                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                            }
+                        )
+
+                    # The context envelope is individually valid, but the live
+                    # forecast binding either says DOWN for a LONG lane or names
+                    # the DOWN calibration for an UP forecast. Previously both
+                    # pre-bounded paths returned max_multiple=1 before these checks.
+                    metadata["forecast_direction"] = (
+                        "DOWN" if failure == "DIRECTION" else "UP"
+                    )
+                    metadata["forecast_directional_calibration_name"] = (
+                        "directional_forecast_down"
+                    )
+                    for key in (
+                        "forecast_directional_economic_hit_rate",
+                        "forecast_directional_economic_samples",
+                        "forecast_target_price",
+                        "forecast_invalidation_price",
+                    ):
+                        metadata.pop(key, None)
+                    paths["intents"].write_text(json.dumps(intents))
+                    snapshot = json.loads(paths["snapshot"].read_text())
+                    snapshot.pop("account")
+                    paths["snapshot"].write_text(json.dumps(snapshot))
+                    _reprepare(paths)
+
+                    board = json.loads(paths["packet"].read_text())[
+                        "capital_allocation_board"
+                    ]
+                    lane = board["selected_lane"]
+                    self.assertEqual(
+                        lane["forecast"]["technical_context"]["status"],
+                        "VALID",
+                    )
+                    self.assertEqual(
+                        board["forecast_context"]["technical_context"]["status"],
+                        "UNKNOWN",
+                    )
+                    self.assertEqual(
+                        board["forecast_context"]["technical_context"]["reason"],
+                        (
+                            "FORECAST_TECHNICAL_CONTEXT_DIRECTION_MISMATCH"
+                            if failure == "DIRECTION"
+                            else "FORECAST_TECHNICAL_CONTEXT_CALIBRATION_MISMATCH"
+                        ),
+                    )
+                    self.assertEqual(
+                        lane["numeric_ceiling"]["geometry"]["direction_side_aligned"],
+                        failure != "DIRECTION",
+                    )
+                    self.assertEqual(
+                        lane["numeric_ceiling"]["reason"],
+                        (
+                            "FORECAST_DIRECTION_SIDE_MISMATCH"
+                            if failure == "DIRECTION"
+                            else "FORECAST_CALIBRATION_IDENTITY_MISMATCH"
+                        ),
+                    )
+                    self.assertEqual(lane["allowed_size_multiples"], [])
+                    self.assertFalse(lane["positive_edge_proven"])
+                    self.assertFalse(lane["allocation_eligible"])
+
+                    _write_overlay(paths, size_multiple=1.0)
+                    with self.assertRaisesRegex(
+                        MarketReadOverlayError,
+                        "MARKET_READ_CAPITAL_ALLOCATION_FORECAST_CONTEXT_INVALID",
+                    ):
+                        _apply(paths)
 
     def test_trade_allocation_rejects_expansion_units_and_stale_board(self) -> None:
         for mutation, expected_code in (
@@ -2391,6 +3583,7 @@ def _prepared_paths(
         "predictions": predictions_path or root / "market_read_predictions.jsonl",
         "watchdog": root / "qr_trader_run_watchdog.json",
         "execution_ledger": root / "execution_ledger.db",
+        "pair_charts": root / "pair_charts.json",
     }
     _write_exact_vehicle_ledger(
         paths["execution_ledger"],
@@ -2415,6 +3608,17 @@ def _prepared_paths(
                 },
             }
         )
+    )
+    forecast_context_evidence = _forecast_context_evidence(
+        "EUR_USD",
+        1.1001,
+        now_utc=snapshot_at,
+        pair_charts_path=paths["pair_charts"],
+        session_tag="ROLLOVER",
+        chart_story=(
+            "M5(TREND_STRONG ADX=31) M15(TREND_WEAK ADX=24) "
+            "H1(TREND_STRONG ADX=30) H4(TREND_STRONG ADX=30)"
+        ),
     )
     paths["intents"].write_text(
         json.dumps(
@@ -2487,6 +3691,10 @@ def _prepared_paths(
                                 "forecast_confidence": 0.72,
                                 "forecast_raw_confidence": 0.80,
                                 "forecast_current_price": 1.1001,
+                                "forecast_technical_context": forecast_context_evidence,
+                                **_forecast_weighting_metadata(
+                                    forecast_context_evidence
+                                ),
                                 "forecast_target_price": 1.1050,
                                 "forecast_invalidation_price": 1.0985,
                                 "forecast_directional_calibration_name": "directional_forecast_up",
@@ -2529,6 +3737,9 @@ def _prepared_paths(
 
 def _sources(paths: dict[str, Path]) -> dict[str, Path]:
     return {
+        "calendar": Path("data/economic_calendar.json"),
+        "strategy_profile": Path("data/strategy_profile.json"),
+        "pair_charts": paths["pair_charts"],
         "broker_snapshot": paths["snapshot"],
         "order_intents": paths["intents"],
         "market_read_predictions": paths["predictions"],

@@ -17,6 +17,9 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+)
 from quant_rabbit.self_improvement_audit import (
     PROFITABILITY_DISCIPLINE_CODES,
     PROJECTION_PENDING_EXPIRY_GRACE_SECONDS,
@@ -25,6 +28,7 @@ from quant_rabbit.self_improvement_audit import (
     SelfImprovementAuditor,
     _effect_metrics,
     _directional_forecast_invalidation_first_like,
+    _directional_forecast_no_touch_timeout_like,
     _directional_forecast_target_timeout_like,
     _gateway_close_recovery_observation,
     _intent_live_readiness_family_breakdown,
@@ -35,10 +39,14 @@ from quant_rabbit.self_improvement_audit import (
     _projection_expired,
     _report_perspective_alignment_text,
     _root_cause_focus,
+    _select_independent_directional_calibration_rows,
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
 )
 from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_SELF_IMPROVEMENT_HISTORY_DB
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+)
 
 
 class SelfImprovementAuditorTest(unittest.TestCase):
@@ -644,6 +652,30 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertTrue(_directional_forecast_target_timeout_like(no_touch))
         self.assertTrue(_directional_forecast_invalidation_first_like(invalidation_first))
         self.assertFalse(_directional_forecast_target_timeout_like(invalidation_first))
+
+    def test_incomplete_truth_timeout_is_not_classified_as_scored_no_touch(self) -> None:
+        row = {
+            "direction": "UP",
+            "resolution_status": "TIMEOUT",
+            "predicted_target_price": 1.1020,
+            "predicted_invalidation_price": 1.0990,
+            "resolution_evidence": (
+                "target and invalidation both untouched; incomplete closed candle truth "
+                "for full projection window"
+            ),
+        }
+
+        self.assertFalse(_directional_forecast_no_touch_timeout_like(row))
+        self.assertFalse(
+            _directional_forecast_no_touch_timeout_like(
+                {
+                    **row,
+                    "direction": "RANGE",
+                    "predicted_range_low_price": 1.0990,
+                    "predicted_range_high_price": 1.1010,
+                }
+            )
+        )
 
     def test_top_intent_blockers_ignore_dry_run_strategy_warnings(self) -> None:
         blockers = _top_intent_blockers(
@@ -2117,6 +2149,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "direction": "UP",
                         "regime_at_emission": "TREND",
                         "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
                         "predicted_target_price": 1.1720,
                         "predicted_invalidation_price": 1.1680,
                         "resolution_window_min": 60.0,
@@ -2133,6 +2166,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "direction": "UP",
                         "regime_at_emission": "TREND",
                         "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
                         "predicted_target_price": 1.1720,
                         "predicted_invalidation_price": 1.1680,
                         "resolution_window_min": 60.0,
@@ -2323,6 +2357,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                             "pair": "EUR_USD",
                             "direction": "UP",
                             "signal_name": "directional_forecast",
+                            "lead_time_min": 60.0,
                             "predicted_target_price": 1.1720,
                             "predicted_invalidation_price": 1.1680,
                             "resolution_window_min": 60.0,
@@ -2364,6 +2399,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "direction": "UP",
                         "regime_at_emission": "TREND",
                         "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
                         "predicted_target_price": 1.1720,
                         "predicted_invalidation_price": 1.1680,
                         "resolution_window_min": 60.0,
@@ -2487,7 +2523,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("projection_economic_precision_gap_count", forecast_candidates[0]["why"])
         self.assertIn("projection_economic_precision_edge_count", forecast_candidates[0]["why"])
 
-    def test_directional_forecast_watch_only_samples_do_not_trigger_entry_grade_hit_rate_repair(self) -> None:
+    def test_legacy_watch_only_samples_keep_sample_shortfall_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -2503,9 +2539,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
                         "pair": "EUR_USD",
                         "direction": "UP",
-                        "confidence": 0.12,
+                        "confidence": 0.18,
+                        "entry_price": 1.1700,
                         "regime_at_emission": "TREND",
                         "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
                         "predicted_target_price": 1.1720,
                         "predicted_invalidation_price": 1.1680,
                         "resolution_window_min": 60.0,
@@ -2532,6 +2570,908 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["entry_grade_samples"], 0)
         self.assertEqual(evidence["watch_only_movement_samples"], 12)
         self.assertEqual(evidence["movement_samples"], 12)
+        self.assertEqual(
+            evidence["entry_grade_confidence_basis"],
+            "raw_confidence_when_present_else_legacy_confidence",
+        )
+
+    def test_directional_forecast_raw_grade_survives_low_calibrated_confidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.20,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.25,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx == 0 else "MISS",
+                        "resolution_evidence": (
+                            "target 1.17200 touched before invalidation 1.16800"
+                            if idx == 0
+                            else "invalidation 1.16800 touched before target 1.17200"
+                        ),
+                        "cycle_id": f"raw-grade-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        evidence = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertAlmostEqual(evidence["hit_rate"], 0.1)
+        self.assertEqual(evidence["raw_schema_input_rows"], 10)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 10)
+        self.assertEqual(evidence["skipped_overlapping_raw_schema_rows"], 0)
+
+    def test_directional_forecast_audit_excludes_pair_overlap_after_range_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            base = _NOW - timedelta(days=3)
+            rows = []
+            for idx in range(10):
+                block = base + timedelta(minutes=120 * idx)
+                rows.extend(
+                    [
+                        {
+                            "timestamp_emitted_utc": block.isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "RANGE",
+                            "confidence": 0.25,
+                            "raw_confidence": 0.80,
+                            "calibration_multiplier": 0.3125,
+                            "entry_price": 1.1700,
+                            "regime_at_emission": "RANGE",
+                            "signal_name": "directional_forecast",
+                            "lead_time_min": 60.0,
+                            "predicted_range_low_price": 1.1680,
+                            "predicted_range_high_price": 1.1720,
+                            "technical_context_v1": _range_emission_context(
+                                current_price=1.1700,
+                            ),
+                            "resolution_window_min": 60.0,
+                            "resolution_status": "HIT",
+                            "resolution_evidence": "range held",
+                            "cycle_id": f"range-clock-{idx}",
+                        },
+                        {
+                            "timestamp_emitted_utc": (block + timedelta(minutes=5)).isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "DOWN" if idx % 2 else "UP",
+                            "confidence": 0.20,
+                            "raw_confidence": 0.80,
+                            "calibration_multiplier": 0.25,
+                            "entry_price": 1.1700,
+                            "regime_at_emission": "TREND",
+                            "signal_name": "directional_forecast",
+                            "lead_time_min": 60.0,
+                            "predicted_target_price": 1.1680 if idx % 2 else 1.1720,
+                            "predicted_invalidation_price": 1.1720 if idx % 2 else 1.1680,
+                            "resolution_window_min": 60.0,
+                            "resolution_status": "HIT",
+                            "resolution_evidence": "target touched before invalidation",
+                            "cycle_id": f"overlap-flip-{idx}",
+                        },
+                        {
+                            "timestamp_emitted_utc": (block + timedelta(minutes=60)).isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.20,
+                            "raw_confidence": 0.80,
+                            "calibration_multiplier": 0.25,
+                            "entry_price": 1.1700,
+                            "regime_at_emission": "TREND",
+                            "signal_name": "directional_forecast",
+                            "lead_time_min": 60.0,
+                            "predicted_target_price": 1.1720,
+                            "predicted_invalidation_price": 1.1680,
+                            "resolution_window_min": 60.0,
+                            "resolution_status": "MISS",
+                            "resolution_evidence": "invalidation touched before target",
+                            "cycle_id": f"independent-miss-{idx}",
+                        },
+                    ]
+                )
+            files["projection_ledger"].write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        evidence = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertEqual(evidence["hit_count"], 0)
+        self.assertEqual(evidence["raw_schema_input_rows"], 30)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 20)
+        self.assertEqual(evidence["skipped_overlapping_raw_schema_rows"], 10)
+        self.assertTrue(evidence["independent_non_overlap"])
+
+    def test_directional_forecast_same_timestamp_tie_uses_source_order(self) -> None:
+        emitted_at = (_NOW - timedelta(hours=2)).isoformat()
+        range_row = {
+            "timestamp_emitted_utc": emitted_at,
+            "pair": "EUR_USD",
+            "direction": "RANGE",
+            "signal_name": "directional_forecast",
+            "lead_time_min": 60.0,
+            "confidence": 0.20,
+            "raw_confidence": 0.80,
+            "calibration_multiplier": 0.25,
+            "entry_price": 1.1700,
+            "predicted_range_low_price": 1.1680,
+            "predicted_range_high_price": 1.1720,
+            "resolution_window_min": 60.0,
+            "technical_context_v1": _range_emission_context(
+                current_price=1.1700,
+                h1_atr_pips=20.0,
+            ),
+        }
+        up_row = {
+            "timestamp_emitted_utc": emitted_at,
+            "pair": "EUR_USD",
+            "direction": "UP",
+            "signal_name": "directional_forecast",
+            "lead_time_min": 60.0,
+            "confidence": 0.20,
+            "raw_confidence": 0.80,
+            "calibration_multiplier": 0.25,
+            "entry_price": 1.1700,
+            "predicted_target_price": 1.1720,
+            "predicted_invalidation_price": 1.1680,
+            "resolution_window_min": 60.0,
+        }
+
+        range_first, range_first_stats = _select_independent_directional_calibration_rows(
+            [range_row, up_row]
+        )
+        up_first, up_first_stats = _select_independent_directional_calibration_rows(
+            [up_row, range_row]
+        )
+
+        self.assertEqual(range_first, [range_row])
+        self.assertEqual(up_first, [up_row])
+        self.assertEqual(range_first_stats["skipped_overlapping_raw_schema_rows"], 1)
+        self.assertEqual(up_first_stats["skipped_overlapping_raw_schema_rows"], 1)
+
+    def test_directional_forecast_selector_bounds_horizon_and_datetime(self) -> None:
+        base = _NOW - timedelta(days=3)
+
+        def row(
+            *,
+            timestamp: str,
+            pair: str,
+            window_min: float,
+            cycle_id: str,
+        ) -> dict[str, object]:
+            return {
+                "timestamp_emitted_utc": timestamp,
+                "pair": pair,
+                "direction": "UP",
+                "confidence": 0.24,
+                "raw_confidence": 0.80,
+                "calibration_multiplier": 0.30,
+                "entry_price": 1.1700,
+                "signal_name": "directional_forecast",
+                "lead_time_min": 60.0,
+                "predicted_target_price": 1.1720,
+                "predicted_invalidation_price": 1.1680,
+                "resolution_window_min": window_min,
+                "resolution_status": "HIT",
+                "cycle_id": cycle_id,
+            }
+
+        rows = [
+            row(
+                timestamp=base.isoformat(),
+                pair="EUR_USD",
+                window_min=1e300,
+                cycle_id="huge-window",
+            ),
+            row(
+                timestamp="9999-12-31T23:59:59+00:00",
+                pair="EUR_USD",
+                window_min=60.0,
+                cycle_id="datetime-overflow",
+            ),
+            row(
+                timestamp=(base + timedelta(minutes=5)).isoformat(),
+                pair="EUR_USD",
+                window_min=60.0,
+                cycle_id="valid-after-invalid",
+            ),
+            row(
+                timestamp=base.isoformat(),
+                pair="GBP_USD",
+                window_min=24.0 * 60.0,
+                cycle_id="max-window-a",
+            ),
+            row(
+                timestamp=(base + timedelta(days=1)).isoformat(),
+                pair="GBP_USD",
+                window_min=24.0 * 60.0,
+                cycle_id="max-window-b",
+            ),
+        ]
+
+        selected, stats = _select_independent_directional_calibration_rows(rows)
+
+        self.assertEqual(
+            [item["cycle_id"] for item in selected],
+            ["valid-after-invalid", "max-window-a", "max-window-b"],
+        )
+        self.assertEqual(stats["raw_schema_selected_rows"], 3)
+        self.assertEqual(stats["ex_ante_ineligible_raw_schema_rows_excluded"], 1)
+        self.assertEqual(stats["invalid_raw_schema_rows_excluded"], 1)
+
+    def test_directional_forecast_selector_rejects_noncanonical_or_unsupported_pairs(self) -> None:
+        emitted_at = (_NOW - timedelta(hours=2)).isoformat()
+
+        def row(pair: str, cycle_id: str) -> dict[str, object]:
+            return {
+                "timestamp_emitted_utc": emitted_at,
+                "pair": pair,
+                "direction": "UP",
+                "confidence": 0.24,
+                "raw_confidence": 0.80,
+                "calibration_multiplier": 0.30,
+                "entry_price": 1.1700,
+                "signal_name": "directional_forecast",
+                "lead_time_min": 60.0,
+                "predicted_target_price": 1.1720,
+                "predicted_invalidation_price": 1.1680,
+                "resolution_window_min": 60.0,
+                "resolution_status": "HIT",
+                "cycle_id": cycle_id,
+            }
+
+        rows = [
+            row("", "empty"),
+            row(" ", "whitespace"),
+            row("eur_usd", "noncanonical"),
+            row("XAU_USD", "unsupported"),
+            row("EUR_USD", "valid"),
+        ]
+
+        selected, stats = _select_independent_directional_calibration_rows(rows)
+
+        self.assertEqual([item["cycle_id"] for item in selected], ["valid"])
+        self.assertEqual(stats["raw_schema_selected_rows"], 1)
+        self.assertEqual(stats["ex_ante_ineligible_raw_schema_rows_excluded"], 4)
+
+    def _directional_audit_codes(
+        self,
+        rows: list[dict[str, object]],
+    ) -> dict[str, dict[str, object]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["projection_ledger"].write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+        return {item["code"]: item for item in payload["findings"]}
+
+    def test_directional_forecast_audit_clocks_unscored_first_trial_before_outcome(self) -> None:
+        for first_status, first_evidence in (
+            ("PENDING", ""),
+            ("TIMEOUT", "no candle truth for projection window"),
+        ):
+            with self.subTest(first_status=first_status):
+                base = _NOW - timedelta(days=3)
+                rows: list[dict[str, object]] = []
+                for idx in range(10):
+                    block = base + timedelta(minutes=120 * idx)
+
+                    def row(
+                        *,
+                        minute: int,
+                        status: str,
+                        evidence: str,
+                        suffix: str,
+                    ) -> dict[str, object]:
+                        return {
+                            "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.20,
+                            "raw_confidence": 0.80,
+                            "calibration_multiplier": 0.25,
+                            "entry_price": 1.1700,
+                            "regime_at_emission": "TREND",
+                            "signal_name": "directional_forecast",
+                            "lead_time_min": 60.0,
+                            "predicted_target_price": 1.1720,
+                            "predicted_invalidation_price": 1.1680,
+                            "resolution_window_min": 60.0,
+                            "resolution_status": status,
+                            "resolution_evidence": evidence,
+                            "cycle_id": f"{first_status.lower()}-{idx}-{suffix}",
+                        }
+
+                    rows.extend(
+                        [
+                            row(
+                                minute=0,
+                                status=first_status,
+                                evidence=first_evidence,
+                                suffix="first",
+                            ),
+                            row(
+                                minute=5,
+                                status="HIT",
+                                evidence="target touched before invalidation",
+                                suffix="overlap-hit",
+                            ),
+                            row(
+                                minute=60,
+                                status="MISS",
+                                evidence="invalidation touched before target",
+                                suffix="boundary-miss",
+                            ),
+                        ]
+                    )
+
+                evidence = self._directional_audit_codes(rows)[
+                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+                ]["evidence"]
+                self.assertEqual(evidence["samples"], 10)
+                self.assertEqual(evidence["hit_count"], 0)
+                self.assertEqual(evidence["raw_schema_input_rows"], 30)
+                self.assertEqual(evidence["raw_schema_selected_rows"], 20)
+                self.assertEqual(evidence["skipped_overlapping_raw_schema_rows"], 10)
+
+    def test_unscored_clock_owner_blocks_later_hit_from_coverage_and_matches_ledger(self) -> None:
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        for idx in range(10):
+            block = base + timedelta(minutes=120 * idx)
+
+            def row(*, minute: int, status: str, evidence: str, suffix: str) -> dict[str, object]:
+                return {
+                    "timestamp_emitted_utc": (
+                        block + timedelta(minutes=minute)
+                    ).isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "UP",
+                    "confidence": 0.20,
+                    "raw_confidence": 0.80,
+                    "calibration_multiplier": 0.25,
+                    "entry_price": 1.1700,
+                    "regime_at_emission": "TREND",
+                    "signal_name": "directional_forecast",
+                    "lead_time_min": 60.0,
+                    "predicted_target_price": 1.1720,
+                    "predicted_invalidation_price": 1.1680,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": status,
+                    "resolution_evidence": evidence,
+                    "cycle_id": f"truth-gap-clock-{idx}-{suffix}",
+                }
+
+            rows.extend(
+                [
+                    row(
+                        minute=0,
+                        status="TIMEOUT",
+                        evidence="no candle truth for projection window",
+                        suffix="clock-owner",
+                    ),
+                    row(
+                        minute=5,
+                        status="HIT",
+                        evidence="target touched before invalidation",
+                        suffix="overlap-hit",
+                    ),
+                ]
+            )
+
+        codes = self._directional_audit_codes(rows)
+        unresolved = codes["DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED"]
+        evidence = unresolved["evidence"]
+        self.assertEqual(evidence["selected_trial_rows"], 10)
+        self.assertEqual(evidence["scored_outcome_samples"], 0)
+        self.assertEqual(evidence["calibration_coverage"], 0.0)
+        self.assertEqual(evidence["status_counts"], {"TIMEOUT": 10})
+        self.assertEqual(evidence["raw_schema_input_rows"], 20)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 10)
+        self.assertEqual(evidence["skipped_overlapping_raw_schema_rows"], 10)
+        self.assertNotIn("DIRECTIONAL_FORECAST_HIT_RATE_WEAK", codes)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            (data_root / "projection_ledger.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in rows) + "\n"
+            )
+            hit_rates = compute_hit_rates(data_root)
+        self.assertNotIn("directional_forecast", hit_rates)
+
+    def test_directional_forecast_audit_excludes_low_raw_before_pair_clock(self) -> None:
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        for idx in range(10):
+            block = base + timedelta(minutes=180 * idx)
+            for minute, raw_confidence, status, suffix in (
+                (0, 0.20, "MISS", "low-raw-first"),
+                (5, 0.80, "HIT", "entry-grade-hit"),
+                (65, 0.80, "MISS", "entry-grade-miss-a"),
+                (125, 0.80, "MISS", "entry-grade-miss-b"),
+            ):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": raw_confidence * 0.25,
+                        "raw_confidence": raw_confidence,
+                        "calibration_multiplier": 0.25,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"low-raw-order-{idx}-{suffix}",
+                    }
+                )
+
+        evidence = self._directional_audit_codes(rows)[
+            "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+        ]["evidence"]
+        self.assertEqual(evidence["samples"], 30)
+        self.assertEqual(evidence["hit_count"], 10)
+        self.assertEqual(evidence["raw_schema_input_rows"], 40)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 30)
+        self.assertEqual(evidence["ex_ante_ineligible_raw_schema_rows_excluded"], 10)
+
+    def test_directional_forecast_audit_excludes_low_raw_range_before_pair_clock(self) -> None:
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        for idx in range(10):
+            block = base + timedelta(minutes=180 * idx)
+            rows.append(
+                {
+                    "timestamp_emitted_utc": block.isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "RANGE",
+                    "confidence": 0.06,
+                    "raw_confidence": 0.20,
+                    "calibration_multiplier": 0.30,
+                    "entry_price": 1.1700,
+                    "regime_at_emission": "RANGE",
+                    "signal_name": "directional_forecast",
+                    "lead_time_min": 60.0,
+                    "predicted_range_low_price": 1.1680,
+                    "predicted_range_high_price": 1.1720,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": "HIT",
+                    "resolution_evidence": "range held",
+                    "cycle_id": f"low-raw-range-{idx}",
+                }
+            )
+            for minute, status, suffix in (
+                (5, "HIT", "entry-grade-hit"),
+                (65, "MISS", "entry-grade-miss-a"),
+                (125, "MISS", "entry-grade-miss-b"),
+            ):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.24,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.30,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"low-raw-range-order-{idx}-{suffix}",
+                    }
+                )
+
+        evidence = self._directional_audit_codes(rows)[
+            "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+        ]["evidence"]
+        self.assertEqual(evidence["samples"], 30)
+        self.assertEqual(evidence["hit_count"], 10)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 30)
+        self.assertEqual(evidence["ex_ante_ineligible_raw_schema_rows_excluded"], 10)
+
+    def test_directional_forecast_audit_excludes_bad_geometry_before_pair_clock(self) -> None:
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        for idx in range(10):
+            block = base + timedelta(minutes=180 * idx)
+            for minute, target, invalidation, status, suffix in (
+                (0, 1.1680, 1.1690, "HIT", "bad-up-geometry"),
+                (5, 1.1720, 1.1680, "HIT", "valid-hit"),
+                (65, 1.1720, 1.1680, "MISS", "valid-miss-a"),
+                (125, 1.1720, 1.1680, "MISS", "valid-miss-b"),
+            ):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.20,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.25,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": target,
+                        "predicted_invalidation_price": invalidation,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"geometry-order-{idx}-{suffix}",
+                    }
+                )
+
+        evidence = self._directional_audit_codes(rows)[
+            "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+        ]["evidence"]
+        self.assertEqual(evidence["samples"], 30)
+        self.assertEqual(evidence["hit_count"], 10)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 30)
+        self.assertEqual(evidence["ex_ante_ineligible_raw_schema_rows_excluded"], 10)
+
+    def test_directional_forecast_audit_rejects_forged_confidence_triplets(self) -> None:
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        for idx in range(10):
+            block = base + timedelta(minutes=180 * idx)
+            rows.append(
+                {
+                    "timestamp_emitted_utc": block.isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "UP",
+                    "confidence": 0.06,
+                    "raw_confidence": 0.80,
+                    "calibration_multiplier": 0.30,
+                    "entry_price": 1.1700,
+                    "regime_at_emission": "TREND",
+                    "signal_name": "directional_forecast",
+                    "lead_time_min": 60.0,
+                    "predicted_target_price": 1.1720,
+                    "predicted_invalidation_price": 1.1680,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": "MISS",
+                    "resolution_evidence": "invalidation touched before target",
+                    "cycle_id": f"forged-triplet-{idx}",
+                }
+            )
+            for minute, status, suffix in (
+                (5, "HIT", "valid-hit"),
+                (65, "MISS", "valid-miss-a"),
+                (125, "MISS", "valid-miss-b"),
+            ):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.24,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.30,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"triplet-order-{idx}-{suffix}",
+                    }
+                )
+
+        evidence = self._directional_audit_codes(rows)[
+            "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+        ]["evidence"]
+        self.assertEqual(evidence["samples"], 30)
+        self.assertEqual(evidence["hit_count"], 10)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 30)
+        self.assertEqual(evidence["invalid_raw_schema_rows_excluded"], 10)
+
+    def test_directional_forecast_audit_rejects_partial_or_invalid_raw_schema(self) -> None:
+        base = _NOW - timedelta(days=3)
+        rows: list[dict[str, object]] = []
+        invalid_variants = (
+            {"raw_confidence": "corrupt", "calibration_multiplier": 0.25},
+            {"raw_confidence": 0.80},
+            {"raw_confidence": 0.80, "calibration_multiplier": "corrupt"},
+        )
+        for idx in range(10):
+            block = base + timedelta(minutes=180 * idx)
+            invalid_row: dict[str, object] = {
+                "timestamp_emitted_utc": block.isoformat(),
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.99,
+                "entry_price": 1.1700,
+                "regime_at_emission": "TREND",
+                "signal_name": "directional_forecast",
+                "lead_time_min": 60.0,
+                "predicted_target_price": 1.1720,
+                "predicted_invalidation_price": 1.1680,
+                "resolution_window_min": 60.0,
+                "resolution_status": "HIT",
+                "resolution_evidence": "target touched before invalidation",
+                "cycle_id": f"invalid-schema-{idx}",
+                **invalid_variants[idx % len(invalid_variants)],
+            }
+            rows.append(invalid_row)
+            for minute, status, suffix in (
+                (5, "HIT", "valid-hit"),
+                (65, "MISS", "valid-miss-a"),
+                (125, "MISS", "valid-miss-b"),
+            ):
+                rows.append(
+                    {
+                        **invalid_row,
+                        "timestamp_emitted_utc": (block + timedelta(minutes=minute)).isoformat(),
+                        "confidence": 0.20,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.25,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"invalid-schema-{idx}-{suffix}",
+                    }
+                )
+
+        evidence = self._directional_audit_codes(rows)[
+            "DIRECTIONAL_FORECAST_HIT_RATE_WEAK"
+        ]["evidence"]
+        self.assertEqual(evidence["samples"], 30)
+        self.assertEqual(evidence["hit_count"], 10)
+        self.assertEqual(evidence["raw_schema_input_rows"], 40)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 30)
+        self.assertEqual(evidence["invalid_raw_schema_rows_excluded"], 10)
+
+    def test_directional_forecast_audit_survives_nonobject_and_bad_numeric_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows: list[dict[str, object]] = []
+            for idx in range(10):
+                status = "HIT" if idx == 0 else "MISS"
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.24,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.30,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "target touched before invalidation"
+                            if status == "HIT"
+                            else "invalidation touched before target"
+                        ),
+                        "cycle_id": f"valid-numeric-{idx}",
+                    }
+                )
+            bad_base = {**rows[-1], "resolution_status": "HIT"}
+            bad_rows = [
+                {**bad_base, "cycle_id": "bad-lead", "lead_time_min": "bad"},
+                {**bad_base, "cycle_id": "bad-confidence", "confidence": float("inf")},
+                {
+                    **bad_base,
+                    "cycle_id": "bad-window",
+                    "resolution_window_min": 10**400,
+                },
+                {**bad_base, "cycle_id": "bad-entry", "entry_price": ["bad"]},
+            ]
+            lines = [json.dumps(7), json.dumps([{"bad": "shape"}])]
+            lines.extend(json.dumps(row) for row in rows + bad_rows)
+            files["projection_ledger"].write_text("\n".join(lines) + "\n")
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertIn("PROJECTION_LEDGER_MALFORMED_ROWS", codes)
+        self.assertEqual(
+            codes["PROJECTION_LEDGER_MALFORMED_ROWS"]["evidence"]["malformed_rows"],
+            2,
+        )
+        evidence = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertEqual(evidence["hit_count"], 1)
+        self.assertEqual(evidence["invalid_raw_schema_rows_excluded"], 3)
+        self.assertEqual(evidence["ex_ante_ineligible_raw_schema_rows_excluded"], 1)
+
+    def test_directional_forecast_audit_counts_only_scored_no_touch_timeouts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.20,
+                        "raw_confidence": 0.80,
+                        "calibration_multiplier": 0.25,
+                        "entry_price": 1.1700,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "lead_time_min": 60.0,
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "TIMEOUT",
+                        "resolution_evidence": (
+                            "target 1.17200 and invalidation 1.16800 both untouched in forecast window"
+                        ),
+                        "cycle_id": f"no-touch-{idx}",
+                    }
+                )
+            rows.append(
+                {
+                    **rows[-1],
+                    "timestamp_emitted_utc": (_NOW - timedelta(hours=13)).isoformat(),
+                    "resolution_evidence": "no candle truth for projection window",
+                    "cycle_id": "truth-missing",
+                }
+            )
+            files["projection_ledger"].write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        evidence = codes["DIRECTIONAL_FORECAST_TARGET_TIMEOUT_DOMINANT"]["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertEqual(evidence["target_timeout_samples"], 10)
+        self.assertEqual(evidence["raw_schema_input_rows"], 11)
+        self.assertEqual(evidence["raw_schema_selected_rows"], 11)
+
+    def test_directional_forecast_audit_range_truth_gaps_are_zero_learning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            evidence_variants = (
+                "incomplete closed candle truth for full projection window; retryable",
+                "no candle truth for projection window",
+                "market closed at projection emission; excluded from calibration",
+                "malformed candle truth",
+            )
+            rows = [
+                {
+                    "timestamp_emitted_utc": (
+                        _NOW - timedelta(hours=2 * index + 2)
+                    ).isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "RANGE",
+                    "confidence": 0.24,
+                    "raw_confidence": 0.80,
+                    "calibration_multiplier": 0.30,
+                    "entry_price": 1.1000,
+                    "regime_at_emission": "RANGE",
+                    "signal_name": "directional_forecast",
+                    "lead_time_min": 60.0,
+                    "predicted_range_low_price": 1.0990,
+                    "predicted_range_high_price": 1.1010,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": "TIMEOUT",
+                    "resolution_evidence": evidence_variants[index % len(evidence_variants)],
+                    "cycle_id": f"range-truth-gap-{index}",
+                }
+                for index in range(12)
+            ]
+            files["projection_ledger"].write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertNotIn("DIRECTIONAL_FORECAST_TARGET_TIMEOUT_DOMINANT", codes)
+        unresolved = codes["DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED"]
+        self.assertEqual(unresolved["evidence"]["target_timeout_samples"], 0)
+        self.assertEqual(
+            unresolved["evidence"][
+                "invalid_range_emission_atr_context_rows_excluded"
+            ],
+            12,
+        )
 
     def test_directional_forecast_low_hit_rate_excludes_range_box_hits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6672,6 +7612,46 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
+
+
+def _range_emission_context(
+    *,
+    pair: str = "EUR_USD",
+    current_price: float = 1.1050,
+    h1_atr_pips: object = 20.0,
+) -> dict[str, object]:
+    return build_forecast_technical_context(
+        {
+            "confluence": {
+                "dominant_regime": "RANGE",
+                "price_percentile_24h": 0.5,
+            },
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "indicators": {"atr_pips": 5.0},
+                },
+                {
+                    "granularity": "M15",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "BOS_UP", "index": 5, "close_confirmed": True}
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                    "indicators": {"atr_pips": h1_atr_pips},
+                },
+            ],
+        },
+        pair=pair,
+        current_price=current_price,
+        spread_pips=0.5,
+    )
 
 
 def _run(files: dict[str, Path], *, now: datetime = _NOW):

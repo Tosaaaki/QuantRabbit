@@ -26,6 +26,9 @@ from quant_rabbit.market_read_contract import market_read_missing_fields
 from quant_rabbit.close_discipline import (
     thesis_evolution_reason_has_hard_close_evidence,
 )
+from quant_rabbit.strategy.forecast_technical_context import (
+    normalize_forecast_technical_context_evidence,
+)
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -4719,6 +4722,9 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                 "action_downgrade_only": {"type": "boolean"},
                 "capital_allocation_sha256": {"type": "string"},
                 "capital_allocation_board_sha256": {"type": "string"},
+                "capital_allocation_edge_basis": {
+                    "type": ["string", "null"]
+                },
                 "execution_cost_floor_sha256": {
                     "type": ["string", "null"]
                 },
@@ -7072,7 +7078,10 @@ def _lane_packet(
                     ),
                 ),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
-                "forecast": _lane_forecast_packet(intent.get("metadata")),
+                "forecast": _lane_forecast_packet(
+                    intent.get("metadata"),
+                    pair=pair,
+                ),
                 "opportunity": _small_dict(
                     metadata,
                     (
@@ -9387,11 +9396,14 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
     }
 
 
-def _lane_forecast_packet(metadata: object) -> dict[str, Any]:
-    if not isinstance(metadata, dict):
-        return {}
-    return _small_dict(
-        metadata,
+def _lane_forecast_packet(
+    metadata: object,
+    *,
+    pair: str | None = None,
+) -> dict[str, Any]:
+    source = metadata if isinstance(metadata, dict) else {}
+    packet = _small_dict(
+        source,
         (
             "forecast_direction",
             "forecast_confidence",
@@ -9399,8 +9411,17 @@ def _lane_forecast_packet(metadata: object) -> dict[str, Any]:
             "forecast_invalidation_price",
             "forecast_horizon_min",
             "forecast_rationale",
+            "forecast_regime_family_weighting_sha256",
+            "forecast_regime_family_selected_method",
+            "forecast_regime_family_direction",
         ),
     )
+    packet["technical_context"] = normalize_forecast_technical_context_evidence(
+        source.get("forecast_technical_context"),
+        pair=pair,
+        current_price=source.get("forecast_current_price"),
+    )
+    return packet
 
 
 def _has_pending_entry_order(packet: dict[str, Any]) -> bool:

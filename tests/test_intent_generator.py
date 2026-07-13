@@ -60,6 +60,11 @@ from quant_rabbit.strategy.intent_generator import (
     _risk_budgeted_units,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLaneLossStreak, SameDayLossStreak
+from quant_rabbit.strategy.forecast_technical_context import (
+    CONFIDENCE_SEMANTICS,
+    build_forecast_technical_context,
+    verify_forecast_technical_context_evidence,
+)
 from tests.support_bidask_rules import (
     bidask_rules_env,
     write_bidask_replay_fixture_rules,
@@ -630,6 +635,76 @@ class IntentGeneratorTest(unittest.TestCase):
             os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
         else:
             os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
+
+    def test_forecast_context_payload_preserves_verified_technical_context(self) -> None:
+        context = build_forecast_technical_context(
+            {
+                "confluence": {
+                    "dominant_regime": "TREND_UP",
+                    "price_percentile_24h": 0.7,
+                    "price_percentile_7d": 0.6,
+                },
+                "views": [
+                    {
+                        "granularity": "M5",
+                        "regime_reading": {
+                            "state": "TREND_STRONG",
+                            "atr_percentile": 60.0,
+                        },
+                        "indicators": {"atr_pips": 2.0},
+                        "structure": {
+                            "structure_events": [
+                                {
+                                    "kind": "BOS_UP",
+                                    "index": 1,
+                                    "close_confirmed": True,
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1001,
+            spread_pips=0.2,
+        )
+        payload = _forecast_context_payload(
+            SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.72,
+                current_price=1.1001,
+                technical_context_v1=context,
+            ),
+            cycle_id="cycle-context",
+        )
+
+        evidence = payload["forecast_technical_context"]
+        self.assertEqual(evidence["status"], "VALID")
+        self.assertEqual(evidence["confidence_semantics"], CONFIDENCE_SEMANTICS)
+        self.assertEqual(evidence["technical_context_v1"], context)
+        self.assertEqual(evidence["context_sha256"], context["context_sha256"])
+        receipt = context["regime_family_weighting"]
+        self.assertEqual(
+            payload["forecast_regime_family_weighting_sha256"],
+            receipt["receipt_sha256"],
+        )
+        self.assertEqual(
+            payload["forecast_regime_family_selected_method"],
+            receipt["source_identity"]["selected_method"],
+        )
+        self.assertEqual(
+            payload["forecast_regime_family_direction"],
+            receipt["aggregate"]["direction"],
+        )
+        self.assertEqual(
+            verify_forecast_technical_context_evidence(
+                evidence,
+                pair="EUR_USD",
+                current_price=1.1001,
+            ),
+            (True, None),
+        )
 
     def test_session_bucket_maps_judas_window_to_london_context(self) -> None:
         self.assertEqual(_session_bucket_from_tag("JUDAS_WINDOW"), "LONDON")
@@ -4892,7 +4967,39 @@ class IntentGeneratorTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / "intents.json"
+                technical_context = build_forecast_technical_context(
+                    {
+                        "confluence": {
+                            "dominant_regime": "TREND_UP",
+                            "price_percentile_24h": 0.7,
+                            "price_percentile_7d": 0.6,
+                        },
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime_reading": {
+                                    "state": "TREND_WEAK",
+                                    "atr_percentile": 50.0,
+                                },
+                                "indicators": {"atr_pips": 8.0},
+                                "structure": {
+                                    "structure_events": [
+                                        {
+                                            "kind": "BOS_UP",
+                                            "index": 1,
+                                            "close_confirmed": True,
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                    pair="EUR_USD",
+                    current_price=1.17326,
+                    spread_pips=0.8,
+                )
                 forecast = SimpleNamespace(
+                    pair="EUR_USD",
                     direction="UP",
                     confidence=0.91,
                     current_price=1.17326,
@@ -4903,6 +5010,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     drivers_for=("sell-side sweep fade",),
                     drivers_against=("old profile is watch-only",),
                     market_support=_high_precision_market_support("UP"),
+                    technical_context_v1=technical_context,
                 )
 
                 with patch(
@@ -4942,6 +5050,18 @@ class IntentGeneratorTest(unittest.TestCase):
             if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET"
         )
         self.assertTrue(trigger["intent"]["metadata"]["forecast_seed"])
+        forecast_context = trigger["intent"]["metadata"][
+            "forecast_technical_context"
+        ]
+        self.assertEqual(forecast_context["status"], "VALID")
+        self.assertEqual(
+            verify_forecast_technical_context_evidence(
+                forecast_context,
+                pair="EUR_USD",
+                current_price=1.17326,
+            ),
+            (True, None),
+        )
         self.assertEqual(trigger["status"], "DRY_RUN_PASSED")
         self.assertIn(MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE, trigger["live_blocker_codes"])
         self.assertTrue(
@@ -7560,6 +7680,15 @@ class IntentGeneratorTest(unittest.TestCase):
         metadata = {
             "forecast_direction": "RANGE",
             "forecast_confidence": 0.54,
+            "forecast_range_low_price": 1.1618,
+            "forecast_range_high_price": 1.1650,
+            "geometry_model": "RANGE_RAIL_LIMIT",
+            "range_indicator_source": "forecast_range_box",
+            "range_support": 1.1618,
+            "range_resistance": 1.1650,
+            "range_entry_side": "support",
+            "range_tp_is_inside_box": True,
+            "range_sl_outside_box": True,
             "attach_take_profit_on_fill": True,
             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
             "tp_target_intent": "HARVEST",
@@ -7594,6 +7723,16 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertIsNone(
             _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+        )
+        stop_issue = _forecast_live_readiness_issue(
+            replace(intent, order_type=OrderType.STOP_ENTRY),
+            metadata,
+            TradeMethod.BREAKOUT_FAILURE,
+        )
+        self.assertIsNotNone(stop_issue)
+        self.assertEqual(
+            stop_issue["code"],
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
         )
 
     def test_range_limit_uses_same_side_unselected_projection_support(self) -> None:
@@ -8236,6 +8375,107 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["directional_calibration_name"], "directional_forecast_up")
         self.assertAlmostEqual(support["directional_hit_rate"], 0.1)
         self.assertEqual(support["directional_samples"], 12)
+
+    def test_range_forecast_exposes_its_own_box_hold_calibration(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="RANGE", raw_confidence=0.68)
+        hit_rates = {
+            "directional_forecast_range": {
+                "EUR_USD:RANGE": {
+                    "hit_rate": 0.64,
+                    "samples": 40,
+                    "economic_hit_rate": 0.55,
+                    "economic_samples": 40,
+                    "timeout_rate": 0.0,
+                    "timeout_count": 0,
+                    "invalidation_first_rate": 0.45,
+                    "invalidation_first_count": 18,
+                },
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertFalse(support["ok"])
+        self.assertEqual(
+            support["directional_calibration_name"],
+            "directional_forecast_range",
+        )
+        self.assertAlmostEqual(support["directional_hit_rate"], 0.64)
+        self.assertEqual(support["directional_samples"], 40)
+        self.assertAlmostEqual(support["directional_economic_hit_rate"], 0.55)
+        self.assertEqual(support["directional_economic_samples"], 40)
+
+    def test_thin_range_forecast_preserves_range_calibration_identity(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="RANGE", raw_confidence=0.68)
+        hit_rates = {
+            "directional_forecast_range": {
+                "_all_pairs:_all_regimes": {
+                    "hit_rate": 0.75,
+                    "samples": 29,
+                    "economic_hit_rate": 0.70,
+                    "economic_samples": 29,
+                },
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertEqual(
+            support["directional_calibration_name"],
+            "directional_forecast_range",
+        )
+        self.assertIsNone(support["directional_hit_rate"])
+        self.assertEqual(support["directional_samples"], 0)
+        self.assertIsNone(support["directional_economic_hit_rate"])
+        self.assertEqual(support["directional_economic_samples"], 0)
+
+    def test_missing_range_alias_does_not_fall_back_to_mixed_base_bucket(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="RANGE", raw_confidence=0.68)
+        hit_rates = {
+            "directional_forecast": {
+                "EUR_USD:RANGE": {
+                    "hit_rate": 0.99,
+                    "samples": 100,
+                    "economic_hit_rate": 0.99,
+                    "economic_samples": 100,
+                },
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertEqual(
+            support["directional_calibration_name"],
+            "directional_forecast_range",
+        )
+        self.assertIsNone(support["directional_hit_rate"])
+        self.assertEqual(support["directional_samples"], 0)
+        self.assertIsNone(support["directional_economic_hit_rate"])
+        self.assertEqual(support["directional_economic_samples"], 0)
 
     def test_forecast_directional_calibration_ignores_thin_global_bucket(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
@@ -9040,6 +9280,83 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(limit["intent"]["metadata"]["parent_lane_id"], parent)
             self.assertEqual(limit["intent"]["metadata"]["order_timing"], "PENDING_TRIGGER")
 
+    def test_range_forecast_rebinds_breakout_failure_limit_to_forecast_box(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="RANGE",
+                confidence=0.91,
+                raw_confidence=0.93,
+                current_price=1.17326,
+                target_price=1.17480,
+                invalidation_price=1.17200,
+                range_low_price=1.17200,
+                range_high_price=1.17480,
+                range_width_pips=28.0,
+                horizon_min=60,
+                rationale_summary="measured range box",
+                drivers_for=("M5 range compression",),
+                drivers_against=("rail may fail",),
+                component_scores={"UP": 0.1, "DOWN": 0.1, "RANGE": 0.8},
+                market_support={},
+                technical_context_v1=None,
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_breakout_failure_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"]
+                == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            )
+            intent = result["intent"]
+            metadata = intent["metadata"]
+
+            self.assertEqual(metadata["forecast_direction"], "RANGE")
+            self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+            self.assertEqual(
+                metadata["range_indicator_source"],
+                "forecast_range_box",
+            )
+            self.assertAlmostEqual(metadata["range_support"], 1.17200)
+            self.assertAlmostEqual(metadata["range_resistance"], 1.17480)
+            self.assertGreaterEqual(intent["entry"], 1.17200)
+            self.assertLess(abs(intent["entry"] - 1.17200), 0.0002)
+            self.assertLess(intent["sl"], metadata["range_support"])
+            self.assertGreater(intent["tp"], intent["entry"])
+            self.assertLess(intent["tp"], metadata["range_resistance"])
+            self.assertTrue(metadata["range_tp_is_inside_box"])
+            self.assertTrue(metadata["range_sl_outside_box"])
+            for lane_id in (
+                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET",
+            ):
+                alternate = next(
+                    item for item in payload["results"] if item["lane_id"] == lane_id
+                )
+                alternate_metadata = alternate["intent"]["metadata"]
+                self.assertEqual(
+                    alternate_metadata["geometry_model"],
+                    "ATR_SPREAD_STRUCTURE",
+                )
+                self.assertNotIn("range_support", alternate_metadata)
+                self.assertNotIn("range_resistance", alternate_metadata)
+
     def test_sizes_repair_receipt_to_use_loss_budget_without_breaking_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -9535,7 +9852,11 @@ class IntentGeneratorTest(unittest.TestCase):
             payload = json.loads(output.read_text())
             market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
 
-            self.assertEqual(market["status"], "LIVE_READY")
+            self.assertEqual(
+                market["status"],
+                "LIVE_READY",
+                json.dumps(market, sort_keys=True),
+            )
             self.assertEqual(market["intent"]["order_type"], "MARKET")
             self.assertEqual(market["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_MARKET")
             self.assertTrue(market["intent"]["metadata"]["range_tp_is_inside_box"])
@@ -12692,6 +13013,10 @@ class IntentGeneratorTest(unittest.TestCase):
                 {
                     "forecast_direction": "RANGE",
                     "forecast_confidence": 0.62,
+                    "forecast_target_price": 1.17480,
+                    "forecast_invalidation_price": 1.17200,
+                    "forecast_range_low_price": 1.17200,
+                    "forecast_range_high_price": 1.17480,
                 }
             )
             campaign.write_text(json.dumps(campaign_payload))
@@ -12723,6 +13048,15 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertGreaterEqual(summary.live_ready, 1)
             self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+            self.assertEqual(
+                metadata["range_indicator_source"],
+                "forecast_range_box",
+            )
+            self.assertAlmostEqual(metadata["range_support"], 1.17200)
+            self.assertAlmostEqual(metadata["range_resistance"], 1.17480)
+            self.assertTrue(metadata["range_tp_is_inside_box"])
+            self.assertTrue(metadata["range_sl_outside_box"])
             self.assertTrue(metadata["positive_rotation_live_ready"])
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             self.assertTrue(metadata["self_improvement_forecast_adverse_path_repair_live_ready"])

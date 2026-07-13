@@ -28,7 +28,8 @@ emphasis shifts.
 from __future__ import annotations
 
 import json
-import os
+import hashlib
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,6 +101,54 @@ METHOD_OVERLAY: dict[str, dict[str, float]] = {
     "EVENT_RISK": {"M1": 1.4, "M5": 1.3, "M15": 1.1, "M30": 1.0, "H1": 0.9, "H4": 0.8, "D": 0.7},
 }
 
+DYNAMIC_TF_POLICY_CONTRACT = "QR_DYNAMIC_TF_POLICY_INPUTS_V1"
+DYNAMIC_TF_POLICY_FIELDS = {
+    "contract",
+    "situation",
+    "requested_method",
+    "effective_weight_method",
+    "news_event_active",
+    "pair",
+    "atr_percentile_by_timeframe",
+    "strategy_edge_multiplier",
+}
+
+DYNAMIC_TF_POLICY_EVIDENCE_CONTRACT = "QR_DYNAMIC_TF_POLICY_RAW_EVIDENCE_V1"
+DYNAMIC_TF_POLICY_EVIDENCE_FIELDS = {
+    "contract",
+    "pair",
+    "requested_method",
+    "classifier_inputs",
+    "derived_situation",
+    "atr_percentile_by_timeframe",
+    "news_evidence",
+    "strategy_profile_evidence",
+    "evidence_sha256",
+}
+CLASSIFIER_TIMEFRAMES = ("H1", "H4", "M5", "M15")
+MAX_SOURCE_PATH_CHARS = 1024
+MAX_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_SESSION_CHARS = 64
+MAX_REGIME_CHARS = 64
+MAX_NEWS_CANDIDATES = 4
+MAX_NEWS_TITLE_CHARS = 120
+MAX_NEWS_REASON_CHARS = 320
+MAX_STRATEGY_CANDIDATES = 4
+# This evidence is embedded inside the 16 KiB forecast technical context,
+# alongside a ~10.9 KiB seven-frame/failure-proof body.  Its own ceiling must
+# therefore be materially smaller than the parent ceiling.
+MAX_DYNAMIC_TF_EVIDENCE_BYTES = 4600
+_SOURCE_STATUSES = {
+    "OK",
+    "MISSING",
+    "READ_ERROR",
+    "LIMIT_EXCEEDED",
+    "INVALID_JSON",
+    "INVALID_ROOT",
+    "NOT_APPLICABLE",
+}
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
 
 # Pair-specific overlay (Research Extension 1: pair character).
 # Captures pair-level realities the situation+method axes miss:
@@ -151,6 +200,7 @@ EDGE_EVIDENCE_LOW = 20        # below this = barely-tested
 EDGE_LIVE_NET_HIGH = 500.0    # JPY net edge to qualify as proven
 EDGE_MULT_HIGH = 1.15         # boost method overlay strength
 EDGE_MULT_LOW = 0.92          # weak / losing edge → dampen overlay
+ALLOWED_EDGE_MULTIPLIERS = {EDGE_MULT_LOW, 1.0, EDGE_MULT_HIGH}
 DEFAULT_STRATEGY_PROFILE_PATH = Path("data/strategy_profile.json")
 
 
@@ -173,6 +223,141 @@ def _extract_per_tf_state(chart_story: str) -> dict[str, dict[str, float | str]]
     return out
 
 
+def _normalized_optional_token(value: object, *, limit: int) -> str | None:
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def build_dynamic_tf_classifier_inputs(
+    *,
+    session: str | None,
+    chart_story: str,
+    dominant_regime: str | None,
+) -> dict[str, Any]:
+    """Canonicalize only the values that the situation classifier consumes."""
+
+    parsed = _extract_per_tf_state(chart_story)
+    timeframes: dict[str, dict[str, Any]] = {}
+    for timeframe in CLASSIFIER_TIMEFRAMES:
+        row = parsed.get(timeframe)
+        if row is None:
+            timeframes[timeframe] = {
+                "present": False,
+                "regime": "",
+                "adx": 0.0,
+            }
+            continue
+        regime = str(row.get("regime") or "")[:MAX_REGIME_CHARS]
+        adx = float(row.get("adx") or 0.0)
+        timeframes[timeframe] = {
+            "present": True,
+            "regime": regime,
+            "adx": adx,
+        }
+    return {
+        "session": _normalized_optional_token(session, limit=MAX_SESSION_CHARS),
+        "dominant_regime": _normalized_optional_token(
+            dominant_regime,
+            limit=MAX_REGIME_CHARS,
+        ),
+        "timeframes": timeframes,
+    }
+
+
+# Backward-local alias for the existing classifier entry points.  The public
+# name is also used by forecast_technical_context to freeze an independently
+# hashed parent copy of the exact classifier facts.
+_build_classifier_inputs = build_dynamic_tf_classifier_inputs
+
+
+def classify_situation_from_classifier_inputs(
+    classifier_inputs: dict[str, Any],
+) -> str:
+    """Pure situation classifier over the bounded raw classifier evidence."""
+
+    if set(classifier_inputs) != {"session", "dominant_regime", "timeframes"}:
+        raise ValueError("dynamic TF classifier schema invalid")
+    session = classifier_inputs.get("session")
+    if session is not None and (
+        not isinstance(session, str)
+        or not session
+        or session != session.strip().upper()
+        or len(session) > MAX_SESSION_CHARS
+    ):
+        raise ValueError("dynamic TF classifier session invalid")
+    dominant_regime = classifier_inputs.get("dominant_regime")
+    if dominant_regime is not None and (
+        not isinstance(dominant_regime, str)
+        or not dominant_regime
+        or dominant_regime != dominant_regime.strip().upper()
+        or len(dominant_regime) > MAX_REGIME_CHARS
+    ):
+        raise ValueError("dynamic TF dominant regime invalid")
+    timeframes = classifier_inputs.get("timeframes")
+    if not isinstance(timeframes, dict) or set(timeframes) != set(
+        CLASSIFIER_TIMEFRAMES
+    ):
+        raise ValueError("dynamic TF classifier timeframes invalid")
+    parsed: dict[str, dict[str, Any]] = {}
+    for timeframe in CLASSIFIER_TIMEFRAMES:
+        row = timeframes.get(timeframe)
+        if not isinstance(row, dict) or set(row) != {"present", "regime", "adx"}:
+            raise ValueError("dynamic TF classifier row invalid")
+        present = row.get("present")
+        regime = row.get("regime")
+        adx = row.get("adx")
+        if not isinstance(present, bool):
+            raise ValueError("dynamic TF classifier presence invalid")
+        if (
+            not isinstance(regime, str)
+            or len(regime) > MAX_REGIME_CHARS
+            or regime != regime.upper()
+        ):
+            raise ValueError("dynamic TF classifier regime invalid")
+        if isinstance(adx, bool) or not isinstance(adx, (int, float)):
+            raise ValueError("dynamic TF classifier ADX invalid")
+        adx_value = float(adx)
+        if not math.isfinite(adx_value) or adx_value < 0.0 or adx_value > 10_000.0:
+            raise ValueError("dynamic TF classifier ADX invalid")
+        if not present and (regime or adx_value != 0.0):
+            raise ValueError("dynamic TF missing classifier row invalid")
+        parsed[timeframe] = {"regime": regime, "adx": adx_value}
+
+    sess = session or ""
+    if "ROLLOVER" in sess or "OFF_HOURS" in sess:
+        return "ROLLOVER_SWING"
+
+    h1 = parsed["H1"]
+    h4 = parsed["H4"]
+    m5 = parsed["M5"]
+    m15 = parsed["M15"]
+    h1_strong = h1["adx"] >= 25.0 and "TREND" in h1["regime"]
+    h4_strong = h4["adx"] >= 25.0 and "TREND" in h4["regime"]
+    micro_strong = m5["adx"] >= 28.0 or m15["adx"] >= 28.0
+
+    if "NY" in sess or "NEW_YORK" in sess or "NEWYORK" in sess:
+        return "NY_TREND" if h1_strong and h4_strong else "NY_OVERLAP"
+    if "LONDON" in sess or "LDN" in sess or "EUROPE" in sess:
+        if micro_strong and not (h1_strong and h4_strong):
+            return "LONDON_IMPULSE"
+        if h1_strong or h4_strong:
+            return "LONDON_TREND"
+        return "LONDON_IMPULSE"
+    if "ASIA" in sess or "TOKYO" in sess or "JP" in sess:
+        return "ASIA_TREND" if h1_strong and h4_strong else "ASIA_RANGE"
+    if dominant_regime:
+        if "TREND" in dominant_regime:
+            return "NY_TREND"
+        if any(
+            token in dominant_regime
+            for token in ("RANGE", "TRANSITION", "UNCLEAR")
+        ):
+            return "TRANSITION"
+    return "TRANSITION"
+
+
 def classify_situation(
     *,
     session: str | None = None,
@@ -188,45 +373,13 @@ def classify_situation(
     4. ASIA session: TREND_STRONG → ASIA_TREND, else ASIA_RANGE
     5. Unknown / TRANSITION → TRANSITION
     """
-    sess = (session or "").upper()
-    if "ROLLOVER" in sess or "OFF_HOURS" in sess:
-        return "ROLLOVER_SWING"
-
-    per_tf = _extract_per_tf_state(chart_story)
-    h1 = per_tf.get("H1") or {}
-    h4 = per_tf.get("H4") or {}
-    m5 = per_tf.get("M5") or {}
-    m15 = per_tf.get("M15") or {}
-
-    h1_strong = float(h1.get("adx", 0.0)) >= 25.0 and "TREND" in str(h1.get("regime", ""))
-    h4_strong = float(h4.get("adx", 0.0)) >= 25.0 and "TREND" in str(h4.get("regime", ""))
-    micro_strong = float(m5.get("adx", 0.0)) >= 28.0 or float(m15.get("adx", 0.0)) >= 28.0
-
-    if "NY" in sess or "NEW_YORK" in sess or "NEWYORK" in sess:
-        if h1_strong and h4_strong:
-            return "NY_TREND"
-        return "NY_OVERLAP"
-
-    if "LONDON" in sess or "LDN" in sess or "EUROPE" in sess:
-        if micro_strong and not (h1_strong and h4_strong):
-            return "LONDON_IMPULSE"
-        if h1_strong or h4_strong:
-            return "LONDON_TREND"
-        return "LONDON_IMPULSE"  # default for london when no clear backbone
-
-    if "ASIA" in sess or "TOKYO" in sess or "JP" in sess:
-        if h1_strong and h4_strong:
-            return "ASIA_TREND"
-        return "ASIA_RANGE"
-
-    # Use dominant_regime as a fallback signal when session is unknown.
-    if dominant_regime:
-        dr = dominant_regime.upper()
-        if "TREND" in dr:
-            return "NY_TREND"  # generic trend bucket
-        if "RANGE" in dr or "TRANSITION" in dr or "UNCLEAR" in dr:
-            return "TRANSITION"
-    return "TRANSITION"
+    return classify_situation_from_classifier_inputs(
+        _build_classifier_inputs(
+            session=session,
+            chart_story=chart_story,
+            dominant_regime=dominant_regime,
+        )
+    )
 
 
 _ATR_PCT_PATTERN = re.compile(r"\b(D|H4|H1|M30|M15|M5|M1)\([^)]*atr_percentile=([\d.]+)", re.IGNORECASE)
@@ -248,12 +401,37 @@ def _atr_percentile_from_views(pair_chart: dict[str, Any] | None) -> dict[str, f
             continue
         rr = view.get("regime_reading")
         if not isinstance(rr, dict):
+            rr = {}
+        raw_ap = rr.get("atr_percentile")
+        if raw_ap is None:
+            indicators = view.get("indicators")
+            raw_fraction = (
+                indicators.get("atr_percentile_100")
+                if isinstance(indicators, dict)
+                else None
+            )
+            if isinstance(raw_fraction, bool):
+                continue
+            try:
+                fraction = float(raw_fraction)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+                continue
+            raw_ap = fraction * 100.0
+        if isinstance(raw_ap, bool):
             continue
         try:
-            ap = float(rr.get("atr_percentile"))
-        except (TypeError, ValueError):
+            ap = float(raw_ap)
+        except (TypeError, ValueError, OverflowError):
             continue
-        out[gran] = ap
+        if not math.isfinite(ap) or ap < 0.0 or ap > 100.0:
+            continue
+        # ``regime_reading.atr_percentile`` is already emitted on a 0..100
+        # scale by chart_reader.  Do not reinterpret a legitimate 0.5th/1st
+        # percentile as a 0..1 fraction; doing so turns the quietest regime
+        # into neutral/high volatility and selects the wrong TF profile.
+        out[gran] = round(ap, 4)
     return out
 
 
@@ -364,6 +542,834 @@ def _strategy_edge_multiplier(
     return 1.0, ""
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _sha256(value: object) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
+
+
+def dynamic_tf_policy_evidence_sha256(evidence: dict[str, Any]) -> str:
+    """Return the canonical digest over an evidence body without its hash."""
+
+    body = dict(evidence)
+    body.pop("evidence_sha256", None)
+    return _sha256(body)
+
+
+def _canonical_utc(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc_text(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return _canonical_utc(parsed)
+
+
+def _source_identity(path: Path, *, applicable: bool = True) -> tuple[dict[str, Any], object | None]:
+    path_text = path.expanduser().resolve(strict=False).as_posix()
+    if not path_text or len(path_text) > MAX_SOURCE_PATH_CHARS:
+        raise ValueError("dynamic TF source path invalid")
+    if not applicable:
+        return {
+            "path": path_text,
+            "status": "NOT_APPLICABLE",
+            "sha256": None,
+            "byte_length": None,
+        }, None
+    try:
+        byte_length = path.stat().st_size
+    except FileNotFoundError:
+        return {
+            "path": path_text,
+            "status": "MISSING",
+            "sha256": None,
+            "byte_length": None,
+        }, None
+    except OSError:
+        return {
+            "path": path_text,
+            "status": "READ_ERROR",
+            "sha256": None,
+            "byte_length": None,
+        }, None
+    if byte_length < 0 or byte_length > MAX_SOURCE_BYTES:
+        return {
+            "path": path_text,
+            "status": "LIMIT_EXCEEDED",
+            "sha256": None,
+            "byte_length": max(0, int(byte_length)),
+        }, None
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return {
+            "path": path_text,
+            "status": "READ_ERROR",
+            "sha256": None,
+            "byte_length": int(byte_length),
+        }, None
+    digest = hashlib.sha256(raw).hexdigest()
+    identity = {
+        "path": path_text,
+        "status": "OK",
+        "sha256": digest,
+        "byte_length": len(raw),
+    }
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        identity["status"] = "INVALID_JSON"
+        return identity, None
+    if not isinstance(payload, dict):
+        identity["status"] = "INVALID_ROOT"
+        return identity, None
+    return identity, payload
+
+
+def _validate_source_identity(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "path",
+        "status",
+        "sha256",
+        "byte_length",
+    }:
+        return False
+    path = value.get("path")
+    status = value.get("status")
+    digest = value.get("sha256")
+    byte_length = value.get("byte_length")
+    if (
+        not isinstance(path, str)
+        or not path
+        or len(path) > MAX_SOURCE_PATH_CHARS
+        or status not in _SOURCE_STATUSES
+    ):
+        return False
+    if byte_length is not None and (
+        isinstance(byte_length, bool)
+        or not isinstance(byte_length, int)
+        or byte_length < 0
+    ):
+        return False
+    if status in {"OK", "INVALID_JSON", "INVALID_ROOT"}:
+        return (
+            isinstance(digest, str)
+            and _SHA256_PATTERN.fullmatch(digest) is not None
+            and isinstance(byte_length, int)
+            and 0 <= byte_length <= MAX_SOURCE_BYTES
+        )
+    if status == "LIMIT_EXCEEDED":
+        return (
+            (byte_length is None or isinstance(byte_length, int))
+            and (
+                digest is None
+                or (
+                    isinstance(digest, str)
+                    and _SHA256_PATTERN.fullmatch(digest) is not None
+                )
+            )
+        )
+    return digest is None and byte_length is None
+
+
+def _bounded_news_title(value: object) -> str:
+    text = str(value or "event")
+    text = " ".join(text.split()) or "event"
+    return text[:MAX_NEWS_TITLE_CHARS]
+
+
+def _build_news_evidence(
+    *,
+    pair: str,
+    calendar_path: Path,
+    evaluated_at_utc: datetime,
+) -> dict[str, Any]:
+    source, payload = _source_identity(calendar_path)
+    evaluation_time = (
+        evaluated_at_utc.replace(tzinfo=timezone.utc)
+        if evaluated_at_utc.tzinfo is None
+        else evaluated_at_utc.astimezone(timezone.utc)
+    )
+    events: object = []
+    issues: object = []
+    if isinstance(payload, dict):
+        events = payload.get("events") or payload.get("calendar") or []
+        issues = payload.get("issues") or []
+        if not isinstance(events, list):
+            source["status"] = "INVALID_ROOT"
+            events = []
+    event_count = len(events) if isinstance(events, list) else 0
+    missing_feed_issue = bool(
+        event_count == 0
+        and isinstance(issues, list)
+        and any("MISSING_FOREX_FACTORY_FEED" in str(issue) for issue in issues)
+    )
+    pair_currencies: set[str] = set()
+    if "_" in pair:
+        base, quote = pair.split("_", 1)
+        pair_currencies = {base.upper(), quote.upper()}
+    candidates: list[dict[str, Any]] = []
+    for row in events if isinstance(events, list) else []:
+        if not isinstance(row, dict):
+            continue
+        impact = str(row.get("impact") or row.get("importance") or "").upper()
+        if impact not in HIGH_IMPACT_TOKENS:
+            continue
+        currency = str(
+            row.get("currency") or row.get("country") or ""
+        ).upper()[:16]
+        if pair_currencies and currency and currency not in pair_currencies:
+            continue
+        timestamp = _parse_utc_text(
+            row.get("timestamp_utc")
+            or row.get("time_utc")
+            or row.get("time")
+            or row.get("timestamp")
+            or row.get("date")
+        )
+        if timestamp is None:
+            continue
+        event_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        delta = (event_time - evaluation_time).total_seconds()
+        if not (
+            -(NEWS_WINDOW_MINUTES_AFTER * 60)
+            <= delta
+            <= NEWS_WINDOW_MINUTES_BEFORE * 60
+        ):
+            continue
+        candidates.append(
+            {
+                "impact": impact,
+                "currency": currency,
+                "timestamp_utc": timestamp,
+                "title": _bounded_news_title(
+                    row.get("title") or row.get("event") or "event"
+                ),
+            }
+        )
+        if len(candidates) > MAX_NEWS_CANDIDATES:
+            candidates = []
+            source["status"] = "LIMIT_EXCEEDED"
+            break
+    news: dict[str, Any] = {
+        "source": source,
+        "evaluated_at_utc": _canonical_utc(evaluation_time),
+        "event_count": event_count,
+        "missing_feed_issue": missing_feed_issue,
+        "candidates": candidates,
+        "active": False,
+        "reason": "",
+    }
+    news["active"], news["reason"] = _news_active_from_evidence(pair, news)
+    return news
+
+
+def _news_active_from_evidence(
+    pair: str,
+    news_evidence: dict[str, Any],
+) -> tuple[bool, str]:
+    source = news_evidence.get("source") or {}
+    if source.get("status") == "LIMIT_EXCEEDED":
+        return True, "calendar_unavailable"
+    if source.get("status") != "OK":
+        return False, ""
+    if news_evidence.get("event_count") == 0 and news_evidence.get(
+        "missing_feed_issue"
+    ):
+        return True, "calendar_unavailable"
+    evaluated_text = news_evidence.get("evaluated_at_utc")
+    try:
+        evaluated_at = datetime.fromisoformat(
+            str(evaluated_text).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("dynamic TF news evaluation time invalid")
+    pair_currencies: set[str] = set()
+    if "_" in pair:
+        base, quote = pair.split("_", 1)
+        pair_currencies = {base.upper(), quote.upper()}
+    for candidate in news_evidence.get("candidates") or []:
+        currency = candidate.get("currency") or ""
+        if pair_currencies and currency and currency not in pair_currencies:
+            continue
+        timestamp = candidate.get("timestamp_utc")
+        if timestamp is None:
+            continue
+        try:
+            event_time = datetime.fromisoformat(
+                str(timestamp).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError, OverflowError):
+            continue
+        delta = (event_time - evaluated_at).total_seconds()
+        if (
+            -(NEWS_WINDOW_MINUTES_AFTER * 60)
+            <= delta
+            <= NEWS_WINDOW_MINUTES_BEFORE * 60
+        ):
+            reason = f"{currency}:{candidate.get('title') or 'event'} {int(delta / 60)}m"
+            return True, reason[:MAX_NEWS_REASON_CHARS]
+    return False, ""
+
+
+def _build_strategy_profile_evidence(
+    *,
+    pair: str,
+    pair_was_supplied: bool,
+    requested_method: str | None,
+    strategy_profile_path: Path,
+) -> dict[str, Any]:
+    source, payload = _source_identity(
+        strategy_profile_path,
+        applicable=pair_was_supplied and requested_method is not None,
+    )
+    candidates: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        profiles = payload.get("profiles") or []
+        if not isinstance(profiles, list):
+            source["status"] = "INVALID_ROOT"
+            profiles = []
+        for index, entry in enumerate(profiles):
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("pair") or "").strip().upper() != pair:
+                continue
+            if (
+                str(entry.get("method") or "").strip().upper()
+                != requested_method
+            ):
+                continue
+            raw_count = entry.get("positive_evidence_n") or 0
+            raw_live_net = entry.get("live_net_jpy") or 0.0
+            if isinstance(raw_count, bool) or isinstance(raw_live_net, bool):
+                continue
+            try:
+                count = int(raw_count)
+                live_net = float(raw_live_net)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if count < 0 or not math.isfinite(live_net):
+                continue
+            candidate = {
+                "source_index": index,
+                "pair": pair,
+                "method": requested_method,
+                "positive_evidence_n": count,
+                "live_net_jpy": live_net,
+            }
+            candidates.append(candidate)
+            if len(candidates) > MAX_STRATEGY_CANDIDATES:
+                candidates = []
+                source["status"] = "LIMIT_EXCEEDED"
+                break
+    selected = _select_strategy_candidate(candidates)
+    evidence: dict[str, Any] = {
+        "source": source,
+        "candidates": candidates,
+        "selected": selected,
+        "multiplier": 1.0,
+        "label": "",
+    }
+    evidence["multiplier"], evidence["label"] = (
+        _strategy_multiplier_from_evidence(pair, requested_method, evidence)
+    )
+    return evidence
+
+
+def _select_strategy_candidate(
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Purely select the first highest-evidence exact-scope profile row."""
+
+    selected: dict[str, Any] | None = None
+    for candidate in candidates:
+        if (
+            selected is None
+            or int(candidate["positive_evidence_n"])
+            > int(selected["positive_evidence_n"])
+        ):
+            selected = candidate
+    return dict(selected) if selected is not None else None
+
+
+def _strategy_multiplier_from_evidence(
+    pair: str,
+    requested_method: str | None,
+    strategy_evidence: dict[str, Any],
+) -> tuple[float, str]:
+    selected = strategy_evidence.get("selected")
+    if not isinstance(selected, dict):
+        return 1.0, ""
+    if selected.get("pair") != pair or selected.get("method") != requested_method:
+        raise ValueError("dynamic TF strategy selection binding invalid")
+    count = int(selected.get("positive_evidence_n"))
+    live_net = float(selected.get("live_net_jpy"))
+    if count >= EDGE_EVIDENCE_HIGH and live_net >= EDGE_LIVE_NET_HIGH:
+        return (
+            EDGE_MULT_HIGH,
+            f"edge:{pair}:{requested_method}:n={count}/live={live_net:.0f}",
+        )
+    if count <= EDGE_EVIDENCE_LOW or live_net < 0.0:
+        return (
+            EDGE_MULT_LOW,
+            f"weak_edge:{pair}:{requested_method}:n={count}/live={live_net:.0f}",
+        )
+    return 1.0, ""
+
+
+def _compact_oversized_dynamic_tf_evidence(evidence: dict[str, Any]) -> None:
+    """Fail closed when valid UTF-8 evidence exceeds the GPT packet budget."""
+
+    news = evidence["news_evidence"]
+    news["source"]["status"] = "LIMIT_EXCEEDED"
+    news["candidates"] = []
+    news["active"], news["reason"] = _news_active_from_evidence(
+        str(evidence["pair"]),
+        news,
+    )
+
+    strategy = evidence["strategy_profile_evidence"]
+    strategy["source"]["status"] = "LIMIT_EXCEEDED"
+    strategy["candidates"] = []
+    strategy["selected"] = None
+    strategy["multiplier"] = 1.0
+    strategy["label"] = ""
+
+
+def build_dynamic_tf_policy_evidence(
+    *,
+    session: str | None = None,
+    chart_story: str = "",
+    dominant_regime: str | None = None,
+    method: str | None = None,
+    pair: str | None = None,
+    pair_chart: dict[str, Any] | None = None,
+    calendar_path: Path | None = None,
+    strategy_profile_path: Path | None = None,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Build bounded point-in-time evidence for the dynamic-TF policy."""
+
+    requested_method = (method or "").strip().upper() or None
+    if requested_method not in METHOD_OVERLAY:
+        requested_method = None
+    pair_input = str(pair or "").strip()
+    pair_key = pair_input.upper() or "UNKNOWN"
+    if len(pair_key) > 16:
+        raise ValueError("dynamic TF pair invalid")
+    classifier_inputs = _build_classifier_inputs(
+        session=session,
+        chart_story=chart_story,
+        dominant_regime=dominant_regime,
+    )
+    atr_values = _atr_percentile_from_views(pair_chart)
+    evaluated_at = now_utc or datetime.now(timezone.utc)
+    evidence: dict[str, Any] = {
+        "contract": DYNAMIC_TF_POLICY_EVIDENCE_CONTRACT,
+        "pair": pair_key,
+        "requested_method": requested_method,
+        "classifier_inputs": classifier_inputs,
+        "derived_situation": classify_situation_from_classifier_inputs(
+            classifier_inputs
+        ),
+        "atr_percentile_by_timeframe": {
+            timeframe: atr_values.get(timeframe)
+            for timeframe in BASELINE_WEIGHTS
+        },
+        "news_evidence": _build_news_evidence(
+            pair=pair_key,
+            calendar_path=calendar_path or DEFAULT_CALENDAR_PATH,
+            evaluated_at_utc=evaluated_at,
+        ),
+        "strategy_profile_evidence": _build_strategy_profile_evidence(
+            pair=pair_key,
+            pair_was_supplied=bool(pair_input),
+            requested_method=requested_method,
+            strategy_profile_path=(
+                strategy_profile_path or DEFAULT_STRATEGY_PROFILE_PATH
+            ),
+        ),
+    }
+    evidence["evidence_sha256"] = dynamic_tf_policy_evidence_sha256(evidence)
+    if len(_canonical_json_bytes(evidence)) > MAX_DYNAMIC_TF_EVIDENCE_BYTES:
+        _compact_oversized_dynamic_tf_evidence(evidence)
+        evidence["evidence_sha256"] = dynamic_tf_policy_evidence_sha256(
+            evidence
+        )
+    if len(_canonical_json_bytes(evidence)) > MAX_DYNAMIC_TF_EVIDENCE_BYTES:
+        raise ValueError("DYNAMIC_TF_EVIDENCE_LIMIT_EXCEEDED")
+    valid, error = verify_dynamic_tf_policy_evidence(evidence)
+    if not valid:
+        raise ValueError(error or "dynamic TF evidence invalid")
+    return evidence
+
+
+def verify_dynamic_tf_policy_evidence(
+    value: object,
+) -> tuple[bool, str | None]:
+    """Verify evidence shape, bounds, digest, and all stored derivations."""
+
+    try:
+        if not isinstance(value, dict) or set(value) != DYNAMIC_TF_POLICY_EVIDENCE_FIELDS:
+            return False, "DYNAMIC_TF_EVIDENCE_SCHEMA_INVALID"
+        evidence = dict(value)
+        if evidence.get("contract") != DYNAMIC_TF_POLICY_EVIDENCE_CONTRACT:
+            return False, "DYNAMIC_TF_EVIDENCE_CONTRACT_INVALID"
+        if len(_canonical_json_bytes(evidence)) > MAX_DYNAMIC_TF_EVIDENCE_BYTES:
+            return False, "DYNAMIC_TF_EVIDENCE_LIMIT_EXCEEDED"
+        pair = evidence.get("pair")
+        if (
+            not isinstance(pair, str)
+            or not pair
+            or pair != pair.strip().upper()
+            or len(pair) > 16
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_PAIR_INVALID"
+        requested_method = evidence.get("requested_method")
+        if requested_method is not None and requested_method not in METHOD_OVERLAY:
+            return False, "DYNAMIC_TF_EVIDENCE_METHOD_INVALID"
+        classifier_inputs = evidence.get("classifier_inputs")
+        if not isinstance(classifier_inputs, dict):
+            return False, "DYNAMIC_TF_EVIDENCE_CLASSIFIER_INVALID"
+        expected_situation = classify_situation_from_classifier_inputs(
+            classifier_inputs
+        )
+        if evidence.get("derived_situation") != expected_situation:
+            return False, "DYNAMIC_TF_EVIDENCE_SITUATION_MISMATCH"
+
+        atr_values = evidence.get("atr_percentile_by_timeframe")
+        if not isinstance(atr_values, dict) or set(atr_values) != set(
+            BASELINE_WEIGHTS
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_ATR_INVALID"
+        for timeframe in BASELINE_WEIGHTS:
+            atr = atr_values.get(timeframe)
+            if atr is None:
+                continue
+            if isinstance(atr, bool) or not isinstance(atr, (int, float)):
+                return False, "DYNAMIC_TF_EVIDENCE_ATR_INVALID"
+            parsed_atr = float(atr)
+            if (
+                not math.isfinite(parsed_atr)
+                or parsed_atr < 0.0
+                or parsed_atr > 100.0
+            ):
+                return False, "DYNAMIC_TF_EVIDENCE_ATR_INVALID"
+
+        news = evidence.get("news_evidence")
+        if not isinstance(news, dict) or set(news) != {
+            "source",
+            "evaluated_at_utc",
+            "event_count",
+            "missing_feed_issue",
+            "candidates",
+            "active",
+            "reason",
+        }:
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_INVALID"
+        if not _validate_source_identity(news.get("source")):
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_SOURCE_INVALID"
+        evaluated_at = news.get("evaluated_at_utc")
+        if _parse_utc_text(evaluated_at) != evaluated_at:
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_TIME_INVALID"
+        event_count = news.get("event_count")
+        if (
+            isinstance(event_count, bool)
+            or not isinstance(event_count, int)
+            or event_count < 0
+            or event_count > 1_000_000
+            or not isinstance(news.get("missing_feed_issue"), bool)
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_INVALID"
+        candidates = news.get("candidates")
+        if not isinstance(candidates, list) or len(candidates) > MAX_NEWS_CANDIDATES:
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_INVALID"
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or set(candidate) != {
+                "impact",
+                "currency",
+                "timestamp_utc",
+                "title",
+            }:
+                return False, "DYNAMIC_TF_EVIDENCE_NEWS_CANDIDATE_INVALID"
+            impact = candidate.get("impact")
+            currency = candidate.get("currency")
+            timestamp = candidate.get("timestamp_utc")
+            title = candidate.get("title")
+            if (
+                impact not in HIGH_IMPACT_TOKENS
+                or not isinstance(currency, str)
+                or currency != currency.upper()
+                or len(currency) > 16
+                or not isinstance(title, str)
+                or not title
+                or title != " ".join(title.split())
+                or len(title) > MAX_NEWS_TITLE_CHARS
+                or (timestamp is not None and _parse_utc_text(timestamp) != timestamp)
+            ):
+                return False, "DYNAMIC_TF_EVIDENCE_NEWS_CANDIDATE_INVALID"
+        if not isinstance(news.get("active"), bool):
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_INVALID"
+        reason = news.get("reason")
+        if not isinstance(reason, str) or len(reason) > MAX_NEWS_REASON_CHARS:
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_INVALID"
+        expected_news = _news_active_from_evidence(pair, news)
+        if (news.get("active"), reason) != expected_news:
+            return False, "DYNAMIC_TF_EVIDENCE_NEWS_MISMATCH"
+
+        strategy = evidence.get("strategy_profile_evidence")
+        if not isinstance(strategy, dict) or set(strategy) != {
+            "source",
+            "candidates",
+            "selected",
+            "multiplier",
+            "label",
+        }:
+            return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_INVALID"
+        if not _validate_source_identity(strategy.get("source")):
+            return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SOURCE_INVALID"
+        strategy_candidates = strategy.get("candidates")
+        if (
+            not isinstance(strategy_candidates, list)
+            or len(strategy_candidates) > MAX_STRATEGY_CANDIDATES
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_INVALID"
+        seen_source_indexes: set[int] = set()
+        for candidate in strategy_candidates:
+            if not isinstance(candidate, dict) or set(candidate) != {
+                "source_index",
+                "pair",
+                "method",
+                "positive_evidence_n",
+                "live_net_jpy",
+            }:
+                return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_INVALID"
+            source_index = candidate.get("source_index")
+            count = candidate.get("positive_evidence_n")
+            live_net = candidate.get("live_net_jpy")
+            if (
+                isinstance(source_index, bool)
+                or not isinstance(source_index, int)
+                or source_index < 0
+                or source_index in seen_source_indexes
+                or candidate.get("pair") != pair
+                or candidate.get("method") != requested_method
+                or isinstance(count, bool)
+                or not isinstance(count, int)
+                or count < 0
+                or isinstance(live_net, bool)
+                or not isinstance(live_net, (int, float))
+                or not math.isfinite(float(live_net))
+            ):
+                return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_INVALID"
+            seen_source_indexes.add(source_index)
+        selected = strategy.get("selected")
+        if selected is not None:
+            if not isinstance(selected, dict) or set(selected) != {
+                "source_index",
+                "pair",
+                "method",
+                "positive_evidence_n",
+                "live_net_jpy",
+            }:
+                return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_INVALID"
+            source_index = selected.get("source_index")
+            count = selected.get("positive_evidence_n")
+            live_net = selected.get("live_net_jpy")
+            if (
+                isinstance(source_index, bool)
+                or not isinstance(source_index, int)
+                or source_index < 0
+                or selected.get("pair") != pair
+                or selected.get("method") != requested_method
+                or isinstance(count, bool)
+                or not isinstance(count, int)
+                or count < 0
+                or isinstance(live_net, bool)
+                or not isinstance(live_net, (int, float))
+                or not math.isfinite(float(live_net))
+            ):
+                return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_INVALID"
+        if selected != _select_strategy_candidate(strategy_candidates):
+            return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_SELECTION_MISMATCH"
+        expected_multiplier, expected_label = _strategy_multiplier_from_evidence(
+            pair,
+            requested_method,
+            strategy,
+        )
+        multiplier = strategy.get("multiplier")
+        if (
+            isinstance(multiplier, bool)
+            or not isinstance(multiplier, (int, float))
+            or float(multiplier) != expected_multiplier
+            or strategy.get("label") != expected_label
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_STRATEGY_MISMATCH"
+        digest = evidence.get("evidence_sha256")
+        if (
+            not isinstance(digest, str)
+            or _SHA256_PATTERN.fullmatch(digest) is None
+            or digest != dynamic_tf_policy_evidence_sha256(evidence)
+        ):
+            return False, "DYNAMIC_TF_EVIDENCE_SHA_MISMATCH"
+    except (TypeError, ValueError, OverflowError, UnicodeError):
+        return False, "DYNAMIC_TF_EVIDENCE_INVALID"
+    return True, None
+
+
+def derive_dynamic_tf_policy_from_evidence(
+    evidence: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, float], str]:
+    """Purely derive policy inputs, normalized weights, and audit label."""
+
+    valid, error = verify_dynamic_tf_policy_evidence(evidence)
+    if not valid:
+        raise ValueError(error or "dynamic TF evidence invalid")
+    pair = str(evidence["pair"])
+    requested_method = evidence.get("requested_method")
+    news = evidence["news_evidence"]
+    strategy = evidence["strategy_profile_evidence"]
+    news_active = news.get("active") is True
+    situation = "NY_OVERLAP" if news_active else evidence["derived_situation"]
+    effective_method = "EVENT_RISK" if news_active else requested_method
+    policy_inputs = {
+        "contract": DYNAMIC_TF_POLICY_CONTRACT,
+        "situation": situation,
+        "requested_method": requested_method,
+        "effective_weight_method": effective_method,
+        "news_event_active": news_active,
+        "pair": pair,
+        "atr_percentile_by_timeframe": dict(
+            evidence["atr_percentile_by_timeframe"]
+        ),
+        "strategy_edge_multiplier": float(strategy["multiplier"]),
+    }
+    weights = dynamic_tf_weights_from_policy_inputs(policy_inputs)
+    parts = [situation]
+    if pair in PAIR_OVERLAY:
+        parts.append(f"pair:{pair}")
+    if news_active:
+        parts.append(f"news:{news['reason']}")
+    hot = [
+        timeframe
+        for timeframe in BASELINE_WEIGHTS
+        if evidence["atr_percentile_by_timeframe"].get(timeframe) is not None
+        and float(evidence["atr_percentile_by_timeframe"][timeframe])
+        >= ATR_PERCENTILE_HIGH
+    ]
+    if hot:
+        parts.append(f"atr_hot:{'/'.join(hot)}")
+    if strategy["label"]:
+        parts.append(str(strategy["label"]))
+    return policy_inputs, weights, " | ".join(parts)
+
+
+def dynamic_tf_weights_from_policy_inputs(
+    policy_inputs: dict[str, Any],
+) -> dict[str, float]:
+    """Purely recompute weights from a bounded, receipt-safe input set.
+
+    File reads, wall-clock news lookup, and situation classification happen
+    before this boundary.  Both the live builder and receipt verifier use this
+    same arithmetic so changing weights and merely re-hashing the artifact
+    cannot forge a valid dynamic-TF policy result.
+    """
+
+    if set(policy_inputs) != DYNAMIC_TF_POLICY_FIELDS:
+        raise ValueError("dynamic TF policy schema invalid")
+    if policy_inputs.get("contract") != DYNAMIC_TF_POLICY_CONTRACT:
+        raise ValueError("dynamic TF policy contract invalid")
+    situation = policy_inputs.get("situation")
+    if situation not in SITUATION_WEIGHTS:
+        raise ValueError("dynamic TF situation invalid")
+    requested_method = policy_inputs.get("requested_method")
+    if requested_method is not None and requested_method not in METHOD_OVERLAY:
+        raise ValueError("dynamic TF requested method invalid")
+    effective_method = policy_inputs.get("effective_weight_method")
+    if effective_method is not None and effective_method not in METHOD_OVERLAY:
+        raise ValueError("dynamic TF effective method invalid")
+    news_active = policy_inputs.get("news_event_active")
+    if not isinstance(news_active, bool):
+        raise ValueError("dynamic TF news flag invalid")
+    if news_active:
+        if situation != "NY_OVERLAP" or effective_method != "EVENT_RISK":
+            raise ValueError("dynamic TF news override invalid")
+    elif effective_method != requested_method:
+        raise ValueError("dynamic TF method binding invalid")
+    pair = policy_inputs.get("pair")
+    if (
+        not isinstance(pair, str)
+        or not pair
+        or pair != pair.strip().upper()
+        or len(pair) > 16
+    ):
+        raise ValueError("dynamic TF pair invalid")
+    edge_multiplier = policy_inputs.get("strategy_edge_multiplier")
+    if isinstance(edge_multiplier, bool) or not isinstance(
+        edge_multiplier, (int, float)
+    ):
+        raise ValueError("dynamic TF edge multiplier invalid")
+    edge_multiplier = float(edge_multiplier)
+    if edge_multiplier not in ALLOWED_EDGE_MULTIPLIERS:
+        raise ValueError("dynamic TF edge multiplier invalid")
+    atr_values = policy_inputs.get("atr_percentile_by_timeframe")
+    if not isinstance(atr_values, dict) or set(atr_values) != set(BASELINE_WEIGHTS):
+        raise ValueError("dynamic TF ATR inputs invalid")
+    parsed_atr: dict[str, float | None] = {}
+    for timeframe in BASELINE_WEIGHTS:
+        value = atr_values.get(timeframe)
+        if value is None:
+            parsed_atr[timeframe] = None
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("dynamic TF ATR input invalid")
+        parsed = float(value)
+        if not math.isfinite(parsed) or parsed < 0.0 or parsed > 100.0:
+            raise ValueError("dynamic TF ATR input invalid")
+        parsed_atr[timeframe] = parsed
+
+    base = SITUATION_WEIGHTS[situation].copy()
+    overlay = METHOD_OVERLAY.get(effective_method, {}) if effective_method else {}
+    for timeframe in base:
+        overlay_multiplier = overlay.get(timeframe, 1.0)
+        adjusted = 1.0 + (overlay_multiplier - 1.0) * edge_multiplier
+        base[timeframe] *= adjusted
+
+    pair_overlay = PAIR_OVERLAY.get(pair, {})
+    for timeframe in base:
+        base[timeframe] *= pair_overlay.get(timeframe, 1.0)
+
+    for timeframe, atr_percentile in parsed_atr.items():
+        if atr_percentile is None:
+            continue
+        if atr_percentile >= ATR_PERCENTILE_HIGH:
+            base[timeframe] *= ATR_HIGH_BOOST
+        elif atr_percentile <= ATR_PERCENTILE_LOW:
+            base[timeframe] *= ATR_LOW_DAMP
+
+    total = sum(base.values())
+    if not math.isfinite(total) or total <= 0.0:
+        raise ValueError("dynamic TF total invalid")
+    return {timeframe: value / total for timeframe, value in base.items()}
+
+
 def dynamic_tf_weights(
     *,
     session: str | None = None,
@@ -375,10 +1381,19 @@ def dynamic_tf_weights(
     calendar_path: Path | None = None,
     strategy_profile_path: Path | None = None,
     now_utc: datetime | None = None,
-) -> tuple[dict[str, float], str]:
+    include_trace: bool = False,
+    include_evidence: bool = False,
+) -> (
+    tuple[dict[str, float], str]
+    | tuple[dict[str, float], str, dict[str, Any]]
+    | tuple[dict[str, float], str, dict[str, Any], dict[str, Any]]
+):
     """Pick a per-TF weight dict for the current situation × method.
 
-    Returns (weights, situation_label). weights sums to 1.0. Combines
+    Returns ``(weights, situation_label)``. With ``include_trace=True``, also
+    returns the derived policy inputs. With both ``include_trace`` and
+    ``include_evidence``, the fourth value is the verified raw evidence.
+    weights sums to 1.0. Combines
     in order:
       1. Situation profile (session × dominant_regime × ADX)
       2. Method overlay (RANGE/BREAKOUT/TREND/EVENT)
@@ -386,70 +1401,24 @@ def dynamic_tf_weights(
       4. ATR percentile boost (high-vol TF → +20%, low-vol → -15%)
       5. News calendar override (force EVENT_RISK overlay near events)
     """
-    # Step 0: news calendar may override the situation entirely.
-    news_active, news_reason = _high_impact_news_active(
-        pair=pair, calendar_path=calendar_path, now_utc=now_utc
+    evidence = build_dynamic_tf_policy_evidence(
+        session=session,
+        chart_story=chart_story,
+        dominant_regime=dominant_regime,
+        method=method,
+        pair=pair,
+        pair_chart=pair_chart,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        now_utc=now_utc,
     )
-    if news_active:
-        situation = "NY_OVERLAP"  # storm bias for event window
-        method_for_overlay = "EVENT_RISK"
-    else:
-        situation = classify_situation(
-            session=session,
-            chart_story=chart_story,
-            dominant_regime=dominant_regime,
-        )
-        method_for_overlay = (method or "").upper()
-
-    base = SITUATION_WEIGHTS.get(situation, BASELINE_WEIGHTS).copy()
-
-    # Step 1+2: method overlay (with strategy-mining edge multiplier
-    # applied to the overlay strength — well-mined + winning methods
-    # have their TF preferences pushed harder)
-    overlay = METHOD_OVERLAY.get(method_for_overlay, {}) if method_for_overlay else {}
-    edge_mult, edge_label = _strategy_edge_multiplier(pair, method, strategy_profile_path)
-    if overlay:
-        for tf in base:
-            ov = overlay.get(tf, 1.0)
-            # Distance from 1.0 is the overlay's "strength"; multiply that
-            # distance by edge_mult so a proven method overlays harder
-            # while a weak method overlays softer.
-            adjusted = 1.0 + (ov - 1.0) * edge_mult
-            base[tf] = base[tf] * adjusted
-
-    # Step 3: pair-specific overlay
-    pair_key = (pair or "").upper()
-    pair_ov = PAIR_OVERLAY.get(pair_key, {})
-    if pair_ov:
-        for tf in base:
-            base[tf] = base[tf] * pair_ov.get(tf, 1.0)
-
-    # Step 4: ATR percentile boost (use actual measured vol per TF)
-    atr_pcts = _atr_percentile_from_views(pair_chart)
-    for tf, ap in atr_pcts.items():
-        if tf not in base:
-            continue
-        if ap >= ATR_PERCENTILE_HIGH:
-            base[tf] = base[tf] * ATR_HIGH_BOOST
-        elif ap <= ATR_PERCENTILE_LOW:
-            base[tf] = base[tf] * ATR_LOW_DAMP
-
-    # Renormalize to 1.0
-    total = sum(base.values())
-    if total > 0:
-        for tf in base:
-            base[tf] = base[tf] / total
-
-    # Build descriptive label including all active overlays
-    parts = [situation]
-    if pair_ov:
-        parts.append(f"pair:{pair_key}")
-    if news_active:
-        parts.append(f"news:{news_reason}")
-    high_atr_tfs = [tf for tf, ap in atr_pcts.items() if ap >= ATR_PERCENTILE_HIGH]
-    if high_atr_tfs:
-        parts.append(f"atr_hot:{'/'.join(high_atr_tfs)}")
-    if edge_label:
-        parts.append(edge_label)
-    label = " | ".join(parts)
-    return base, label
+    policy_inputs, weights, label = derive_dynamic_tf_policy_from_evidence(
+        evidence
+    )
+    if include_trace and include_evidence:
+        return weights, label, policy_inputs, evidence
+    if include_trace:
+        return weights, label, policy_inputs
+    if include_evidence:
+        return weights, label, evidence
+    return weights, label

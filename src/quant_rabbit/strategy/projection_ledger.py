@@ -57,7 +57,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, IO, Iterable, List, Optional
 
-from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.strategy.forecast_technical_context import verify_forecast_technical_context
 
 
@@ -79,6 +79,11 @@ CONFIDENCE_DAMPING = float(os.environ.get("QR_PROJECTION_CONFIDENCE_DAMPING", "0
 CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_MULT", "1.5"))
 # Multiplier when a detector has 0% hit-rate
 CONFIDENCE_MIN_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_MULT", "0.2"))
+DIRECTIONAL_FORECAST_TIMEOUT_HAIRCUT_MAX = 0.65
+DIRECTIONAL_FORECAST_MIN_STORED_CALIBRATION_MULTIPLIER = (
+    CONFIDENCE_MIN_MULTIPLIER * (1.0 - DIRECTIONAL_FORECAST_TIMEOUT_HAIRCUT_MAX)
+)
+DIRECTIONAL_FORECAST_CALIBRATION_TRIPLET_ABS_TOL = 1e-6
 _PROJECTION_KEY_CACHE: dict[
     tuple[str, str],
     tuple[tuple[int, int, int, int, int], set[tuple]],
@@ -119,6 +124,13 @@ DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN = float(
 )
 if DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN < 0:
     raise ValueError("QR_FORECAST_ENTRY_CONFIDENCE_MIN must be non-negative")
+# New-schema calibration is intentionally a short-horizon contract. One day is
+# far beyond current scalp/range windows while bounding timedelta arithmetic and
+# preventing corrupt rows from owning a pair clock indefinitely.
+DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN = 24.0 * 60.0
+DIRECTIONAL_FORECAST_MAX_ENDPOINT_OVERHANG = timedelta(minutes=1)
+RANGE_FORECAST_EMISSION_ATR_TIMEFRAME = "H1"
+_SUPPORTED_CALIBRATION_PAIRS = frozenset(DEFAULT_TRADER_PAIRS)
 
 
 @dataclass
@@ -146,6 +158,21 @@ class LedgerEntry:
     regime_at_emission: Optional[str] = None  # "TREND" | "RANGE" | "REVERSAL_RISK" | "UNCLEAR" | None
     cycle_id: Optional[str] = None
     technical_context_v1: Optional[Dict[str, Any]] = None
+    # New directional rows preserve both sides of the calibration transform.
+    # `confidence` remains the calibrated value used by live trading; learning
+    # cohort eligibility uses `raw_confidence` so a weak historical multiplier
+    # cannot suppress the very forward samples needed to recover calibration.
+    # Missing values identify legacy rows and retain the old confidence fallback.
+    raw_confidence: Optional[float] = None
+    calibration_multiplier: Optional[float] = None
+    # Presence is part of the schema contract.  A corrupt/null new-schema field
+    # must not disappear during load/rewrite and then fall back to legacy
+    # confidence learning.
+    raw_confidence_field_present: bool = field(default=False, repr=False, compare=False)
+    calibration_multiplier_field_present: bool = field(default=False, repr=False, compare=False)
+    lead_time_min_valid: bool = field(default=True, repr=False, compare=False)
+    confidence_valid: bool = field(default=True, repr=False, compare=False)
+    resolution_window_min_valid: bool = field(default=True, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         payload = {
@@ -153,12 +180,16 @@ class LedgerEntry:
             "pair": self.pair,
             "signal_name": self.signal_name,
             "direction": self.direction,
-            "lead_time_min": self.lead_time_min,
-            "confidence": self.confidence,
+            "lead_time_min": self.lead_time_min if self.lead_time_min_valid else None,
+            "confidence": self.confidence if self.confidence_valid else None,
             "entry_price": self.entry_price,
             "predicted_target_price": self.predicted_target_price,
             "predicted_invalidation_price": self.predicted_invalidation_price,
-            "resolution_window_min": self.resolution_window_min,
+            "resolution_window_min": (
+                self.resolution_window_min
+                if self.resolution_window_min_valid
+                else None
+            ),
             "resolution_status": self.resolution_status,
             "resolved_at_utc": self.resolved_at_utc,
             "resolution_evidence": self.resolution_evidence,
@@ -170,27 +201,48 @@ class LedgerEntry:
         }
         if self.technical_context_v1 is not None:
             payload["technical_context_v1"] = self.technical_context_v1
+        if self.raw_confidence is not None or self.raw_confidence_field_present:
+            payload["raw_confidence"] = self.raw_confidence
+        if self.calibration_multiplier is not None or self.calibration_multiplier_field_present:
+            payload["calibration_multiplier"] = self.calibration_multiplier
         return payload
 
     @classmethod
     def from_dict(cls, d: dict) -> "LedgerEntry":
+        lead_time_min, lead_time_min_valid = _required_finite_float(
+            d.get("lead_time_min")
+        )
+        confidence, confidence_valid = _required_finite_float(d.get("confidence"))
+        resolution_window_min, resolution_window_min_valid = _required_finite_float(
+            d.get("resolution_window_min")
+        )
         return cls(
             timestamp_emitted_utc=str(d.get("timestamp_emitted_utc", "")),
             pair=str(d.get("pair", "")),
             signal_name=str(d.get("signal_name", "")),
             direction=str(d.get("direction", "")),
-            lead_time_min=float(d.get("lead_time_min", 0)),
-            confidence=float(d.get("confidence", 0)),
-            entry_price=d.get("entry_price"),
-            predicted_target_price=d.get("predicted_target_price"),
-            resolution_window_min=float(d.get("resolution_window_min", 0)),
+            lead_time_min=lead_time_min,
+            confidence=confidence,
+            entry_price=_optional_finite_float(d.get("entry_price")),
+            predicted_target_price=_optional_finite_float(
+                d.get("predicted_target_price")
+            ),
+            resolution_window_min=resolution_window_min,
             resolution_status=str(d.get("resolution_status", "PENDING")),
-            predicted_invalidation_price=d.get("predicted_invalidation_price"),
+            predicted_invalidation_price=_optional_finite_float(
+                d.get("predicted_invalidation_price")
+            ),
             resolved_at_utc=d.get("resolved_at_utc"),
             resolution_evidence=str(d.get("resolution_evidence", "")),
-            pre_emission_range_pips=d.get("pre_emission_range_pips"),
-            predicted_range_low_price=d.get("predicted_range_low_price"),
-            predicted_range_high_price=d.get("predicted_range_high_price"),
+            pre_emission_range_pips=_optional_finite_float(
+                d.get("pre_emission_range_pips")
+            ),
+            predicted_range_low_price=_optional_finite_float(
+                d.get("predicted_range_low_price")
+            ),
+            predicted_range_high_price=_optional_finite_float(
+                d.get("predicted_range_high_price")
+            ),
             regime_at_emission=d.get("regime_at_emission"),
             cycle_id=d.get("cycle_id"),
             technical_context_v1=(
@@ -198,11 +250,47 @@ class LedgerEntry:
                 if isinstance(d.get("technical_context_v1"), dict)
                 else None
             ),
+            raw_confidence=_optional_finite_float(d.get("raw_confidence")),
+            calibration_multiplier=_optional_finite_float(d.get("calibration_multiplier")),
+            raw_confidence_field_present="raw_confidence" in d,
+            calibration_multiplier_field_present="calibration_multiplier" in d,
+            lead_time_min_valid=lead_time_min_valid,
+            confidence_valid=confidence_valid,
+            resolution_window_min_valid=resolution_window_min_valid,
         )
+
+
+def _optional_finite_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _required_finite_float(value: Any) -> tuple[float, bool]:
+    parsed = _optional_finite_float(value)
+    return (parsed, True) if parsed is not None else (0.0, False)
 
 
 def _ledger_path(data_root: Path) -> Path:
     return data_root / LEDGER_FILENAME
+
+
+def _normalise_utc_datetime(value: Optional[datetime]) -> datetime:
+    """Treat naive caller times as UTC and emit one canonical aware clock."""
+
+    parsed = value or datetime.now(timezone.utc)
+    if not isinstance(parsed, datetime):
+        raise TypeError("timestamp must be a datetime")
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except (OverflowError, ValueError, OSError) as exc:
+        raise ValueError("timestamp cannot be represented in UTC") from exc
 
 
 def record_projections(
@@ -226,7 +314,7 @@ def record_projections(
     """
     if not signals:
         return 0
-    now = now or datetime.now(timezone.utc)
+    now = _normalise_utc_datetime(now)
     ts = now.isoformat().replace("+00:00", "Z")
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,37 +392,19 @@ def record_directional_forecast(
     entry_price = current_price
     if entry_price is None:
         entry_price = getattr(forecast, "current_price", None)
-    try:
-        parsed_entry = float(entry_price) if entry_price is not None else None
-    except (TypeError, ValueError):
-        parsed_entry = None
+    parsed_entry = _optional_finite_float(entry_price)
     if parsed_entry is None or parsed_entry <= 0:
         return 0
     target_price = getattr(forecast, "target_price", None)
-    try:
-        parsed_target = float(target_price) if target_price is not None else None
-    except (TypeError, ValueError):
-        parsed_target = None
+    parsed_target = _optional_finite_float(target_price)
     invalidation_price = getattr(forecast, "invalidation_price", None)
-    try:
-        parsed_invalidation = float(invalidation_price) if invalidation_price is not None else None
-    except (TypeError, ValueError):
-        parsed_invalidation = None
+    parsed_invalidation = _optional_finite_float(invalidation_price)
     range_low_price = getattr(forecast, "range_low_price", None)
     range_high_price = getattr(forecast, "range_high_price", None)
-    try:
-        parsed_range_low = float(range_low_price) if range_low_price is not None else None
-    except (TypeError, ValueError):
-        parsed_range_low = None
-    try:
-        parsed_range_high = float(range_high_price) if range_high_price is not None else None
-    except (TypeError, ValueError):
-        parsed_range_high = None
+    parsed_range_low = _optional_finite_float(range_low_price)
+    parsed_range_high = _optional_finite_float(range_high_price)
     range_width_pips = getattr(forecast, "range_width_pips", None)
-    try:
-        parsed_range_width = float(range_width_pips) if range_width_pips is not None else None
-    except (TypeError, ValueError):
-        parsed_range_width = None
+    parsed_range_width = _optional_finite_float(range_width_pips)
     if (
         (parsed_range_width is None or parsed_range_width <= 0)
         and parsed_range_low is not None
@@ -342,11 +412,8 @@ def record_directional_forecast(
         and parsed_range_high > parsed_range_low
     ):
         parsed_range_width = (parsed_range_high - parsed_range_low) * float(instrument_pip_factor(pair))
-    try:
-        horizon_min = float(getattr(forecast, "horizon_min", 0) or 0)
-    except (TypeError, ValueError):
-        horizon_min = 0.0
-    if horizon_min <= 0:
+    horizon_min = _optional_finite_float(getattr(forecast, "horizon_min", 0) or 0)
+    if horizon_min is None or horizon_min <= 0:
         horizon_min = 60.0
     technical_context = getattr(forecast, "technical_context_v1", None)
     if technical_context:
@@ -360,8 +427,13 @@ def record_directional_forecast(
         technical_context = dict(technical_context)
     else:
         technical_context = None
-    now = now or datetime.now(timezone.utc)
+    now = _normalise_utc_datetime(now)
     ts = now.isoformat().replace("+00:00", "Z")
+    calibrated_confidence = _optional_finite_float(getattr(forecast, "confidence", None))
+    raw_confidence = _optional_finite_float(getattr(forecast, "raw_confidence", None))
+    calibration_multiplier = _optional_finite_float(
+        getattr(forecast, "calibration_multiplier", None)
+    )
     key = _projection_key(
         cycle_id=cycle_id,
         pair=pair,
@@ -376,7 +448,7 @@ def record_directional_forecast(
         signal_name="directional_forecast",
         direction=direction,
         lead_time_min=horizon_min,
-        confidence=float(getattr(forecast, "confidence", 0.0) or 0.0),
+        confidence=calibrated_confidence if calibrated_confidence is not None else 0.0,
         entry_price=parsed_entry,
         predicted_target_price=parsed_target if direction != "RANGE" else None,
         resolution_window_min=horizon_min,
@@ -388,6 +460,10 @@ def record_directional_forecast(
         regime_at_emission=regime_at_emission,
         cycle_id=cycle_id,
         technical_context_v1=technical_context,
+        raw_confidence=raw_confidence,
+        calibration_multiplier=calibration_multiplier,
+        raw_confidence_field_present=True,
+        calibration_multiplier_field_present=True,
     )
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -430,7 +506,7 @@ def _round_key_price(value: Optional[float]) -> Optional[float]:
         return None
     try:
         return round(float(value), 8)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -491,6 +567,8 @@ def _scan_existing_projection_keys_from_handle(
         try:
             item = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
             continue
         if str(item.get("cycle_id") or "") != cycle_id:
             continue
@@ -598,8 +676,10 @@ def _load_ledger_from_handle(handle: IO[str]) -> List[LedgerEntry]:
             continue
         try:
             d = json.loads(line)
+            if not isinstance(d, dict):
+                continue
             out.append(LedgerEntry.from_dict(d))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
             continue
     return out
 
@@ -675,7 +755,7 @@ def _verify_pending_unlocked(
 
     Returns count summary {"HIT": n, "MISS": n, "TIMEOUT": n}.
     """
-    now = now or datetime.now(timezone.utc)
+    now = _normalise_utc_datetime(now)
     entries = _load_ledger_from_handle(ledger_handle) if ledger_handle is not None else load_ledger(data_root)
     if not entries:
         return {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
@@ -696,9 +776,26 @@ def _verify_pending_unlocked(
         retrying_truth_timeout = _retryable_truth_timeout(e) and candles_by_pair is not None
         if e.resolution_status != "PENDING" and not retrying_truth_timeout:
             continue
-        try:
-            emitted_at = datetime.fromisoformat(e.timestamp_emitted_utc.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
+        requires_complete_truth = _new_directional_complete_truth_required(e)
+        if requires_complete_truth and not _supported_directional_calibration_pair(e.pair):
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "unsupported or noncanonical pair; excluded from calibration"
+            counts["TIMEOUT"] += 1
+            continue
+        emitted_at = _projection_emitted_at(e.timestamp_emitted_utc)
+        if emitted_at is None:
+            if requires_complete_truth:
+                e.resolution_status = "TIMEOUT"
+                e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                e.resolution_evidence = "invalid emission timestamp; excluded from calibration"
+                counts["TIMEOUT"] += 1
+            continue
+        if requires_complete_truth and emitted_at > now:
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "future emission timestamp; excluded from calibration"
+            counts["TIMEOUT"] += 1
             continue
         if not projection_telemetry_market_open(emitted_at):
             e.resolution_status = "TIMEOUT"
@@ -707,22 +804,77 @@ def _verify_pending_unlocked(
             counts["TIMEOUT"] += 1
             continue
 
+        resolution_window_min = _optional_finite_float(e.resolution_window_min)
+        if resolution_window_min is None or resolution_window_min <= 0:
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "invalid resolution window; excluded from calibration"
+            counts["TIMEOUT"] += 1
+            continue
+        if (
+            requires_complete_truth
+            and resolution_window_min
+            > DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+        ):
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "resolution window exceeds new-schema maximum; excluded from calibration"
+            counts["TIMEOUT"] += 1
+            continue
         elapsed_min = (now - emitted_at).total_seconds() / 60.0
-        if elapsed_min < e.resolution_window_min:
+        if elapsed_min < resolution_window_min:
             counts["PENDING"] += 1
             continue
 
-        expires_at = emitted_at + timedelta(minutes=e.resolution_window_min)
-        price_path = _price_path_for_entry(e, emitted_at=emitted_at, expires_at=expires_at, candles_by_pair=candles_by_pair)
-        if price_path is None:
-            if candles_by_pair is not None:
+        if requires_complete_truth:
+            expires_at = _safe_projection_window_end(emitted_at, resolution_window_min)
+        else:
+            try:
+                expires_at = emitted_at + timedelta(minutes=resolution_window_min)
+            except (OverflowError, ValueError):
+                expires_at = None
+        if expires_at is None:
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "invalid resolution window; excluded from calibration"
+            counts["TIMEOUT"] += 1
+            continue
+
+        complete_truth_window: Optional[list[dict[str, Any]]] = None
+        if requires_complete_truth:
+            complete_truth_window = _complete_closed_candle_window(
+                e,
+                emitted_at=emitted_at,
+                expires_at=expires_at,
+                as_of=now,
+                candles_by_pair=candles_by_pair,
+            )
+            if not complete_truth_window:
                 if e.resolution_status == "PENDING":
                     e.resolution_status = "TIMEOUT"
                     e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-                    e.resolution_evidence = "no candle truth for projection window"
+                    e.resolution_evidence = (
+                        "incomplete closed candle truth for full projection window; retryable"
+                    )
                     counts["TIMEOUT"] += 1
                 continue
-            price_path = _quote_point_path(e, quotes_by_pair=quotes_by_pair)
+            price_path = _price_path_from_candle_window(complete_truth_window)
+        else:
+            price_path = _price_path_for_entry(
+                e,
+                emitted_at=emitted_at,
+                expires_at=expires_at,
+                candles_by_pair=candles_by_pair,
+            )
+            if price_path is None:
+                if candles_by_pair is not None:
+                    if e.resolution_status == "PENDING":
+                        e.resolution_status = "TIMEOUT"
+                        e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                        e.resolution_evidence = "no candle truth for projection window"
+                        counts["TIMEOUT"] += 1
+                    continue
+                price_path = _quote_point_path(e, quotes_by_pair=quotes_by_pair)
         if price_path is None:
             e.resolution_status = "TIMEOUT"
             e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
@@ -730,7 +882,9 @@ def _verify_pending_unlocked(
             counts["TIMEOUT"] += 1
             continue
 
-        entry_price = e.entry_price if e.entry_price is not None else price_path["entry"]
+        entry_price = _optional_finite_float(e.entry_price)
+        if entry_price is None:
+            entry_price = _optional_finite_float(price_path["entry"])
         if entry_price is None or entry_price <= 0:
             e.resolution_status = "TIMEOUT"
             e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
@@ -739,10 +893,16 @@ def _verify_pending_unlocked(
             continue
 
         pip_factor = float(instrument_pip_factor(e.pair))
-        atr_pips = atr_pips_by_pair.get(e.pair)
+        atr_pips = _optional_finite_float(atr_pips_by_pair.get(e.pair))
+        if atr_pips is not None and atr_pips <= 0:
+            atr_pips = None
         move_threshold_price = None
+        parsed_target_price = _optional_finite_float(e.predicted_target_price)
+        parsed_invalidation_price = _optional_finite_float(
+            e.predicted_invalidation_price
+        )
         needs_atr_threshold = (
-            e.predicted_target_price is None
+            parsed_target_price is None
             and str(e.direction or "").upper() in {"UP", "DOWN", "EITHER"}
             and (atr_pips is None or atr_pips <= 0)
         )
@@ -755,19 +915,20 @@ def _verify_pending_unlocked(
         if atr_pips is not None and atr_pips > 0:
             move_threshold_price = atr_pips * 0.5 / pip_factor
 
-        if e.predicted_target_price is not None:
+        if parsed_target_price is not None:
             # Liquidity-sweep signals store the sweep trigger price, while
             # `direction` is the executable fade direction. Verify target
             # touch by signal name so sweep_high + DOWN is valid.
-            target = e.predicted_target_price
+            target = parsed_target_price
             signal_name = e.signal_name.lower()
-            if signal_name == "directional_forecast" and e.predicted_invalidation_price is not None:
+            if signal_name == "directional_forecast" and parsed_invalidation_price is not None:
                 ordered_outcome = _directional_target_invalidation_outcome(
                     e,
                     emitted_at=emitted_at,
                     expires_at=expires_at,
                     entry_price=entry_price,
                     candles_by_pair=candles_by_pair,
+                    candle_window=complete_truth_window,
                 )
                 if ordered_outcome is not None:
                     status, evidence = ordered_outcome
@@ -841,10 +1002,23 @@ def _verify_pending_unlocked(
                 )
                 counts["MISS"] += 1
         elif e.signal_name == "directional_forecast" and str(e.direction or "").upper() == "RANGE":
+            range_atr_pips = atr_pips
+            if requires_complete_truth:
+                range_atr_pips, range_atr_error = _range_forecast_emission_atr_pips(e)
+                if range_atr_pips is None:
+                    if e.resolution_status == "PENDING":
+                        e.resolution_status = "TIMEOUT"
+                        e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                        e.resolution_evidence = (
+                            "range emission ATR truth unavailable"
+                            f" ({range_atr_error or 'invalid'}); retryable"
+                        )
+                        counts["TIMEOUT"] += 1
+                    continue
             status, evidence = _range_forecast_outcome(
                 e,
                 price_path=price_path,
-                atr_pips=atr_pips,
+                atr_pips=range_atr_pips,
                 pip_factor=pip_factor,
             )
             e.resolution_status = status
@@ -925,8 +1099,12 @@ def _range_forecast_outcome(
     try:
         low = float(range_low) if range_low is not None else None
         high = float(range_high) if range_high is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         low = None
+        high = None
+    if low is not None and not math.isfinite(low):
+        low = None
+    if high is not None and not math.isfinite(high):
         high = None
     if low is not None and high is not None and high > low:
         lower_bound = low - tolerance_price
@@ -955,7 +1133,9 @@ def _range_forecast_outcome(
             if entry.pre_emission_range_pips is not None
             else None
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        emitted_width_pips = None
+    if emitted_width_pips is not None and not math.isfinite(emitted_width_pips):
         emitted_width_pips = None
     if emitted_width_pips is None or emitted_width_pips <= 0:
         return "TIMEOUT", "missing emitted range bounds for RANGE forecast verification"
@@ -978,6 +1158,45 @@ def _range_forecast_outcome(
     )
 
 
+def _range_forecast_emission_atr_pips(
+    entry: LedgerEntry,
+) -> tuple[Optional[float], Optional[str]]:
+    """Return the verified point-in-time H1 ATR for a new RANGE forecast.
+
+    Live verification also receives a mutable pair-chart ATR map. It is
+    deliberately ignored here: RANGE tolerance is an ex-ante forecast input,
+    so only the content-addressed technical context emitted with the forecast
+    may affect its later label.
+    """
+
+    context = entry.technical_context_v1
+    entry_price = _optional_finite_float(entry.entry_price)
+    if context is None or entry_price is None or entry_price <= 0.0:
+        return None, "technical context missing"
+    try:
+        valid, error = verify_forecast_technical_context(
+            context,
+            pair=entry.pair,
+            current_price=entry_price,
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return None, "technical context invalid"
+    if not valid:
+        return None, str(error or "technical context invalid")
+    volatility = context.get("volatility")
+    if not isinstance(volatility, dict):
+        return None, "volatility context missing"
+    by_timeframe = volatility.get("atr_pips_by_timeframe")
+    if not isinstance(by_timeframe, dict):
+        return None, "ATR timeframe context missing"
+    atr_pips = _optional_finite_float(
+        by_timeframe.get(RANGE_FORECAST_EMISSION_ATR_TIMEFRAME)
+    )
+    if atr_pips is None or atr_pips <= 0.0:
+        return None, f"emission {RANGE_FORECAST_EMISSION_ATR_TIMEFRAME} ATR missing or nonpositive"
+    return atr_pips, None
+
+
 def _retryable_truth_timeout(entry: LedgerEntry) -> bool:
     if str(entry.resolution_status or "").upper() != "TIMEOUT":
         return False
@@ -988,6 +1207,8 @@ def _retryable_truth_timeout(entry: LedgerEntry) -> bool:
             "no m1 candle truth",
             "no candle truth",
             "no quote/candle truth",
+            "incomplete closed candle truth",
+            "range emission atr truth unavailable",
         )
     )
 
@@ -1023,6 +1244,142 @@ def _price_path_for_entry(
         "low": min(item["low"] for item in window),
         "close": window[-1]["close"],
     }
+
+
+def _price_path_from_candle_window(
+    window: list[dict[str, Any]],
+) -> dict[str, float]:
+    return {
+        "entry": window[0]["close"],
+        "high": max(item["high"] for item in window),
+        "low": min(item["low"] for item in window),
+        "close": window[-1]["close"],
+    }
+
+
+def _new_directional_complete_truth_required(entry: LedgerEntry) -> bool:
+    return (
+        _directional_forecast_schema_scoped(entry)
+        and _directional_calibration_schema_state(entry) != "legacy"
+    )
+
+
+def _complete_closed_candle_window(
+    entry: LedgerEntry,
+    *,
+    emitted_at: datetime,
+    expires_at: datetime,
+    as_of: datetime,
+    candles_by_pair: Optional[Dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return the finest complete closed-bar cover of ``[emission, expiry)``.
+
+    A partial finer set never wins over a complete coarser set. Candle
+    timestamps are bar opens; a bar opening exactly at expiry is deliberately
+    outside the truth window. Boundary OHLC may straddle the exact second of
+    emission/expiry, but each side is bounded to strictly less than one minute.
+    This preserves second-stamped M1 truth without allowing a coarse fallback
+    bar to import a large amount of price action from outside the forecast.
+    """
+
+    if candles_by_pair is None:
+        return []
+    for label, candles in _ordered_candle_sets(candles_by_pair.get(entry.pair)):
+        try:
+            raw_candles = list(candles)
+        except (TypeError, ValueError):
+            continue
+        bar_width = _known_candle_width(label, raw_candles)
+        if bar_width is None:
+            continue
+        by_timestamp: dict[datetime, dict[str, Any]] = {}
+        duplicate_timestamp = False
+        for candle in raw_candles:
+            norm = _normalise_candle(candle)
+            if norm is None:
+                continue
+            opened_at = norm["timestamp"]
+            try:
+                closed_at = opened_at + bar_width
+            except (OverflowError, ValueError):
+                continue
+            if opened_at >= expires_at or closed_at <= emitted_at:
+                continue
+            if norm.get("complete") is False or closed_at > as_of:
+                continue
+            if opened_at in by_timestamp:
+                duplicate_timestamp = True
+                continue
+            by_timestamp[opened_at] = norm
+        window = [by_timestamp[key] for key in sorted(by_timestamp)]
+        if not window or duplicate_timestamp:
+            continue
+        first_open = window[0]["timestamp"]
+        try:
+            first_close = first_open + bar_width
+            last_close = window[-1]["timestamp"] + bar_width
+        except (OverflowError, ValueError):
+            continue
+        if not (first_open <= emitted_at < first_close):
+            continue
+        if last_close < expires_at:
+            continue
+        leading_overhang = emitted_at - first_open
+        trailing_overhang = last_close - expires_at
+        if not (
+            timedelta(0) <= leading_overhang < DIRECTIONAL_FORECAST_MAX_ENDPOINT_OVERHANG
+            and timedelta(0) <= trailing_overhang < DIRECTIONAL_FORECAST_MAX_ENDPOINT_OVERHANG
+        ):
+            continue
+        if any(
+            current["timestamp"] - previous["timestamp"] != bar_width
+            for previous, current in zip(window, window[1:])
+        ):
+            continue
+        return window
+    return []
+
+
+def _known_candle_width(
+    label: str,
+    raw_candles: list[Any],
+) -> Optional[timedelta]:
+    width = _granularity_width(label)
+    if width is not None:
+        return width
+    granularities = {
+        str(value).upper()
+        for candle in raw_candles
+        if (value := _candle_granularity(candle)) is not None
+    }
+    if len(granularities) != 1:
+        return None
+    return _granularity_width(next(iter(granularities)))
+
+
+def _candle_granularity(candle: Any) -> Any:
+    if isinstance(candle, dict):
+        return candle.get("granularity")
+    return getattr(candle, "granularity", None)
+
+
+def _granularity_width(value: Any) -> Optional[timedelta]:
+    label = str(value or "").strip().upper()
+    if label == "D":
+        return timedelta(days=1)
+    if label == "W":
+        return timedelta(days=7)
+    units = {"S": "seconds", "M": "minutes", "H": "hours"}
+    unit = units.get(label[:1])
+    if unit is None or not label[1:].isdigit():
+        return None
+    amount = int(label[1:])
+    if amount <= 0:
+        return None
+    try:
+        return timedelta(**{unit: amount})
+    except (OverflowError, ValueError):
+        return None
 
 
 def _normalised_candle_window(
@@ -1082,6 +1439,7 @@ def _directional_target_invalidation_outcome(
     expires_at: datetime,
     entry_price: float,
     candles_by_pair: Optional[Dict[str, Any]],
+    candle_window: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[tuple[str, str]]:
     """Resolve directional forecasts by first target/invalidation touch.
 
@@ -1089,8 +1447,8 @@ def _directional_target_invalidation_outcome(
     after invalidation still counted as HIT. Ordered candles are the minimum
     truth needed to learn whether the forecast was useful before it was wrong.
     """
-    target = entry.predicted_target_price
-    invalidation = entry.predicted_invalidation_price
+    target = _optional_finite_float(entry.predicted_target_price)
+    invalidation = _optional_finite_float(entry.predicted_invalidation_price)
     if target is None or invalidation is None:
         return None
     direction = str(entry.direction or "").upper()
@@ -1107,12 +1465,14 @@ def _directional_target_invalidation_outcome(
     else:
         return None
 
-    window = _normalised_candle_window(
-        entry,
-        emitted_at=emitted_at,
-        expires_at=expires_at,
-        candles_by_pair=candles_by_pair,
-    )
+    window = candle_window
+    if window is None:
+        window = _normalised_candle_window(
+            entry,
+            emitted_at=emitted_at,
+            expires_at=expires_at,
+            candles_by_pair=candles_by_pair,
+        )
     if not window:
         return None
 
@@ -1142,7 +1502,7 @@ def _directional_target_invalidation_outcome(
 
 
 def _directional_invalidation_touched(entry: LedgerEntry, price_path: dict[str, float]) -> bool:
-    invalidation = entry.predicted_invalidation_price
+    invalidation = _optional_finite_float(entry.predicted_invalidation_price)
     if invalidation is None:
         return False
     direction = str(entry.direction or "").upper()
@@ -1163,7 +1523,7 @@ def _quote_point_path(
         return None
     try:
         current_price = (float(quote.get("bid", 0)) + float(quote.get("ask", 0))) / 2.0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if current_price <= 0:
         return None
@@ -1180,11 +1540,15 @@ def _normalise_candle(candle: Any) -> Optional[dict[str, Any]]:
     high = getattr(candle, "high", None)
     low = getattr(candle, "low", None)
     close = getattr(candle, "close", None)
+    complete = getattr(candle, "complete", None)
     if isinstance(candle, dict):
         ts = candle.get("timestamp_utc") or candle.get("timestamp") or candle.get("time")
         high = candle.get("high")
         low = candle.get("low")
         close = candle.get("close")
+        complete = candle.get("complete", candle.get("closed"))
+    if any(isinstance(value, bool) for value in (high, low, close)):
+        return None
     if isinstance(ts, str):
         try:
             ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
@@ -1200,11 +1564,37 @@ def _normalise_candle(candle: Any) -> Optional[dict[str, Any]]:
         high_f = float(high)
         low_f = float(low)
         close_f = float(close)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if high_f <= 0 or low_f <= 0 or close_f <= 0:
+    if (
+        not all(math.isfinite(value) for value in (high_f, low_f, close_f))
+        or not 0.0 < low_f <= close_f <= high_f
+    ):
         return None
-    return {"timestamp": ts, "high": high_f, "low": low_f, "close": close_f}
+    return {
+        "timestamp": ts,
+        "high": high_f,
+        "low": low_f,
+        "close": close_f,
+        "complete": _optional_bool(complete),
+    }
+
+
+def _optional_bool(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
 
 
 def compute_hit_rates(
@@ -1250,15 +1640,49 @@ def _compute_hit_rates_uncached(
     lookback: int,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     entries = load_ledger(data_root)
-    resolved = _deduped_calibration_entries([
-        e
-        for e in entries
-        if (
-            e.resolution_status in ("HIT", "MISS")
-            and _calibration_entry_eligible(e)
-        )
-        or _projection_timing_penalty_eligible(e)
-    ])
+
+    # New directional rows define trials ex ante.  In particular, a PENDING or
+    # truth-missing first forecast still owns its pair/window and must suppress
+    # an overlapping later HIT.  Selecting only resolved outcomes first leaks
+    # future knowledge into calibration.  Keep legacy and non-directional rows
+    # on their historical outcome-then-dedupe path.
+    new_directional = _deduped_calibration_entries(
+        [
+            entry
+            for entry in entries
+            if _directional_forecast_schema_scoped(entry)
+            and _directional_calibration_schema_state(entry) != "legacy"
+        ]
+    )
+    independent_new_directional, _independence = (
+        _select_independent_directional_calibration_entries(new_directional)
+    )
+    new_resolved = [
+        entry
+        for entry in independent_new_directional
+        if _calibration_outcome_eligible(entry)
+    ]
+
+    legacy_and_non_directional_resolved = _deduped_calibration_entries(
+        [
+            entry
+            for entry in entries
+            if (
+                not _directional_forecast_schema_scoped(entry)
+                or _directional_calibration_schema_state(entry) == "legacy"
+            )
+            and _calibration_outcome_eligible(entry)
+        ]
+    )
+    resolved_ids = {
+        id(entry)
+        for entry in new_resolved + legacy_and_non_directional_resolved
+    }
+    resolved = [entry for entry in entries if id(entry) in resolved_ids]
+    resolved = _chronological_new_directional_slots(
+        resolved,
+        source_index_by_id={id(entry): index for index, entry in enumerate(entries)},
+    )
     grouped: Dict[str, Dict[str, List[tuple[bool | None, bool, bool]]]] = {}
     for e in resolved:
         is_timeout_penalty = _projection_timing_penalty_eligible(e)
@@ -1311,6 +1735,75 @@ def _compute_hit_rates_uncached(
     return out
 
 
+def _calibration_outcome_eligible(entry: LedgerEntry) -> bool:
+    # Required-field validity is part of the new directional schema contract.
+    # Legacy directional and non-directional rows historically omitted some of
+    # these fields; keep their outcome semantics unchanged while still parsing
+    # hostile values safely in ``LedgerEntry.from_dict``.
+    strict_required_fields = (
+        _directional_forecast_schema_scoped(entry)
+        and _directional_calibration_schema_state(entry) != "legacy"
+    )
+    if strict_required_fields and not (
+        entry.lead_time_min_valid
+        and entry.confidence_valid
+        and entry.resolution_window_min_valid
+    ):
+        return False
+    return (
+        entry.resolution_status in ("HIT", "MISS")
+        and _calibration_entry_eligible(entry)
+    ) or _projection_timing_penalty_eligible(entry)
+
+
+def _chronological_new_directional_slots(
+    entries: list[LedgerEntry],
+    *,
+    source_index_by_id: dict[int, int],
+) -> list[LedgerEntry]:
+    """Chronologize only selected new-schema slots before lookback slicing.
+
+    Backfilled rows can be appended after newer outcomes.  The non-overlap clock
+    already evaluates new trials by emission time, so their bucket lookback must
+    use that same order.  Legacy and non-directional entries retain their exact
+    source slots and relative order; only the contents of selected new-schema
+    slots are rearranged.  Source index is the deterministic tie-break for equal
+    timestamps.
+    """
+
+    new_slots: list[int] = []
+    new_rows: list[tuple[datetime, int, LedgerEntry]] = []
+    for slot, entry in enumerate(entries):
+        if (
+            not _directional_forecast_schema_scoped(entry)
+            or _directional_calibration_schema_state(entry) != "new"
+        ):
+            continue
+        emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+        if emitted_at is None:
+            # Ex-ante selection rejects this case. Stay defensive without
+            # changing legacy/source ordering should a caller reuse the helper.
+            continue
+        new_slots.append(slot)
+        new_rows.append(
+            (
+                emitted_at,
+                source_index_by_id.get(id(entry), slot),
+                entry,
+            )
+        )
+    if len(new_rows) < 2:
+        return entries
+
+    ordered = list(entries)
+    for slot, (_emitted_at, _source_index, entry) in zip(
+        new_slots,
+        sorted(new_rows, key=lambda item: (item[0], item[1])),
+    ):
+        ordered[slot] = entry
+    return ordered
+
+
 def _calibration_invalidation_first_like(entry: LedgerEntry) -> bool:
     if entry.resolution_status != "MISS":
         return False
@@ -1340,7 +1833,7 @@ def _directional_forecast_timing_penalty_eligible(entry: LedgerEntry) -> bool:
     if entry.predicted_target_price is None or entry.predicted_invalidation_price is None:
         return False
     if entry.resolution_status == "TIMEOUT":
-        return True
+        return _directional_forecast_no_touch_timeout_like(entry)
     return _directional_forecast_target_timeout_like(entry)
 
 
@@ -1354,10 +1847,15 @@ def _projection_timing_penalty_eligible(entry: LedgerEntry) -> bool:
     calibration_samples/economic_hit_rate while excluding explicitly
     non-tradable market-closed emissions from learning.
     """
-    if (
-        entry.signal_name == "directional_forecast"
-        and str(entry.direction or "").upper() in {"UP", "DOWN"}
-    ):
+    if entry.signal_name == "directional_forecast":
+        direction = str(entry.direction or "").upper()
+        if direction == "RANGE" and _directional_calibration_schema_state(entry) != "legacy":
+            # A complete RANGE window always resolves HIT (box held) or MISS
+            # (box broke). New-schema RANGE TIMEOUT therefore means truth or
+            # input was unavailable and must contribute zero learning.
+            return False
+        if direction not in {"UP", "DOWN"}:
+            return str(entry.resolution_status or "").upper() == "TIMEOUT"
         # Final directional forecasts have an explicit entry-grade contract.
         # Do not let the generic TIMEOUT branch below re-admit watch-only rows
         # that `_directional_forecast_timing_penalty_eligible` deliberately
@@ -1411,6 +1909,219 @@ def _deduped_calibration_entries(entries: list[LedgerEntry]) -> list[LedgerEntry
     return [entry for _index, entry in sorted(latest.values(), key=lambda item: item[0])]
 
 
+def _select_independent_directional_calibration_entries(
+    entries: list[LedgerEntry],
+) -> tuple[list[LedgerEntry], dict[str, int | bool]]:
+    """Keep independent raw-schema directional forecast trials.
+
+    The fixed replay selects the first forecast for a pair, then excludes every
+    later forecast whose emission falls before that forecast's truth-window end.
+    Calibration must use the same trial definition: an opposite-direction flip
+    inside the same future-candle window is not independent evidence.  Apply the
+    rule only to rows carrying the new raw-confidence schema so deployment does
+    not abruptly redefine the entire legacy calibration history.
+    """
+
+    selected_indexes: set[int] = set()
+    raw_candidates: list[tuple[datetime, int, LedgerEntry, datetime]] = []
+    legacy_rows = 0
+    raw_schema_input_rows = 0
+    invalid_raw_schema_rows = 0
+    ex_ante_ineligible_rows = 0
+    for index, entry in enumerate(entries):
+        if not _directional_forecast_schema_scoped(entry):
+            selected_indexes.add(index)
+            legacy_rows += 1
+            continue
+        schema_state = _directional_calibration_schema_state(entry)
+        if schema_state == "legacy":
+            selected_indexes.add(index)
+            legacy_rows += 1
+            continue
+        raw_schema_input_rows += 1
+        if schema_state == "invalid":
+            invalid_raw_schema_rows += 1
+            continue
+        if not _directional_forecast_ex_ante_calibration_eligible(entry):
+            ex_ante_ineligible_rows += 1
+            continue
+        emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+        window_min = _optional_finite_float(entry.resolution_window_min)
+        window_end = (
+            _safe_projection_window_end(emitted_at, window_min)
+            if emitted_at is not None and window_min is not None
+            else None
+        )
+        if window_end is None:
+            invalid_raw_schema_rows += 1
+            continue
+        raw_candidates.append((emitted_at, index, entry, window_end))
+
+    accepted_until: dict[str, datetime] = {}
+    skipped_overlapping_rows = 0
+    for emitted_at, index, entry, window_end in sorted(
+        raw_candidates,
+        key=lambda item: (item[0], item[1]),
+    ):
+        pair = str(entry.pair or "").upper()
+        current_until = accepted_until.get(pair)
+        if current_until is not None and emitted_at < current_until:
+            skipped_overlapping_rows += 1
+            continue
+        selected_indexes.add(index)
+        accepted_until[pair] = window_end
+
+    selected = [entry for index, entry in enumerate(entries) if index in selected_indexes]
+    return selected, {
+        "independent_non_overlap": True,
+        "raw_schema_input_rows": raw_schema_input_rows,
+        "raw_schema_selected_rows": len(raw_candidates) - skipped_overlapping_rows,
+        "skipped_overlapping_rows": skipped_overlapping_rows,
+        "invalid_raw_schema_rows": invalid_raw_schema_rows,
+        "ex_ante_ineligible_raw_schema_rows": ex_ante_ineligible_rows,
+        "legacy_rows_unchanged": legacy_rows,
+    }
+
+
+def _directional_forecast_schema_scoped(entry: LedgerEntry) -> bool:
+    return (
+        entry.signal_name == "directional_forecast"
+        and str(entry.direction or "").upper() in {"UP", "DOWN", "RANGE"}
+    )
+
+
+def _supported_directional_calibration_pair(value: Any) -> bool:
+    pair = str(value or "")
+    return pair == pair.strip().upper() and pair in _SUPPORTED_CALIBRATION_PAIRS
+
+
+def _directional_calibration_schema_state(entry: LedgerEntry) -> str:
+    """Return ``legacy``, ``new``, or ``invalid`` without fail-open fallback."""
+
+    raw_present = entry.raw_confidence_field_present or entry.raw_confidence is not None
+    multiplier_present = (
+        entry.calibration_multiplier_field_present
+        or entry.calibration_multiplier is not None
+    )
+    if not raw_present and not multiplier_present:
+        return "legacy"
+    raw_confidence = _optional_finite_float(entry.raw_confidence)
+    calibration_multiplier = _optional_finite_float(entry.calibration_multiplier)
+    confidence = _optional_finite_float(entry.confidence)
+    if (
+        not raw_present
+        or not multiplier_present
+        or not entry.lead_time_min_valid
+        or not entry.confidence_valid
+        or not entry.resolution_window_min_valid
+        or raw_confidence is None
+        or calibration_multiplier is None
+        or confidence is None
+        or not 0.0 <= raw_confidence <= 1.0
+        or not 0.0 <= confidence <= 1.0
+        or not (
+            DIRECTIONAL_FORECAST_MIN_STORED_CALIBRATION_MULTIPLIER
+            <= calibration_multiplier
+            <= CONFIDENCE_MAX_MULTIPLIER
+        )
+    ):
+        return "invalid"
+    if (
+        _directional_forecast_complete_geometry(entry)
+        and not _directional_forecast_confidence_triplet_valid(entry)
+    ):
+        return "invalid"
+    return "new"
+
+
+def _directional_forecast_complete_geometry(entry: LedgerEntry) -> bool:
+    direction = str(entry.direction or "").upper()
+    entry_price = _optional_finite_float(entry.entry_price)
+    if entry_price is None or entry_price <= 0.0:
+        return False
+    if direction in {"UP", "DOWN"}:
+        target = _optional_finite_float(entry.predicted_target_price)
+        invalidation = _optional_finite_float(entry.predicted_invalidation_price)
+        if target is None or invalidation is None:
+            return False
+        if direction == "UP":
+            return target > entry_price > invalidation
+        return target < entry_price < invalidation
+    if direction == "RANGE":
+        low = _optional_finite_float(entry.predicted_range_low_price)
+        high = _optional_finite_float(entry.predicted_range_high_price)
+        return low is not None and high is not None and low < entry_price < high
+    return False
+
+
+def _directional_forecast_confidence_triplet_valid(entry: LedgerEntry) -> bool:
+    confidence = _optional_finite_float(entry.confidence)
+    raw_confidence = _optional_finite_float(entry.raw_confidence)
+    calibration_multiplier = _optional_finite_float(entry.calibration_multiplier)
+    if confidence is None or raw_confidence is None or calibration_multiplier is None:
+        return False
+    expected_confidence = min(1.0, raw_confidence * calibration_multiplier)
+    return math.isclose(
+        confidence,
+        expected_confidence,
+        rel_tol=0.0,
+        abs_tol=DIRECTIONAL_FORECAST_CALIBRATION_TRIPLET_ABS_TOL,
+    )
+
+
+def _directional_forecast_ex_ante_calibration_eligible(entry: LedgerEntry) -> bool:
+    """Eligibility known when emitted; outcome/status must not affect it."""
+
+    if _directional_calibration_schema_state(entry) != "new":
+        return False
+    raw_confidence = _optional_finite_float(entry.raw_confidence)
+    if (
+        raw_confidence is None
+        or raw_confidence < DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
+    ):
+        return False
+    if not _directional_forecast_complete_geometry(entry):
+        return False
+    if (
+        str(entry.direction or "").upper() == "RANGE"
+        and _range_forecast_emission_atr_pips(entry)[0] is None
+    ):
+        return False
+    if not _supported_directional_calibration_pair(entry.pair):
+        return False
+    window_min = _optional_finite_float(entry.resolution_window_min)
+    return bool(
+        window_min is not None
+        and 0.0 < window_min <= DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+    )
+
+
+def _projection_emitted_at(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _safe_projection_window_end(
+    emitted_at: datetime,
+    window_min: float,
+) -> Optional[datetime]:
+    if not math.isfinite(window_min) or not (
+        0.0 < window_min <= DIRECTIONAL_FORECAST_MAX_RESOLUTION_WINDOW_MIN
+    ):
+        return None
+    try:
+        return emitted_at + timedelta(minutes=window_min)
+    except (OverflowError, ValueError):
+        return None
+
+
 def _calibration_dedupe_key(entry: LedgerEntry, *, fallback_index: int) -> tuple[Any, ...]:
     if not entry.cycle_id:
         return ("no-cycle", fallback_index)
@@ -1451,11 +2162,49 @@ def _directional_forecast_entry_grade(entry: LedgerEntry) -> bool:
     Watch-only rows below the live-entry confidence floor remain in the append
     ledger for audit, but they must not train the entry-grade confidence bucket.
     """
-    try:
-        confidence = float(entry.confidence)
-    except (TypeError, ValueError):
+    confidence = (
+        entry.raw_confidence
+        if entry.raw_confidence is not None
+        else _optional_finite_float(entry.confidence)
+    )
+    if confidence is None:
         return True
     return confidence >= DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
+
+
+def _directional_forecast_no_touch_timeout_like(entry: LedgerEntry) -> bool:
+    """True only for a scored window where target and invalidation stayed untouched.
+
+    TIMEOUT is also used for missing candle truth, malformed geometry, and closed
+    markets. Those are telemetry gaps, not evidence that a directional target
+    failed to materialize, so they must never damp confidence.
+    """
+
+    if entry.signal_name != "directional_forecast":
+        return False
+    if str(entry.resolution_status or "").upper() != "TIMEOUT":
+        return False
+    if str(entry.direction or "").upper() not in {"UP", "DOWN"}:
+        return False
+    evidence = str(entry.resolution_evidence or "").lower()
+    if any(
+        marker in evidence
+        for marker in (
+            "no candle truth",
+            "no quote/candle truth",
+            "incomplete closed candle truth",
+            "market closed",
+            "missing entry_price",
+            "malformed",
+            "excluded from calibration",
+        )
+    ):
+        return False
+    return (
+        "both untouched" in evidence
+        or "neither target nor invalidation touched" in evidence
+        or "target and invalidation stayed untouched" in evidence
+    )
 
 
 def _directional_forecast_target_timeout_like(entry: LedgerEntry) -> bool:
@@ -1675,7 +2424,10 @@ def confidence_calibration(
         # hit_rate. They still reduce executable confidence: the target did not
         # arrive inside the forecast horizon. Cap the haircut so a bucket can
         # recover once adverse-direction HIT/MISS performance improves.
-        mult *= 1.0 - min(0.65, timeout_rate * 0.65)
+        mult *= 1.0 - min(
+            DIRECTIONAL_FORECAST_TIMEOUT_HAIRCUT_MAX,
+            timeout_rate * DIRECTIONAL_FORECAST_TIMEOUT_HAIRCUT_MAX,
+        )
     return round(mult, 3)
 
 

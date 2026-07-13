@@ -1172,6 +1172,69 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertNotIn("anchor horizon", forecast.rationale_summary)
 
 
+class RegimeFamilyForecastGateTest(unittest.TestCase):
+    @staticmethod
+    def _chart(trend_score: float) -> dict:
+        return {
+            "pair": "EUR_USD",
+            "session": {"current_tag": "LONDON"},
+            "confluence": {"dominant_regime": "TREND_STRONG"},
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime_reading": {
+                        "state": "TREND_STRONG",
+                        "atr_percentile": 50.0,
+                    },
+                    "family_scores": {
+                        "trend_score": trend_score,
+                        "mean_rev_score": 0.0,
+                        "breakout_score": 0.0,
+                        "disagreement": 0.0,
+                    },
+                    "indicators": {"pip_size": 0.0001, "atr_pips": 2.0},
+                }
+            ],
+        }
+
+    def test_aligned_receipt_is_not_reported_as_an_extra_support_driver(self) -> None:
+        from quant_rabbit.strategy.directional_forecaster import (
+            _regime_family_adjustment,
+        )
+        from quant_rabbit.strategy.forecast_technical_context import (
+            build_forecast_technical_context,
+        )
+
+        context = build_forecast_technical_context(
+            self._chart(1.0),
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.2,
+        )
+        score, reason = _regime_family_adjustment(context, "UP", 30.0, 10.0)
+
+        self.assertEqual(score, 30.0)
+        self.assertIsNone(reason)
+
+    def test_opposite_receipt_vetoes_to_unclear_without_sort_direction_flip(self) -> None:
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=self._chart(-1.0),
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn("contradiction vetoed UP", forecast.rationale_summary)
+        self.assertTrue(
+            any("CONTRADICTS_FORECAST" in reason for reason in forecast.drivers_against)
+        )
+
+
 class ContestedRangePhaseEvidenceTest(unittest.TestCase):
     """_contested_range_raw_confidence phase-evidence path (2026-06-11).
 

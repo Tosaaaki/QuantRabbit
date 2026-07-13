@@ -48,6 +48,10 @@ from quant_rabbit.strategy.trader_brain import (
 )
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+    build_forecast_technical_context_evidence,
+)
 from quant_rabbit.strategy.lane_history_ledger import LaneHistorySnapshot
 from tests.support_bidask_rules import (
     bidask_rules_env,
@@ -77,6 +81,198 @@ class _NonmatchingBidaskRulesMixin:
 
 
 class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
+
+    def test_regime_family_mismatch_falls_back_to_compatible_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            incompatible = _result(
+                "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                "EUR_USD",
+                "LONG",
+                "RANGE_ROTATION",
+            )
+            incompatible["intent"]["metadata"] = _regime_family_test_metadata(
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            compatible = _result(
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"results": [incompatible, compatible]}))
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            with mock.patch(
+                "quant_rabbit.strategy.trader_brain._technical_consensus_score",
+                side_effect=lambda **kwargs: (
+                    500.0
+                    if kwargs.get("method") == "RANGE_ROTATION"
+                    else 0.0
+                ),
+            ):
+                decision = brain.run(_snapshot())
+
+        mismatch_score = next(
+            item for item in decision.scores if item.method == "RANGE_ROTATION"
+        )
+        compatible_score = next(
+            item for item in decision.scores if item.method == "TREND_CONTINUATION"
+        )
+        self.assertGreater(mismatch_score.score, compatible_score.score)
+        self.assertEqual(mismatch_score.action, ACTION_NO_TRADE)
+        self.assertTrue(
+            any("regime_family_method_mismatch" in item for item in mismatch_score.blockers)
+        )
+        self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+        self.assertEqual(decision.selected_lane_id, compatible_score.lane_id)
+
+    def test_missing_and_tampered_regime_family_receipts_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = _result(
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:missing",
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            missing["intent"]["metadata"] = {}
+            tampered = _result(
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:tampered",
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            tampered["intent"]["metadata"]["forecast_technical_context"][
+                "evidence_sha256"
+            ] = "0" * 64
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"results": [missing, tampered]}))
+            decision = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            ).run(_snapshot())
+
+        self.assertEqual(decision.action, ACTION_NO_TRADE)
+        self.assertTrue(all(item.action == ACTION_NO_TRADE for item in decision.scores))
+        self.assertTrue(
+            all(
+                any("regime_family_receipt_invalid" in blocker for blocker in item.blockers)
+                for item in decision.scores
+            )
+        )
+
+    def test_breakout_pending_and_transition_none_methods_block_fresh_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = []
+            for regime in ("BREAKOUT_PENDING", "TRANSITION"):
+                row = _result(
+                    f"trend_trader:EUR_USD:LONG:TREND_CONTINUATION:{regime}",
+                    "EUR_USD",
+                    "LONG",
+                    "TREND_CONTINUATION",
+                )
+                row["intent"]["metadata"] = _regime_family_test_metadata(
+                    "EUR_USD",
+                    "LONG",
+                    "TREND_CONTINUATION",
+                    primary_regime=regime,
+                )
+                rows.append(row)
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"results": rows}))
+            decision = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            ).run(_snapshot())
+
+        self.assertEqual(decision.action, ACTION_NO_TRADE)
+        self.assertTrue(
+            all(
+                any("regime_family_method_unavailable" in blocker for blocker in item.blockers)
+                for item in decision.scores
+            )
+        )
+
+    def test_mtf_and_price_action_receive_identical_verified_receipt_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = _result(
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            expected = result["intent"]["metadata"]["forecast_technical_context"][
+                "technical_context_v1"
+            ]["regime_family_weighting"]
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"results": [result]}))
+            pair_charts = root / "pair_charts.json"
+            pair_charts.write_text(
+                json.dumps({"charts": [{"pair": "EUR_USD", "views": []}]})
+            )
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack.json",
+                pair_charts_path=pair_charts,
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            with mock.patch(
+                "quant_rabbit.strategy.trader_brain._mtf_confluence_score",
+                return_value=0.0,
+            ) as mtf, mock.patch(
+                "quant_rabbit.strategy.trader_brain.aggregate_price_action_score",
+                return_value=(0.0, []),
+            ) as price_action:
+                brain.run(_snapshot())
+
+        self.assertEqual(mtf.call_args.kwargs["receipt_weights"], expected["weights"])
+        self.assertEqual(
+            price_action.call_args.kwargs["receipt_weights"],
+            expected["weights"],
+        )
+        self.assertEqual(
+            mtf.call_args.kwargs["receipt_label"],
+            price_action.call_args.kwargs["receipt_label"],
+        )
 
     def test_missing_or_expansive_score_settings_remain_trim_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,7 +388,10 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             result["intent"] = {
                 **result["intent"],
                 "order_type": "LIMIT",
-                "metadata": {"campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT"},
+                "metadata": {
+                    **result["intent"].get("metadata", {}),
+                    "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT",
+                },
             }
             intents_path = root / "intents.json"
             intents_path.write_text(json.dumps({"results": [result]}))
@@ -333,6 +532,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
                 lane["intent"]["tp"] = 1.17280
                 lane["intent"]["sl"] = 1.17370
                 lane["intent"]["metadata"] = {
+                    **lane["intent"].get("metadata", {}),
                     "forecast_direction": "DOWN",
                     "forecast_confidence": 0.23,
                     "chart_direction_bias": "SHORT",
@@ -409,6 +609,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             good["intent"]["tp"] = 1.17280
             good["intent"]["sl"] = 1.17400
             good["intent"]["metadata"] = {
+                **good["intent"].get("metadata", {}),
                 "forecast_direction": "DOWN",
                 "forecast_confidence": 0.23,
                 "chart_direction_bias": "SHORT",
@@ -417,6 +618,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
                 "opportunity_mode": "HARVEST",
             }
             bad["intent"]["metadata"] = {
+                **bad["intent"].get("metadata", {}),
                 "forecast_direction": "UP",
                 "forecast_confidence": 0.87,
                 "chart_direction_bias": "LONG",
@@ -426,6 +628,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             contrarian["intent"]["tp"] = 114.189
             contrarian["intent"]["sl"] = 114.359
             contrarian["intent"]["metadata"] = {
+                **contrarian["intent"].get("metadata", {}),
                 "forecast_direction": "UP",
                 "forecast_confidence": 0.80,
                 "forecast_horizon_min": 60,
@@ -768,6 +971,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
                 lane["intent"]["tp"] = 1.17280
                 lane["intent"]["sl"] = 1.17370
                 lane["intent"]["metadata"] = {
+                    **lane["intent"].get("metadata", {}),
                     "forecast_direction": "DOWN",
                     "forecast_confidence": 0.63,
                     "chart_direction_bias": "SHORT",
@@ -2072,6 +2276,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
                 "tp": 1.1725,
                 "sl": 1.1762,
                 "metadata": {
+                    **lane["intent"].get("metadata", {}),
                     "geometry_model": "RANGE_RAIL_LIMIT",
                     "range_support": 1.1710,
                     "range_resistance": 1.1760,
@@ -2160,6 +2365,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
                 "tp": 1.1725,
                 "sl": 1.1762,
                 "metadata": {
+                    **lane["intent"].get("metadata", {}),
                     "geometry_model": "RANGE_RAIL_LIMIT",
                     "range_support": 1.1710,
                     "range_resistance": 1.1760,
@@ -3192,6 +3398,7 @@ def _opposite_market_intents(root: Path) -> Path:
 
 
 def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
+    metadata = _regime_family_test_metadata(pair, side, method)
     return {
         "lane_id": lane_id,
         "status": "LIVE_READY",
@@ -3209,6 +3416,7 @@ def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
             "sl": 1.1717 if pair == "EUR_USD" else 112.46,
             "thesis": "test",
             "owner": "trader",
+            "metadata": metadata,
             "market_context": {
                 "regime": f"{method} campaign lane",
                 "narrative": "test narrative",
@@ -3218,6 +3426,143 @@ def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
             },
         },
     }
+
+
+def _regime_family_test_metadata(
+    pair: str,
+    side: str,
+    method: str,
+    *,
+    primary_regime: str | None = None,
+) -> dict:
+    pair_name = str(pair).upper()
+    side_name = str(side).upper()
+    method_name = str(method).upper()
+    price = 112.5 if pair_name.endswith("_JPY") else 1.17205
+    regime = primary_regime or {
+        "TREND_CONTINUATION": "TREND_STRONG",
+        "RANGE_ROTATION": "RANGE",
+        "BREAKOUT_FAILURE": "BREAKOUT_PENDING",
+    }.get(method_name, "TRANSITION")
+    side_direction = "UP" if side_name == "LONG" else "DOWN"
+    forecast_direction = (
+        "RANGE" if method_name == "RANGE_ROTATION" else side_direction
+    )
+    score = 1.0 if side_direction == "UP" else -1.0
+    structure_kind = f"BOS_{side_direction}"
+    views = []
+    for timeframe in ("D", "H4", "H1", "M30", "M15", "M5", "M1"):
+        view = {
+            "granularity": timeframe,
+            "regime_reading": {
+                "state": regime,
+                "confidence": 0.8,
+                "atr_percentile": 50.0,
+            },
+            "indicators": {"atr_pips": 4.0},
+            "structure": {
+                "structure_events": [
+                    {
+                        "kind": structure_kind,
+                        "index": 1,
+                        "close_confirmed": True,
+                    }
+                ]
+            },
+            "family_scores": {
+                "trend_score": score,
+                "mean_rev_score": score,
+                "breakout_score": abs(score),
+                "disagreement": 0.0,
+            },
+        }
+        if timeframe == "M5" and method_name == "BREAKOUT_FAILURE":
+            view["recent_candles"] = _failed_break_test_candles(
+                price,
+                side=side_name,
+                jpy_pair=pair_name.endswith("_JPY"),
+            )
+        views.append(view)
+    chart = {
+        "pair": pair_name,
+        "generated_at_utc": "2026-07-13T00:00:00+00:00",
+        "session": {"current_tag": "ASIA"},
+        "chart_story": f"M15({regime} ADX=25.0) H1({regime} ADX=25.0)",
+        "confluence": {
+            "dominant_regime": regime,
+            "price_percentile_24h": 0.5,
+            "price_percentile_7d": 0.5,
+            "atr_percentile_24h": 0.5,
+        },
+        "views": views,
+    }
+    context = build_forecast_technical_context(
+        chart,
+        pair=pair_name,
+        current_price=price,
+        spread_pips=0.8,
+        calendar_path=Path("/nonexistent/qr-test-calendar.json"),
+        strategy_profile_path=Path("/nonexistent/qr-test-strategy.json"),
+        now_utc=datetime(2026, 7, 13, tzinfo=timezone.utc),
+    )
+    evidence = build_forecast_technical_context_evidence(
+        context,
+        pair=pair_name,
+        current_price=price,
+    )
+    receipt = context["regime_family_weighting"]
+    source = receipt["source_identity"]
+    return {
+        "forecast_direction": forecast_direction,
+        "forecast_current_price": price,
+        "forecast_technical_context": evidence,
+        "forecast_regime_family_weighting_sha256": receipt["receipt_sha256"],
+        "forecast_regime_family_selected_method": source["selected_method"],
+        "forecast_regime_family_direction": receipt["aggregate"]["direction"],
+    }
+
+
+def _failed_break_test_candles(
+    price: float,
+    *,
+    side: str,
+    jpy_pair: bool,
+) -> list[dict]:
+    step = 0.01 if jpy_pair else 0.0001
+    start = datetime(2026, 7, 12, 22, 0, tzinfo=timezone.utc)
+    candles = [
+        {
+            "t": (start + timedelta(minutes=5 * index)).isoformat(),
+            "o": price,
+            "h": price + step,
+            "l": price - step,
+            "c": price,
+            "complete": True,
+        }
+        for index in range(20)
+    ]
+    if side == "LONG":
+        last = {
+            "o": price - step,
+            "h": price + step * 0.5,
+            "l": price - step * 2.0,
+            "c": price,
+        }
+    else:
+        last = {
+            "o": price + step,
+            "h": price + step * 2.0,
+            "l": price - step * 0.5,
+            "c": price,
+        }
+    candles.append(
+        {
+            "t": (start + timedelta(minutes=100)).isoformat(),
+            **last,
+            "complete": True,
+        }
+    )
+    return candles
 
 
 def _campaign(root: Path) -> Path:
@@ -3928,6 +4273,7 @@ class CaptureSegmentPriorityPromotionTest(_NonmatchingBidaskRulesMixin, unittest
         for lane in lanes:
             lane["intent"]["order_type"] = "LIMIT"
             lane["intent"]["metadata"] = {
+                **lane["intent"].get("metadata", {}),
                 "attach_take_profit_on_fill": True,
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                 "tp_target_intent": "HARVEST",
