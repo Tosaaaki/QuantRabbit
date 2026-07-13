@@ -1614,6 +1614,182 @@ class MarketReadOverlayTest(unittest.TestCase):
                 ["FADE", "RANGE", "ROTATION", "SQUEEZE", "TREND"],
             )
 
+    def test_evidence_packet_embeds_bounded_numeric_forecast_replay_scorecard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _prepared_paths(root)
+            replay = root / "oanda_history_replay_validate_latest.json"
+            replay.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-10T00:00:00Z",
+                        "truth_source": "BID_ASK_S5",
+                        "granularity": "S5",
+                        "pair_filter": ["EUR_USD", "GBP_JPY"],
+                        "history_pairs": 2,
+                        "evaluated_rows": 9420,
+                        "summary": {
+                            "n": 9420,
+                            "hit_rate": 0.3297,
+                            "avg_final_pips": -2.8666,
+                            "median_final_pips": -2.3,
+                            "avg_mfe_pips": 5.1498,
+                            "avg_mae_pips": 10.6671,
+                            "target_touch_rate": 0.3021,
+                            "invalidation_touch_rate": 0.5825,
+                            "target_before_invalidation_rate": 0.2322,
+                        },
+                        "segments": {
+                            "by_pair_direction": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "direction": "UP",
+                                    "n": 120,
+                                    "hit_rate": 0.45,
+                                    "avg_final_pips": 0.6,
+                                },
+                                {
+                                    "pair": "GBP_JPY",
+                                    "direction": "DOWN",
+                                    "n": 80,
+                                    "hit_rate": 0.38,
+                                    "avg_final_pips": -2.8,
+                                },
+                            ],
+                            "by_confidence": [
+                                {
+                                    "confidence_bucket": ">=0.90",
+                                    "n": 188,
+                                    "hit_rate": 0.367,
+                                    "avg_final_pips": -0.09,
+                                }
+                            ],
+                            "by_horizon": [
+                                {
+                                    "horizon_bucket": "31-60m",
+                                    "n": 7883,
+                                    "hit_rate": 0.3166,
+                                    "avg_final_pips": -2.9177,
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline.pop("decision_provenance", None)
+            paths["baseline"].write_text(json.dumps(baseline))
+            sources = _sources(paths)
+            sources["bidask_replay_validation"] = replay
+            prepare_market_read_baseline(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                evidence_sources=sources,
+                now=NOW,
+            )
+
+            scorecard = json.loads(paths["packet"].read_text())[
+                "forecast_replay_scorecard"
+            ]
+            self.assertEqual(scorecard["status"], "VALID")
+            self.assertEqual(scorecard["global"]["n"], 9420)
+            self.assertEqual(scorecard["global"]["avg_final_pips"], -2.8666)
+            self.assertEqual(scorecard["selected_pair"], "EUR_USD")
+            self.assertEqual(scorecard["selected_direction"], "UP")
+            self.assertEqual(scorecard["selected_coverage_status"], "COVERED")
+            self.assertEqual(
+                scorecard["selected_pair_direction"]["avg_final_pips"],
+                0.6,
+            )
+            self.assertGreater(
+                scorecard["selected_pair_direction"]["hit_wilson95_lower"],
+                0.36,
+            )
+            self.assertEqual(scorecard["proof_status"], "UNVERIFIED_LEGACY")
+            self.assertFalse(scorecard["proof_eligible"])
+            self.assertEqual(scorecard["scope"]["pair_filter"], ["EUR_USD", "GBP_JPY"])
+            self.assertFalse(scorecard["scope"]["pair_direction_rows_truncated"])
+            self.assertTrue(scorecard["read_only"])
+            self.assertFalse(scorecard["live_permission"])
+
+    def test_forecast_replay_change_stales_market_read_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _prepared_paths(root)
+            replay = root / "oanda_history_replay_validate_latest.json"
+            replay.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-10T00:00:00Z",
+                        "summary": {"n": 100, "avg_final_pips": -1.0},
+                        "segments": {"by_pair_direction": []},
+                    }
+                )
+            )
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline.pop("decision_provenance", None)
+            paths["baseline"].write_text(json.dumps(baseline))
+            sources = _sources(paths)
+            sources["bidask_replay_validation"] = replay
+            prepare_market_read_baseline(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                evidence_sources=sources,
+                now=NOW,
+            )
+            _write_overlay(paths)
+            replay.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-10T00:01:00Z",
+                        "summary": {"n": 101, "avg_final_pips": -2.0},
+                        "segments": {"by_pair_direction": []},
+                    }
+                )
+            )
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_PACKET_STALE",
+            ):
+                apply_codex_market_read_overlay(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    overlay_path=paths["overlay"],
+                    output_path=paths["output"],
+                    evidence_sources=sources,
+                    now=NOW,
+                )
+
+    def test_missing_or_malformed_forecast_replay_never_fabricates_zero_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _prepared_paths(root)
+            missing_scorecard = json.loads(paths["packet"].read_text())[
+                "forecast_replay_scorecard"
+            ]
+            self.assertEqual(missing_scorecard["status"], "MISSING")
+            self.assertNotIn("global", missing_scorecard)
+
+            malformed = root / "malformed_replay.json"
+            malformed.write_text("{not-json")
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline.pop("decision_provenance", None)
+            paths["baseline"].write_text(json.dumps(baseline))
+            sources = _sources(paths)
+            sources["bidask_replay_validation"] = malformed
+            prepare_market_read_baseline(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                evidence_sources=sources,
+                now=NOW,
+            )
+            malformed_scorecard = json.loads(paths["packet"].read_text())[
+                "forecast_replay_scorecard"
+            ]
+            self.assertEqual(malformed_scorecard["status"], "MALFORMED")
+            self.assertNotIn("global", malformed_scorecard)
+
     def test_baseline_or_evidence_mutation_rejects_stale_overlay(self) -> None:
         for mutation, expected_code in (
             ("baseline", "MARKET_READ_BASELINE_SHA_STALE"),

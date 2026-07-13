@@ -665,10 +665,13 @@ def _market_read_review(
         "v2_score_ineligible_predictions": 0,
         "v2_score_ineligible_reason_counts": {},
         "v2_lifecycle_resolved_predictions": 0,
+        "v2_lifecycle_not_applicable_predictions": 0,
         "v2_lifecycle_unresolved_predictions": 0,
         "v2_score_eligible_resolved_predictions": 0,
+        "v2_score_eligible_not_applicable_predictions": 0,
         "v2_score_eligible_unresolved_predictions": 0,
         "v2_score_ineligible_resolved_predictions": 0,
+        "v2_score_ineligible_not_applicable_predictions": 0,
         "v2_score_ineligible_unresolved_predictions": 0,
         "score_eligible_predictions": 0,
         "score_ineligible_predictions": 0,
@@ -696,10 +699,13 @@ def _market_read_review(
         "full_read_completion_30m_pct": None,
         "full_read_completion_2h_pct": None,
         "v2_resolved_horizons": 0,
+        "v2_not_applicable_horizons": 0,
         "v2_unresolved_horizons": 0,
         "v2_score_eligible_resolved_horizons": 0,
+        "v2_score_eligible_not_applicable_horizons": 0,
         "v2_score_eligible_unresolved_horizons": 0,
         "v2_score_ineligible_resolved_horizons": 0,
+        "v2_score_ineligible_not_applicable_horizons": 0,
         "v2_score_ineligible_unresolved_horizons": 0,
         "v2_horizons": {},
         "direct_origin_counts": {
@@ -811,30 +817,45 @@ def _market_read_review(
     v2_fully_resolved = [
         row
         for row in v2_score_rows
-        if all(
-            isinstance(row.get("horizon_results"), dict)
-            and isinstance(row.get("horizon_results", {}).get(horizon), dict)
-            and row.get("horizon_results", {}).get(horizon, {}).get("resolution_status")
-            == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
-            for horizon in ("30m", "2h")
-        )
+        if _market_read_v2_prediction_lifecycle(row) == "RESOLVED"
+    ]
+    v2_score_not_applicable = [
+        row
+        for row in v2_score_rows
+        if _market_read_v2_prediction_lifecycle(row) == "NOT_APPLICABLE"
+    ]
+    v2_score_unresolved = [
+        row
+        for row in v2_score_rows
+        if _market_read_v2_prediction_lifecycle(row) == "UNRESOLVED"
     ]
     v2_ineligible_fully_resolved = [
         row
         for row in v2_ineligible_rows
-        if all(
-            isinstance(row.get("horizon_results"), dict)
-            and isinstance(row.get("horizon_results", {}).get(horizon), dict)
-            and row.get("horizon_results", {}).get(horizon, {}).get("resolution_status")
-            == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
-            for horizon in ("30m", "2h")
-        )
+        if _market_read_v2_prediction_lifecycle(row) == "RESOLVED"
+    ]
+    v2_ineligible_not_applicable = [
+        row
+        for row in v2_ineligible_rows
+        if _market_read_v2_prediction_lifecycle(row) == "NOT_APPLICABLE"
+    ]
+    v2_ineligible_unresolved = [
+        row
+        for row in v2_ineligible_rows
+        if _market_read_v2_prediction_lifecycle(row) == "UNRESOLVED"
     ]
     v2_lifecycle_resolved_count = len(v2_fully_resolved) + len(
         v2_ineligible_fully_resolved
     )
+    v2_lifecycle_not_applicable_count = len(v2_score_not_applicable) + len(
+        v2_ineligible_not_applicable
+    )
     resolved = [*legacy_resolved, *v2_fully_resolved]
-    pending = [row for row in score_rows if row not in resolved]
+    pending = [
+        row
+        for row in legacy_score_rows
+        if str(row.get("verdict") or "PENDING") == "PENDING"
+    ] + v2_score_unresolved
 
     blocked_correct = [
         row for row in legacy_resolved
@@ -915,16 +936,26 @@ def _market_read_review(
             sorted(v2_ineligible_reason_counts.items())
         ),
         "v2_lifecycle_resolved_predictions": v2_lifecycle_resolved_count,
-        "v2_lifecycle_unresolved_predictions": len(v2_rows)
-        - v2_lifecycle_resolved_count,
+        "v2_lifecycle_not_applicable_predictions": (
+            v2_lifecycle_not_applicable_count
+        ),
+        "v2_lifecycle_unresolved_predictions": (
+            len(v2_score_unresolved) + len(v2_ineligible_unresolved)
+        ),
         "v2_score_eligible_resolved_predictions": len(v2_fully_resolved),
-        "v2_score_eligible_unresolved_predictions": len(v2_score_rows)
-        - len(v2_fully_resolved),
+        "v2_score_eligible_not_applicable_predictions": len(
+            v2_score_not_applicable
+        ),
+        "v2_score_eligible_unresolved_predictions": len(v2_score_unresolved),
         "v2_score_ineligible_resolved_predictions": len(
             v2_ineligible_fully_resolved
         ),
-        "v2_score_ineligible_unresolved_predictions": len(v2_ineligible_rows)
-        - len(v2_ineligible_fully_resolved),
+        "v2_score_ineligible_not_applicable_predictions": len(
+            v2_ineligible_not_applicable
+        ),
+        "v2_score_ineligible_unresolved_predictions": len(
+            v2_ineligible_unresolved
+        ),
         "score_eligible_predictions": len(score_rows),
         "score_ineligible_predictions": len(rows) - len(score_rows),
         "geometry_ineligible_predictions": sum(
@@ -957,15 +988,24 @@ def _market_read_review(
         "full_read_completion_30m_pct": v2_horizons["30m"]["full_read_completion_pct"],
         "full_read_completion_2h_pct": v2_horizons["2h"]["full_read_completion_pct"],
         "v2_resolved_horizons": sum(item["resolved"] for item in v2_horizons.values()),
+        "v2_not_applicable_horizons": sum(
+            item["not_applicable"] for item in v2_horizons.values()
+        ),
         "v2_unresolved_horizons": sum(item["unresolved"] for item in v2_horizons.values()),
         "v2_score_eligible_resolved_horizons": sum(
             item["eligible_resolved"] for item in v2_horizons.values()
+        ),
+        "v2_score_eligible_not_applicable_horizons": sum(
+            item["eligible_not_applicable"] for item in v2_horizons.values()
         ),
         "v2_score_eligible_unresolved_horizons": sum(
             item["eligible_unresolved"] for item in v2_horizons.values()
         ),
         "v2_score_ineligible_resolved_horizons": sum(
             item["ineligible_resolved"] for item in v2_horizons.values()
+        ),
+        "v2_score_ineligible_not_applicable_horizons": sum(
+            item["ineligible_not_applicable"] for item in v2_horizons.values()
         ),
         "v2_score_ineligible_unresolved_horizons": sum(
             item["ineligible_unresolved"] for item in v2_horizons.values()
@@ -986,6 +1026,35 @@ def _market_read_review(
 
 
 _MARKET_READ_FULL_SUCCESS = frozenset({"TARGET_FIRST", "TARGET_ONLY", "RANGE_CONTAINED"})
+_MARKET_READ_RESOLVED = "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+_MARKET_READ_NOT_APPLICABLE = "NOT_APPLICABLE_CLOSED_MARKET_WINDOW"
+_MARKET_READ_TERMINAL = frozenset(
+    {_MARKET_READ_RESOLVED, _MARKET_READ_NOT_APPLICABLE}
+)
+
+
+def _market_read_v2_prediction_lifecycle(row: dict[str, Any]) -> str:
+    """Partition a v2 prediction into resolved, closed-window N/A, or unresolved."""
+
+    horizon_results = (
+        row.get("horizon_results")
+        if isinstance(row.get("horizon_results"), dict)
+        else {}
+    )
+    statuses = []
+    for horizon in ("30m", "2h"):
+        result = horizon_results.get(horizon)
+        statuses.append(
+            result.get("resolution_status") if isinstance(result, dict) else None
+        )
+    if all(status == _MARKET_READ_RESOLVED for status in statuses):
+        return "RESOLVED"
+    if (
+        all(status in _MARKET_READ_TERMINAL for status in statuses)
+        and _MARKET_READ_NOT_APPLICABLE in statuses
+    ):
+        return "NOT_APPLICABLE"
+    return "UNRESOLVED"
 
 
 def _market_read_v2_horizon_review(
@@ -1020,7 +1089,16 @@ def _market_read_v2_horizon_review(
         return [
             result
             for result in results
-            if result.get("resolution_status") == "RESOLVED_MID_CANDLE_DIAGNOSTIC"
+            if result.get("resolution_status") == _MARKET_READ_RESOLVED
+        ]
+
+    def not_applicable_results(
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            result
+            for result in results
+            if result.get("resolution_status") == _MARKET_READ_NOT_APPLICABLE
         ]
 
     results = horizon_results_for(rows)
@@ -1029,6 +1107,9 @@ def _market_read_v2_horizon_review(
     resolved = resolved_results(results)
     eligible_resolved = resolved_results(eligible_results)
     ineligible_resolved = resolved_results(ineligible_results)
+    not_applicable = not_applicable_results(results)
+    eligible_not_applicable = not_applicable_results(eligible_results)
+    ineligible_not_applicable = not_applicable_results(ineligible_results)
     direction = [
         result
         for result in eligible_resolved
@@ -1055,11 +1136,22 @@ def _market_read_v2_horizon_review(
         first_touch_counts[status] = first_touch_counts.get(status, 0) + 1
     return {
         "resolved": len(resolved),
-        "unresolved": len(results) - len(resolved),
+        "not_applicable": len(not_applicable),
+        "unresolved": len(results) - len(resolved) - len(not_applicable),
         "eligible_resolved": len(eligible_resolved),
-        "eligible_unresolved": len(eligible_results) - len(eligible_resolved),
+        "eligible_not_applicable": len(eligible_not_applicable),
+        "eligible_unresolved": (
+            len(eligible_results)
+            - len(eligible_resolved)
+            - len(eligible_not_applicable)
+        ),
         "ineligible_resolved": len(ineligible_resolved),
-        "ineligible_unresolved": len(ineligible_results) - len(ineligible_resolved),
+        "ineligible_not_applicable": len(ineligible_not_applicable),
+        "ineligible_unresolved": (
+            len(ineligible_results)
+            - len(ineligible_resolved)
+            - len(ineligible_not_applicable)
+        ),
         "direction_scoreable": len(direction),
         "direction_correct": sum(result.get("direction_status") == "CORRECT" for result in direction),
         "direction_accuracy_pct": _pct(
@@ -1539,6 +1631,9 @@ def compute_daily_review(
             f"target={market_read.get('target_completion_2h_pct')} "
             f"full={market_read.get('full_read_completion_2h_pct')} "
             f"resolved_horizons={market_read.get('v2_resolved_horizons', 0)} "
+            "not_applicable_horizons="
+            f"{market_read.get('v2_not_applicable_horizons', 0)} "
+            f"unresolved_horizons={market_read.get('v2_unresolved_horizons', 0)} "
             "truth=MID_CANDLE_DIAGNOSTIC live_permission=false "
             f"direct_origin={direct_counts.get('originating_decision_bound', 0)}/"
             f"{direct_counts.get('predictions', 0)} "

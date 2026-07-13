@@ -876,6 +876,7 @@ class DailyReviewTest(unittest.TestCase):
             self.assertEqual(review["target_completion_2h_pct"], 100.0)
             self.assertEqual(review["full_read_completion_2h_pct"], 100.0)
             self.assertEqual(review["v2_resolved_horizons"], 3)
+            self.assertEqual(review["v2_not_applicable_horizons"], 0)
             self.assertEqual(review["v2_unresolved_horizons"], 1)
             self.assertEqual(
                 review["direct_origin_counts"]["originating_decision_bound"],
@@ -903,6 +904,7 @@ class DailyReviewTest(unittest.TestCase):
             self.assertIn(
                 "market-read-v2: 30m direction=50.0 target=0.0 full=0.0; "
                 "2h direction=0.0 target=100.0 full=100.0 resolved_horizons=3 "
+                "not_applicable_horizons=0 unresolved_horizons=1 "
                 "truth=MID_CANDLE_DIAGNOSTIC live_permission=false "
                 "direct_origin=2/2 direct_execution_partially_attributed=1 "
                 "direct_realized=0 direct_realized_partial=1; "
@@ -984,6 +986,103 @@ class DailyReviewTest(unittest.TestCase):
                 self.assertEqual(metrics["unresolved"], 1)
                 self.assertEqual(metrics["eligible_unresolved"], 0)
                 self.assertEqual(metrics["ineligible_unresolved"], 1)
+
+    def test_market_read_v2_closed_window_is_not_unresolved_or_scoreable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+
+            resolved = {
+                "resolution_status": "RESOLVED_MID_CANDLE_DIAGNOSTIC",
+                "direction_status": "CORRECT",
+                "target_completion_status": "NOT_TOUCHED",
+                "invalidation_status": "NOT_TOUCHED",
+                "first_touch_status": "NEITHER_TOUCHED",
+                "full_read_status": "DIRECTION_CORRECT_TARGET_INCOMPLETE",
+                "truth_source": "MID_CANDLE_DIAGNOSTIC",
+                "live_permission": False,
+            }
+            not_applicable = {
+                "resolution_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "direction_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "target_completion_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "invalidation_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "first_touch_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "full_read_status": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                "truth_source": "MID_CANDLE_DIAGNOSTIC",
+                "live_permission": False,
+            }
+            rows = [
+                {
+                    "schema_version": 2,
+                    "prediction_id": "mr2:mixed-terminal",
+                    "generated_at_utc": self._ts(2),
+                    "pair": "EUR_USD",
+                    "direction": "SHORT",
+                    "score_eligible": True,
+                    "verdict": "PARTIALLY_NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                    "horizon_results": {
+                        "30m": dict(resolved),
+                        "2h": dict(not_applicable),
+                    },
+                },
+                {
+                    "schema_version": 2,
+                    "prediction_id": "mr2:closed-window",
+                    "generated_at_utc": self._ts(1),
+                    "pair": "EUR_USD",
+                    "direction": "RANGE",
+                    "score_eligible": False,
+                    "score_ineligible_reasons": [
+                        "SOURCE_QUOTE_LAG_EXCEEDS_WINDOW"
+                    ],
+                    "verdict": "NOT_APPLICABLE_CLOSED_MARKET_WINDOW",
+                    "horizon_results": {
+                        "30m": dict(not_applicable),
+                        "2h": dict(not_applicable),
+                    },
+                },
+            ]
+            score_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            report = compute_daily_review(
+                db_path,
+                now=self.now,
+                market_read_score_path=score_path,
+            )
+            review = report.market_read_review
+
+            self.assertEqual(review["v2_lifecycle_resolved_predictions"], 0)
+            self.assertEqual(review["v2_lifecycle_not_applicable_predictions"], 2)
+            self.assertEqual(review["v2_lifecycle_unresolved_predictions"], 0)
+            self.assertEqual(
+                review["v2_score_eligible_not_applicable_predictions"],
+                1,
+            )
+            self.assertEqual(
+                review["v2_score_ineligible_not_applicable_predictions"],
+                1,
+            )
+            self.assertEqual(review["v2_resolved_horizons"], 1)
+            self.assertEqual(review["v2_not_applicable_horizons"], 3)
+            self.assertEqual(review["v2_unresolved_horizons"], 0)
+            self.assertEqual(review["pending_predictions"], 0)
+            self.assertEqual(review["direction_accuracy_30m_pct"], 100.0)
+            self.assertIsNone(review["direction_accuracy_2h_pct"])
+            self.assertEqual(review["v2_horizons"]["30m"]["resolved"], 1)
+            self.assertEqual(review["v2_horizons"]["30m"]["not_applicable"], 1)
+            self.assertEqual(review["v2_horizons"]["30m"]["unresolved"], 0)
+            self.assertEqual(review["v2_horizons"]["2h"]["resolved"], 0)
+            self.assertEqual(review["v2_horizons"]["2h"]["not_applicable"], 2)
+            self.assertEqual(review["v2_horizons"]["2h"]["unresolved"], 0)
+            self.assertEqual(
+                review["v2_horizons"]["2h"]["direction_scoreable"],
+                0,
+            )
 
     def test_market_read_v2_malformed_ineligible_reasons_are_fail_contained(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

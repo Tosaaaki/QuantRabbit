@@ -77,6 +77,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_ATTACK_ADVICE_REPORT,
+    DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAMPAIGN_REPORT,
@@ -4967,6 +4968,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_MARKET_READ_PREDICTIONS,
     )
+    p_draft.add_argument(
+        "--bidask-replay-validation",
+        type=Path,
+        default=DEFAULT_BIDASK_REPLAY_VALIDATION,
+    )
     p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
 
     p_market_read = sub.add_parser(
@@ -5067,6 +5073,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_MARKET_READ_PREDICTIONS,
     )
+    p_market_read.add_argument(
+        "--bidask-replay-validation",
+        type=Path,
+        default=DEFAULT_BIDASK_REPLAY_VALIDATION,
+    )
 
     p_gpt = sub.add_parser("gpt-trader-decision", help="Verify a Codex-written trader decision against broker truth.")
     p_gpt.add_argument("--snapshot", type=Path, required=True)
@@ -5126,6 +5137,11 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_gpt.add_argument("--report", type=Path, default=DEFAULT_GPT_TRADER_DECISION_REPORT)
     p_gpt.add_argument("--market-read-predictions", type=Path, default=None)
+    p_gpt.add_argument(
+        "--bidask-replay-validation",
+        type=Path,
+        default=None,
+    )
     p_gpt.add_argument("--market-read-score-report", type=Path, default=None)
 
     p_intents = sub.add_parser("generate-intents", help="Generate dry-run order intents from campaign lanes.")
@@ -9809,6 +9825,7 @@ def _market_read_evidence_sources(args: argparse.Namespace) -> dict[str, Path]:
         "range_rail_geometry_repair": "range_rail_geometry_repair",
         "execution_ledger": "execution_ledger_db",
         "market_read_predictions": "market_read_predictions",
+        "bidask_replay_validation": "bidask_replay_validation",
     }
     sources: dict[str, Path] = {}
     for label, attribute in names.items():

@@ -113,6 +113,22 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
 WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
 WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
+FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V1"
+FORECAST_REPLAY_METRIC_FIELDS = (
+    "n",
+    "hit_rate",
+    "hit_wilson95_lower",
+    "hit_wilson95_upper",
+    "avg_final_pips",
+    "median_final_pips",
+    "avg_mfe_pips",
+    "avg_mae_pips",
+    "target_touch_rate",
+    "invalidation_touch_rate",
+    "target_before_invalidation_rate",
+    "avg_realized_r",
+    "total_realized_r",
+)
 
 
 class MarketReadOverlayError(ValueError):
@@ -1473,6 +1489,11 @@ def _build_evidence_packet(
         if predictions_path is not None
         else []
     )
+    replay_path = normalized_sources.get("bidask_replay_validation")
+    forecast_replay_scorecard = _forecast_replay_scorecard(
+        Path(replay_path) if replay_path is not None else None,
+        baseline=baseline,
+    )
     order_intents_path = normalized_sources.get("order_intents")
     order_intents = (
         _load_optional_json_object(Path(order_intents_path))
@@ -1591,6 +1612,7 @@ def _build_evidence_packet(
             else {}
         ),
         "recent_resolved_predictions": recent_predictions,
+        "forecast_replay_scorecard": forecast_replay_scorecard,
         "execution_ledger_allocation_surface": execution_ledger_surface,
         "capital_allocation_board": capital_allocation_board,
         "capital_allocation_board_sha256": allocation_board_sha,
@@ -1602,8 +1624,236 @@ def _build_evidence_packet(
             "capital_allocation_cannot_exceed_base_units": True,
             "overlay_grants_live_permission": False,
             "directional_and_range_geometry_must_be_numeric": True,
+            "forecast_replay_scorecard_is_read_only": True,
+            "forecast_replay_scorecard_grants_live_permission": False,
             "market_read_first": market_read_contract_payload(),
         },
+    }
+
+
+def _forecast_replay_scorecard(
+    path: Path | None,
+    *,
+    baseline: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Expose bounded replay diagnostics directly to the GPT market read.
+
+    The full replay artifact can be multi-megabyte. The packet binds its file
+    hash as normal evidence, but gives GPT only the numeric slices needed to
+    challenge a current directional thesis. This scorecard is diagnostic and
+    cannot authorize a lane or increase units.
+    """
+
+    selected_pair, selected_direction = _baseline_replay_scope(baseline)
+    base = {
+        "contract": FORECAST_REPLAY_SCORECARD_CONTRACT,
+        "source_path": str(path) if path is not None else None,
+        "selected_pair": selected_pair,
+        "selected_direction": selected_direction,
+        "read_only": True,
+        "live_permission": False,
+    }
+    if path is None or not path.exists() or not path.is_file():
+        return {**base, "status": "MISSING"}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {**base, "status": "MALFORMED"}
+    if not isinstance(payload, Mapping):
+        return {**base, "status": "MALFORMED"}
+
+    segments = payload.get("segments")
+    segments = segments if isinstance(segments, Mapping) else {}
+    raw_pair_direction_rows = segments.get("by_pair_direction")
+    raw_pair_direction_count = (
+        len(raw_pair_direction_rows)
+        if isinstance(raw_pair_direction_rows, list)
+        else 0
+    )
+    pair_direction_rows = _forecast_replay_rows(
+        raw_pair_direction_rows,
+        dimension_fields=("pair", "direction"),
+        limit=64,
+    )
+    pair_filter = sorted(
+        {
+            str(pair or "").strip().upper()
+            for pair in (payload.get("pair_filter") or [])
+            if str(pair or "").strip()
+        }
+    )
+    selected_pair_direction = next(
+        (
+            row
+            for row in pair_direction_rows
+            if row.get("pair") == selected_pair
+            and row.get("direction") == selected_direction
+        ),
+        None,
+    )
+    return {
+        **base,
+        "status": "VALID",
+        "proof_eligible": False,
+        "proof_status": (
+            "UNVERIFIED_LEGACY"
+            if not isinstance(payload.get("selection_contract"), Mapping)
+            else "DIAGNOSTIC_ONLY"
+        ),
+        "proof_blockers": [
+            "REPLAY_SCORECARD_DOES_NOT_GRANT_LIVE_PERMISSION",
+            *(
+                ["MISSING_SELECTION_CONTRACT"]
+                if not isinstance(payload.get("selection_contract"), Mapping)
+                else []
+            ),
+        ],
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "source": payload.get("source"),
+        "truth_source": payload.get("truth_source"),
+        "granularity": payload.get("granularity"),
+        "scope": {
+            "pair_filter": pair_filter,
+            "history_pairs": _nonnegative_int(payload.get("history_pairs")),
+            "evaluated_rows": _nonnegative_int(payload.get("evaluated_rows")),
+            "forecast_time_from_utc": payload.get("forecast_time_from_utc"),
+            "forecast_time_to_utc": payload.get("forecast_time_to_utc"),
+            "independent_non_overlap": payload.get("independent_non_overlap"),
+            "independent_selected_rows": _nonnegative_int(
+                payload.get("independent_selected_rows")
+            ),
+            "pair_direction_rows": raw_pair_direction_count,
+            "pair_direction_rows_included": len(pair_direction_rows),
+            "pair_direction_rows_truncated": raw_pair_direction_count
+            > len(pair_direction_rows),
+        },
+        "selection_contract": _forecast_replay_selection_contract(
+            payload.get("selection_contract")
+        ),
+        "experiment": _forecast_replay_experiment(payload.get("experiment")),
+        "global": _forecast_replay_metrics(payload.get("summary")),
+        "selected_pair_direction": selected_pair_direction,
+        "selected_coverage_status": (
+            "COVERED"
+            if selected_pair_direction is not None
+            else (
+                "NOT_COVERED"
+                if selected_pair is not None
+                and pair_filter
+                and selected_pair not in pair_filter
+                else "NO_MATCH"
+            )
+        ),
+        "by_pair_direction": pair_direction_rows,
+        "by_confidence": _forecast_replay_rows(
+            segments.get("by_confidence"),
+            dimension_fields=("confidence_bucket",),
+            limit=16,
+        ),
+        "by_horizon": _forecast_replay_rows(
+            segments.get("by_horizon"),
+            dimension_fields=("horizon_bucket",),
+            limit=16,
+        ),
+    }
+
+
+def _baseline_replay_scope(baseline: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    market_read = baseline.get("market_read_first")
+    market_read = market_read if isinstance(market_read, Mapping) else {}
+    forced = market_read.get("best_trade_if_forced")
+    forced = forced if isinstance(forced, Mapping) else {}
+    pair = str(forced.get("pair") or "").strip().upper() or None
+    direction_text = str(forced.get("direction") or "").strip().upper()
+    direction = {
+        "LONG": "UP",
+        "SHORT": "DOWN",
+        "UP": "UP",
+        "DOWN": "DOWN",
+    }.get(direction_text)
+    return pair, direction
+
+
+def _forecast_replay_rows(
+    value: Any,
+    *,
+    dimension_fields: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value[:limit]:
+        if not isinstance(item, Mapping):
+            continue
+        row = {
+            field: str(item.get(field) or "").strip().upper()
+            for field in dimension_fields
+        }
+        row.update(_forecast_replay_metrics(item))
+        rows.append(row)
+    return rows
+
+
+def _forecast_replay_metrics(value: Any) -> dict[str, float | int | None]:
+    item = value if isinstance(value, Mapping) else {}
+    metrics: dict[str, float | int | None] = {}
+    for field in FORECAST_REPLAY_METRIC_FIELDS:
+        parsed = _optional_float(item.get(field))
+        if field == "n" and parsed is not None and parsed >= 0 and parsed.is_integer():
+            metrics[field] = int(parsed)
+        else:
+            metrics[field] = parsed
+    if metrics.get("hit_wilson95_lower") is None:
+        metrics["hit_wilson95_lower"] = hit_rate_wilson_lower(
+            metrics.get("hit_rate"),
+            metrics.get("n") if isinstance(metrics.get("n"), int) else None,
+        )
+    return metrics
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    parsed = _optional_float(value)
+    if parsed is None or parsed < 0 or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+def _forecast_replay_selection_contract(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return {
+        key: deepcopy(value.get(key))
+        for key in (
+            "audit_mode",
+            "proof_eligible",
+            "proof_blockers",
+            "forecast_from_utc_inclusive",
+            "forecast_to_utc_exclusive",
+            "forecast_window_start_utc",
+            "forecast_window_end_utc",
+            "independent_non_overlap_per_pair",
+            "independence_limit",
+            "confidence_field",
+            "min_confidence",
+        )
+        if key in value
+    }
+
+
+def _forecast_replay_experiment(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    semantics = value.get("semantics")
+    return {
+        "schema_version": value.get("schema_version"),
+        "status": value.get("status"),
+        "audit_mode": value.get("audit_mode"),
+        "evaluator_sha256": value.get("evaluator_sha256"),
+        "experiment_id": value.get("experiment_id"),
+        "semantics_version": (
+            semantics.get("version") if isinstance(semantics, Mapping) else None
+        ),
     }
 
 
