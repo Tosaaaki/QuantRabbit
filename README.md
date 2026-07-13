@@ -31,6 +31,7 @@ DecaBot is a QuantRabbit-derived experiment, but it runs from `/Users/tossaki/Ap
 
 See `docs/DECABOT_BRIDGE.md` for the boundary. `cycle` can trade live when DecaBot `dry_run=false`; it does not use the QuantRabbit live gateway or main account.
 The weekend guard checks the DST-aware FX close at Saturday 06:00/07:00 JST, stops DecaBot `ai` / `monitor` / `review` launchd agents only after the New York Friday close, then restores at the Monday FX reopen (06:00 JST in New York summer time, 07:00 JST in winter). It restores only the labels that were running before the pause.
+For Codex automations, schedules use the app's canonical prefix-free `FREQ=...` form. The hourly trader is scheduled across all seven RRULE weekdays so either a local or UTC weekday boundary still covers the Monday FX reopen; the DST-aware weekend switch pauses it while the market is closed. A switch with Codex rows returns `PENDING_CODEX_SCHEDULER_REFRESH` plus an operation id. The weekend automation must replay the rows in their supplied order through Codex `automation_update`—trader first on pause, last on restore—and acknowledge that exact operation only after every update succeeds, with one ordered `--updated-task task_id=STATUS` caller attestation per row. Pending state is locked, retry-stable, and cannot be replaced by the opposite transition. A direct TOML edit is never treated as completed app state.
 
 ## Local Credentials
 

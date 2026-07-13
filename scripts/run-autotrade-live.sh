@@ -109,6 +109,7 @@ readonly DEFAULT_SYNC_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
 readonly DEFAULT_SYNC_MAIN_BRANCH="main"
 
 source "${SCRIPT_DIR}/qr-live-lock.sh"
+source "${SCRIPT_DIR}/runtime-drift-allowlist.sh"
 
 acquire_lock() {
   qr_live_lock_acquire \
@@ -117,60 +118,6 @@ acquire_lock() {
     "$QR_AUTOTRADE_LOCK_WAIT_SECONDS" \
     "$QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN" \
     "$QR_AUTOTRADE_LOCK_POLL_SECONDS"
-}
-
-is_report_path() {
-  local path="$1"
-  case "$path" in
-    docs/*_report.md|\
-docs/*_report.close_reentry.md|\
-docs/guardian_action_review.md|\
-docs/as_lane_candidate_board.md|\
-docs/as_proof_pack_queue.md|\
-docs/audjpy_short_breakout_failure_limit_proof_pack.md|\
-docs/audjpy_short_breakout_failure_repair_proof.md|\
-docs/eurusd_short_breakout_failure_scout_plan.md|\
-docs/eurusd_short_breakout_failure_stop_harvest_replay.md|\
-docs/entry_frequency_recovery_report.md|\
-docs/forecast_pattern_refresh_report.md|\
-docs/range_rail_geometry_repair_report.md|\
-docs/historical_only_to_fresh_proof_replay.md|\
-docs/manual_eurusd_tp_replacement_provenance.md|\
-docs/portfolio_4x_path_planner.md|\
-docs/post_gate_capture_economics_decomposition.md|\
-docs/post_gate_expectancy_gap_trace.md|\
-docs/post_gate_gap_family_repair_table.md|\
-docs/profitability_acceptance_blocker_reconciliation.md|\
-docs/remaining_profitability_p0_decomposition.md|\
-docs/rolling_30d_4x_firepower_board.md|\
-data/guardian_trigger_contract.json|\
-data/guardian_receipt_consumption.json|\
-data/guardian_receipt_operator_review.json|\
-data/as_lane_candidate_board.json|\
-data/as_proof_pack_queue.json|\
-data/audjpy_short_breakout_failure_limit_proof_pack.json|\
-data/audjpy_short_breakout_failure_repair_proof.json|\
-data/eurusd_short_breakout_failure_stop_harvest_replay.json|\
-data/entry_frequency_recovery.json|\
-data/forecast_pattern_refresh.json|\
-data/range_rail_geometry_repair.json|\
-data/harvest_live_grade_path.json|\
-data/historical_only_to_fresh_proof_replay.json|\
-data/manual_eurusd_tp_replacement_provenance.json|\
-data/portfolio_4x_path_planner.json|\
-data/post_gate_capture_economics_decomposition.json|\
-data/post_gate_expectancy_gap_trace.json|\
-data/post_gate_gap_family_repair_table.json|\
-data/payoff_shape_diagnosis.json|\
-data/profitability_acceptance_blocker_reconciliation.json|\
-data/remaining_profitability_p0_decomposition.json|\
-data/rolling_30d_4x_firepower_board.json|\
-data/predictive_scout_forward_proof.json|\
-data/trader_goal_loop_orchestrator.json)
-      return 0
-      ;;
-  esac
-  return 1
 }
 
 clear_runtime_verdict_markers() {
@@ -205,7 +152,7 @@ can_continue_after_sync_failure() {
     if [[ "$lock_rel" != "$QR_AUTOTRADE_LOCK_DIR" && ( "$path" == "$lock_rel" || "$path" == "$lock_rel/"* ) ]]; then
       continue
     fi
-    if ! is_report_path "$path"; then
+    if ! qr_is_runtime_drift_path "$path"; then
       echo "[run-autotrade-live] live sync failed and runtime has non-evidence drift: ${line}" >&2
       return 1
     fi

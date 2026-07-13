@@ -22,6 +22,7 @@ from quant_rabbit.market_read_ledger import (
     record_market_read_prediction,
     refresh_market_read_measurements,
 )
+from quant_rabbit.market_read_contract import market_read_missing_fields
 from quant_rabbit.close_discipline import (
     thesis_evolution_reason_has_hard_close_evidence,
 )
@@ -2125,21 +2126,6 @@ class TraderDecisionDraftSummary:
     verification_issues: tuple[str, ...]
 
 
-MARKET_READ_NAKED_FIELDS = (
-    "currency_bought",
-    "currency_sold",
-    "cleanest_pair_expression",
-    "is_cleanest_currency_theme",
-    "location_24h",
-    "h1_h4_alignment",
-    "tape_state",
-    "known_winning_trade_shape_match",
-    "proposed_building_style_allowed",
-    "thesis_state",
-    "what_price_is_trying_to_do_now",
-)
-MARKET_READ_PREDICTION_FIELDS = ("pair", "direction", "expected_path", "target_zone", "invalidation")
-MARKET_READ_FORCED_TRADE_FIELDS = ("pair", "direction", "vehicle", "entry", "tp", "sl", "why_this_pays")
 MARKET_READ_BLOCKER_FIELDS = (
     "thesis",
     "narrative",
@@ -2176,51 +2162,7 @@ MARKET_READ_PREDICTION_REF_PATTERN = re.compile(
 
 
 def _market_read_missing_fields(market_read: dict[str, Any]) -> list[str]:
-    missing: list[str] = []
-    nested_requirements = (
-        ("naked_read", MARKET_READ_NAKED_FIELDS),
-        ("next_30m_prediction", MARKET_READ_PREDICTION_FIELDS),
-        ("next_2h_prediction", MARKET_READ_PREDICTION_FIELDS),
-        ("best_trade_if_forced", MARKET_READ_FORCED_TRADE_FIELDS),
-    )
-    for parent, fields in nested_requirements:
-        section = market_read.get(parent)
-        if not isinstance(section, dict):
-            missing.append(parent)
-            continue
-        for field_name in fields:
-            value = section.get(field_name)
-            if not str(value or "").strip():
-                missing.append(f"{parent}.{field_name}")
-    vehicle = (
-        str((market_read.get("best_trade_if_forced") or {}).get("vehicle") or "").strip().upper()
-        if isinstance(market_read.get("best_trade_if_forced"), dict)
-        else ""
-    )
-    if vehicle and vehicle not in {"MARKET", "LIMIT", "STOP"}:
-        missing.append("best_trade_if_forced.vehicle")
-    tape_state = (
-        str((market_read.get("naked_read") or {}).get("tape_state") or "").strip().upper()
-        if isinstance(market_read.get("naked_read"), dict)
-        else ""
-    )
-    if tape_state and tape_state not in {"TREND", "RANGE", "SQUEEZE", "FADE", "ROTATION"}:
-        missing.append("naked_read.tape_state")
-    location = (
-        str((market_read.get("naked_read") or {}).get("location_24h") or "").strip().upper()
-        if isinstance(market_read.get("naked_read"), dict)
-        else ""
-    )
-    if location and location not in {"LOWER", "MIDDLE", "UPPER", "UNKNOWN"}:
-        missing.append("naked_read.location_24h")
-    thesis_state = (
-        str((market_read.get("naked_read") or {}).get("thesis_state") or "").strip().upper()
-        if isinstance(market_read.get("naked_read"), dict)
-        else ""
-    )
-    if thesis_state and thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY", "UNKNOWN"}:
-        missing.append("naked_read.thesis_state")
-    return missing
+    return market_read_missing_fields(market_read)
 
 
 def _decision_contract_text(decision: GPTTraderDecision) -> str:

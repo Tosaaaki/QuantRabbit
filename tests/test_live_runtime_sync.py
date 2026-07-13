@@ -617,7 +617,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 automation_file,
                 live,
                 status="ACTIVE",
-                rrule="RRULE:FREQ=MINUTELY;INTERVAL=5;BYDAY=MO,TU,WE,TH,FR,SA",
+                rrule="FREQ=MINUTELY;INTERVAL=5;BYDAY=SU,MO,TU,WE,TH,FR,SA",
             )
 
             result = _sync(
@@ -694,7 +694,7 @@ def _write_automation(
     *,
     status: str,
     prompt: str | None = None,
-    rrule: str = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA",
 ) -> None:
     prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(

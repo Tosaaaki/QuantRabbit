@@ -9,6 +9,9 @@ accidentally enabled.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -64,7 +67,20 @@ class Change:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("pause", "restore"))
+    parser.add_argument(
+        "action",
+        choices=("pause", "restore", "ack-codex-scheduler-refresh"),
+    )
+    parser.add_argument(
+        "--operation-id",
+        help="Exact pending Codex scheduler refresh id returned by pause/restore.",
+    )
+    parser.add_argument(
+        "--updated-task",
+        action="append",
+        default=[],
+        help="Caller attestation in task_id=STATUS form; repeat in supplied row order.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--require-market-open",
@@ -89,12 +105,22 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--require-market-closed is valid only with pause")
     if args.require_market_open and args.require_market_closed:
         parser.error("market-open and market-closed requirements are mutually exclusive")
+    if args.action == "ack-codex-scheduler-refresh" and not args.operation_id:
+        parser.error("--operation-id is required for ack-codex-scheduler-refresh")
+    if args.action == "ack-codex-scheduler-refresh" and not args.updated_task:
+        parser.error("at least one --updated-task is required for ack-codex-scheduler-refresh")
+    if args.action != "ack-codex-scheduler-refresh" and args.operation_id:
+        parser.error("--operation-id is valid only with ack-codex-scheduler-refresh")
+    if args.action != "ack-codex-scheduler-refresh" and args.updated_task:
+        parser.error("--updated-task is valid only with ack-codex-scheduler-refresh")
     try:
         result = switch_tasks(
             args.action,
             dry_run=args.dry_run,
             require_market_open=args.require_market_open,
             require_market_closed=args.require_market_closed,
+            operation_id=args.operation_id,
+            updated_tasks=tuple(args.updated_task),
         )
     except TaskSwitchError as exc:
         print(json.dumps({"status": "ERROR", "error": str(exc)}, indent=2), file=sys.stderr)
@@ -109,34 +135,49 @@ def switch_tasks(
     dry_run: bool = False,
     require_market_open: bool = False,
     require_market_closed: bool = False,
+    operation_id: str | None = None,
+    updated_tasks: tuple[str, ...] = (),
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    specs = _task_specs()
     state_file = _state_file()
     clock = now or datetime.now(timezone.utc)
     timestamp = clock.replace(microsecond=0).isoformat()
-    if action == "pause":
-        if require_market_closed:
-            waiting = _scheduled_pause_wait(
-                specs=specs,
+    if action == "ack-codex-scheduler-refresh":
+        if dry_run:
+            raise TaskSwitchError("scheduler refresh acknowledgement cannot be dry-run")
+        if not operation_id:
+            raise TaskSwitchError("scheduler refresh acknowledgement requires operation_id")
+        with _state_lock(state_file):
+            return _ack_codex_scheduler_refresh(
                 state_file=state_file,
-                dry_run=dry_run,
-                now=clock,
+                operation_id=operation_id,
+                updated_tasks=updated_tasks,
+                timestamp=timestamp,
             )
-            if waiting is not None:
-                return waiting
-        return _pause(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
-    if action == "restore":
-        if require_market_open:
-            waiting = _scheduled_restore_wait(
-                state_file=state_file,
-                dry_run=dry_run,
-                now=clock,
-            )
-            if waiting is not None:
-                return waiting
-        return _restore(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
-    raise TaskSwitchError(f"unsupported action: {action}")
+    specs = _task_specs()
+    with _state_lock(state_file):
+        if action == "pause":
+            if require_market_closed:
+                waiting = _scheduled_pause_wait(
+                    specs=specs,
+                    state_file=state_file,
+                    dry_run=dry_run,
+                    now=clock,
+                )
+                if waiting is not None:
+                    return waiting
+            return _pause(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
+        if action == "restore":
+            if require_market_open:
+                waiting = _scheduled_restore_wait(
+                    state_file=state_file,
+                    dry_run=dry_run,
+                    now=clock,
+                )
+                if waiting is not None:
+                    return waiting
+            return _restore(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
+        raise TaskSwitchError(f"unsupported action: {action}")
 
 
 def _scheduled_pause_wait(
@@ -215,6 +256,11 @@ def _pause(
 ) -> dict[str, Any]:
     existing = _load_state_if_present(state_file)
     warnings: list[str] = []
+    existing_pending = existing.get("codex_scheduler_refresh_pending")
+    if isinstance(existing_pending, dict) and existing_pending.get("action") != "pause":
+        raise TaskSwitchError(
+            "refusing to replace an unacknowledged Codex scheduler refresh with pause"
+        )
     if existing.get("mode") == "paused":
         state = existing
         state["last_pause_reapplied_at_utc"] = timestamp
@@ -232,10 +278,20 @@ def _pause(
         _write_state(state_file, state)
 
     desired = {spec.key: _paused_task_state(spec, _read_task(spec)) for spec in specs}
-    changes = _apply_states(specs, desired, dry_run=dry_run)
+    if not dry_run:
+        _assert_pending_refresh_compatible(state, action="pause", specs=specs, desired=desired)
+    changes = _apply_states(specs, desired, action="pause", dry_run=dry_run)
+    refresh_rows = _codex_scheduler_refresh_rows(changes, dry_run=dry_run)
+    operation_id = None
     if not dry_run:
         state["pause_applied_at_utc"] = timestamp
         state["last_changes"] = [_change_dict(change) for change in changes]
+        operation_id = _stage_codex_scheduler_refresh(
+            state,
+            action="pause",
+            timestamp=timestamp,
+            rows=refresh_rows,
+        )
         _write_state(state_file, state)
     return _summary(
         action="pause",
@@ -243,6 +299,8 @@ def _pause(
         state_file=state_file,
         baseline_tasks=state.get("tasks", {}),
         changes=changes,
+        refresh_rows=refresh_rows,
+        operation_id=operation_id,
         warnings=warnings,
     )
 
@@ -272,19 +330,30 @@ def _restore(
         for spec in specs
         if spec.key in baseline_tasks
     }
-    changes = _apply_states(specs, desired, dry_run=dry_run)
+    if not dry_run:
+        _assert_pending_refresh_compatible(state, action="restore", specs=specs, desired=desired)
+    changes = _apply_states(specs, desired, action="restore", dry_run=dry_run)
+    refresh_rows = _codex_scheduler_refresh_rows(changes, dry_run=dry_run)
+    operation_id = None
     warnings: list[str] = []
     if mode == "restored":
         warnings.append("weekend snapshot already restored")
         if any(change.changed for change in changes):
             warnings.append("restored snapshot drift reconciled")
     if not dry_run:
-        state["mode"] = "restored"
         if mode == "paused":
-            state["restored_at_utc"] = timestamp
+            state["restore_requested_at_utc"] = timestamp
         elif any(change.changed for change in changes):
-            state["last_restore_reconciled_at_utc"] = timestamp
+            state["last_restore_reconciliation_requested_at_utc"] = timestamp
         state["last_changes"] = [_change_dict(change) for change in changes]
+        operation_id = _stage_codex_scheduler_refresh(
+            state,
+            action="restore",
+            timestamp=timestamp,
+            rows=refresh_rows,
+        )
+        if not refresh_rows:
+            _finalize_scheduler_refresh_state(state, action="restore", timestamp=timestamp)
         _write_state(state_file, state)
     return _summary(
         action="restore",
@@ -292,6 +361,8 @@ def _restore(
         state_file=state_file,
         baseline_tasks=baseline_tasks,
         changes=changes,
+        refresh_rows=refresh_rows,
+        operation_id=operation_id,
         warnings=warnings,
     )
 
@@ -482,6 +553,20 @@ def _state_file() -> Path:
     return Path(os.environ.get("QR_WEEKEND_TASK_STATE_FILE", str(default))).expanduser()
 
 
+@contextmanager
+def _state_lock(state_file: Path):
+    """Serialize snapshot/pending/ack read-modify-write operations."""
+
+    lock_path = state_file.with_name(state_file.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _read_task(spec: TaskSpec) -> dict[str, Any]:
     base: dict[str, Any] = {
         "kind": spec.kind,
@@ -525,11 +610,17 @@ def _apply_states(
     specs: list[TaskSpec],
     desired_by_key: dict[str, dict[str, Any]],
     *,
+    action: str,
     dry_run: bool,
 ) -> list[Change]:
     changes: list[Change] = []
     specs_by_key = {spec.key: spec for spec in specs}
-    for key, desired in desired_by_key.items():
+    ordered_keys = sorted(
+        desired_by_key,
+        key=lambda key: _task_apply_priority(specs_by_key.get(key), action=action),
+    )
+    for key in ordered_keys:
+        desired = desired_by_key[key]
         spec = specs_by_key.get(key)
         if spec is None:
             continue
@@ -587,6 +678,16 @@ def _apply_states(
                 )
             )
     return changes
+
+
+def _task_apply_priority(spec: TaskSpec | None, *, action: str) -> tuple[int, str]:
+    key = spec.key if spec is not None else ""
+    is_trader = key in TRADER_TASK_KEYS
+    if action == "pause":
+        return (0 if is_trader else 1, key)
+    if action == "restore":
+        return (1 if is_trader else 0, key)
+    raise TaskSwitchError(f"unsupported apply action: {action}")
 
 
 def _read_codex_status(path: Path) -> str:
@@ -724,6 +825,229 @@ def _active_trader_keys(tasks: dict[str, Any]) -> list[str]:
     return active
 
 
+def _codex_scheduler_refresh_rows(
+    changes: list[Change],
+    *,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    if dry_run:
+        return []
+    return [
+        {
+            "task_id": change.key.split(":", 1)[1],
+            "status": change.after,
+            "automation_path": change.path,
+            "config_file_changed": change.changed,
+        }
+        for change in changes
+        if change.key.startswith("codex:") and change.field == "status"
+    ]
+
+
+def _stage_codex_scheduler_refresh(
+    state: dict[str, Any],
+    *,
+    action: str,
+    timestamp: str,
+    rows: list[dict[str, Any]],
+) -> str | None:
+    existing = state.get("codex_scheduler_refresh_pending")
+    if not rows:
+        if isinstance(existing, dict):
+            raise TaskSwitchError("cannot discard an unacknowledged Codex scheduler refresh")
+        return None
+    identity_rows = _scheduler_refresh_identity_rows(rows)
+    if isinstance(existing, dict):
+        existing_action = str(existing.get("action") or "")
+        existing_rows = existing.get("rows")
+        existing_identity = (
+            _scheduler_refresh_identity_rows(existing_rows)
+            if isinstance(existing_rows, list)
+            else []
+        )
+        if existing_action == action and existing_identity == identity_rows:
+            existing_id = existing.get("operation_id")
+            if not isinstance(existing_id, str) or not existing_id:
+                raise TaskSwitchError("pending Codex scheduler refresh has no operation id")
+            return existing_id
+        raise TaskSwitchError(
+            "refusing to replace an unacknowledged Codex scheduler refresh: "
+            f"pending_action={existing_action!r} requested_action={action!r}"
+        )
+    seed = json.dumps(
+        {
+            "action": action,
+            "snapshot_created_at_utc": state.get("created_at_utc"),
+            "rows": identity_rows,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    operation_id = "codex-refresh-" + hashlib.sha256(seed.encode()).hexdigest()[:24]
+    state["codex_scheduler_refresh_pending"] = {
+        "operation_id": operation_id,
+        "action": action,
+        "requested_at_utc": timestamp,
+        "rows": rows,
+    }
+    return operation_id
+
+
+def _assert_pending_refresh_compatible(
+    state: dict[str, Any],
+    *,
+    action: str,
+    specs: list[TaskSpec],
+    desired: dict[str, dict[str, Any]],
+) -> None:
+    existing = state.get("codex_scheduler_refresh_pending")
+    if not isinstance(existing, dict):
+        return
+    planned_rows: list[dict[str, Any]] = []
+    specs_by_key = {spec.key: spec for spec in specs}
+    ordered_keys = sorted(
+        desired,
+        key=lambda key: _task_apply_priority(specs_by_key.get(key), action=action),
+    )
+    for key in ordered_keys:
+        spec = specs_by_key.get(key)
+        target = desired[key]
+        if (
+            spec is None
+            or spec.kind != "codex"
+            or not target.get("exists", True)
+            or not spec.path.exists()
+        ):
+            continue
+        planned_rows.append(
+            {
+                "task_id": spec.task_id,
+                "status": str(target.get("status", CODEX_PAUSED)),
+                "automation_path": str(spec.path),
+            }
+        )
+    existing_rows = existing.get("rows")
+    if (
+        existing.get("action") != action
+        or not isinstance(existing_rows, list)
+        or _scheduler_refresh_identity_rows(existing_rows)
+        != _scheduler_refresh_identity_rows(planned_rows)
+    ):
+        raise TaskSwitchError(
+            "refusing task mutation while a different Codex scheduler refresh is unacknowledged"
+        )
+
+
+def _scheduler_refresh_identity_rows(rows: list[Any]) -> list[dict[str, str]]:
+    identity: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise TaskSwitchError("scheduler refresh row must be an object")
+        task_id = str(row.get("task_id") or "")
+        status = str(row.get("status") or "")
+        automation_path = str(row.get("automation_path") or "")
+        if not task_id or status not in {CODEX_ACTIVE, CODEX_PAUSED} or not automation_path:
+            raise TaskSwitchError("scheduler refresh row identity is incomplete")
+        identity.append(
+            {
+                "task_id": task_id,
+                "status": status,
+                "automation_path": automation_path,
+            }
+        )
+    return identity
+
+
+def _ack_codex_scheduler_refresh(
+    *,
+    state_file: Path,
+    operation_id: str,
+    updated_tasks: tuple[str, ...],
+    timestamp: str,
+) -> dict[str, Any]:
+    state = _load_state(state_file)
+    pending = state.get("codex_scheduler_refresh_pending")
+    if not isinstance(pending, dict):
+        acknowledged = state.get("codex_scheduler_refresh_acknowledged")
+        if isinstance(acknowledged, dict) and acknowledged.get("operation_id") == operation_id:
+            expected_tasks = tuple(str(item) for item in acknowledged.get("updated_tasks") or [])
+            if updated_tasks != expected_tasks:
+                raise TaskSwitchError("scheduler refresh acknowledgement attestation mismatch")
+            return {
+                "status": "OK",
+                "action": "ack-codex-scheduler-refresh",
+                "operation_id": operation_id,
+                "acknowledged_action": acknowledged.get("action"),
+                "acknowledged_task_count": len(expected_tasks),
+                "caller_attestation": list(expected_tasks),
+                "idempotent_replay": True,
+                "state_file": str(state_file),
+            }
+        raise TaskSwitchError("no Codex scheduler refresh is pending")
+    expected = pending.get("operation_id")
+    if operation_id != expected:
+        raise TaskSwitchError(
+            f"scheduler refresh operation mismatch: expected={expected!r} actual={operation_id!r}"
+        )
+    action = str(pending.get("action") or "")
+    if action not in {"pause", "restore"}:
+        raise TaskSwitchError(f"invalid pending scheduler refresh action: {action!r}")
+    rows = pending.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise TaskSwitchError("pending scheduler refresh has no task rows")
+    expected_tasks = tuple(
+        f"{row['task_id']}={row['status']}"
+        for row in _scheduler_refresh_identity_rows(rows)
+    )
+    if updated_tasks != expected_tasks:
+        raise TaskSwitchError(
+            "scheduler refresh caller attestation mismatch: "
+            f"expected={list(expected_tasks)!r} actual={list(updated_tasks)!r}"
+        )
+
+    _finalize_scheduler_refresh_state(state, action=action, timestamp=timestamp)
+    state["codex_scheduler_refresh_acknowledged"] = {
+        "operation_id": operation_id,
+        "action": action,
+        "acknowledged_at_utc": timestamp,
+        "task_ids": [str(row.get("task_id") or "") for row in rows if isinstance(row, dict)],
+        "updated_tasks": list(expected_tasks),
+    }
+    state.pop("codex_scheduler_refresh_pending", None)
+    _write_state(state_file, state)
+    return {
+        "status": "OK",
+        "action": "ack-codex-scheduler-refresh",
+        "operation_id": operation_id,
+        "acknowledged_action": action,
+        "acknowledged_task_count": len(rows),
+        "caller_attestation": list(expected_tasks),
+        "idempotent_replay": False,
+        "state_file": str(state_file),
+    }
+
+
+def _finalize_scheduler_refresh_state(
+    state: dict[str, Any],
+    *,
+    action: str,
+    timestamp: str,
+) -> None:
+    if action == "restore":
+        was_restored = state.get("mode") == "restored"
+        state["mode"] = "restored"
+        if was_restored:
+            state["last_restore_reconciled_at_utc"] = timestamp
+        else:
+            state["restored_at_utc"] = timestamp
+    elif action == "pause":
+        state["mode"] = "paused"
+        state["pause_scheduler_acknowledged_at_utc"] = timestamp
+    else:  # pragma: no cover - internal callers are constrained.
+        raise TaskSwitchError(f"unsupported scheduler refresh action: {action}")
+
+
 def _summary(
     *,
     action: str,
@@ -731,16 +1055,24 @@ def _summary(
     state_file: Path,
     baseline_tasks: dict[str, Any],
     changes: list[Change],
+    refresh_rows: list[dict[str, Any]],
+    operation_id: str | None,
     warnings: list[str],
 ) -> dict[str, Any]:
     return {
-        "status": "OK",
+        "status": "PENDING_CODEX_SCHEDULER_REFRESH" if refresh_rows else "OK",
         "action": action,
         "dry_run": dry_run,
         "state_file": str(state_file),
         "baseline_active_trader_tasks": _active_trader_keys(baseline_tasks),
         "changed_count": sum(1 for change in changes if change.changed),
         "changes": [_change_dict(change) for change in changes],
+        # Editing automation.toml is durable state, but Codex Desktop owns the
+        # in-memory scheduler.  The weekend automation must resubmit every row
+        # through automation_update, including unchanged rows on its retry,
+        # before it can claim that pause/restore reached the scheduler.
+        "codex_scheduler_refresh_operation_id": operation_id,
+        "codex_scheduler_refresh_required": refresh_rows,
         "warnings": warnings,
     }
 

@@ -21,8 +21,14 @@ AGENTS_PATH = REPO_ROOT / "AGENTS.md"
 CHANGELOG_PATH = REPO_ROOT / "docs" / "CHANGELOG.md"
 STRATEGY_MEMORY_PATH = REPO_ROOT / "collab_trade" / "strategy_memory.md"
 QR_TRADER_AUTOMATION_PATH = Path.home() / ".codex" / "automations" / "qr-trader" / "automation.toml"
+QR_WEEKEND_MARKET_OFF_AUTOMATION_PATH = (
+    Path.home() / ".codex" / "automations" / "qr-weekend-market-off" / "automation.toml"
+)
+QR_WEEKEND_MARKET_ON_AUTOMATION_PATH = (
+    Path.home() / ".codex" / "automations" / "qr-weekend-market-on" / "automation.toml"
+)
 QR_WEEKEND_TASK_STATE_PATH = Path.home() / ".codex" / "quant_rabbit_weekend_task_state.json"
-EXPECTED_QR_TRADER_RRULE = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"
+EXPECTED_QR_TRADER_RRULE = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"
 EXPECTED_QR_TRADER_MODEL = "gpt-5.5"
 EXPECTED_QR_TRADER_REASONING = "high"
 EXPECTED_QR_TRADER_CWD = "/Users/tossaki/App/QuantRabbit-live"
@@ -49,6 +55,34 @@ EXPECTED_QR_TRADER_RUNTIME_DRIFT_PROMPT_PHRASES = (
     "data/trader_goal_loop_orchestrator.json",
     "runtime drift and **do not** block the run",
 )
+EXPECTED_WEEKEND_SCHEDULER_REFRESH_PROMPT_PHRASES = (
+    "PENDING_CODEX_SCHEDULER_REFRESH",
+    "codex_scheduler_refresh_required",
+    "codex_scheduler_refresh_operation_id",
+    "config_file_changed=false",
+    "automation_update",
+    "ack-codex-scheduler-refresh --operation-id",
+    "--updated-task",
+    "editing automation.toml alone is not proof",
+    "never turn a requested PAUSED task ACTIVE",
+)
+EXPECTED_WEEKEND_AUTOMATIONS = {
+    "qr-weekend-market-off": {
+        "name": "QR weekend market off",
+        "rrule": "FREQ=WEEKLY;BYDAY=SA;BYHOUR=6,7;BYMINUTE=0",
+        "command": "quant_rabbit.weekend_task_switch pause --require-market-closed",
+        "order": "pause order with qr-trader first",
+    },
+    "qr-weekend-market-on": {
+        "name": "QR weekend market on",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;BYHOUR=6,7;BYMINUTE=0",
+        "command": "quant_rabbit.weekend_task_switch restore --require-market-open",
+        "order": "restore order with qr-trader last",
+    },
+}
+EXPECTED_WEEKEND_CWD = "/Users/tossaki/App/QuantRabbit"
+EXPECTED_WEEKEND_MODEL = "gpt-5-codex"
+EXPECTED_WEEKEND_REASONING = "medium"
 SOURCE_DIRT_EXPLANATION_REQUIRED_PATHS = (
     "src/quant_rabbit/automation.py",
     "src/quant_rabbit/broker/execution.py",
@@ -90,6 +124,51 @@ def _validate_qr_trader_automation(issues: list[str], *, now_utc: datetime | Non
     for required_phrase in EXPECTED_QR_TRADER_RUNTIME_DRIFT_PROMPT_PHRASES:
         if required_phrase not in prompt:
             issues.append(f"qr-trader automation prompt missing runtime drift allowance: {required_phrase}")
+
+
+def _validate_weekend_scheduler_automation(
+    path: Path,
+    *,
+    label: str,
+    issues: list[str],
+) -> None:
+    if not path.exists():
+        issues.append(f"{label} automation missing: {path}")
+        return
+    payload = _load_toml_payload(path.read_text())
+    expected = EXPECTED_WEEKEND_AUTOMATIONS.get(label)
+    if expected is None:
+        issues.append(f"unsupported weekend automation label: {label}")
+        return
+    exact_checks = {
+        "id": label,
+        "kind": "cron",
+        "name": expected["name"],
+        "status": "ACTIVE",
+        "rrule": expected["rrule"],
+        "model": EXPECTED_WEEKEND_MODEL,
+        "reasoning_effort": EXPECTED_WEEKEND_REASONING,
+        "execution_environment": "local",
+    }
+    for key, wanted in exact_checks.items():
+        actual = payload.get(key)
+        if actual != wanted:
+            issues.append(f"{label} automation {key} expected {wanted!r}, got {actual!r}")
+    if payload.get("cwds") != [EXPECTED_WEEKEND_CWD]:
+        issues.append(
+            f"{label} automation cwds expected {[EXPECTED_WEEKEND_CWD]!r}, "
+            f"got {payload.get('cwds')!r}"
+        )
+    target = payload.get("target")
+    if not isinstance(target, dict) or target.get("project_id") != EXPECTED_WEEKEND_CWD:
+        issues.append(f"{label} automation target project must be {EXPECTED_WEEKEND_CWD!r}")
+    prompt = str(payload.get("prompt") or "")
+    for phrase in (str(expected["command"]), str(expected["order"])):
+        if phrase not in prompt:
+            issues.append(f"{label} automation prompt missing safety contract: {phrase}")
+    for phrase in EXPECTED_WEEKEND_SCHEDULER_REFRESH_PROMPT_PHRASES:
+        if phrase not in prompt:
+            issues.append(f"{label} automation prompt missing scheduler refresh contract: {phrase}")
 
 
 def _load_toml_payload(text: str) -> dict[str, Any]:
@@ -214,6 +293,16 @@ def main() -> int:
         issues,
     )
     _validate_qr_trader_automation(issues)
+    _validate_weekend_scheduler_automation(
+        QR_WEEKEND_MARKET_OFF_AUTOMATION_PATH,
+        label="qr-weekend-market-off",
+        issues=issues,
+    )
+    _validate_weekend_scheduler_automation(
+        QR_WEEKEND_MARKET_ON_AUTOMATION_PATH,
+        label="qr-weekend-market-on",
+        issues=issues,
+    )
 
     if issues:
         for issue in issues:

@@ -44,6 +44,17 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(state["tasks"]["codex:qr-trader"]["status"], "ACTIVE")
             self.assertEqual(state["tasks"]["codex:qr-hole-audit"]["status"], "ACTIVE")
             self.assertNotIn("codex:qr-weekend-market-off", state["tasks"])
+            refresh = json.loads(result.stdout)["codex_scheduler_refresh_required"]
+            self.assertEqual(refresh[0]["task_id"], "qr-trader")
+            self.assertEqual(
+                {row["task_id"]: row["status"] for row in refresh},
+                {
+                    "qr-hole-audit": "PAUSED",
+                    "qr-news-digest": "PAUSED",
+                    "qr-self-improvement-watch": "PAUSED",
+                    "qr-trader": "PAUSED",
+                },
+            )
 
     def test_restore_uses_snapshot_without_enabling_disabled_claude_traders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,7 +66,9 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _codex_task(codex_root, "qr-weekend-market-off", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            paused = _run_switch("pause", env)
+            self.assertEqual(paused.returncode, 0)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
 
             result = _run_switch("restore", env)
 
@@ -67,6 +80,24 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(_codex_status(codex_root, "qr-weekend-market-off"), "ACTIVE")
             self.assertFalse(_claude_enabled(claude_root, "trader"))
             self.assertFalse(_claude_enabled(claude_root, "trader_v2"))
+            refresh = json.loads(result.stdout)["codex_scheduler_refresh_required"]
+            self.assertEqual(refresh[-1]["task_id"], "qr-trader")
+            self.assertEqual(
+                {row["task_id"]: row["status"] for row in refresh},
+                {
+                    "qr-hole-audit": "ACTIVE",
+                    "qr-news-digest": "ACTIVE",
+                    "qr-self-improvement-watch": "PAUSED",
+                    "qr-trader": "ACTIVE",
+                },
+            )
+            changed_by_task = {
+                row["task_id"]: row["config_file_changed"] for row in refresh
+            }
+            self.assertTrue(changed_by_task["qr-trader"])
+            self.assertTrue(changed_by_task["qr-news-digest"])
+            self.assertTrue(changed_by_task["qr-hole-audit"])
+            self.assertFalse(changed_by_task["qr-self-improvement-watch"])
 
     def test_restore_never_enables_self_improvement_watch_from_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -75,7 +106,9 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            paused = _run_switch("pause", env)
+            self.assertEqual(paused.returncode, 0)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
 
             result = _run_switch("restore", env)
 
@@ -89,7 +122,9 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _codex_task(codex_root, "qr-trader", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            paused_result = _run_switch("pause", env)
+            self.assertEqual(paused_result.returncode, 0)
+            self.assertEqual(_ack_refresh(paused_result, env).returncode, 0)
 
             with mock.patch.dict(os.environ, env, clear=True):
                 waiting = switch_tasks(
@@ -103,13 +138,20 @@ class WeekendTaskSwitchTest(unittest.TestCase):
                     require_market_open=True,
                     now=datetime(2026, 1, 11, 22, 0, tzinfo=timezone.utc),
                 )
+                acknowledged = switch_tasks(
+                    "ack-codex-scheduler-refresh",
+                    operation_id=restored["codex_scheduler_refresh_operation_id"],
+                    updated_tasks=_updated_tasks(restored),
+                    now=datetime(2026, 1, 11, 22, 1, tzinfo=timezone.utc),
+                )
 
             self.assertEqual(waiting["status"], "WAITING_FOR_MARKET_OPEN")
             self.assertEqual(waiting["changed_count"], 0)
             self.assertFalse(waiting["market_status"]["is_fx_open"])
             self.assertEqual(mode_after_wait, "paused")
             self.assertEqual(json.loads(state_file.read_text())["mode"], "restored")
-            self.assertEqual(restored["status"], "OK")
+            self.assertEqual(restored["status"], "PENDING_CODEX_SCHEDULER_REFRESH")
+            self.assertEqual(acknowledged["status"], "OK")
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
 
     def test_scheduled_pause_keeps_the_last_winter_market_hour(self) -> None:
@@ -136,7 +178,7 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(waiting["changed_count"], 0)
             self.assertTrue(waiting["market_status"]["is_fx_open"])
             self.assertFalse(state_existed_before_close)
-            self.assertEqual(paused["status"], "OK")
+            self.assertEqual(paused["status"], "PENDING_CODEX_SCHEDULER_REFRESH")
             self.assertEqual(json.loads(state_file.read_text())["mode"], "paused")
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "PAUSED")
 
@@ -149,8 +191,12 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
-            self.assertEqual(_run_switch("restore", env).returncode, 0)
+            paused = _run_switch("pause", env)
+            self.assertEqual(paused.returncode, 0)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
+            first_restore = _run_switch("restore", env)
+            self.assertEqual(first_restore.returncode, 0)
+            self.assertEqual(_ack_refresh(first_restore, env).returncode, 0)
 
             _write_codex_status(codex_root, "qr-trader", "PAUSED")
             _write_codex_status(codex_root, "qr-hole-audit", "PAUSED")
@@ -165,9 +211,106 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
+            self.assertEqual(_ack_refresh(result, env).returncode, 0)
             state = json.loads(state_file.read_text())
             self.assertEqual(state["mode"], "restored")
             self.assertIn("last_restore_reconciled_at_utc", state)
+
+            retry = _run_switch("restore", env)
+            self.assertEqual(retry.returncode, 0, retry.stderr)
+            retry_refresh = json.loads(retry.stdout)["codex_scheduler_refresh_required"]
+            self.assertTrue(retry_refresh)
+            self.assertTrue(all(not row["config_file_changed"] for row in retry_refresh))
+
+    def test_restore_requires_exact_scheduler_ack_before_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            paused = _run_switch("pause", env)
+            self.assertEqual(paused.returncode, 0)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
+
+            restored = _run_switch("restore", env)
+
+            self.assertEqual(restored.returncode, 0, restored.stderr)
+            payload = json.loads(restored.stdout)
+            self.assertEqual(payload["status"], "PENDING_CODEX_SCHEDULER_REFRESH")
+            state = json.loads(state_file.read_text())
+            self.assertEqual(state["mode"], "paused")
+            self.assertEqual(
+                state["codex_scheduler_refresh_pending"]["operation_id"],
+                payload["codex_scheduler_refresh_operation_id"],
+            )
+            bad_ack = _run_ack("codex-refresh-wrong", _updated_tasks(payload), env)
+            self.assertEqual(bad_ack.returncode, 1)
+            self.assertEqual(json.loads(state_file.read_text())["mode"], "paused")
+            incomplete_ack = _run_ack(
+                payload["codex_scheduler_refresh_operation_id"],
+                _updated_tasks(payload)[:-1],
+                env,
+            )
+            self.assertEqual(incomplete_ack.returncode, 1)
+            (codex_root / "qr-news-digest" / "automation.toml").write_text("not valid toml")
+
+            acknowledged = _ack_refresh(restored, env)
+
+            self.assertEqual(acknowledged.returncode, 0, acknowledged.stderr)
+            state = json.loads(state_file.read_text())
+            self.assertEqual(state["mode"], "restored")
+            self.assertNotIn("codex_scheduler_refresh_pending", state)
+            replayed = _ack_refresh(restored, env)
+            self.assertEqual(replayed.returncode, 0, replayed.stderr)
+            self.assertTrue(json.loads(replayed.stdout)["idempotent_replay"])
+
+    def test_dry_run_never_requests_codex_scheduler_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, _state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            result = subprocess.run(
+                [sys.executable, "-m", "quant_rabbit.weekend_task_switch", "pause", "--dry-run"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                json.loads(result.stdout)["codex_scheduler_refresh_required"],
+                [],
+            )
+
+    def test_opposite_transition_cannot_replace_pending_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            paused = _run_switch("pause", env)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
+            restored = _run_switch("restore", env)
+            pending_before = json.loads(state_file.read_text())[
+                "codex_scheduler_refresh_pending"
+            ]
+
+            opposite = _run_switch("pause", env)
+
+            self.assertEqual(opposite.returncode, 1)
+            state = json.loads(state_file.read_text())
+            self.assertEqual(state["codex_scheduler_refresh_pending"], pending_before)
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
+            self.assertEqual(
+                json.loads(restored.stdout)["codex_scheduler_refresh_operation_id"],
+                pending_before["operation_id"],
+            )
 
     def test_claude_quant_rabbit_weekday_tasks_are_snapshot_managed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,7 +320,9 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _claude_task(claude_root, "daily-review", True, project="/Users/tossaki/App/QuantRabbit")
             _claude_task(claude_root, "daily-slack-summary", True, project="/Users/tossaki/App/QuantRabbit")
             _claude_task(claude_root, "other-project", True, project="/tmp/not-qr")
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            paused = _run_switch("pause", env)
+            self.assertEqual(paused.returncode, 0)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
 
             self.assertFalse(_claude_enabled(claude_root, "daily-review"))
             self.assertFalse(_claude_enabled(claude_root, "daily-slack-summary"))
@@ -197,8 +342,15 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             _codex_task(codex_root, "qr-news-digest", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
-            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            first_pause = _run_switch("pause", env)
+            second_pause = _run_switch("pause", env)
+            self.assertEqual(first_pause.returncode, 0)
+            self.assertEqual(second_pause.returncode, 0)
+            self.assertEqual(
+                json.loads(first_pause.stdout)["codex_scheduler_refresh_operation_id"],
+                json.loads(second_pause.stdout)["codex_scheduler_refresh_operation_id"],
+            )
+            self.assertEqual(_ack_refresh(second_pause, env).returncode, 0)
 
             state = json.loads(state_file.read_text())
             self.assertEqual(state["tasks"]["codex:qr-trader"]["status"], "ACTIVE")
@@ -272,6 +424,50 @@ def _run_switch(action: str, env: dict[str, str]) -> subprocess.CompletedProcess
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+    )
+
+
+def _run_ack(
+    operation_id: str,
+    updated_tasks: tuple[str, ...],
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    task_args = [item for task in updated_tasks for item in ("--updated-task", task)]
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.weekend_task_switch",
+            "ack-codex-scheduler-refresh",
+            "--operation-id",
+            operation_id,
+            *task_args,
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def _ack_refresh(
+    result: subprocess.CompletedProcess[str],
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    payload = json.loads(result.stdout)
+    operation_id = payload["codex_scheduler_refresh_operation_id"]
+    return _run_ack(operation_id, _updated_tasks(payload), env)
+
+
+def _updated_tasks(payload: dict[str, object]) -> tuple[str, ...]:
+    rows = payload["codex_scheduler_refresh_required"]
+    assert isinstance(rows, list)
+    return tuple(
+        f"{row['task_id']}={row['status']}"
+        for row in rows
+        if isinstance(row, dict)
     )
 
 

@@ -29,7 +29,7 @@ class TaskSyncContractTest(unittest.TestCase):
     def test_qr_trader_expected_runtime_policy_is_hourly_gpt55_high(self) -> None:
         self.assertEqual(
             check_task_sync.EXPECTED_QR_TRADER_RRULE,
-            "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA",
+            "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA",
         )
         self.assertEqual(check_task_sync.EXPECTED_QR_TRADER_MODEL, "gpt-5.5")
         self.assertEqual(check_task_sync.EXPECTED_QR_TRADER_REASONING, "high")
@@ -47,7 +47,7 @@ class TaskSyncContractTest(unittest.TestCase):
                         'name = "QR vNext Trader"',
                         f'prompt = "{prompt}"',
                         'status = "ACTIVE"',
-                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'rrule = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"',
                         'model = "gpt-5.5"',
                         'reasoning_effort = "high"',
                         'execution_environment = "local"',
@@ -80,7 +80,7 @@ class TaskSyncContractTest(unittest.TestCase):
                         'name = "QR vNext Trader"',
                         f'prompt = "{prompt}"',
                         'status = "PAUSED"',
-                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'rrule = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"',
                         'model = "gpt-5.5"',
                         'reasoning_effort = "high"',
                         'execution_environment = "local"',
@@ -123,7 +123,7 @@ class TaskSyncContractTest(unittest.TestCase):
                         'name = "QR vNext Trader"',
                         f'prompt = "{prompt}"',
                         'status = "PAUSED"',
-                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'rrule = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"',
                         'model = "gpt-5.5"',
                         'reasoning_effort = "high"',
                         'execution_environment = "local"',
@@ -169,7 +169,7 @@ class TaskSyncContractTest(unittest.TestCase):
                         'name = "QR vNext Trader"',
                         f'prompt = "{prompt}"',
                         'status = "ACTIVE"',
-                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'rrule = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"',
                         'model = "gpt-5.5"',
                         'reasoning_effort = "high"',
                         'execution_environment = "local"',
@@ -190,6 +190,107 @@ class TaskSyncContractTest(unittest.TestCase):
                 any("runtime drift allowance" in issue for issue in issues),
                 issues,
             )
+
+    def test_weekend_automation_requires_codex_scheduler_reregistration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            automation = Path(tmp) / "automation.toml"
+            prompt = " ".join(
+                check_task_sync.EXPECTED_WEEKEND_SCHEDULER_REFRESH_PROMPT_PHRASES
+            ) + " quant_rabbit.weekend_task_switch restore --require-market-open restore order with qr-trader last"
+            automation.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        'id = "qr-weekend-market-on"',
+                        'kind = "cron"',
+                        'name = "QR weekend market on"',
+                        f'prompt = "{prompt}"',
+                        'status = "ACTIVE"',
+                        'rrule = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=6,7;BYMINUTE=0"',
+                        'model = "gpt-5-codex"',
+                        'reasoning_effort = "medium"',
+                        'execution_environment = "local"',
+                        'target = { type = "project", project_id = "/Users/tossaki/App/QuantRabbit" }',
+                        'cwds = ["/Users/tossaki/App/QuantRabbit"]',
+                    ]
+                )
+                + "\n"
+            )
+            issues: list[str] = []
+
+            check_task_sync._validate_weekend_scheduler_automation(
+                automation,
+                label="qr-weekend-market-on",
+                issues=issues,
+            )
+
+            self.assertEqual(issues, [])
+
+    def test_weekend_automation_rejects_file_only_restore_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            automation = Path(tmp) / "automation.toml"
+            automation.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        'id = "qr-weekend-market-on"',
+                        'kind = "cron"',
+                        'name = "QR weekend market on"',
+                        'prompt = "write automation.toml and report success"',
+                        'status = "ACTIVE"',
+                    ]
+                )
+                + "\n"
+            )
+            issues: list[str] = []
+
+            check_task_sync._validate_weekend_scheduler_automation(
+                automation,
+                label="qr-weekend-market-on",
+                issues=issues,
+            )
+
+            self.assertTrue(
+                any("scheduler refresh contract" in issue for issue in issues),
+                issues,
+            )
+
+    def test_weekend_automation_rejects_wrong_schedule_or_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            automation = Path(tmp) / "automation.toml"
+            prompt = " ".join(
+                check_task_sync.EXPECTED_WEEKEND_SCHEDULER_REFRESH_PROMPT_PHRASES
+            ) + " quant_rabbit.weekend_task_switch restore --require-market-open restore order with qr-trader last"
+            automation.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        'id = "qr-weekend-market-on"',
+                        'kind = "cron"',
+                        'name = "QR weekend market on"',
+                        f'prompt = "{prompt}"',
+                        'status = "ACTIVE"',
+                        'rrule = "FREQ=WEEKLY;BYDAY=TU;BYHOUR=6;BYMINUTE=0"',
+                        'model = "gpt-5-codex"',
+                        'reasoning_effort = "medium"',
+                        'execution_environment = "local"',
+                        'target = { type = "project", project_id = "/tmp/wrong" }',
+                        'cwds = ["/tmp/wrong"]',
+                    ]
+                )
+                + "\n"
+            )
+            issues: list[str] = []
+
+            check_task_sync._validate_weekend_scheduler_automation(
+                automation,
+                label="qr-weekend-market-on",
+                issues=issues,
+            )
+
+            self.assertTrue(any("rrule expected" in issue for issue in issues), issues)
+            self.assertTrue(any("cwds expected" in issue for issue in issues), issues)
+            self.assertTrue(any("target project" in issue for issue in issues), issues)
 
     def test_source_dirt_check_requires_explanation_for_guarded_source_files(self) -> None:
         dirty = [

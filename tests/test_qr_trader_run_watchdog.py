@@ -789,7 +789,7 @@ def _write_automation(
     status: str = "ACTIVE",
     model: str = "gpt-5.5",
     reasoning_effort: str = "high",
-    rrule: str = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA",
     cwds: list[str] | None = None,
 ) -> None:
     cwds = cwds or ["/Users/tossaki/App/QuantRabbit-live"]

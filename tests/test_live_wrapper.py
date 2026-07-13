@@ -364,6 +364,8 @@ class LiveWrapperTest(unittest.TestCase):
             (root / "data" / "guardian_receipt_operator_review.json").write_text('{"status":"tracked"}\n')
             (root / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"tracked"}\n')
             (root / "docs" / "as_proof_pack_queue.md").write_text("tracked proof report\n")
+            (root / "data" / "active_trader_contract.json").write_text('{"status":"tracked"}\n')
+            (root / "docs" / "active_trader_contract.md").write_text("tracked active contract\n")
             _run(["git", "add", "."], cwd=root)
             _run(["git", "commit", "-m", "initial"], cwd=root)
             _run(["git", "branch", "-m", "main"], cwd=root)
@@ -374,6 +376,8 @@ class LiveWrapperTest(unittest.TestCase):
             (root / "data" / "guardian_receipt_operator_review.json").write_text('{"status":"runtime"}\n')
             (root / "data" / "as_proof_pack_queue.json").write_text('{"generated_at":"runtime"}\n')
             (root / "docs" / "as_proof_pack_queue.md").write_text("runtime proof report\n")
+            (root / "data" / "active_trader_contract.json").write_text('{"status":"runtime"}\n')
+            (root / "docs" / "active_trader_contract.md").write_text("runtime active contract\n")
             env["QR_SYNC_DEV_ROOT"] = str(root)
             env["QR_SYNC_MAIN_BRANCH"] = "main"
             env["QR_SYNC_MARKER_PATH"] = str(root / "docs" / "sync_report.md")

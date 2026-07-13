@@ -23,6 +23,10 @@ from quant_rabbit.capture_economics import (
 )
 from quant_rabbit.forecast_precision import hit_rate_wilson_lower
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
+from quant_rabbit.market_read_contract import (
+    market_read_contract_payload,
+    market_read_missing_fields,
+)
 from quant_rabbit.predictive_scout import (
     predictive_scout_geometry_claimed,
     predictive_scout_metadata_supported,
@@ -452,6 +456,13 @@ def apply_codex_market_read_overlay(
         raise MarketReadOverlayError(
             "MARKET_READ_OVERLAY_SCHEMA_INVALID",
             "market_read_first must be an object",
+        )
+    semantic_issues = market_read_missing_fields(market_read)
+    if semantic_issues:
+        raise MarketReadOverlayError(
+            "MARKET_READ_OVERLAY_SCHEMA_INVALID",
+            "market_read_first is missing or has noncanonical fields: "
+            + ", ".join(semantic_issues),
         )
     geometry_issues = validate_market_read_numeric_geometry(
         market_read,
@@ -1590,6 +1601,7 @@ def _build_evidence_packet(
             "capital_allocation_cannot_exceed_base_units": True,
             "overlay_grants_live_permission": False,
             "directional_and_range_geometry_must_be_numeric": True,
+            "market_read_first": market_read_contract_payload(),
         },
     }
 
@@ -3356,9 +3368,12 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
             "active",
             "dependency_before_next_run",
             "exists",
-            "issues",
         ),
     )
+    if "issues" in guardian:
+        guardian_material["issues"] = _watchdog_material_issues(
+            guardian.get("issues")
+        )
     guardian_is_current = bool(
         guardian.get("active") is True
         or guardian.get("exists") is True
@@ -3381,43 +3396,51 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
         )
     guardian_material["current_receipts"] = current_receipts
 
+    health = _mapping_fields(
+        raw,
+        (
+            "status",
+            "runtime_status",
+            "issue_status",
+            "overall_status",
+            "severity",
+            "missed_expected_window",
+            "suspected_cause",
+            "recommended_operator_action",
+            "expected_cadence_minutes",
+            "grace_minutes",
+            "threshold_minutes",
+            "broker_writes_enabled",
+            "codex_exec_enabled",
+            "no_live_side_effects",
+        ),
+    )
+    if "issues" in raw:
+        health["issues"] = _watchdog_material_issues(raw.get("issues"))
+
+    automation_material = _mapping_fields(
+        automation,
+        (
+            "exists",
+            "model",
+            "reasoning_effort",
+            "cadence_minutes",
+            "cwd",
+            "cwds",
+            "rrule",
+            "status",
+        ),
+    )
+    if "issues" in automation:
+        automation_material["issues"] = _watchdog_material_issues(
+            automation.get("issues")
+        )
+
     return {
         "parse_status": "VALID",
-        "health": _mapping_fields(
-            raw,
-            (
-                "status",
-                "runtime_status",
-                "issue_status",
-                "overall_status",
-                "severity",
-                "issues",
-                "missed_expected_window",
-                "suspected_cause",
-                "recommended_operator_action",
-                "expected_cadence_minutes",
-                "grace_minutes",
-                "threshold_minutes",
-                "broker_writes_enabled",
-                "codex_exec_enabled",
-                "no_live_side_effects",
-            ),
-        ),
+        "health": health,
         "automation": {
-            **_mapping_fields(
-                automation,
-                (
-                    "exists",
-                    "issues",
-                    "model",
-                    "reasoning_effort",
-                    "cadence_minutes",
-                    "cwd",
-                    "cwds",
-                    "rrule",
-                    "status",
-                ),
-            ),
+            **automation_material,
             "weekend_pause": _mapping_fields(
                 automation_weekend,
                 (
@@ -3447,6 +3470,33 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
         "execution_boundary": deepcopy(raw.get("execution_boundary")),
         "environment": deepcopy(raw.get("environment")),
     }
+
+
+def _watchdog_material_issues(value: Any) -> Any:
+    """Remove observation prose while retaining every structured safety fact.
+
+    The watchdog rewrites human-readable issue messages with running values
+    such as ``1861.4 minutes old`` on each observation.  Code, severity, and
+    structured receipt/config fields are the stable safety contract; message
+    prose is a rendered diagnostic and must not invalidate an in-flight GPT
+    review when those facts are unchanged.
+    """
+
+    if not isinstance(value, list):
+        return deepcopy(value)
+    material: list[Any] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            material.append(deepcopy(item))
+            continue
+        material.append(
+            {
+                key: deepcopy(field_value)
+                for key, field_value in item.items()
+                if key != "message"
+            }
+        )
+    return material
 
 
 def _mapping_fields(source: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:

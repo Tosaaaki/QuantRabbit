@@ -1552,6 +1552,53 @@ class MarketReadOverlayTest(unittest.TestCase):
             with self.assertRaisesRegex(MarketReadOverlayError, "MARKET_READ_OVERLAY_SCHEMA_INVALID"):
                 _apply(paths)
 
+    def test_overlay_rejects_missing_canonical_market_read_field_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            overlay = _overlay(paths)
+            naked = overlay["market_read_first"]["naked_read"]
+            naked["known_winning_setup_state"] = naked.pop(
+                "known_winning_trade_shape_match"
+            )
+            paths["overlay"].write_text(json.dumps(overlay))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_OVERLAY_SCHEMA_INVALID.*known_winning_trade_shape_match",
+            ):
+                _apply(paths)
+
+            self.assertFalse(paths["output"].exists())
+
+    def test_overlay_rejects_noncanonical_market_read_enum_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            overlay = _overlay(paths)
+            overlay["market_read_first"]["naked_read"]["tape_state"] = "TREND_DOWN"
+            paths["overlay"].write_text(json.dumps(overlay))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_OVERLAY_SCHEMA_INVALID.*naked_read.tape_state",
+            ):
+                _apply(paths)
+
+    def test_evidence_packet_exposes_exact_market_read_first_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            schema = json.loads(paths["packet"].read_text())["contract"][
+                "market_read_first"
+            ]
+
+            self.assertIn(
+                "known_winning_trade_shape_match",
+                schema["required_fields"]["naked_read"],
+            )
+            self.assertEqual(
+                schema["enums"]["naked_read.tape_state"],
+                ["FADE", "RANGE", "ROTATION", "SQUEEZE", "TREND"],
+            )
+
     def test_baseline_or_evidence_mutation_rejects_stale_overlay(self) -> None:
         for mutation, expected_code in (
             ("baseline", "MARKET_READ_BASELINE_SHA_STALE"),
@@ -1664,6 +1711,73 @@ class MarketReadOverlayTest(unittest.TestCase):
             summary = _apply(paths)
 
             self.assertEqual(summary.action, "TRADE")
+
+    def test_watchdog_stale_age_message_rewrite_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            watchdog = json.loads(paths["watchdog"].read_text())
+            watchdog.update(
+                {
+                    "status": "STALE",
+                    "runtime_status": "STALE",
+                    "issue_status": "P0",
+                    "overall_status": "BLOCKED",
+                    "severity": "P0",
+                    "missed_expected_window": True,
+                    "issues": [
+                        {
+                            "code": "QR_TRADER_RUN_STALE",
+                            "message": (
+                                "Latest trader run evidence is 1861.4 minutes old; "
+                                "expected <= 75 minutes."
+                            ),
+                            "severity": "P0",
+                        }
+                    ],
+                }
+            )
+            paths["watchdog"].write_text(json.dumps(watchdog))
+            _reprepare(paths)
+            _write_overlay(paths)
+
+            watchdog["generated_at_utc"] = (NOW + timedelta(minutes=5)).isoformat()
+            watchdog["minutes_since_last_run"] = 1866.4
+            watchdog["issues"][0]["message"] = (
+                "Latest trader run evidence is 1866.4 minutes old; "
+                "expected <= 75 minutes."
+            )
+            paths["watchdog"].write_text(json.dumps(watchdog))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_watchdog_issue_code_or_severity_change_stales_ai_review(self) -> None:
+        for mutation in ("code", "severity"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                watchdog = json.loads(paths["watchdog"].read_text())
+                watchdog["issues"] = [
+                    {
+                        "code": "QR_TRADER_RUN_STALE",
+                        "message": "Rendered diagnostic prose",
+                        "severity": "P0",
+                    }
+                ]
+                paths["watchdog"].write_text(json.dumps(watchdog))
+                _reprepare(paths)
+                _write_overlay(paths)
+
+                watchdog["issues"][0][mutation] = (
+                    "QR_TRADER_RUN_EVIDENCE_MISSING" if mutation == "code" else "P1"
+                )
+                paths["watchdog"].write_text(json.dumps(watchdog))
+
+                with self.assertRaisesRegex(
+                    MarketReadOverlayError,
+                    "MARKET_READ_EVIDENCE_PACKET_STALE",
+                ):
+                    _apply(paths)
 
     def test_watchdog_material_safety_change_stales_ai_review(self) -> None:
         for mutation in ("status", "receipt_identity"):
