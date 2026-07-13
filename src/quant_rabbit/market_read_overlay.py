@@ -113,7 +113,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
 WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
 WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
-FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V2"
+FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V3"
 FORECAST_REPLAY_METRIC_FIELDS = (
     "n",
     "hit_rate",
@@ -1745,6 +1745,15 @@ def _forecast_replay_scorecard(
             "confidence_segment_rows_accounted": confidence_rows_accounted,
             "confidence_segment_rows_unreported": confidence_rows_unreported,
             "confidence_segment_complete": confidence_rows_unreported == 0,
+            "technical_context_missing_rows": _nonnegative_int(
+                payload.get("technical_context_missing_rows")
+            ),
+            "technical_context_invalid_rows": _nonnegative_int(
+                payload.get("technical_context_invalid_rows")
+            ),
+            "technical_context_incomplete_rows": _nonnegative_int(
+                payload.get("technical_context_incomplete_rows")
+            ),
         },
         "selection_contract": _forecast_replay_selection_contract(
             payload.get("selection_contract")
@@ -1809,6 +1818,36 @@ def _forecast_replay_scorecard(
             segments.get("by_session"),
             dimension_fields=("utc_session_bucket",),
             limit=16,
+        ),
+        "by_technical_context_completeness": _forecast_replay_rows(
+            segments.get("by_technical_context_completeness"),
+            dimension_fields=("technical_context_complete",),
+            limit=4,
+        ),
+        "by_technical_regime": _forecast_replay_rows(
+            segments.get("by_technical_regime"),
+            dimension_fields=("technical_regime",),
+            limit=16,
+        ),
+        "by_technical_atr_band": _forecast_replay_rows(
+            segments.get("by_technical_atr_band"),
+            dimension_fields=("technical_atr_band",),
+            limit=8,
+        ),
+        "by_technical_spread_band": _forecast_replay_rows(
+            segments.get("by_technical_spread_band"),
+            dimension_fields=("technical_spread_band",),
+            limit=8,
+        ),
+        "by_technical_range_location_24h": _forecast_replay_rows(
+            segments.get("by_technical_range_location_24h"),
+            dimension_fields=("technical_range_location_24h",),
+            limit=8,
+        ),
+        "by_technical_structure_alignment": _forecast_replay_rows(
+            segments.get("by_technical_structure_alignment"),
+            dimension_fields=("technical_structure_alignment",),
+            limit=8,
         ),
         "exit_policy_validation": _forecast_replay_exit_policy_validation(
             payload.get("train_validation_exit_selection")

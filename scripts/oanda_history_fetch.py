@@ -8,8 +8,11 @@ places orders; it only calls the OANDA instruments/candles read endpoint.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
+import hashlib
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -49,6 +52,25 @@ GRANULARITY_SECONDS: dict[str, int] = {
 }
 
 DEFAULT_OUTPUT_DIR = Path("logs/replay/oanda_history")
+TRUTH_RECEIPT_FILE = "truth_acquisition_receipts.jsonl"
+TRUTH_RECEIPT_SCHEMA = "QR_OANDA_TRUTH_ACQUISITION_RECEIPT_V1"
+TRUTH_RECEIPT_KEYS = {
+    "schema_version",
+    "sequence",
+    "recorded_at_utc",
+    "output_root",
+    "candle_path",
+    "candle_sha256",
+    "pair",
+    "granularity",
+    "price_component",
+    "window",
+    "rows",
+    "fetch_script_path",
+    "fetch_script_sha256",
+    "previous_receipt_sha256",
+    "receipt_sha256",
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +116,7 @@ def main() -> int:
                 client,
                 task,
                 run_dir=run_dir,
+                receipt_root=args.output_dir,
                 max_candles_per_request=args.max_candles_per_request,
                 sleep_seconds=args.sleep_seconds,
                 retries=args.retries,
@@ -187,6 +210,7 @@ def _fetch_task(
     task: FetchTask,
     *,
     run_dir: Path,
+    receipt_root: Path | None = None,
     max_candles_per_request: int,
     sleep_seconds: float,
     retries: int,
@@ -277,7 +301,108 @@ def _fetch_task(
     else:
         tmp_path.replace(file_path)
         summary["published"] = True
+        if receipt_root is not None:
+            receipt = _append_truth_acquisition_receipt(
+                output_root=receipt_root,
+                task=task,
+                candle_path=file_path,
+                rows=int(summary["rows"]),
+            )
+            summary["truth_acquisition_receipt_sha256"] = receipt["receipt_sha256"]
     return summary
+
+
+def _append_truth_acquisition_receipt(
+    *,
+    output_root: Path,
+    task: FetchTask,
+    candle_path: Path,
+    rows: int,
+) -> dict[str, Any]:
+    """Append one wall-clock receipt for an already-published candle file."""
+
+    root = output_root.resolve()
+    published = candle_path.resolve(strict=True)
+    try:
+        published.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("published candle file must be inside the receipt output root") from exc
+    if rows < 0:
+        raise ValueError("published candle row count cannot be negative")
+    receipt_path = root / TRUTH_RECEIPT_FILE
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    fetch_script = Path(__file__).resolve()
+    with receipt_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        existing = handle.read().encode("utf-8")
+        prior = _validate_truth_acquisition_receipt_chain(existing)
+        previous_sha = str(prior[-1]["receipt_sha256"]) if prior else None
+        body: dict[str, Any] = {
+            "schema_version": TRUTH_RECEIPT_SCHEMA,
+            "sequence": len(prior) + 1,
+            "recorded_at_utc": _iso(datetime.now(timezone.utc)),
+            "output_root": str(root),
+            "candle_path": str(published),
+            "candle_sha256": _sha256_bytes(published.read_bytes()),
+            "pair": task.pair,
+            "granularity": task.granularity,
+            "price_component": task.price,
+            "window": {"from_utc": _iso(task.start), "to_utc": _iso(task.end)},
+            "rows": rows,
+            "fetch_script_path": str(fetch_script),
+            "fetch_script_sha256": _sha256_bytes(fetch_script.read_bytes()),
+            "previous_receipt_sha256": previous_sha,
+        }
+        receipt = {**body, "receipt_sha256": _content_sha256(body)}
+        handle.seek(0, os.SEEK_END)
+        handle.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return receipt
+
+
+def _validate_truth_acquisition_receipt_chain(payload: bytes) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    previous_sha: str | None = None
+    for raw in payload.decode("utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("truth acquisition receipt ledger is malformed") from exc
+        if not isinstance(item, dict) or set(item) != TRUTH_RECEIPT_KEYS:
+            raise ValueError("truth acquisition receipt schema invalid")
+        if item.get("schema_version") != TRUTH_RECEIPT_SCHEMA:
+            raise ValueError("truth acquisition receipt version invalid")
+        if item.get("sequence") != len(rows) + 1:
+            raise ValueError("truth acquisition receipt sequence invalid")
+        if item.get("previous_receipt_sha256") != previous_sha:
+            raise ValueError("truth acquisition receipt chain broken")
+        body = {key: value for key, value in item.items() if key != "receipt_sha256"}
+        expected = _content_sha256(body)
+        if item.get("receipt_sha256") != expected:
+            raise ValueError("truth acquisition receipt digest mismatch")
+        previous_sha = expected
+        rows.append(item)
+    return rows
+
+
+def _content_sha256(value: dict[str, Any]) -> str:
+    return _sha256_bytes(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
 def _open_jsonl_writer(path: Path, *, compress: bool):

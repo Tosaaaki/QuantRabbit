@@ -34,6 +34,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.strategy.forecast_technical_context import (
+    verify_forecast_technical_context,
+)
 
 
 DIRECTIONAL = {"UP", "DOWN"}
@@ -103,6 +106,8 @@ class ForecastRow:
     range_score: float | None = None
     driver_families: tuple[str, ...] = ()
     drivers_against_families: tuple[str, ...] = ()
+    technical_context_v1: dict[str, Any] | None = None
+    technical_context_status: str = "MISSING"
 
     @property
     def score_margin(self) -> float | None:
@@ -375,6 +380,11 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
         **candle_stats,
         **score_stats,
         "summary": _summary(results),
+        "max_evaluated_horizon_min": (
+            max(float(row.get("horizon_min") or 0.0) for row in results)
+            if results
+            else None
+        ),
         "price_truth_coverage": price_truth_coverage,
         "forecast_sample_coverage": sample_coverage,
         "segments": {
@@ -405,6 +415,36 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
             "by_session": _group(
                 results,
                 ("utc_session_bucket",),
+                min_n=args.min_group_samples,
+            ),
+            "by_technical_context_completeness": _group(
+                results,
+                ("technical_context_complete",),
+                min_n=1,
+            ),
+            "by_technical_regime": _group(
+                results,
+                ("technical_regime",),
+                min_n=args.min_group_samples,
+            ),
+            "by_technical_atr_band": _group(
+                results,
+                ("technical_atr_band",),
+                min_n=args.min_group_samples,
+            ),
+            "by_technical_spread_band": _group(
+                results,
+                ("technical_spread_band",),
+                min_n=args.min_group_samples,
+            ),
+            "by_technical_range_location_24h": _group(
+                results,
+                ("technical_range_location_24h",),
+                min_n=args.min_group_samples,
+            ),
+            "by_technical_structure_alignment": _group(
+                results,
+                ("technical_structure_alignment",),
                 min_n=args.min_group_samples,
             ),
             "by_month": _group(results, ("month",), min_n=args.min_group_samples),
@@ -927,6 +967,9 @@ def _load_forecasts(
     skipped_invalid = 0
     raw_confidence_missing_rows = 0
     calibrated_confidence_missing_rows = 0
+    technical_context_missing_rows = 0
+    technical_context_invalid_rows = 0
+    technical_context_incomplete_rows = 0
     with path.open(encoding="utf-8") as handle:
         for idx, line in enumerate(handle):
             if not line.strip():
@@ -953,7 +996,24 @@ def _load_forecasts(
             calibration_multiplier = _safe_float(payload.get("calibration_multiplier"))
             target = _safe_float(payload.get("target_price"))
             invalidation = _safe_float(payload.get("invalidation_price"))
+            current_price = _safe_float(payload.get("current_price"))
             cycle_id = str(payload.get("cycle_id") or "").strip() or None
+            technical_context_raw = payload.get("technical_context_v1")
+            technical_context_valid, technical_context_error = verify_forecast_technical_context(
+                technical_context_raw,
+                pair=pair,
+                current_price=current_price,
+            )
+            technical_context = (
+                dict(technical_context_raw)
+                if technical_context_valid and isinstance(technical_context_raw, dict)
+                else None
+            )
+            technical_context_status = (
+                "VALID"
+                if technical_context_valid
+                else str(technical_context_error or "TECHNICAL_CONTEXT_INVALID")
+            )
             key = _dedupe_key(
                 cycle_id=cycle_id,
                 pair=pair,
@@ -974,13 +1034,15 @@ def _load_forecasts(
                 up_score=_safe_float(payload.get("up_score")),
                 down_score=_safe_float(payload.get("down_score")),
                 range_score=_safe_float(payload.get("range_score")),
-                current_price=_safe_float(payload.get("current_price")),
+                current_price=current_price,
                 target_price=target,
                 invalidation_price=invalidation,
                 horizon_min=_safe_horizon(payload.get("horizon_min")),
                 cycle_id=cycle_id,
                 driver_families=_forecast_driver_families(payload.get("drivers_for")),
                 drivers_against_families=_forecast_driver_families(payload.get("drivers_against")),
+                technical_context_v1=technical_context,
+                technical_context_status=technical_context_status,
             )
             if key in conflict_keys:
                 conflict_members[key].append(candidate)
@@ -1031,6 +1093,12 @@ def _load_forecasts(
         ):
             skipped_confidence_filter += 1
             continue
+        if row.technical_context_status == "TECHNICAL_CONTEXT_MISSING":
+            technical_context_missing_rows += 1
+        elif row.technical_context_status != "VALID":
+            technical_context_invalid_rows += 1
+        elif not bool(((row.technical_context_v1 or {}).get("completeness") or {}).get("complete")):
+            technical_context_incomplete_rows += 1
         rows.append(row)
     return rows, {
         "raw_directional_rows": raw_directional,
@@ -1045,6 +1113,9 @@ def _load_forecasts(
         "skipped_confidence_filter_rows": skipped_confidence_filter,
         "raw_confidence_missing_rows": raw_confidence_missing_rows,
         "calibrated_confidence_missing_rows": calibrated_confidence_missing_rows,
+        "technical_context_missing_rows": technical_context_missing_rows,
+        "technical_context_invalid_rows": technical_context_invalid_rows,
+        "technical_context_incomplete_rows": technical_context_incomplete_rows,
         "deduped_directional_rows": len(rows),
         "skipped_duplicate_rows": skipped_duplicate,
         "skipped_conflicting_forecast_rows": scoped_conflicting_forecast_groups,
@@ -1091,6 +1162,42 @@ def _forecast_driver_families(value: object) -> tuple[str, ...]:
         if family not in families:
             families.append(family)
     return tuple(families)
+
+
+def _technical_context_digest(value: dict[str, Any] | None) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    valid, _error = verify_forecast_technical_context(value)
+    if not valid:
+        return None
+    stored = str(value.get("context_sha256") or "").strip().lower()
+    return stored if len(stored) == 64 else None
+
+
+def _technical_context_value(value: dict[str, Any] | None, *path: str) -> object:
+    current: object = value
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _technical_context_label(value: dict[str, Any] | None, *path: str) -> str:
+    raw = _technical_context_value(value, *path)
+    text = str(raw or "").strip().upper()
+    return text or "MISSING"
+
+
+def _technical_structure_alignment(
+    value: dict[str, Any] | None,
+    *,
+    forecast_direction: str,
+) -> str:
+    structure_direction = _technical_context_label(value, "structure", "primary_direction")
+    if structure_direction not in DIRECTIONAL:
+        return "MISSING"
+    return "ALIGNED" if structure_direction == forecast_direction else "OPPOSED"
 
 
 def _driver_family(text: str) -> str:
@@ -1180,6 +1287,8 @@ def _forecast_rows_equivalent_for_dedupe(first: ForecastRow, second: ForecastRow
             row.cycle_id,
             row.driver_families,
             row.drivers_against_families,
+            _technical_context_digest(row.technical_context_v1),
+            row.technical_context_status,
         )
 
     return payload(first) == payload(second)
@@ -1935,6 +2044,29 @@ def _score_direction(
         "horizon_bucket": _horizon_bucket(row.horizon_min),
         "month": row.timestamp_utc.strftime("%Y-%m"),
         "utc_session_bucket": row.utc_session_bucket,
+        "technical_context_sha256": _technical_context_digest(row.technical_context_v1),
+        "technical_context_complete": bool(
+            ((row.technical_context_v1 or {}).get("completeness") or {}).get("complete")
+        ),
+        "technical_regime": _technical_context_label(
+            row.technical_context_v1, "regime", "primary"
+        ),
+        "technical_atr_band": _technical_context_label(
+            row.technical_context_v1, "volatility", "primary_atr_band"
+        ),
+        "technical_spread_band": _technical_context_label(
+            row.technical_context_v1, "execution", "spread_band"
+        ),
+        "technical_range_location_24h": _technical_context_label(
+            row.technical_context_v1, "location", "range_location_24h"
+        ),
+        "technical_structure_direction": _technical_context_label(
+            row.technical_context_v1, "structure", "primary_direction"
+        ),
+        "technical_structure_alignment": _technical_structure_alignment(
+            row.technical_context_v1,
+            forecast_direction=forecast_direction,
+        ),
         "entry_price": entry,
         "final_pips": final_pips,
         "final_direction_hit": final_pips > 0.0,
@@ -3137,6 +3269,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- truth_source: {report['truth_source']}",
         f"- rows: raw_directional={report['raw_directional_rows']} deduped={report['deduped_directional_rows']} evaluated={report['evaluated_rows']}",
         f"- confidence_missing: calibrated_loaded={report.get('calibrated_confidence_missing_rows', 0)} evaluated={report.get('evaluated_confidence_missing_rows', 0)} raw_filter={report.get('raw_confidence_missing_rows', 0)}",
+        f"- technical_context: missing={report.get('technical_context_missing_rows', 0)} invalid={report.get('technical_context_invalid_rows', 0)} incomplete={report.get('technical_context_incomplete_rows', 0)}",
         f"- history: files={report['history_files']} candles={report['history_candles']} skipped={report['history_skipped_rows']}",
         f"- price_truth_coverage: status={(report.get('price_truth_coverage') or {}).get('status')} adoption={(report.get('price_truth_coverage') or {}).get('adoption_level')}",
         f"- audit_mode: {selection.get('audit_mode')}",
@@ -3588,6 +3721,12 @@ def _proof_eligibility(
     blockers.append("SEGMENT_HOLDOUT_RULE_VALIDATION_NOT_IMPLEMENTED")
     if int(load_stats.get("skipped_conflicting_forecast_rows") or 0) > 0:
         blockers.append("CONFLICTING_FORECAST_ROWS")
+    if int(load_stats.get("technical_context_missing_rows") or 0) > 0:
+        blockers.append("TECHNICAL_CONTEXT_MISSING")
+    if int(load_stats.get("technical_context_invalid_rows") or 0) > 0:
+        blockers.append("TECHNICAL_CONTEXT_INVALID")
+    if int(load_stats.get("technical_context_incomplete_rows") or 0) > 0:
+        blockers.append("TECHNICAL_CONTEXT_INCOMPLETE")
     if int(candle_stats.get("history_conflicting_candles") or 0) > 0:
         blockers.append("CONFLICTING_PRICE_TRUTH")
     if int(score_stats.get("skipped_no_pair_candles") or 0) > 0:
@@ -3677,6 +3816,15 @@ def _experiment_identity(
             "raw_confidence_missing_rows": int(
                 (load_stats or {}).get("raw_confidence_missing_rows") or 0
             ),
+            "technical_context_missing_rows": int(
+                (load_stats or {}).get("technical_context_missing_rows") or 0
+            ),
+            "technical_context_invalid_rows": int(
+                (load_stats or {}).get("technical_context_invalid_rows") or 0
+            ),
+            "technical_context_incomplete_rows": int(
+                (load_stats or {}).get("technical_context_incomplete_rows") or 0
+            ),
             "conflicting_forecast_groups": int(
                 (load_stats or {}).get("skipped_conflicting_forecast_rows") or 0
             ),
@@ -3722,6 +3870,8 @@ def _forecast_rows_digest(rows: Sequence[ForecastRow]) -> str:
             row.cycle_id,
             row.driver_families,
             row.drivers_against_families,
+            _technical_context_digest(row.technical_context_v1),
+            row.technical_context_status,
         )
         payloads.append(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     for payload in sorted(payloads):

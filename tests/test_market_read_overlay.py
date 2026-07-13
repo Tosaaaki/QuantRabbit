@@ -1716,6 +1716,22 @@ class MarketReadOverlayTest(unittest.TestCase):
                                     "avg_final_pips": -4.376,
                                 }
                             ],
+                            "by_technical_regime": [
+                                {
+                                    "technical_regime": "TREND_WEAK",
+                                    "n": 30,
+                                    "hit_rate": 0.6,
+                                    "avg_final_pips": 1.2,
+                                }
+                            ],
+                            "by_technical_structure_alignment": [
+                                {
+                                    "technical_structure_alignment": "ALIGNED",
+                                    "n": 24,
+                                    "hit_rate": 0.625,
+                                    "avg_final_pips": 1.5,
+                                }
+                            ],
                         },
                         "train_validation_exit_selection": {
                             "status": "OK",
@@ -1764,7 +1780,7 @@ class MarketReadOverlayTest(unittest.TestCase):
                 "forecast_replay_scorecard"
             ]
             self.assertEqual(scorecard["status"], "VALID")
-            self.assertEqual(scorecard["contract"], "QR_FORECAST_REPLAY_SCORECARD_V2")
+            self.assertEqual(scorecard["contract"], "QR_FORECAST_REPLAY_SCORECARD_V3")
             self.assertEqual(scorecard["global"]["n"], 9420)
             self.assertEqual(scorecard["global"]["avg_final_pips"], -2.8666)
             self.assertEqual(scorecard["selected_pair"], "EUR_USD")
@@ -1822,6 +1838,14 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertEqual(
                 scorecard["by_session"][0]["utc_session_bucket"],
                 "UTC_17_22",
+            )
+            self.assertEqual(
+                scorecard["by_technical_regime"][0]["technical_regime"],
+                "TREND_WEAK",
+            )
+            self.assertEqual(
+                scorecard["by_technical_structure_alignment"][0]["technical_structure_alignment"],
+                "ALIGNED",
             )
             self.assertEqual(
                 scorecard["exit_policy_validation"]["validation"]["profit_factor"],

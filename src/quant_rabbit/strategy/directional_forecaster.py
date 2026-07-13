@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
 from quant_rabbit.strategy.price_action import structural_tp_target
 
 
@@ -160,6 +161,7 @@ class DirectionalForecast:
     range_low_price: Optional[float] = None
     range_high_price: Optional[float] = None
     range_width_pips: Optional[float] = None
+    technical_context_v1: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         payload = {
@@ -186,6 +188,8 @@ class DirectionalForecast:
             payload["range_high_price"] = self.range_high_price
         if self.range_width_pips is not None:
             payload["range_width_pips"] = round(self.range_width_pips, 3)
+        if self.technical_context_v1:
+            payload["technical_context_v1"] = self.technical_context_v1
         return payload
 
 
@@ -1342,6 +1346,12 @@ def synthesize_forecast(
     Confidence: computed as |UP - DOWN| / total_score, clamped 0-1,
     then multiplied by historical accuracy multiplier.
     """
+    technical_context_v1 = build_forecast_technical_context(
+        pair_chart,
+        pair=pair,
+        current_price=current_price,
+        spread_pips=spread_pips,
+    )
     if _is_disabled():
         return DirectionalForecast(
             pair=pair, direction="UNCLEAR", confidence=0.0,
@@ -1349,6 +1359,7 @@ def synthesize_forecast(
             drivers_for=(), drivers_against=(),
             rationale_summary="forecaster disabled",
             current_price=current_price,
+            technical_context_v1=technical_context_v1,
         )
 
     up_score = 0.0
@@ -1459,6 +1470,7 @@ def synthesize_forecast(
             down_score=down_score,
             range_score=range_score,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            technical_context_v1=technical_context_v1,
         )
 
     # Pick winner
@@ -1501,6 +1513,7 @@ def synthesize_forecast(
             range_score=range_score,
             raw_confidence=0.0,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            technical_context_v1=technical_context_v1,
         )
     runner_up_score = candidates[1][1]
 
@@ -1522,6 +1535,7 @@ def synthesize_forecast(
             range_score=range_score,
             raw_confidence=0.0,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            technical_context_v1=technical_context_v1,
         )
 
     # Decisiveness: need clear winner, not close call
@@ -1574,6 +1588,7 @@ def synthesize_forecast(
                 range_low_price=range_phase.range_low_price,
                 range_high_price=range_phase.range_high_price,
                 range_width_pips=range_phase.range_width_pips,
+                technical_context_v1=technical_context_v1,
             )
         # Too contested → UNCLEAR
         return DirectionalForecast(
@@ -1589,6 +1604,7 @@ def synthesize_forecast(
             range_score=range_score,
             raw_confidence=margin / max(winner_score, 1.0),
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            technical_context_v1=technical_context_v1,
         )
 
     raw_confidence = min(1.0, (margin / total) + 0.3)
@@ -1650,6 +1666,7 @@ def synthesize_forecast(
             range_low_price=range_phase.range_low_price,
             range_high_price=range_phase.range_high_price,
             range_width_pips=range_phase.range_width_pips,
+            technical_context_v1=technical_context_v1,
         )
 
     target_price, invalidation_price = _forecast_geometry(
@@ -1710,4 +1727,5 @@ def synthesize_forecast(
         range_low_price=range_phase.range_low_price if winner == "RANGE" else None,
         range_high_price=range_phase.range_high_price if winner == "RANGE" else None,
         range_width_pips=range_phase.range_width_pips if winner == "RANGE" else None,
+        technical_context_v1=technical_context_v1,
     )

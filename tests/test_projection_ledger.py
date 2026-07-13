@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import threading
 import unittest
@@ -10,6 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
+
+from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
 
 from quant_rabbit.strategy.projection_ledger import (
     CONFIDENCE_MAX_MULTIPLIER,
@@ -350,6 +354,75 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].entry_price, 1.1000)
             self.assertEqual(entries[0].predicted_target_price, 1.0950)
             self.assertEqual(entries[0].predicted_invalidation_price, 1.1030)
+
+    def test_directional_forecast_context_survives_ledger_resolution_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context = build_forecast_technical_context(
+                {
+                    "confluence": {
+                        "dominant_regime": "TREND_UP",
+                        "price_percentile_24h": 0.7,
+                    },
+                    "views": [
+                        {
+                            "granularity": "M5",
+                            "regime_reading": {"state": "TREND_STRONG", "atr_percentile": 80},
+                            "indicators": {"atr_pips": 2.0},
+                            "structure": {
+                                "structure_events": [
+                                    {"kind": "BOS_UP", "index": 5, "close_confirmed": True}
+                                ]
+                            },
+                        },
+                        {
+                            "granularity": "M15",
+                            "regime_reading": {"state": "TREND_WEAK", "atr_percentile": 50},
+                            "structure": {
+                                "structure_events": [
+                                    {"kind": "BOS_UP", "index": 4, "close_confirmed": True}
+                                ]
+                            },
+                        },
+                    ],
+                },
+                pair="EUR_USD",
+                current_price=1.1,
+                spread_pips=0.5,
+            )
+            emitted = datetime(2026, 7, 13, 0, 0, tzinfo=timezone.utc)
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.7,
+                current_price=1.1,
+                target_price=1.101,
+                invalidation_price=1.099,
+                horizon_min=60,
+                technical_context_v1=context,
+            )
+            self.assertEqual(
+                record_directional_forecast(
+                    forecast,
+                    pair="EUR_USD",
+                    current_price=1.1,
+                    data_root=root,
+                    cycle_id="context-cycle",
+                    now=emitted,
+                ),
+                1,
+            )
+
+            verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1012, "ask": 1.1013}},
+                atr_pips_by_pair={"EUR_USD": 2.0},
+                now=emitted + timedelta(minutes=61),
+            )
+
+            entry = load_ledger(root)[0]
+            self.assertEqual(entry.technical_context_v1, context)
+            raw = json.loads((root / "projection_ledger.jsonl").read_text())
+            self.assertEqual(raw["technical_context_v1"]["context_sha256"], context["context_sha256"])
 
     def test_record_range_forecast_feeds_calibration_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

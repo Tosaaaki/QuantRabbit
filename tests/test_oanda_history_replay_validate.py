@@ -11,6 +11,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
+
 
 def _load_module():
     path = Path(__file__).resolve().parents[1] / "scripts" / "oanda_history_replay_validate.py"
@@ -44,6 +46,63 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(rows, [])
         self.assertEqual(stats["skipped_invalid_rows"], 1)
+
+    def test_forecast_loader_preserves_verified_technical_context(self) -> None:
+        context = build_forecast_technical_context(
+            {
+                "confluence": {
+                    "dominant_regime": "TREND_DOWN",
+                    "price_percentile_24h": 0.8,
+                    "price_percentile_7d": 0.5,
+                },
+                "views": [
+                    {
+                        "granularity": "M5",
+                        "regime_reading": {"state": "TREND_STRONG", "atr_percentile": 80},
+                        "indicators": {"atr_pips": 2.0},
+                        "structure": {
+                            "structure_events": [
+                                {"kind": "BOS_DOWN", "index": 4, "close_confirmed": True}
+                            ]
+                        },
+                    },
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "TREND_WEAK", "atr_percentile": 50},
+                        "structure": {
+                            "structure_events": [
+                                {"kind": "CHOCH_DOWN", "index": 3, "close_confirmed": True}
+                            ]
+                        },
+                    },
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+        payload = {
+            "timestamp_utc": "2026-07-13T00:00:00Z",
+            "cycle_id": "context-cycle",
+            "pair": "EUR_USD",
+            "direction": "DOWN",
+            "confidence": 0.7,
+            "current_price": 1.1,
+            "target_price": 1.09,
+            "invalidation_price": 1.11,
+            "horizon_min": 60,
+            "technical_context_v1": context,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertEqual(stats["technical_context_missing_rows"], 0)
+        self.assertEqual(stats["technical_context_invalid_rows"], 0)
+        self.assertEqual(stats["technical_context_incomplete_rows"], 0)
+        self.assertEqual(rows[0].technical_context_status, "VALID")
+        self.assertEqual(rows[0].technical_context_v1["context_sha256"], context["context_sha256"])
 
     def test_candle_parser_rejects_incomplete_or_non_executable_bid_ask(self) -> None:
         base = {

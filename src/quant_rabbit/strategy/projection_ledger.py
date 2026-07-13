@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any, Dict, IO, Iterable, List, Optional
 
 from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.strategy.forecast_technical_context import verify_forecast_technical_context
 
 
 LEDGER_FILENAME = "projection_ledger.jsonl"
@@ -144,9 +145,10 @@ class LedgerEntry:
     # by regime makes the multiplier much more accurate.
     regime_at_emission: Optional[str] = None  # "TREND" | "RANGE" | "REVERSAL_RISK" | "UNCLEAR" | None
     cycle_id: Optional[str] = None
+    technical_context_v1: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "timestamp_emitted_utc": self.timestamp_emitted_utc,
             "pair": self.pair,
             "signal_name": self.signal_name,
@@ -166,6 +168,9 @@ class LedgerEntry:
             "regime_at_emission": self.regime_at_emission,
             "cycle_id": self.cycle_id,
         }
+        if self.technical_context_v1 is not None:
+            payload["technical_context_v1"] = self.technical_context_v1
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict) -> "LedgerEntry":
@@ -188,6 +193,11 @@ class LedgerEntry:
             predicted_range_high_price=d.get("predicted_range_high_price"),
             regime_at_emission=d.get("regime_at_emission"),
             cycle_id=d.get("cycle_id"),
+            technical_context_v1=(
+                dict(d.get("technical_context_v1"))
+                if isinstance(d.get("technical_context_v1"), dict)
+                else None
+            ),
         )
 
 
@@ -338,6 +348,18 @@ def record_directional_forecast(
         horizon_min = 0.0
     if horizon_min <= 0:
         horizon_min = 60.0
+    technical_context = getattr(forecast, "technical_context_v1", None)
+    if technical_context:
+        context_valid, context_error = verify_forecast_technical_context(
+            technical_context,
+            pair=pair,
+            current_price=parsed_entry,
+        )
+        if not context_valid:
+            raise ValueError(context_error or "TECHNICAL_CONTEXT_INVALID")
+        technical_context = dict(technical_context)
+    else:
+        technical_context = None
     now = now or datetime.now(timezone.utc)
     ts = now.isoformat().replace("+00:00", "Z")
     key = _projection_key(
@@ -365,6 +387,7 @@ def record_directional_forecast(
         predicted_range_high_price=parsed_range_high if direction == "RANGE" else None,
         regime_at_emission=regime_at_emission,
         cycle_id=cycle_id,
+        technical_context_v1=technical_context,
     )
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)

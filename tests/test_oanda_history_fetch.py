@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
 import gzip
+import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -176,6 +177,91 @@ class OandaHistoryFetchTest(unittest.TestCase):
             self.assertFalse(summary["compressed"])
             rows = Path(summary["path"]).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(rows), 1)
+
+    def test_published_files_append_wall_clock_hash_chain_receipts(self) -> None:
+        class FakeClient:
+            def get_json(self, _path, _query):
+                return {
+                    "candles": [
+                        {
+                            "time": "2026-06-01T00:00:00.000000000Z",
+                            "complete": True,
+                            "volume": 1,
+                            "bid": {"o": "1.0", "h": "1.1", "l": "0.9", "c": "1.0"},
+                            "ask": {"o": "1.1", "h": "1.2", "l": "1.0", "c": "1.1"},
+                        }
+                    ]
+                }
+
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=1)
+        task = hist.FetchTask(
+            pair="EUR_USD",
+            granularity="M1",
+            start=start,
+            end=end,
+            price="BA",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            before = datetime.now(timezone.utc)
+            first = hist._fetch_task(
+                FakeClient(),
+                task,
+                run_dir=root / "run-1",
+                receipt_root=root,
+                max_candles_per_request=2,
+                sleep_seconds=0.0,
+                retries=1,
+                include_incomplete=False,
+                compress=False,
+                dry_run=False,
+            )
+            second = hist._fetch_task(
+                FakeClient(),
+                task,
+                run_dir=root / "run-2",
+                receipt_root=root,
+                max_candles_per_request=2,
+                sleep_seconds=0.0,
+                retries=1,
+                include_incomplete=False,
+                compress=False,
+                dry_run=False,
+            )
+            after = datetime.now(timezone.utc)
+
+            receipt_path = root / hist.TRUTH_RECEIPT_FILE
+            receipts = hist._validate_truth_acquisition_receipt_chain(receipt_path.read_bytes())
+            self.assertEqual(len(receipts), 2)
+            first_receipt, second_receipt = receipts
+            self.assertEqual(first_receipt["schema_version"], hist.TRUTH_RECEIPT_SCHEMA)
+            self.assertEqual(first_receipt["sequence"], 1)
+            self.assertEqual(first_receipt["output_root"], str(root))
+            self.assertEqual(first_receipt["candle_path"], str(Path(first["path"]).resolve()))
+            self.assertEqual(first_receipt["pair"], "EUR_USD")
+            self.assertEqual(first_receipt["granularity"], "M1")
+            self.assertEqual(first_receipt["price_component"], "BA")
+            self.assertEqual(first_receipt["window"]["from_utc"], hist._iso(start))
+            self.assertEqual(first_receipt["window"]["to_utc"], hist._iso(end))
+            self.assertEqual(first_receipt["rows"], 1)
+            self.assertEqual(
+                first_receipt["candle_sha256"],
+                hashlib.sha256(Path(first["path"]).read_bytes()).hexdigest(),
+            )
+            recorded = hist._parse_time(first_receipt["recorded_at_utc"])
+            self.assertLessEqual(before, recorded)
+            self.assertLessEqual(recorded, after)
+            self.assertEqual(second_receipt["sequence"], 2)
+            self.assertEqual(
+                second_receipt["previous_receipt_sha256"],
+                first_receipt["receipt_sha256"],
+            )
+            self.assertEqual(
+                second_receipt["candle_path"],
+                str(Path(second["path"]).resolve()),
+            )
 
     def test_fetch_task_keeps_failed_fetch_out_of_jsonl_discovery(self) -> None:
         class FailingClient:

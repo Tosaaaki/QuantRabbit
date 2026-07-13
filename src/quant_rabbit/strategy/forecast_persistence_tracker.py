@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import fcntl
+import hashlib
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -40,9 +41,11 @@ from pathlib import Path
 from typing import Any, Dict, IO, List, Optional
 
 from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+from quant_rabbit.strategy.forecast_technical_context import verify_forecast_technical_context
 
 
 HISTORY_FILENAME = "forecast_history.jsonl"
+EMISSION_RECEIPTS_FILENAME = "forecast_emission_receipts.jsonl"
 FLIP_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_FLIP_PERSISTENCE", "3"))
 RANGE_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_RANGE_PERSISTENCE", "5"))
 HISTORY_LOOKBACK_CYCLES = int(os.environ.get("QR_FORECAST_HISTORY_LOOKBACK", "10"))
@@ -137,6 +140,16 @@ def record_forecast(
         entry["range_high_price"] = range_high_price
     if range_width_pips is not None:
         entry["range_width_pips"] = range_width_pips
+    technical_context = getattr(forecast, "technical_context_v1", None)
+    if technical_context:
+        context_valid, context_error = verify_forecast_technical_context(
+            technical_context,
+            pair=str(pair),
+            current_price=getattr(forecast, "current_price", None),
+        )
+        if not context_valid:
+            raise ValueError(context_error or "TECHNICAL_CONTEXT_INVALID")
+        entry["technical_context_v1"] = technical_context
     with _FORECAST_HISTORY_PROCESS_LOCK:
         with path.open("a+", encoding="utf-8") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -160,6 +173,11 @@ def record_forecast(
                         if replaced:
                             _rewrite_history_handle(f, lines)
                             f.flush()
+                            _append_forecast_emission_receipt(
+                                data_root=data_root,
+                                entry=entry,
+                                operation="REPLACE",
+                            )
                             _cache_forecast_history_cycle_pairs(path, f, existing_cycle_pairs)
                             return True
                     if removed_duplicates and compacted_lines is not None:
@@ -176,10 +194,90 @@ def record_forecast(
                 if cycle_pair_key:
                     existing_cycle_pairs.add(cycle_pair_key)
                 f.flush()
+                _append_forecast_emission_receipt(
+                    data_root=data_root,
+                    entry=entry,
+                    operation="APPEND",
+                )
                 _cache_forecast_history_cycle_pairs(path, f, existing_cycle_pairs)
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
+
+
+def _append_forecast_emission_receipt(
+    *,
+    data_root: Path,
+    entry: dict[str, Any],
+    operation: str,
+) -> None:
+    """Append a hash-chained receipt for an exact forecast-history fact.
+
+    The history file may replace a same-cycle seed with its executable fact.
+    Receipts never replace: both operations remain visible, which lets a
+    forward evaluator distinguish normal same-cycle refinement from a late
+    historical rewrite.
+    """
+
+    path = data_root / EMISSION_RECEIPTS_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_entry = json.dumps(
+        entry,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    recorded = _receipt_recorded_at_utc()
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        last: dict[str, Any] | None = None
+        for raw in handle:
+            if not raw.strip():
+                continue
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("FORECAST_EMISSION_RECEIPT_LEDGER_INVALID") from exc
+            if not isinstance(value, dict):
+                raise ValueError("FORECAST_EMISSION_RECEIPT_LEDGER_INVALID")
+            last = value
+        previous_sha = str((last or {}).get("receipt_sha256") or "") or None
+        sequence = int((last or {}).get("sequence") or 0) + 1
+        body = {
+            "schema_version": "QR_FORECAST_EMISSION_RECEIPT_V1",
+            "sequence": sequence,
+            "operation": operation,
+            "recorded_at_utc": recorded.isoformat().replace("+00:00", "Z"),
+            "forecast_timestamp_utc": entry.get("timestamp_utc"),
+            "cycle_id": entry.get("cycle_id"),
+            "pair": entry.get("pair"),
+            "forecast_row_sha256": hashlib.sha256(canonical_entry).hexdigest(),
+            "previous_receipt_sha256": previous_sha,
+        }
+        canonical_body = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        receipt = {
+            **body,
+            "receipt_sha256": hashlib.sha256(canonical_body).hexdigest(),
+        }
+        handle.seek(0, os.SEEK_END)
+        handle.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _receipt_recorded_at_utc() -> datetime:
+    """Return the actual receipt wall clock; callers cannot backdate it."""
+
+    return datetime.now(timezone.utc)
 
 
 def _replace_history_cycle_pair_line(
@@ -243,6 +341,7 @@ def _same_forecast_fact(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "drivers_for",
         "drivers_against",
         "rationale_summary",
+        "technical_context_v1",
     )
     return all(left.get(key) == right.get(key) for key in fact_keys)
 
