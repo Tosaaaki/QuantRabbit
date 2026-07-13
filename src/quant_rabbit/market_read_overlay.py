@@ -1883,10 +1883,14 @@ def _forecast_replay_rows(
     for item in value[:limit]:
         if not isinstance(item, Mapping):
             continue
-        row = {
-            field: str(item.get(field) or "").strip().upper()
-            for field in dimension_fields
-        }
+        row = {}
+        for field in dimension_fields:
+            dimension = item.get(field)
+            row[field] = (
+                dimension
+                if isinstance(dimension, bool)
+                else str(dimension or "").strip().upper()
+            )
         row.update(_forecast_replay_metrics(item))
         rows.append(row)
     return rows

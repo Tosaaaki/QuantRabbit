@@ -1724,6 +1724,14 @@ class MarketReadOverlayTest(unittest.TestCase):
                                     "avg_final_pips": 1.2,
                                 }
                             ],
+                            "by_technical_context_completeness": [
+                                {
+                                    "technical_context_complete": False,
+                                    "n": 30,
+                                    "hit_rate": 0.6,
+                                    "avg_final_pips": 1.2,
+                                }
+                            ],
                             "by_technical_structure_alignment": [
                                 {
                                     "technical_structure_alignment": "ALIGNED",
@@ -1842,6 +1850,12 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertEqual(
                 scorecard["by_technical_regime"][0]["technical_regime"],
                 "TREND_WEAK",
+            )
+            self.assertIs(
+                scorecard["by_technical_context_completeness"][0][
+                    "technical_context_complete"
+                ],
+                False,
             )
             self.assertEqual(
                 scorecard["by_technical_structure_alignment"][0]["technical_structure_alignment"],
