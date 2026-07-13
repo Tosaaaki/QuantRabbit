@@ -98,7 +98,28 @@ class ForecastRow:
     cycle_id: str | None
     raw_confidence: float | None = None
     calibration_multiplier: float | None = None
+    up_score: float | None = None
+    down_score: float | None = None
+    range_score: float | None = None
     driver_families: tuple[str, ...] = ()
+    drivers_against_families: tuple[str, ...] = ()
+
+    @property
+    def score_margin(self) -> float | None:
+        return _score_margin(
+            self.direction,
+            self.up_score,
+            self.down_score,
+            self.range_score,
+        )
+
+    @property
+    def range_competition(self) -> str:
+        return _range_competition(self.up_score, self.down_score, self.range_score)
+
+    @property
+    def utc_session_bucket(self) -> str:
+        return _utc_session_bucket(self.timestamp_utc)
 
 
 def main() -> int:
@@ -333,6 +354,15 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
                 "same-pair horizons do not overlap; cross-pair currency correlation is not removed"
             ),
         },
+        "segment_contract": {
+            "min_group_samples": args.min_group_samples,
+            "default_inclusion_rule": "group n >= min_group_samples",
+            "exceptions": [
+                "by_direction is global and includes every observed direction",
+                "by_confidence includes the calibrated-confidence missing bucket whenever observed",
+            ],
+            "diagnostic_only": True,
+        },
         "exit_grid_config": {
             "take_profit_pips": list(args.tp_grid_pips),
             "stop_loss_pips": list(args.sl_grid_pips),
@@ -352,7 +382,32 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
             "by_pair": _group(results, ("pair",), min_n=args.min_group_samples),
             "by_pair_direction": _group(results, ("pair", "direction"), min_n=args.min_group_samples),
             "by_horizon": _group(results, ("horizon_bucket",), min_n=args.min_group_samples),
-            "by_confidence": _group(results, ("confidence_bucket",), min_n=args.min_group_samples),
+            "by_confidence": _group(
+                results,
+                ("confidence_bucket",),
+                min_n=args.min_group_samples,
+                include_under_min_keys={("missing",)},
+            ),
+            "by_raw_confidence": _group(
+                results,
+                ("raw_confidence_bucket",),
+                min_n=args.min_group_samples,
+            ),
+            "by_score_margin": _group(
+                results,
+                ("score_margin_bucket",),
+                min_n=args.min_group_samples,
+            ),
+            "by_range_competition": _group(
+                results,
+                ("range_competition",),
+                min_n=args.min_group_samples,
+            ),
+            "by_session": _group(
+                results,
+                ("utc_session_bucket",),
+                min_n=args.min_group_samples,
+            ),
             "by_month": _group(results, ("month",), min_n=args.min_group_samples),
             "by_pair_direction_confidence": _group(
                 results,
@@ -364,7 +419,16 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
                 ("primary_driver_family",),
                 min_n=args.min_group_samples,
             ),
+            "by_primary_driver_family_direction": _group(
+                results,
+                ("primary_driver_family", "direction"),
+                min_n=args.min_group_samples,
+            ),
             "by_driver_family_presence": _group_driver_family_presence(
+                results,
+                min_n=args.min_group_samples,
+            ),
+            "by_against_driver_family_presence": _group_against_driver_family_presence(
                 results,
                 min_n=args.min_group_samples,
             ),
@@ -863,6 +927,7 @@ def _load_forecasts(
     skipped_duplicate = 0
     skipped_invalid = 0
     raw_confidence_missing_rows = 0
+    calibrated_confidence_missing_rows = 0
     with path.open(encoding="utf-8") as handle:
         for idx, line in enumerate(handle):
             if not line.strip():
@@ -907,12 +972,16 @@ def _load_forecasts(
                 confidence=confidence,
                 raw_confidence=raw_confidence,
                 calibration_multiplier=calibration_multiplier,
+                up_score=_safe_float(payload.get("up_score")),
+                down_score=_safe_float(payload.get("down_score")),
+                range_score=_safe_float(payload.get("range_score")),
                 current_price=_safe_float(payload.get("current_price")),
                 target_price=target,
                 invalidation_price=invalidation,
                 horizon_min=_safe_horizon(payload.get("horizon_min")),
                 cycle_id=cycle_id,
                 driver_families=_forecast_driver_families(payload.get("drivers_for")),
+                drivers_against_families=_forecast_driver_families(payload.get("drivers_against")),
             )
             if key in conflict_keys:
                 conflict_members[key].append(candidate)
@@ -951,6 +1020,8 @@ def _load_forecasts(
         if time_to is not None and row.timestamp_utc >= time_to:
             skipped_time_filter += 1
             continue
+        if row.confidence is None:
+            calibrated_confidence_missing_rows += 1
         selected_confidence = row.confidence
         if confidence_field == "raw":
             selected_confidence = row.raw_confidence
@@ -974,6 +1045,7 @@ def _load_forecasts(
         "skipped_time_filter_rows": skipped_time_filter,
         "skipped_confidence_filter_rows": skipped_confidence_filter,
         "raw_confidence_missing_rows": raw_confidence_missing_rows,
+        "calibrated_confidence_missing_rows": calibrated_confidence_missing_rows,
         "deduped_directional_rows": len(rows),
         "skipped_duplicate_rows": skipped_duplicate,
         "skipped_conflicting_forecast_rows": scoped_conflicting_forecast_groups,
@@ -1099,12 +1171,16 @@ def _forecast_rows_equivalent_for_dedupe(first: ForecastRow, second: ForecastRow
             row.confidence,
             row.raw_confidence,
             row.calibration_multiplier,
+            row.up_score,
+            row.down_score,
+            row.range_score,
             row.current_price,
             row.target_price,
             row.invalidation_price,
             row.horizon_min,
             row.cycle_id,
             row.driver_families,
+            row.drivers_against_families,
         )
 
     return payload(first) == payload(second)
@@ -1162,6 +1238,9 @@ def _score_forecasts(
         results,
         {
             "evaluated_rows": len(results),
+            "evaluated_confidence_missing_rows": sum(
+                1 for item in results if item.get("confidence") is None
+            ),
             "skipped_no_pair_candles": skipped_no_pair,
             "skipped_no_price_window": skipped_no_window,
             "missing_price_window_groups": _missing_price_window_groups(missing_windows),
@@ -1842,13 +1921,21 @@ def _score_direction(
         "confidence": row.confidence,
         "raw_confidence": row.raw_confidence,
         "calibration_multiplier": row.calibration_multiplier,
+        "up_score": row.up_score,
+        "down_score": row.down_score,
+        "range_score": row.range_score,
+        "score_margin": row.score_margin,
+        "score_margin_bucket": _score_margin_bucket(row.score_margin),
+        "range_competition": row.range_competition,
         "confidence_bucket": _confidence_bucket(row.confidence),
         "raw_confidence_bucket": _confidence_bucket(row.raw_confidence),
         "driver_families": row.driver_families,
+        "drivers_against_families": row.drivers_against_families,
         "primary_driver_family": row.driver_families[0] if row.driver_families else "MISSING",
         "horizon_min": row.horizon_min,
         "horizon_bucket": _horizon_bucket(row.horizon_min),
         "month": row.timestamp_utc.strftime("%Y-%m"),
+        "utc_session_bucket": row.utc_session_bucket,
         "entry_price": entry,
         "final_pips": final_pips,
         "final_direction_hit": final_pips > 0.0,
@@ -2187,13 +2274,14 @@ def _group(
     fields: Sequence[str],
     *,
     min_n: int = 1,
+    include_under_min_keys: set[tuple[Any, ...]] | None = None,
 ) -> list[dict[str, Any]]:
     buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = collections.defaultdict(list)
     for row in rows:
         buckets[tuple(row.get(field) for field in fields)].append(row)
     out: list[dict[str, Any]] = []
     for key, items in buckets.items():
-        if len(items) < min_n:
+        if len(items) < min_n and key not in (include_under_min_keys or set()):
             continue
         payload = {field: value for field, value in zip(fields, key)}
         payload.update(_summary(items))
@@ -2216,6 +2304,26 @@ def _group_driver_family_presence(
         if len(items) < min_n:
             continue
         payload = {"driver_family": family}
+        payload.update(_summary(items))
+        out.append(payload)
+    out.sort(key=lambda item: (item["n"], item.get("avg_final_pips") or -999.0), reverse=True)
+    return out
+
+
+def _group_against_driver_family_presence(
+    rows: Sequence[dict[str, Any]],
+    *,
+    min_n: int = 1,
+) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        for family in row.get("drivers_against_families") or ("MISSING",):
+            buckets[str(family)].append(row)
+    out: list[dict[str, Any]] = []
+    for family, items in buckets.items():
+        if len(items) < min_n:
+            continue
+        payload = {"against_driver_family": family}
         payload.update(_summary(items))
         out.append(payload)
     out.sort(key=lambda item: (item["n"], item.get("avg_final_pips") or -999.0), reverse=True)
@@ -3030,6 +3138,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- history_dirs: {', '.join(report['history_dirs'])}",
         f"- truth_source: {report['truth_source']}",
         f"- rows: raw_directional={report['raw_directional_rows']} deduped={report['deduped_directional_rows']} evaluated={report['evaluated_rows']}",
+        f"- confidence_missing: calibrated_loaded={report.get('calibrated_confidence_missing_rows', 0)} evaluated={report.get('evaluated_confidence_missing_rows', 0)} raw_filter={report.get('raw_confidence_missing_rows', 0)}",
         f"- history: files={report['history_files']} candles={report['history_candles']} skipped={report['history_skipped_rows']}",
         f"- price_truth_coverage: status={(report.get('price_truth_coverage') or {}).get('status')} adoption={(report.get('price_truth_coverage') or {}).get('adoption_level')}",
         f"- audit_mode: {selection.get('audit_mode')}",
@@ -3038,6 +3147,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- confidence_policy: field={selection.get('confidence_field')} min={selection.get('min_confidence')}",
         f"- independent_non_overlap_per_pair: {selection.get('independent_non_overlap_per_pair')}",
         f"- experiment_id: {experiment.get('experiment_id')}",
+        f"- segment_min_group_samples: {(report.get('segment_contract') or {}).get('min_group_samples')}",
         "",
         "## Summary",
         "",
@@ -3351,6 +3461,69 @@ def _confidence_bucket(value: float | None) -> str:
     return ">=0.90"
 
 
+def _score_margin(
+    direction: str,
+    up_score: float | None,
+    down_score: float | None,
+    range_score: float | None,
+) -> float | None:
+    if up_score is None or down_score is None or range_score is None:
+        return None
+    normalized_direction = str(direction or "").upper()
+    if normalized_direction == "UP":
+        return float(up_score) - max(float(down_score), float(range_score))
+    if normalized_direction == "DOWN":
+        return float(down_score) - max(float(up_score), float(range_score))
+    return None
+
+
+def _score_margin_bucket(value: float | None) -> str:
+    # Fixed audit bins make repeated reports comparable; they are descriptive
+    # cohort labels, not forecast or live-entry thresholds.
+    if value is None:
+        return "missing"
+    if value < 0.0:
+        return "<0"
+    if value < 5.0:
+        return "0-5"
+    if value < 10.0:
+        return "5-10"
+    if value < 20.0:
+        return "10-20"
+    return ">=20"
+
+
+def _range_competition(
+    up_score: float | None,
+    down_score: float | None,
+    range_score: float | None,
+) -> str:
+    if up_score is None or down_score is None or range_score is None:
+        return "missing"
+    directional_leader = max(float(up_score), float(down_score))
+    directional_margin = abs(float(up_score) - float(down_score))
+    if float(range_score) >= directional_leader:
+        return "RANGE_LEADS_OR_TIES"
+    if float(range_score) >= directional_margin:
+        return "RANGE_COMPETES_WITH_DIRECTIONAL_MARGIN"
+    return "DIRECTIONAL_MARGIN_DOMINATES"
+
+
+def _utc_session_bucket(value: datetime) -> str:
+    # Use fixed UTC bands so the same forecast is never relabelled by DST.
+    # These are diagnostic time cohorts, not execution-session permissions.
+    hour = value.astimezone(timezone.utc).hour
+    if hour < 8:
+        return "UTC_00_08"
+    if hour < 13:
+        return "UTC_08_13"
+    if hour < 17:
+        return "UTC_13_17"
+    if hour < 22:
+        return "UTC_17_22"
+    return "UTC_22_24"
+
+
 def _horizon_bucket(value: float) -> str:
     if value <= 15:
         return "<=15m"
@@ -3500,6 +3673,9 @@ def _experiment_identity(
         "stable_min_positive_day_rate": float(args.stable_min_positive_day_rate),
         "auto_history_min_days": float(args.auto_history_min_days),
         "cohort_input_diagnostics": {
+            "calibrated_confidence_missing_rows": int(
+                (load_stats or {}).get("calibrated_confidence_missing_rows") or 0
+            ),
             "raw_confidence_missing_rows": int(
                 (load_stats or {}).get("raw_confidence_missing_rows") or 0
             ),
@@ -3538,12 +3714,16 @@ def _forecast_rows_digest(rows: Sequence[ForecastRow]) -> str:
             row.confidence,
             row.raw_confidence,
             row.calibration_multiplier,
+            row.up_score,
+            row.down_score,
+            row.range_score,
             row.current_price,
             row.target_price,
             row.invalidation_price,
             row.horizon_min,
             row.cycle_id,
             row.driver_families,
+            row.drivers_against_families,
         )
         payloads.append(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
     for payload in sorted(payloads):

@@ -1675,6 +1675,22 @@ def _forecast_replay_scorecard(
         dimension_fields=("pair", "direction"),
         limit=64,
     )
+    confidence_rows = _forecast_replay_rows(
+        segments.get("by_confidence"),
+        dimension_fields=("confidence_bucket",),
+        limit=16,
+    )
+    evaluated_rows = _nonnegative_int(payload.get("evaluated_rows"))
+    confidence_rows_accounted = sum(
+        int(row["n"])
+        for row in confidence_rows
+        if isinstance(row.get("n"), int)
+    )
+    confidence_rows_unreported = (
+        max(0, evaluated_rows - confidence_rows_accounted)
+        if evaluated_rows is not None
+        else None
+    )
     pair_filter = sorted(
         {
             str(pair or "").strip().upper()
@@ -1715,7 +1731,7 @@ def _forecast_replay_scorecard(
         "scope": {
             "pair_filter": pair_filter,
             "history_pairs": _nonnegative_int(payload.get("history_pairs")),
-            "evaluated_rows": _nonnegative_int(payload.get("evaluated_rows")),
+            "evaluated_rows": evaluated_rows,
             "forecast_time_from_utc": payload.get("forecast_time_from_utc"),
             "forecast_time_to_utc": payload.get("forecast_time_to_utc"),
             "independent_non_overlap": payload.get("independent_non_overlap"),
@@ -1726,6 +1742,9 @@ def _forecast_replay_scorecard(
             "pair_direction_rows_included": len(pair_direction_rows),
             "pair_direction_rows_truncated": raw_pair_direction_count
             > len(pair_direction_rows),
+            "confidence_segment_rows_accounted": confidence_rows_accounted,
+            "confidence_segment_rows_unreported": confidence_rows_unreported,
+            "confidence_segment_complete": confidence_rows_unreported == 0,
         },
         "selection_contract": _forecast_replay_selection_contract(
             payload.get("selection_contract")
@@ -1745,11 +1764,7 @@ def _forecast_replay_scorecard(
             )
         ),
         "by_pair_direction": pair_direction_rows,
-        "by_confidence": _forecast_replay_rows(
-            segments.get("by_confidence"),
-            dimension_fields=("confidence_bucket",),
-            limit=16,
-        ),
+        "by_confidence": confidence_rows,
         "by_horizon": _forecast_replay_rows(
             segments.get("by_horizon"),
             dimension_fields=("horizon_bucket",),
@@ -1764,6 +1779,36 @@ def _forecast_replay_scorecard(
             segments.get("by_driver_family_presence"),
             dimension_fields=("driver_family",),
             limit=32,
+        ),
+        "by_primary_driver_family_direction": _forecast_replay_rows(
+            segments.get("by_primary_driver_family_direction"),
+            dimension_fields=("primary_driver_family", "direction"),
+            limit=32,
+        ),
+        "by_raw_confidence": _forecast_replay_rows(
+            segments.get("by_raw_confidence"),
+            dimension_fields=("raw_confidence_bucket",),
+            limit=16,
+        ),
+        "by_score_margin": _forecast_replay_rows(
+            segments.get("by_score_margin"),
+            dimension_fields=("score_margin_bucket",),
+            limit=16,
+        ),
+        "by_range_competition": _forecast_replay_rows(
+            segments.get("by_range_competition"),
+            dimension_fields=("range_competition",),
+            limit=16,
+        ),
+        "by_against_driver_family_presence": _forecast_replay_rows(
+            segments.get("by_against_driver_family_presence"),
+            dimension_fields=("against_driver_family",),
+            limit=32,
+        ),
+        "by_session": _forecast_replay_rows(
+            segments.get("by_session"),
+            dimension_fields=("utc_session_bucket",),
+            limit=16,
         ),
         "exit_policy_validation": _forecast_replay_exit_policy_validation(
             payload.get("train_validation_exit_selection")

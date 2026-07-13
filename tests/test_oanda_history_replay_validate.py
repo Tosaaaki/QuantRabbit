@@ -727,9 +727,18 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
                         "pair": "EUR_USD",
                         "direction": "DOWN",
                         "confidence": 0.7,
+                        "raw_confidence": 0.8,
+                        "calibration_multiplier": 0.875,
+                        "up_score": 10.0,
+                        "down_score": 40.0,
+                        "range_score": 25.0,
                         "drivers_for": [
                             "M15 BOS_UP wick-only → trap fade DOWN",
                             "M5 price HH but macd_hist LH → bearish divergence",
+                        ],
+                        "drivers_against": [
+                            "M5 aroon/momentum still points UP",
+                            "24h market location is lower",
                         ],
                     }
                 ),
@@ -739,6 +748,95 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             rows, _ = replay._load_forecasts(path)
 
         self.assertEqual(rows[0].driver_families, ("WICK_TRAP_FADE", "DIVERGENCE"))
+        self.assertEqual(rows[0].drivers_against_families, ("MOMENTUM", "MARKET_LOCATION"))
+        self.assertEqual((rows[0].up_score, rows[0].down_score, rows[0].range_score), (10.0, 40.0, 25.0))
+        self.assertEqual(rows[0].score_margin, 15.0)
+        self.assertEqual(rows[0].range_competition, "DIRECTIONAL_MARGIN_DOMINATES")
+        self.assertEqual(rows[0].utc_session_bucket, "UTC_00_08")
+
+    def test_confidence_missing_accounting_and_global_missing_bucket_survive_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-07-01T13:00:00Z",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "raw_confidence": 0.8,
+                        "horizon_min": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rows, load_stats = replay._load_forecasts(path)
+
+        candles = [
+            _candle(
+                f"2026-07-01T13:00:{second:02d}",
+                bid_o=1.1000,
+                bid_h=1.1001,
+                bid_l=1.0999,
+                bid_c=1.1000,
+                ask_o=1.1002,
+                ask_h=1.1003,
+                ask_l=1.1001,
+                ask_c=1.1002,
+            )
+            for second in range(0, 60, 5)
+        ]
+        scored, score_stats, _, _ = replay._score_forecasts(
+            rows,
+            {"EUR_USD": candles},
+            now_utc=datetime(2026, 7, 1, 14, tzinfo=timezone.utc),
+        )
+        confidence_segments = replay._group(
+            scored,
+            ("confidence_bucket",),
+            min_n=5,
+            include_under_min_keys={("missing",)},
+        )
+
+        self.assertEqual(load_stats["calibrated_confidence_missing_rows"], 1)
+        self.assertEqual(score_stats["evaluated_confidence_missing_rows"], 1)
+        self.assertEqual(confidence_segments[0]["confidence_bucket"], "missing")
+        self.assertEqual(confidence_segments[0]["n"], 1)
+
+    def test_scored_row_exposes_condition_and_deterministic_utc_session_segments(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 7, 1, 13, 30, tzinfo=timezone.utc),
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.7,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=1,
+            cycle_id=None,
+            raw_confidence=0.8,
+            up_score=40.0,
+            down_score=25.0,
+            range_score=20.0,
+            driver_families=("MOMENTUM",),
+            drivers_against_families=("DIVERGENCE",),
+        )
+        result = replay._score_one(
+            row,
+            [
+                _candle("2026-07-01T13:30:00", bid_o=1.1000, bid_h=1.1001, bid_l=1.0999, bid_c=1.1000, ask_o=1.1002, ask_h=1.1003, ask_l=1.1001, ask_c=1.1002),
+                _candle("2026-07-01T13:30:05", bid_o=1.1001, bid_h=1.1002, bid_l=1.1000, bid_c=1.1001, ask_o=1.1003, ask_h=1.1004, ask_l=1.1002, ask_c=1.1003),
+            ],
+        )
+
+        self.assertEqual(result["score_margin"], 15.0)
+        self.assertEqual(result["score_margin_bucket"], "10-20")
+        self.assertEqual(result["range_competition"], "RANGE_COMPETES_WITH_DIRECTIONAL_MARGIN")
+        self.assertEqual(result["utc_session_bucket"], "UTC_13_17")
+        self.assertEqual(result["drivers_against_families"], ("DIVERGENCE",))
+        self.assertEqual(replay._utc_session_bucket(datetime(2026, 7, 1, 22, tzinfo=timezone.utc)), "UTC_22_24")
+        self.assertEqual(replay._score_margin("UP", 10.0, 40.0, 25.0), -30.0)
+        self.assertEqual(replay._score_margin_bucket(-30.0), "<0")
 
     def test_independent_selection_is_per_pair_and_accepts_horizon_boundary(self) -> None:
         base = datetime(2026, 7, 1, tzinfo=timezone.utc)

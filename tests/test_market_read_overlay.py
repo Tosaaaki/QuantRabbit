@@ -1690,6 +1690,32 @@ class MarketReadOverlayTest(unittest.TestCase):
                                     "avg_realized_r": -0.1613,
                                 }
                             ],
+                            "by_primary_driver_family_direction": [
+                                {
+                                    "primary_driver_family": "RANGE_BREAKOUT_CONFIRMED",
+                                    "direction": "DOWN",
+                                    "n": 20,
+                                    "hit_rate": 0.55,
+                                    "avg_final_pips": 6.32,
+                                    "avg_realized_r": -0.0406,
+                                }
+                            ],
+                            "by_raw_confidence": [
+                                {
+                                    "raw_confidence_bucket": ">=0.90",
+                                    "n": 47,
+                                    "hit_rate": 0.34,
+                                    "avg_final_pips": -3.326,
+                                }
+                            ],
+                            "by_session": [
+                                {
+                                    "utc_session_bucket": "UTC_17_22",
+                                    "n": 68,
+                                    "hit_rate": 0.25,
+                                    "avg_final_pips": -4.376,
+                                }
+                            ],
                         },
                         "train_validation_exit_selection": {
                             "status": "OK",
@@ -1757,6 +1783,15 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertEqual(scorecard["scope"]["pair_filter"], ["EUR_USD", "GBP_JPY"])
             self.assertFalse(scorecard["scope"]["pair_direction_rows_truncated"])
             self.assertEqual(
+                scorecard["scope"]["confidence_segment_rows_accounted"],
+                188,
+            )
+            self.assertEqual(
+                scorecard["scope"]["confidence_segment_rows_unreported"],
+                9232,
+            )
+            self.assertFalse(scorecard["scope"]["confidence_segment_complete"])
+            self.assertEqual(
                 scorecard["by_primary_driver_family"][0]["primary_driver_family"],
                 "RANGE_BREAKOUT_CONFIRMED",
             )
@@ -1771,6 +1806,22 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertEqual(
                 scorecard["by_driver_family_presence"][0]["driver_family"],
                 "MARKET_LOCATION",
+            )
+            self.assertEqual(
+                scorecard["by_primary_driver_family_direction"][0]["direction"],
+                "DOWN",
+            )
+            self.assertEqual(
+                scorecard["by_primary_driver_family_direction"][0]["avg_realized_r"],
+                -0.0406,
+            )
+            self.assertEqual(
+                scorecard["by_raw_confidence"][0]["raw_confidence_bucket"],
+                ">=0.90",
+            )
+            self.assertEqual(
+                scorecard["by_session"][0]["utc_session_bucket"],
+                "UTC_17_22",
             )
             self.assertEqual(
                 scorecard["exit_policy_validation"]["validation"]["profit_factor"],
