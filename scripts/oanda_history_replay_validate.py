@@ -359,7 +359,7 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
             "default_inclusion_rule": "group n >= min_group_samples",
             "exceptions": [
                 "by_direction is global and includes every observed direction",
-                "by_confidence includes the calibrated-confidence missing bucket whenever observed",
+                "by_confidence is global and includes every observed calibrated-confidence bucket",
             ],
             "diagnostic_only": True,
         },
@@ -385,8 +385,7 @@ def _run(args: argparse.Namespace, *, resources: ExitStack) -> int:
             "by_confidence": _group(
                 results,
                 ("confidence_bucket",),
-                min_n=args.min_group_samples,
-                include_under_min_keys={("missing",)},
+                min_n=1,
             ),
             "by_raw_confidence": _group(
                 results,
@@ -2274,14 +2273,13 @@ def _group(
     fields: Sequence[str],
     *,
     min_n: int = 1,
-    include_under_min_keys: set[tuple[Any, ...]] | None = None,
 ) -> list[dict[str, Any]]:
     buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = collections.defaultdict(list)
     for row in rows:
         buckets[tuple(row.get(field) for field in fields)].append(row)
     out: list[dict[str, Any]] = []
     for key, items in buckets.items():
-        if len(items) < min_n and key not in (include_under_min_keys or set()):
+        if len(items) < min_n:
             continue
         payload = {field: value for field, value in zip(fields, key)}
         payload.update(_summary(items))

@@ -793,8 +793,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         confidence_segments = replay._group(
             scored,
             ("confidence_bucket",),
-            min_n=5,
-            include_under_min_keys={("missing",)},
+            min_n=1,
         )
 
         self.assertEqual(load_stats["calibrated_confidence_missing_rows"], 1)
