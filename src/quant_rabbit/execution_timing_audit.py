@@ -222,6 +222,7 @@ def build_execution_timing_audit(
             "lookback_hours": float(lookback_hours),
             "post_cancel_hours": float(post_cancel_hours),
             "post_close_hours": float(post_close_hours),
+            "max_events": int(max_events) if max_events is not None else None,
         },
         "summary": _summary(canceled_rows, loss_rows, market_close_rows),
         "canceled_order_regret_by_shape": _canceled_order_regret_by_shape(canceled_rows),

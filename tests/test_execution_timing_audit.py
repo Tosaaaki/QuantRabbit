@@ -645,11 +645,13 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                 output_path=root / "audit.json",
                 report_path=root / "audit.md",
                 lookback_hours=48,
+                max_events=80,
                 now_utc=_dt("2026-06-23T00:00:00Z"),
                 candle_fetcher=fetcher,
             )
 
             summary = payload["summary"]
+            self.assertEqual(payload["window"]["max_events"], 80)
             self.assertEqual(summary["loss_closes_profit_capture_missed"], 2)
             self.assertEqual(summary["loss_closes_repair_replay_triggered"], 2)
             self.assertEqual(

@@ -27,13 +27,17 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_BLOCKED,
     SelfImprovementAuditor,
     _chronological_directional_calibration_rows,
+    _coverage_market_evidence_refresh,
     _deduped_directional_calibration_rows,
     _effect_metrics,
     _directional_forecast_invalidation_first_like,
     _directional_forecast_no_touch_timeout_like,
     _directional_forecast_target_timeout_like,
     _gateway_close_recovery_observation,
+    _intent_findings,
+    _intent_artifact_freshness,
     _intent_live_readiness_family_breakdown,
+    _no_live_ready_next_action,
     _normalized_pending_order_type,
     _profit_capture_miss_findings,
     _profitability_findings,
@@ -47,9 +51,68 @@ from quant_rabbit.self_improvement_audit import (
     _top_intent_live_readiness_blockers,
 )
 from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_SELF_IMPROVEMENT_HISTORY_DB
-from quant_rabbit.strategy.forecast_technical_context import (
-    build_forecast_technical_context,
-)
+
+
+_REPLAY_NOW = datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc)
+
+
+def _replay_window(now: datetime) -> dict[str, object]:
+    cutoff = now - timedelta(hours=744)
+    return {
+        "from_utc": cutoff.isoformat(),
+        "canceled_from_utc": cutoff.isoformat(),
+        "market_close_from_utc": cutoff.isoformat(),
+        "market_close_anchor_utc": None,
+        "to_utc": now.isoformat(),
+        "lookback_hours": 744.0,
+        "post_close_hours": 6.0,
+        "max_events": 80,
+    }
+
+
+def _loss_close_replay_rows(
+    *,
+    audited: int = 28,
+    pre_repair_samples: int = 23,
+    raw_misses: int = 8,
+    replay_triggers: int = 7,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for index in range(audited):
+        close_at = (
+            "2026-06-22T17:00:00+00:00"
+            if index < pre_repair_samples
+            else "2026-06-22T18:00:00+00:00"
+        )
+        fill_at = (
+            "2026-06-22T16:00:00+00:00"
+            if index < pre_repair_samples
+            else "2026-06-22T17:55:00+00:00"
+        )
+        raw_miss = index < raw_misses
+        replay_trigger = index < replay_triggers
+        rows.append(
+            {
+                "trade_id": f"loss-{index}",
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "units": 1000,
+                "entry": 1.1,
+                "close_price": 1.09,
+                "realized_pl_jpy": -10.0,
+                "exit_reason": "STOP_LOSS_ORDER",
+                "candles_available": 1,
+                "fill_at_utc": fill_at,
+                "close_at_utc": close_at,
+                "mfe_at_utc": close_at if raw_miss else None,
+                "repair_replay_trigger_at_utc": (
+                    close_at if replay_trigger else None
+                ),
+                "profit_capture_missed_before_loss_close": raw_miss,
+                "repair_replay_triggered_before_loss_close": replay_trigger,
+            }
+        )
+    return rows
 
 
 class SelfImprovementAuditorTest(unittest.TestCase):
@@ -98,13 +161,18 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
     def test_profit_capture_miss_becomes_p0_while_target_open(self) -> None:
         findings = _profit_capture_miss_findings(
-            run_id=_NOW.isoformat(),
+            run_id=_REPLAY_NOW.isoformat(),
             target_open=True,
             timing_payload={
-                "generated_at_utc": _NOW.isoformat(),
+                "generated_at_utc": _REPLAY_NOW.isoformat(),
+                "status": "OK",
+                "fetch_errors": [],
                 "precision": {
                     TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                    "granularity": "M1",
                 },
+                "window": _replay_window(_REPLAY_NOW),
                 "summary": {
                     "loss_closes_audited": 1,
                     "loss_closes_profit_capture_missed": 1,
@@ -119,6 +187,18 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     "loss_close_counterfactual_profit_capture_pl_jpy": 105.84,
                     "loss_close_counterfactual_profit_capture_delta_jpy": 446.04,
                     "loss_close_counterfactual_profit_capture_jpy": 105.84,
+                    "tp_progress_repair_live_evidence_boundary_utc": (
+                        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                    ),
+                    "tp_progress_repair_live_evidence_status": (
+                        "POST_REPAIR_REPLAY_FAILURES_PRESENT"
+                    ),
+                    "pre_repair_historical_loss_closes_audited": 0,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 0,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 0,
+                    "post_repair_live_evidence_loss_closes_audited": 1,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 1,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 1,
                 },
                 "loss_close_regrets": [
                     {
@@ -128,7 +208,14 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "side": "SHORT",
                         "exit_reason": "STOP_LOSS_ORDER",
                         "realized_pl_jpy": -340.2,
+                        "units": 1000,
+                        "entry": 150.0,
+                        "close_price": 149.9,
+                        "candles_available": 20,
+                        "fill_at_utc": "2026-07-13T11:00:00+00:00",
+                        "close_at_utc": "2026-07-13T12:00:00+00:00",
                         "mfe_pips_before_loss_close": 4.8,
+                        "mfe_at_utc": "2026-07-13T11:50:00+00:00",
                         "tp_progress_before_loss_close": 0.86,
                         "estimated_mfe_jpy_before_loss_close": 302.4,
                         "profit_capture_missed_before_loss_close": True,
@@ -138,7 +225,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "profit_capture_counterfactual_net_improvement_jpy": 446.04,
                         "repair_replay_triggered_before_loss_close": True,
                         "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
-                        "repair_replay_trigger_at_utc": _NOW.isoformat(),
+                        "repair_replay_trigger_at_utc": (
+                            "2026-07-13T11:55:00+00:00"
+                        ),
                         "repair_replay_profit_pips": 2.0,
                         "repair_replay_noise_floor_pips": 1.6,
                         "repair_replay_counterfactual_jpy": 126.0,
@@ -173,13 +262,18 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
     def test_pre_repair_tp_progress_replay_history_is_p1_until_post_repair_sample(self) -> None:
         findings = _profit_capture_miss_findings(
-            run_id=_NOW.isoformat(),
+            run_id=_REPLAY_NOW.isoformat(),
             target_open=True,
             timing_payload={
-                "generated_at_utc": _NOW.isoformat(),
+                "generated_at_utc": _REPLAY_NOW.isoformat(),
+                "status": "OK",
+                "fetch_errors": [],
                 "precision": {
                     TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                    "granularity": "M1",
                 },
+                "window": _replay_window(_REPLAY_NOW),
                 "summary": {
                     "loss_closes_audited": 34,
                     "loss_closes_profit_capture_missed": 14,
@@ -197,18 +291,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
                     "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
                 },
-                "loss_close_regrets": [
-                    {
-                        "trade_id": "472792",
-                        "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
-                        "pair": "USD_JPY",
-                        "side": "SHORT",
-                        "exit_reason": "STOP_LOSS_ORDER",
-                        "profit_capture_missed_before_loss_close": True,
-                        "repair_replay_triggered_before_loss_close": True,
-                        "repair_replay_trigger_at_utc": "2026-06-22T06:45:00+00:00",
-                    }
-                ],
+                "loss_close_regrets": _loss_close_replay_rows(
+                    audited=34,
+                    pre_repair_samples=34,
+                    raw_misses=14,
+                    replay_triggers=13,
+                ),
             },
         )
 
@@ -229,6 +317,486 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             findings[0]["evidence"]["pre_repair_historical_loss_closes_repair_replay_triggered"],
             13,
         )
+
+    def test_post_repair_clean_replay_suppresses_historical_profit_capture_p1(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_REPLAY_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _REPLAY_NOW.isoformat(),
+                "status": "OK",
+                "fetch_errors": [],
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                    "granularity": "M1",
+                },
+                "window": _replay_window(_REPLAY_NOW),
+                "summary": {
+                    "loss_closes_audited": 28,
+                    "loss_closes_profit_capture_missed": 8,
+                    "loss_closes_repair_replay_triggered": 7,
+                    "tp_progress_repair_live_evidence_boundary_utc": (
+                        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                    ),
+                    "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
+                    "pre_repair_historical_loss_closes_audited": 23,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 8,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 7,
+                    "post_repair_live_evidence_loss_closes_audited": 5,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                },
+                "loss_close_regrets": _loss_close_replay_rows(),
+            },
+        )
+
+        self.assertEqual(findings, [])
+
+    def test_post_repair_clean_values_without_contract_remain_fail_closed(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _NOW.isoformat(),
+                "precision": {},
+                "summary": {
+                    "loss_closes_audited": 28,
+                    "loss_closes_profit_capture_missed": 8,
+                    "loss_closes_repair_replay_triggered": 7,
+                    "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
+                    "pre_repair_historical_loss_closes_audited": 23,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 8,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 7,
+                    "post_repair_live_evidence_loss_closes_audited": 5,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                },
+                "loss_close_regrets": [],
+            },
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["priority"], "P1")
+        self.assertIn("lacks current production-gate replay proof", findings[0]["message"])
+
+    def test_post_repair_clean_values_with_status_mismatch_remain_fail_closed(self) -> None:
+        for status in (
+            "WAITING_FOR_POST_REPAIR_SAMPLE",
+            "POST_REPAIR_REPLAY_FAILURES_PRESENT",
+        ):
+            with self.subTest(status=status):
+                findings = _profit_capture_miss_findings(
+                    run_id=_REPLAY_NOW.isoformat(),
+                    target_open=True,
+                    timing_payload={
+                        "generated_at_utc": _REPLAY_NOW.isoformat(),
+                        "status": "OK",
+                        "fetch_errors": [],
+                        "precision": {
+                            TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                            "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                            "granularity": "M1",
+                        },
+                        "window": _replay_window(_REPLAY_NOW),
+                        "summary": {
+                            "loss_closes_audited": 28,
+                            "loss_closes_profit_capture_missed": 8,
+                            "loss_closes_repair_replay_triggered": 7,
+                            "tp_progress_repair_live_evidence_boundary_utc": (
+                                TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                            ),
+                            "tp_progress_repair_live_evidence_status": status,
+                            "pre_repair_historical_loss_closes_audited": 23,
+                            "pre_repair_historical_loss_closes_profit_capture_missed": 8,
+                            "pre_repair_historical_loss_closes_repair_replay_triggered": 7,
+                            "post_repair_live_evidence_loss_closes_audited": 5,
+                            "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                            "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                        },
+                        "loss_close_regrets": _loss_close_replay_rows(),
+                    },
+                )
+
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["priority"], "P1")
+                self.assertEqual(
+                    findings[0]["code"],
+                    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                )
+
+    def test_post_repair_clean_status_with_incomplete_or_inconsistent_split_is_fail_closed(
+        self,
+    ) -> None:
+        base_summary = {
+            "loss_closes_audited": 28,
+            "loss_closes_profit_capture_missed": 8,
+            "loss_closes_repair_replay_triggered": 7,
+            "tp_progress_repair_live_evidence_boundary_utc": (
+                TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+            ),
+            "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
+            "pre_repair_historical_loss_closes_audited": 23,
+            "pre_repair_historical_loss_closes_profit_capture_missed": 8,
+            "pre_repair_historical_loss_closes_repair_replay_triggered": 7,
+            "post_repair_live_evidence_loss_closes_audited": 5,
+            "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+            "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+        }
+        variants = []
+        incomplete = dict(base_summary)
+        incomplete.pop("post_repair_live_evidence_loss_closes_profit_capture_missed")
+        variants.append(incomplete)
+        all_counts_missing = dict(base_summary)
+        for field in (
+            "loss_closes_audited",
+            "loss_closes_profit_capture_missed",
+            "loss_closes_repair_replay_triggered",
+            "pre_repair_historical_loss_closes_audited",
+            "pre_repair_historical_loss_closes_profit_capture_missed",
+            "pre_repair_historical_loss_closes_repair_replay_triggered",
+            "post_repair_live_evidence_loss_closes_audited",
+            "post_repair_live_evidence_loss_closes_profit_capture_missed",
+            "post_repair_live_evidence_loss_closes_repair_replay_triggered",
+        ):
+            all_counts_missing.pop(field)
+        variants.append(all_counts_missing)
+        inconsistent = dict(base_summary)
+        inconsistent["pre_repair_historical_loss_closes_audited"] = 22
+        variants.append(inconsistent)
+        non_integer = dict(base_summary)
+        non_integer["post_repair_live_evidence_loss_closes_profit_capture_missed"] = 0.5
+        variants.append(non_integer)
+        corrupt_total = dict(base_summary)
+        corrupt_total["loss_closes_profit_capture_missed"] = "corrupt"
+        variants.append(corrupt_total)
+        impossible = dict(base_summary)
+        impossible["loss_closes_audited"] = 5
+        impossible["pre_repair_historical_loss_closes_audited"] = 0
+        variants.append(impossible)
+        missing_declared_status = dict(base_summary)
+        missing_declared_status.pop("tp_progress_repair_live_evidence_status")
+        variants.append(missing_declared_status)
+        missing_boundary = dict(base_summary)
+        missing_boundary.pop("tp_progress_repair_live_evidence_boundary_utc")
+        variants.append(missing_boundary)
+        wrong_boundary = dict(base_summary)
+        wrong_boundary["tp_progress_repair_live_evidence_boundary_utc"] = (
+            "2026-06-22T17:54:25Z"
+        )
+        variants.append(wrong_boundary)
+
+        for summary in variants:
+            with self.subTest(summary=summary):
+                findings = _profit_capture_miss_findings(
+                    run_id=_REPLAY_NOW.isoformat(),
+                    target_open=True,
+                    timing_payload={
+                        "generated_at_utc": _REPLAY_NOW.isoformat(),
+                        "status": "OK",
+                        "fetch_errors": [],
+                        "precision": {
+                            TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                            "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                            "granularity": "M1",
+                        },
+                        "window": _replay_window(_REPLAY_NOW),
+                        "summary": summary,
+                        "loss_close_regrets": _loss_close_replay_rows(),
+                    },
+                )
+
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["code"], "LOSS_CLOSE_PROFIT_CAPTURE_MISSED")
+
+    def test_post_repair_clean_counts_with_partial_source_remain_fail_closed(self) -> None:
+        base_payload = {
+            "generated_at_utc": _REPLAY_NOW.isoformat(),
+            "status": "OK",
+            "fetch_errors": [],
+            "precision": {
+                TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                "granularity": "M1",
+            },
+            "window": _replay_window(_REPLAY_NOW),
+            "summary": {
+                "loss_closes_audited": 28,
+                "loss_closes_profit_capture_missed": 8,
+                "loss_closes_repair_replay_triggered": 7,
+                "tp_progress_repair_live_evidence_boundary_utc": (
+                    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                ),
+                "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
+                "pre_repair_historical_loss_closes_audited": 23,
+                "pre_repair_historical_loss_closes_profit_capture_missed": 8,
+                "pre_repair_historical_loss_closes_repair_replay_triggered": 7,
+                "post_repair_live_evidence_loss_closes_audited": 5,
+                "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+            },
+            "loss_close_regrets": _loss_close_replay_rows(),
+        }
+        variants = []
+        partial = json.loads(json.dumps(base_payload))
+        partial["status"] = "PARTIAL_DATA"
+        partial["fetch_errors"] = [{"pair": "EUR_USD", "error": "missing candle"}]
+        variants.append(partial)
+        missing_status = json.loads(json.dumps(base_payload))
+        missing_status.pop("status")
+        variants.append(missing_status)
+        short_window = json.loads(json.dumps(base_payload))
+        short_window["window"]["lookback_hours"] = 168.0
+        variants.append(short_window)
+        wrong_granularity = json.loads(json.dumps(base_payload))
+        wrong_granularity["precision"]["granularity"] = "M5"
+        variants.append(wrong_granularity)
+        unknown_cap = json.loads(json.dumps(base_payload))
+        unknown_cap["window"].pop("max_events")
+        variants.append(unknown_cap)
+        cap_reached = json.loads(json.dumps(base_payload))
+        cap_reached["summary"]["loss_closes_audited"] = 80
+        cap_reached["summary"]["pre_repair_historical_loss_closes_audited"] = 75
+        variants.append(cap_reached)
+        stale_clock = json.loads(json.dumps(base_payload))
+        stale_at = (_REPLAY_NOW - timedelta(hours=2)).isoformat()
+        stale_clock["generated_at_utc"] = stale_at
+        stale_clock["window"]["to_utc"] = stale_at
+        variants.append(stale_clock)
+        mismatched_clock = json.loads(json.dumps(base_payload))
+        mismatched_clock["window"]["to_utc"] = (
+            _REPLAY_NOW - timedelta(seconds=1)
+        ).isoformat()
+        variants.append(mismatched_clock)
+        naive_clock = json.loads(json.dumps(base_payload))
+        naive_clock["generated_at_utc"] = _REPLAY_NOW.replace(
+            tzinfo=None
+        ).isoformat()
+        naive_clock["window"]["to_utc"] = _REPLAY_NOW.replace(
+            tzinfo=None
+        ).isoformat()
+        variants.append(naive_clock)
+        float_cap = json.loads(json.dumps(base_payload))
+        float_cap["window"]["max_events"] = 80.0
+        variants.append(float_cap)
+        zero_candle_row = json.loads(json.dumps(base_payload))
+        zero_candle_row["loss_close_regrets"][0]["candles_available"] = 0
+        variants.append(zero_candle_row)
+        missing_loss_row = json.loads(json.dumps(base_payload))
+        missing_loss_row["loss_close_regrets"].pop()
+        variants.append(missing_loss_row)
+        duplicate_trade_row = json.loads(json.dumps(base_payload))
+        duplicate_trade_row["loss_close_regrets"][1] = json.loads(
+            json.dumps(duplicate_trade_row["loss_close_regrets"][0])
+        )
+        variants.append(duplicate_trade_row)
+        naive_row_clock = json.loads(json.dumps(base_payload))
+        naive_row_clock["loss_close_regrets"][0]["close_at_utc"] = (
+            "2026-06-22T17:00:00"
+        )
+        variants.append(naive_row_clock)
+        row_count_mismatch = json.loads(json.dumps(base_payload))
+        row_count_mismatch["loss_close_regrets"][0][
+            "profit_capture_missed_before_loss_close"
+        ] = False
+        row_count_mismatch["loss_close_regrets"][0][
+            "repair_replay_triggered_before_loss_close"
+        ] = False
+        variants.append(row_count_mismatch)
+        row_split_mismatch = json.loads(json.dumps(base_payload))
+        row_split_mismatch["loss_close_regrets"][0]["mfe_at_utc"] = (
+            "2026-06-22T18:00:00+00:00"
+        )
+        row_split_mismatch["loss_close_regrets"][0][
+            "repair_replay_trigger_at_utc"
+        ] = "2026-06-22T18:00:00+00:00"
+        variants.append(row_split_mismatch)
+        future_row = json.loads(json.dumps(base_payload))
+        future_row["loss_close_regrets"][0]["close_at_utc"] = (
+            _REPLAY_NOW + timedelta(minutes=1)
+        ).isoformat()
+        variants.append(future_row)
+        fill_order_mismatch = json.loads(json.dumps(base_payload))
+        fill_order_mismatch["loss_close_regrets"][0]["fill_at_utc"] = (
+            "2026-06-22T17:30:00+00:00"
+        )
+        variants.append(fill_order_mismatch)
+        hidden_trigger = json.loads(json.dumps(base_payload))
+        hidden_trigger["loss_close_regrets"][7][
+            "repair_replay_trigger_at_utc"
+        ] = "2026-06-22T17:00:00+00:00"
+        variants.append(hidden_trigger)
+        corrupt_sort_value = json.loads(json.dumps(partial))
+        corrupt_sort_value["loss_close_regrets"][0][
+            "profit_capture_counterfactual_net_improvement_jpy"
+        ] = "corrupt"
+        variants.append(corrupt_sort_value)
+        non_list_rows = json.loads(json.dumps(base_payload))
+        non_list_rows["loss_close_regrets"] = 42
+        variants.append(non_list_rows)
+        overflow_lookback = json.loads(json.dumps(base_payload))
+        overflow_lookback["window"]["lookback_hours"] = 1e308
+        variants.append(overflow_lookback)
+        for field, invalid_value in (
+            ("realized_pl_jpy", None),
+            ("realized_pl_jpy", 100.0),
+            ("realized_pl_jpy", "corrupt"),
+            ("pair", ""),
+            ("side", "BUY"),
+            ("side", []),
+            ("side", {}),
+            ("units", 0),
+            ("entry", "corrupt"),
+            ("close_price", 0.0),
+            ("exit_reason", ""),
+        ):
+            invalid_core_row = json.loads(json.dumps(base_payload))
+            invalid_core_row["loss_close_regrets"][0][field] = invalid_value
+            variants.append(invalid_core_row)
+
+        for payload in variants:
+            with self.subTest(payload=payload):
+                findings = _profit_capture_miss_findings(
+                    run_id=_REPLAY_NOW.isoformat(),
+                    target_open=True,
+                    timing_payload=payload,
+                )
+
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["code"], "LOSS_CLOSE_PROFIT_CAPTURE_MISSED")
+
+    def test_zero_miss_clearance_requires_complete_current_replay_source(self) -> None:
+        base_payload = {
+            "generated_at_utc": _REPLAY_NOW.isoformat(),
+            "status": "OK",
+            "fetch_errors": [],
+            "precision": {
+                TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                "granularity": "M1",
+            },
+            "window": _replay_window(_REPLAY_NOW),
+            "summary": {
+                "loss_closes_audited": 5,
+                "loss_closes_profit_capture_missed": 0,
+                "loss_closes_repair_replay_triggered": 0,
+                "tp_progress_repair_live_evidence_boundary_utc": (
+                    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                ),
+                "tp_progress_repair_live_evidence_status": (
+                    "POST_REPAIR_REPLAY_CLEAN"
+                ),
+                "pre_repair_historical_loss_closes_audited": 0,
+                "pre_repair_historical_loss_closes_profit_capture_missed": 0,
+                "pre_repair_historical_loss_closes_repair_replay_triggered": 0,
+                "post_repair_live_evidence_loss_closes_audited": 5,
+                "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+            },
+            "loss_close_regrets": _loss_close_replay_rows(
+                audited=5,
+                pre_repair_samples=0,
+                raw_misses=0,
+                replay_triggers=0,
+            ),
+        }
+        self.assertEqual(
+            _profit_capture_miss_findings(
+                run_id=_REPLAY_NOW.isoformat(),
+                target_open=True,
+                timing_payload=base_payload,
+            ),
+            [],
+        )
+
+        variants: list[dict[str, object]] = [{}, {"summary": {}, "loss_close_regrets": []}]
+        partial = json.loads(json.dumps(base_payload))
+        partial["status"] = "PARTIAL_DATA"
+        partial["fetch_errors"] = [{"pair": "EUR_USD", "error": "missing"}]
+        variants.append(partial)
+        stale = json.loads(json.dumps(base_payload))
+        stale_at = _REPLAY_NOW - timedelta(hours=24)
+        stale["generated_at_utc"] = stale_at.isoformat()
+        stale["window"] = _replay_window(stale_at)
+        variants.append(stale)
+        short = json.loads(json.dumps(base_payload))
+        short["window"]["lookback_hours"] = 1.0
+        variants.append(short)
+        missing_rows = json.loads(json.dumps(base_payload))
+        missing_rows["loss_close_regrets"] = []
+        variants.append(missing_rows)
+        missing_status = json.loads(json.dumps(base_payload))
+        missing_status.pop("status")
+        variants.append(missing_status)
+        cap_reached = json.loads(json.dumps(base_payload))
+        cap_reached["summary"]["loss_closes_audited"] = 80
+        cap_reached["summary"]["post_repair_live_evidence_loss_closes_audited"] = 80
+        cap_reached["loss_close_regrets"] = _loss_close_replay_rows(
+            audited=80,
+            pre_repair_samples=0,
+            raw_misses=0,
+            replay_triggers=0,
+        )
+        variants.append(cap_reached)
+
+        for payload in variants:
+            with self.subTest(payload=payload):
+                findings = _profit_capture_miss_findings(
+                    run_id=_REPLAY_NOW.isoformat(),
+                    target_open=True,
+                    timing_payload=payload,
+                )
+
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["priority"], "P1")
+                self.assertEqual(
+                    findings[0]["code"],
+                    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                )
+
+    def test_contradictory_zero_total_does_not_hide_post_repair_replay_failure(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_REPLAY_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _REPLAY_NOW.isoformat(),
+                "status": "OK",
+                "fetch_errors": [],
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                    "granularity": "M1",
+                },
+                "window": _replay_window(_REPLAY_NOW),
+                "summary": {
+                    "loss_closes_audited": 1,
+                    "loss_closes_profit_capture_missed": 0,
+                    "loss_closes_repair_replay_triggered": 0,
+                    "tp_progress_repair_live_evidence_boundary_utc": (
+                        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                    ),
+                    "tp_progress_repair_live_evidence_status": (
+                        "POST_REPAIR_REPLAY_FAILURES_PRESENT"
+                    ),
+                    "pre_repair_historical_loss_closes_audited": 0,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 0,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 0,
+                    "post_repair_live_evidence_loss_closes_audited": 1,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 1,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 1,
+                },
+                "loss_close_regrets": _loss_close_replay_rows(
+                    audited=1,
+                    pre_repair_samples=0,
+                    raw_misses=1,
+                    replay_triggers=1,
+                ),
+            },
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["priority"], "P0")
+        self.assertEqual(findings[0]["code"], "LOSS_CLOSE_PROFIT_CAPTURE_MISSED")
 
     def test_raw_profit_capture_miss_without_repair_replay_is_p1_diagnostic(self) -> None:
         findings = _profit_capture_miss_findings(
@@ -938,6 +1506,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("risk_geometry", dry_run_families)
         self.assertEqual(dry_run_families["strategy_profile"]["lane_count"], 2)
         self.assertEqual(
+            breakdown["nearest_all_non_live_ready_candidates"][0]["lane_id"],
+            "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+        )
+        self.assertEqual(
             breakdown["nearest_live_ready_candidates"][0]["lane_id"],
             "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
         )
@@ -949,10 +1521,399 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         blocker_evidence = breakdown["nearest_live_ready_candidates"][0]["blockers"][0][
             "strategy_profile_evidence"
         ]
+        self.assertEqual(
+            breakdown["nearest_live_ready_candidates"][0]["blockers"][0]["code"],
+            "STRATEGY_NOT_ELIGIBLE",
+        )
         self.assertEqual(blocker_evidence["profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
         self.assertEqual(blocker_evidence["live_net_jpy"], -1501.57)
         candidate_lane_ids = [item["lane_id"] for item in breakdown["nearest_live_ready_candidates"]]
         self.assertEqual(len(candidate_lane_ids), len(set(candidate_lane_ids)))
+
+    def test_no_live_ready_next_action_names_one_lane_and_its_exact_blocker(self) -> None:
+        intents = {
+            "generated_at_utc": _NOW.isoformat(),
+            "results": [
+                {
+                    "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+                    "status": "DRY_RUN_BLOCKED",
+                    "intent": {
+                        "pair": "EUR_JPY",
+                        "side": "LONG",
+                        "order_type": "LIMIT",
+                        "market_context": {"method": "RANGE_ROTATION"},
+                        "metadata": {
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 1.0,
+                        },
+                    },
+                    "risk_metrics": {"reward_risk": 1.62, "reward_jpy": 698.0},
+                    "risk_issues": [
+                        {
+                            "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                            "message": "exact TP evidence is not mature",
+                            "severity": "BLOCK",
+                        },
+                        {
+                            "code": "CHART_DIRECTION_CONFLICT",
+                            "message": "advisory chart disagreement",
+                            "severity": "WARN",
+                        },
+                    ],
+                    "live_strategy_issues": [],
+                    "live_blockers": [],
+                    "live_blocker_codes": [
+                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+                    ],
+                }
+            ]
+        }
+
+        findings = _intent_findings(
+            run_id=_NOW.isoformat(),
+            intents=intents,
+            target_state={},
+            target_open=True,
+            live_ready=[],
+            active_positions=[],
+            pending_entry_orders=[],
+            coverage_optimization={
+                "generated_at_utc": _NOW.isoformat(),
+                "artifact_diagnostics": {
+                    "intents_generated_at_utc": _NOW.isoformat(),
+                    "intents_age_seconds": 0.0,
+                    "intents_artifact_stale": False,
+                    "intents_stale_after_seconds": 3600.0,
+                },
+            },
+        )
+
+        finding = next(
+            item
+            for item in findings
+            if item["code"] == "TARGET_OPEN_NO_LIVE_READY_LANES"
+        )
+        self.assertIn(
+            "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+            finding["next_action"],
+        )
+        self.assertIn(
+            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+            finding["next_action"],
+        )
+        self.assertNotIn("CHART_DIRECTION_CONFLICT", finding["next_action"])
+        self.assertIn("do not repeat a broad market refresh", finding["next_action"].lower())
+
+    def test_no_live_ready_next_action_prefers_dry_run_passed_candidate_like_report(
+        self,
+    ) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_live_ready_candidates": [
+                    {
+                        "lane_id": "dry-run-passed",
+                        "blocker_count": 1,
+                        "blockers": [{"code": "FORECAST_WATCH_ONLY"}],
+                        "authoritative_live_blocker_codes": ["FORECAST_WATCH_ONLY"],
+                        "authoritative_live_blocker_codes_complete": True,
+                    }
+                ],
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "dry-run-blocked",
+                        "blocker_count": 1,
+                        "blockers": [{"code": "RISK_BLOCK"}],
+                        "authoritative_live_blocker_codes": ["RISK_BLOCK"],
+                        "authoritative_live_blocker_codes_complete": True,
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("dry-run-passed", action)
+        self.assertIn("FORECAST_WATCH_ONLY", action)
+        self.assertNotIn("dry-run-blocked", action)
+
+    def test_market_evidence_refresh_still_outranks_lane_specific_repair(self) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh={"requires_market_evidence_refresh": True},
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+                        "blockers": [
+                            {
+                                "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("Refresh broker truth", action)
+        self.assertNotIn("Narrow the next repair", action)
+
+    def test_missing_market_matrix_alone_is_not_a_broker_quote_refresh(self) -> None:
+        refresh = _coverage_market_evidence_refresh(
+            {
+                "artifact_diagnostics": {
+                    "requires_market_evidence_refresh": True,
+                    "market_context_matrix_missing": True,
+                    "all_lanes_spread_blocked": False,
+                    "all_lanes_quote_stale": False,
+                }
+            }
+        )
+
+        self.assertIsNone(refresh)
+
+    def test_truthy_string_market_flags_do_not_trigger_broker_refresh(self) -> None:
+        for diagnostics in (
+            {
+                "requires_market_evidence_refresh": "true",
+                "all_lanes_spread_blocked": True,
+                "all_lanes_quote_stale": False,
+            },
+            {
+                "requires_market_evidence_refresh": True,
+                "all_lanes_spread_blocked": "false",
+                "all_lanes_quote_stale": "false",
+            },
+        ):
+            with self.subTest(diagnostics=diagnostics):
+                self.assertIsNone(
+                    _coverage_market_evidence_refresh(
+                        {"artifact_diagnostics": diagnostics}
+                    )
+                )
+
+    def test_stale_intent_evidence_cannot_name_a_lane_specific_repair(self) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh={"requires_market_evidence_refresh": True},
+            intent_evidence_fresh=False,
+            live_readiness_breakdown={
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "stale-lane",
+                        "authoritative_live_blocker_codes": ["STALE_BLOCKER"],
+                        "authoritative_live_blocker_codes_complete": True,
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("Regenerate order intents", action)
+        self.assertNotIn("stale-lane", action)
+
+    def test_intent_freshness_rejects_self_reported_unbounded_threshold(self) -> None:
+        old = _NOW - timedelta(days=13)
+        freshness = _intent_artifact_freshness(
+            run_id=_NOW.isoformat(),
+            coverage_optimization={
+                "generated_at_utc": old.isoformat(),
+                "artifact_diagnostics": {
+                    "intents_generated_at_utc": old.isoformat(),
+                    "intents_age_seconds": 0.0,
+                    "intents_artifact_stale": False,
+                    "intents_stale_after_seconds": 999999999.0,
+                },
+            },
+            intents={"generated_at_utc": old.isoformat()},
+        )
+
+        self.assertFalse(freshness["fresh"])
+
+    def test_intent_freshness_rejects_timezone_less_proof_clocks(self) -> None:
+        aware = _NOW.isoformat()
+        naive = _NOW.replace(tzinfo=None).isoformat()
+        variants = (
+            (naive, aware, aware, aware),
+            (aware, naive, aware, aware),
+            (aware, aware, naive, aware),
+            (aware, aware, aware, naive),
+        )
+        for run_id, intents_at, diagnostics_at, coverage_at in variants:
+            with self.subTest(
+                run_id=run_id,
+                intents_at=intents_at,
+                diagnostics_at=diagnostics_at,
+                coverage_at=coverage_at,
+            ):
+                freshness = _intent_artifact_freshness(
+                    run_id=run_id,
+                    coverage_optimization={
+                        "generated_at_utc": coverage_at,
+                        "artifact_diagnostics": {
+                            "intents_generated_at_utc": diagnostics_at,
+                            "intents_age_seconds": 0.0,
+                            "intents_artifact_stale": False,
+                            "intents_stale_after_seconds": 3600.0,
+                        },
+                    },
+                    intents={"generated_at_utc": intents_at},
+                )
+
+                self.assertFalse(freshness["fresh"])
+
+    def test_no_live_ready_next_action_does_not_mislabel_family_as_exact_blocker(self) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "legacy-lane",
+                        "blocker_count": 1,
+                        "blockers": [
+                            {
+                                "family": "risk_geometry",
+                                "message": "legacy unstructured blocker",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("inspect top live blockers", action)
+        self.assertNotIn("risk_geometry", action)
+
+    def test_no_live_ready_next_action_does_not_hide_truncated_blockers(self) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "many-blockers",
+                        "blocker_count": 7,
+                        "blockers": [
+                            {"code": f"BLOCKER_{index}"} for index in range(6)
+                        ],
+                        "authoritative_live_blocker_codes": [
+                            f"BLOCKER_{index}" for index in range(6)
+                        ],
+                        "authoritative_live_blocker_codes_complete": False,
+                    }
+                ]
+            },
+        )
+
+        self.assertIn("inspect top live blockers", action)
+        self.assertNotIn("BLOCKER_0", action)
+
+    def test_incomplete_authoritative_blocker_codes_keep_action_generic(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    {
+                        "lane_id": "incomplete-codes",
+                        "status": "DRY_RUN_BLOCKED",
+                        "intent": {},
+                        "risk_issues": [
+                            {"code": "BLOCK_A", "message": "a", "severity": "BLOCK"},
+                            {"code": "BLOCK_B", "message": "b", "severity": "BLOCK"},
+                        ],
+                        "live_strategy_issues": [],
+                        "live_blockers": ["a", "b"],
+                        "live_blocker_codes": ["BLOCK_A"],
+                    }
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["authoritative_live_blocker_codes_complete"])
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("inspect top live blockers", action)
+        self.assertNotIn("BLOCK_A", action)
+
+    def test_unmapped_legacy_live_blocker_keeps_action_generic(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    {
+                        "lane_id": "legacy-extra",
+                        "status": "DRY_RUN_BLOCKED",
+                        "intent": {},
+                        "risk_issues": [
+                            {
+                                "code": "EXACT",
+                                "message": "exact message",
+                                "severity": "BLOCK",
+                            }
+                        ],
+                        "live_strategy_issues": [],
+                        "live_blockers": ["exact message", "legacy extra blocker"],
+                        "live_blocker_codes": ["EXACT"],
+                    }
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["authoritative_live_blocker_codes_complete"])
+
+    def test_extra_or_duplicate_authoritative_blocker_evidence_stays_generic(
+        self,
+    ) -> None:
+        variants = (
+            {
+                "live_blockers": ["exact message"],
+                "live_blocker_codes": ["EXACT", "FAKE"],
+            },
+            {
+                "live_blockers": ["exact message", "exact message"],
+                "live_blocker_codes": ["EXACT"],
+            },
+            {
+                "live_blockers": ["exact message"],
+                "live_blocker_codes": ["EXACT"],
+                "strategy_issues": 42,
+            },
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "untrusted-proof",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {},
+                                "risk_issues": [
+                                    {
+                                        "code": "EXACT",
+                                        "message": "exact message",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "live_strategy_issues": [],
+                                **variant,
+                            }
+                        ]
+                    }
+                )
+
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(
+                    candidate["authoritative_live_blocker_codes_complete"]
+                )
+                action = _no_live_ready_next_action(
+                    coverage_refresh=None,
+                    intent_evidence_fresh=True,
+                    live_readiness_breakdown=breakdown,
+                )
+                self.assertIn("inspect top live blockers", action)
+                self.assertNotIn("EXACT", action)
 
     def test_blocks_missing_memory_projection_and_entry_thesis_holes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -975,8 +1936,25 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             with sqlite3.connect(files["history_db"]) as conn:
                 run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
                 finding_count = conn.execute("SELECT COUNT(*) FROM self_improvement_findings").fetchone()[0]
-            self.assertEqual(run_count, 1)
-            self.assertEqual(finding_count, summary.findings)
+                self.assertEqual(run_count, 1)
+                self.assertEqual(finding_count, summary.findings)
+
+    def test_missing_execution_timing_audit_remains_visible_as_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["execution_timing"].unlink()
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+            findings = {
+                item["code"]: item for item in payload["findings"]
+            }
+
+            self.assertEqual(
+                findings["EXECUTION_TIMING_AUDIT_UNREADABLE"]["priority"],
+                "P1",
+            )
 
     def test_stale_memory_health_routes_to_refresh_before_old_blocker_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1632,6 +2610,13 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     {
                         "generated_at_utc": _NOW.isoformat(),
                         "status": "OK",
+                        "fetch_errors": [],
+                        "precision": {
+                            TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                            "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                            "granularity": "M1",
+                        },
+                        "window": _replay_window(_NOW),
                         "summary": {
                             "canceled_orders_audited": 3,
                             "canceled_entry_touched_after_cancel": 2,
@@ -1639,7 +2624,23 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                             "canceled_positive_after_cancel_entry": 2,
                             "canceled_tp_touched_after_cancel": 1,
                             "canceled_estimated_missed_mfe_jpy": 815.5,
+                            "loss_closes_audited": 0,
+                            "loss_closes_profit_capture_missed": 0,
+                            "loss_closes_repair_replay_triggered": 0,
+                            "tp_progress_repair_live_evidence_boundary_utc": (
+                                TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                            ),
+                            "tp_progress_repair_live_evidence_status": (
+                                "WAITING_FOR_POST_REPAIR_SAMPLE"
+                            ),
+                            "pre_repair_historical_loss_closes_audited": 0,
+                            "pre_repair_historical_loss_closes_profit_capture_missed": 0,
+                            "pre_repair_historical_loss_closes_repair_replay_triggered": 0,
+                            "post_repair_live_evidence_loss_closes_audited": 0,
+                            "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                            "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
                         },
+                        "loss_close_regrets": [],
                         "canceled_order_regrets": [
                             {
                                 "order_id": "O-mixed-3",
@@ -7947,6 +8948,13 @@ def _fixtures(
             {
                 "generated_at_utc": _NOW.isoformat(),
                 "status": "OK",
+                "fetch_errors": [],
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "price_basis": "OANDA_M1_BID_ASK_CANDLES",
+                    "granularity": "M1",
+                },
+                "window": _replay_window(_NOW),
                 "summary": {
                     "canceled_orders_audited": 0,
                     "canceled_entry_touched_after_cancel": 0,
@@ -7954,7 +8962,23 @@ def _fixtures(
                     "canceled_positive_after_cancel_entry": 0,
                     "canceled_tp_touched_after_cancel": 0,
                     "canceled_estimated_missed_mfe_jpy": 0.0,
+                    "loss_closes_audited": 0,
+                    "loss_closes_profit_capture_missed": 0,
+                    "loss_closes_repair_replay_triggered": 0,
+                    "tp_progress_repair_live_evidence_boundary_utc": (
+                        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                    ),
+                    "tp_progress_repair_live_evidence_status": (
+                        "WAITING_FOR_POST_REPAIR_SAMPLE"
+                    ),
+                    "pre_repair_historical_loss_closes_audited": 0,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 0,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 0,
+                    "post_repair_live_evidence_loss_closes_audited": 0,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
                 },
+                "loss_close_regrets": [],
                 "canceled_order_regrets": [],
             }
         )

@@ -10,7 +10,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.coverage import COVERAGE_INTENTS_STALE_AFTER_SECONDS
 from quant_rabbit.execution_timing_contracts import (
+    MONTH_SCALE_REPAIR_REPLAY_LOOKBACK_HOURS,
+    MONTH_SCALE_REPAIR_REPLAY_MAX_EVENTS,
+    MONTH_SCALE_REPAIR_REPLAY_POST_CLOSE_HOURS,
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     repair_replay_contract_from_payload,
@@ -129,6 +133,10 @@ PENDING_CANCEL_REGRET_MAX_AGE_HOURS = _env_nonnegative_float(
     "QR_SELF_IMPROVEMENT_PENDING_CANCEL_REGRET_MAX_AGE_HOURS",
     168.0,
 )
+
+# The TP-progress replay sidecar is rebuilt inside the hourly trader cycle.
+# One cadence is an operational freshness bound, not a market/risk threshold.
+TP_PROGRESS_REPAIR_REPLAY_CURRENT_MAX_AGE_SECONDS = 3600.0
 
 # A loss-containment close is positive close-discipline evidence only when it
 # avoids at least twice the realized containment cost. The 2x boundary mirrors
@@ -529,16 +537,22 @@ class SelfImprovementAuditor:
                 )
             )
         artifact_loads = {
-            "broker_snapshot": (snapshot_loaded, snapshot_path, "runtime"),
-            "daily_target_state": (target_loaded, target_state_path, "runtime"),
-            "order_intents": (intents_loaded, order_intents_path, "runtime"),
+            "broker_snapshot": (snapshot_loaded, snapshot_path, "runtime", "P0"),
+            "daily_target_state": (target_loaded, target_state_path, "runtime", "P0"),
+            "order_intents": (intents_loaded, order_intents_path, "runtime", "P0"),
+            "execution_timing_audit": (
+                execution_timing_loaded,
+                execution_timing_audit_path,
+                "execution_quality",
+                "P1",
+            ),
         }
-        for label, (loaded, path, layer) in artifact_loads.items():
+        for label, (loaded, path, layer, priority) in artifact_loads.items():
             if loaded.error is not None:
                 findings.append(
                     _finding(
                         run_id=run_id,
-                        priority="P0",
+                        priority=priority,
                         layer=layer,
                         code=f"{label.upper()}_UNREADABLE",
                         message=f"{label} is unreadable: {path}: {loaded.error}",
@@ -2238,96 +2252,436 @@ def _profit_capture_miss_findings(
     if not isinstance(timing_payload, dict):
         return []
     summary = timing_payload.get("summary") if isinstance(timing_payload.get("summary"), dict) else {}
-    missed = int(summary.get("loss_closes_profit_capture_missed") or 0)
-    if missed <= 0:
-        return []
+    split_count_fields = (
+        "loss_closes_audited",
+        "loss_closes_profit_capture_missed",
+        "loss_closes_repair_replay_triggered",
+        "pre_repair_historical_loss_closes_audited",
+        "pre_repair_historical_loss_closes_profit_capture_missed",
+        "pre_repair_historical_loss_closes_repair_replay_triggered",
+        "post_repair_live_evidence_loss_closes_audited",
+        "post_repair_live_evidence_loss_closes_profit_capture_missed",
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered",
+    )
+    split_marker_fields = tuple(
+        field
+        for field in split_count_fields
+        if field.startswith(("pre_repair_", "post_repair_"))
+    )
+
+    def summary_count(field: str) -> int:
+        raw = summary.get(field)
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+            return raw
+        return 0
+
+    malformed_count_fields = [
+        field
+        for field in split_count_fields
+        if field in summary
+        and not (
+            isinstance(summary[field], int)
+            and not isinstance(summary[field], bool)
+            and summary[field] >= 0
+        )
+    ]
+    missed = summary_count("loss_closes_profit_capture_missed")
     repair_replay_contract = repair_replay_contract_from_payload(timing_payload)
     repair_replay_contract_present = repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
-    repair_replay_missed = int(summary.get("loss_closes_repair_replay_triggered") or 0)
-    split_present = "post_repair_live_evidence_loss_closes_repair_replay_triggered" in summary
-    post_repair_sample_count = int(
-        _maybe_float(
-            summary.get("post_repair_live_evidence_loss_closes_audited")
-            if split_present
-            else summary.get("loss_closes_audited")
-        )
-        or 0
+    repair_replay_missed = summary_count("loss_closes_repair_replay_triggered")
+    split_present = all(field in summary for field in split_count_fields)
+    split_marker_present = any(field in summary for field in split_marker_fields)
+    split_counts_are_exact = split_present and not malformed_count_fields
+    post_repair_sample_count = (
+        summary_count("post_repair_live_evidence_loss_closes_audited")
+        if split_present
+        else summary_count("loss_closes_audited")
     )
-    post_repair_missed = int(
-        _maybe_float(
-            summary.get("post_repair_live_evidence_loss_closes_profit_capture_missed")
-            if split_present
-            else missed
-        )
-        or 0
+    post_repair_missed = (
+        summary_count("post_repair_live_evidence_loss_closes_profit_capture_missed")
+        if split_present
+        else missed
     )
-    post_repair_replay_missed = int(
-        _maybe_float(
-            summary.get("post_repair_live_evidence_loss_closes_repair_replay_triggered")
-            if split_present
-            else repair_replay_missed
-        )
-        or 0
+    post_repair_replay_missed = (
+        summary_count("post_repair_live_evidence_loss_closes_repair_replay_triggered")
+        if split_present
+        else repair_replay_missed
     )
-    pre_repair_missed = int(
-        _maybe_float(
-            summary.get("pre_repair_historical_loss_closes_profit_capture_missed")
-            if split_present
-            else 0
-        )
-        or 0
+    pre_repair_missed = (
+        summary_count("pre_repair_historical_loss_closes_profit_capture_missed")
+        if split_present
+        else 0
     )
-    pre_repair_replay_missed = int(
-        _maybe_float(
-            summary.get("pre_repair_historical_loss_closes_repair_replay_triggered")
-            if split_present
-            else 0
+    pre_repair_replay_missed = (
+        summary_count("pre_repair_historical_loss_closes_repair_replay_triggered")
+        if split_present
+        else 0
+    )
+    pre_repair_sample_count = (
+        summary_count("pre_repair_historical_loss_closes_audited")
+        if split_present
+        else 0
+    )
+    split_counts_are_consistent = split_counts_are_exact and (
+        pre_repair_sample_count + post_repair_sample_count
+        == summary_count("loss_closes_audited")
+        and pre_repair_missed + post_repair_missed == missed
+        and pre_repair_replay_missed + post_repair_replay_missed == repair_replay_missed
+        and pre_repair_missed <= pre_repair_sample_count
+        and pre_repair_replay_missed <= pre_repair_missed
+        and post_repair_missed <= post_repair_sample_count
+        and post_repair_replay_missed <= post_repair_missed
+        and missed <= summary_count("loss_closes_audited")
+        and repair_replay_missed <= missed
+    )
+    post_repair_status_declared_clean = (
+        summary.get("tp_progress_repair_live_evidence_status")
+        == "POST_REPAIR_REPLAY_CLEAN"
+    )
+    repair_boundary_matches = (
+        summary.get("tp_progress_repair_live_evidence_boundary_utc")
+        == TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+    )
+    window = (
+        timing_payload.get("window")
+        if isinstance(timing_payload.get("window"), dict)
+        else {}
+    )
+    lookback_hours = window.get("lookback_hours")
+    post_close_hours = window.get("post_close_hours")
+    max_events = window.get("max_events")
+    audit_run_at = _parse_explicit_utc(run_id)
+    replay_generated_at = _parse_explicit_utc(timing_payload.get("generated_at_utc"))
+    replay_window_to = _parse_explicit_utc(window.get("to_utc"))
+    replay_window_from = _parse_explicit_utc(window.get("from_utc"))
+    replay_canceled_from = _parse_explicit_utc(window.get("canceled_from_utc"))
+    replay_market_close_from = _parse_explicit_utc(
+        window.get("market_close_from_utc")
+    )
+    market_close_anchor_raw = window.get("market_close_anchor_utc")
+    replay_market_close_anchor = _parse_explicit_utc(market_close_anchor_raw)
+    lookback_contract_matches = bool(
+        isinstance(lookback_hours, (int, float))
+        and not isinstance(lookback_hours, bool)
+        and math.isfinite(float(lookback_hours))
+        and float(lookback_hours)
+        == float(MONTH_SCALE_REPAIR_REPLAY_LOOKBACK_HOURS)
+    )
+    expected_canceled_from = (
+        replay_window_to
+        - timedelta(hours=float(MONTH_SCALE_REPAIR_REPLAY_LOOKBACK_HOURS))
+        if replay_window_to is not None
+        else None
+    )
+    expected_market_close_from = expected_canceled_from
+    if expected_canceled_from is not None and replay_market_close_anchor is not None:
+        expected_market_close_from = min(
+            expected_canceled_from,
+            replay_market_close_anchor
+            - timedelta(hours=float(MONTH_SCALE_REPAIR_REPLAY_LOOKBACK_HOURS)),
         )
-        or 0
+    replay_window_bounds_match = bool(
+        replay_window_to is not None
+        and replay_window_from is not None
+        and replay_canceled_from is not None
+        and replay_market_close_from is not None
+        and expected_canceled_from is not None
+        and expected_market_close_from is not None
+        and replay_canceled_from == expected_canceled_from
+        and replay_market_close_from == expected_market_close_from
+        and replay_window_from
+        == min(replay_canceled_from, replay_market_close_from)
+        and (
+            market_close_anchor_raw is None
+            or replay_market_close_anchor is not None
+        )
+        and (
+            replay_market_close_anchor is None
+            or replay_market_close_anchor <= replay_window_to
+        )
+    )
+    replay_age_seconds = (
+        (audit_run_at - replay_generated_at).total_seconds()
+        if audit_run_at is not None and replay_generated_at is not None
+        else None
+    )
+    replay_clock_is_current = bool(
+        audit_run_at is not None
+        and replay_generated_at is not None
+        and replay_window_to is not None
+        and replay_generated_at == replay_window_to
+        and replay_age_seconds is not None
+        and 0.0 <= replay_age_seconds <= TP_PROGRESS_REPAIR_REPLAY_CURRENT_MAX_AGE_SECONDS
+    )
+    precision = (
+        timing_payload.get("precision")
+        if isinstance(timing_payload.get("precision"), dict)
+        else {}
+    )
+    raw_loss_close_rows = timing_payload.get("loss_close_regrets")
+    loss_close_rows_type_valid = isinstance(raw_loss_close_rows, list)
+    loss_close_rows = raw_loss_close_rows if loss_close_rows_type_valid else []
+    repair_boundary = _parse_explicit_utc(
+        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+    )
+
+    def loss_close_row_is_structurally_complete(row: Any) -> bool:
+        if not isinstance(row, dict):
+            return False
+        fill_at = _parse_explicit_utc(row.get("fill_at_utc"))
+        close_at = _parse_explicit_utc(row.get("close_at_utc"))
+        mfe_at = _parse_explicit_utc(row.get("mfe_at_utc"))
+        replay_trigger_at = _parse_explicit_utc(
+            row.get("repair_replay_trigger_at_utc")
+        )
+        realized_pl_jpy = row.get("realized_pl_jpy")
+        entry = row.get("entry")
+        close_price = row.get("close_price")
+        raw_miss = row.get("profit_capture_missed_before_loss_close")
+        replay_triggered = row.get("repair_replay_triggered_before_loss_close")
+        return bool(
+            isinstance(row.get("trade_id"), str)
+            and row["trade_id"].strip()
+            and isinstance(row.get("pair"), str)
+            and row["pair"] in DEFAULT_SPECS
+            and isinstance(row.get("side"), str)
+            and row["side"] in {"LONG", "SHORT"}
+            and isinstance(row.get("units"), int)
+            and not isinstance(row.get("units"), bool)
+            and row["units"] > 0
+            and isinstance(entry, (int, float))
+            and not isinstance(entry, bool)
+            and math.isfinite(float(entry))
+            and float(entry) > 0.0
+            and isinstance(close_price, (int, float))
+            and not isinstance(close_price, bool)
+            and math.isfinite(float(close_price))
+            and float(close_price) > 0.0
+            and isinstance(realized_pl_jpy, (int, float))
+            and not isinstance(realized_pl_jpy, bool)
+            and math.isfinite(float(realized_pl_jpy))
+            and float(realized_pl_jpy) < 0.0
+            and isinstance(row.get("exit_reason"), str)
+            and bool(row["exit_reason"].strip())
+            and isinstance(row.get("candles_available"), int)
+            and not isinstance(row.get("candles_available"), bool)
+            and row["candles_available"] > 0
+            and isinstance(raw_miss, bool)
+            and isinstance(replay_triggered, bool)
+            and not (replay_triggered and not raw_miss)
+            and fill_at is not None
+            and close_at is not None
+            and fill_at < close_at
+            and replay_window_from is not None
+            and replay_window_to is not None
+            and replay_window_from <= close_at <= replay_window_to
+            and (row.get("mfe_at_utc") is None or mfe_at is not None)
+            and (not raw_miss or mfe_at is not None)
+            and (mfe_at is None or fill_at <= mfe_at <= close_at)
+            and (
+                row.get("repair_replay_trigger_at_utc") is None
+                or replay_trigger_at is not None
+            )
+            and replay_triggered == (replay_trigger_at is not None)
+            and (
+                replay_trigger_at is None
+                or fill_at <= replay_trigger_at <= close_at
+            )
+        )
+
+    loss_close_trade_ids = (
+        [
+            str(row.get("trade_id") or "").strip()
+            for row in loss_close_rows
+            if isinstance(row, dict)
+        ]
+        if loss_close_rows_type_valid
+        else []
+    )
+    loss_close_rows_are_structurally_complete = bool(
+        loss_close_rows_type_valid
+        and len(loss_close_rows) == summary_count("loss_closes_audited")
+        and len(loss_close_trade_ids) == len(loss_close_rows)
+        and all(loss_close_trade_ids)
+        and len(set(loss_close_trade_ids)) == len(loss_close_trade_ids)
+        and all(loss_close_row_is_structurally_complete(row) for row in loss_close_rows)
+    )
+    row_summary_counts_match = False
+    if (
+        loss_close_rows_are_structurally_complete
+        and repair_boundary is not None
+    ):
+        post_sample_rows = [
+            row
+            for row in loss_close_rows
+            if (_parse_explicit_utc(row.get("close_at_utc")) or repair_boundary)
+            >= repair_boundary
+        ]
+        raw_miss_rows = [
+            row
+            for row in loss_close_rows
+            if row["profit_capture_missed_before_loss_close"]
+        ]
+        post_raw_miss_rows = [
+            row
+            for row in raw_miss_rows
+            if (
+                _parse_explicit_utc(row.get("mfe_at_utc"))
+                or _parse_explicit_utc(row.get("close_at_utc"))
+                or repair_boundary
+            )
+            >= repair_boundary
+        ]
+        replay_trigger_rows = [
+            row
+            for row in loss_close_rows
+            if row["repair_replay_triggered_before_loss_close"]
+        ]
+        post_replay_trigger_rows = [
+            row
+            for row in replay_trigger_rows
+            if (
+                _parse_explicit_utc(row.get("repair_replay_trigger_at_utc"))
+                or _parse_explicit_utc(row.get("close_at_utc"))
+                or repair_boundary
+            )
+            >= repair_boundary
+        ]
+        row_summary_counts_match = (
+            len(loss_close_rows) == summary_count("loss_closes_audited")
+            and len(raw_miss_rows) == missed
+            and len(replay_trigger_rows) == repair_replay_missed
+            and len(loss_close_rows) - len(post_sample_rows) == pre_repair_sample_count
+            and len(raw_miss_rows) - len(post_raw_miss_rows) == pre_repair_missed
+            and len(replay_trigger_rows) - len(post_replay_trigger_rows)
+            == pre_repair_replay_missed
+            and len(post_sample_rows) == post_repair_sample_count
+            and len(post_raw_miss_rows) == post_repair_missed
+            and len(post_replay_trigger_rows) == post_repair_replay_missed
+        )
+    loss_close_rows_are_complete = bool(
+        loss_close_rows_are_structurally_complete and row_summary_counts_match
+    )
+    replay_source_is_complete = (
+        timing_payload.get("status") == "OK"
+        and isinstance(timing_payload.get("fetch_errors"), list)
+        and not timing_payload["fetch_errors"]
+        and lookback_contract_matches
+        and isinstance(post_close_hours, (int, float))
+        and not isinstance(post_close_hours, bool)
+        and float(post_close_hours) == float(MONTH_SCALE_REPAIR_REPLAY_POST_CLOSE_HOURS)
+        and "max_events" in window
+        and isinstance(max_events, int)
+        and not isinstance(max_events, bool)
+        and max_events == MONTH_SCALE_REPAIR_REPLAY_MAX_EVENTS
+        and split_counts_are_exact
+        and summary_count("loss_closes_audited") < MONTH_SCALE_REPAIR_REPLAY_MAX_EVENTS
+        and precision.get("price_basis") == "OANDA_M1_BID_ASK_CANDLES"
+        and precision.get("granularity") == "M1"
+        and replay_clock_is_current
+        and replay_window_bounds_match
+        and loss_close_rows_are_complete
+    )
+    expected_post_repair_status = (
+        "WAITING_FOR_POST_REPAIR_SAMPLE"
+        if split_present and post_repair_sample_count <= 0
+        else "POST_REPAIR_REPLAY_FAILURES_PRESENT"
+        if post_repair_replay_missed > 0
+        else "POST_REPAIR_REPLAY_CLEAN"
     )
     post_repair_status = str(
         summary.get("tp_progress_repair_live_evidence_status")
-        or (
-            "WAITING_FOR_POST_REPAIR_SAMPLE"
-            if split_present and post_repair_sample_count <= 0
-            else "POST_REPAIR_REPLAY_FAILURES_PRESENT"
-            if post_repair_replay_missed > 0
-            else "POST_REPAIR_REPLAY_CLEAN"
+        or expected_post_repair_status
+    )
+    post_repair_status_matches_counts = (
+        summary.get("tp_progress_repair_live_evidence_status")
+        == expected_post_repair_status
+    )
+    row_reports_profit_capture_miss = bool(
+        any(
+            isinstance(row, dict)
+            and (
+                row.get("profit_capture_missed_before_loss_close") is True
+                or row.get("repair_replay_triggered_before_loss_close") is True
+            )
+            for row in loss_close_rows
         )
     )
+    replay_count_contract_present = bool(
+        repair_replay_contract_present
+        or "tp_progress_repair_live_evidence_status" in summary
+        or "tp_progress_repair_live_evidence_boundary_utc" in summary
+        or row_reports_profit_capture_miss
+    )
+    replay_counts_invalid = not loss_close_rows_type_valid or bool(malformed_count_fields) or (
+        (split_marker_present or replay_count_contract_present)
+        and not split_counts_are_consistent
+    ) or bool(
+        loss_close_rows
+        and not row_summary_counts_match
+    )
+    replay_miss_count = max(
+        missed,
+        repair_replay_missed,
+        pre_repair_missed,
+        pre_repair_replay_missed,
+        post_repair_missed,
+        post_repair_replay_missed,
+    )
+    if (
+        replay_miss_count <= 0
+        and not replay_counts_invalid
+        and repair_replay_contract_present
+        and split_counts_are_consistent
+        and repair_boundary_matches
+        and post_repair_status_matches_counts
+        and replay_source_is_complete
+    ):
+        return []
+    if (
+        repair_replay_contract_present
+        and split_counts_are_consistent
+        and post_repair_sample_count > 0
+        and post_repair_missed == 0
+        and post_repair_replay_missed == 0
+        and post_repair_status_declared_clean
+        and repair_boundary_matches
+        and replay_source_is_complete
+    ):
+        return []
     production_gate_p0 = (
         (not repair_replay_contract_present and (post_repair_missed if split_present else missed) > 0)
         or post_repair_replay_missed > 0
     )
     rows = [
         row
-        for row in (timing_payload.get("loss_close_regrets") or [])
+        for row in loss_close_rows
         if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
     ]
     rows.sort(
-        key=lambda row: float(
+        key=lambda row: _maybe_float(
             row.get("profit_capture_counterfactual_net_improvement_jpy")
-            or row.get("estimated_mfe_jpy_before_loss_close")
-            or 0.0
-        ),
+        )
+        or _maybe_float(row.get("estimated_mfe_jpy_before_loss_close"))
+        or 0.0,
         reverse=True,
     )
     repair_rows = [
         row
-        for row in (timing_payload.get("loss_close_regrets") or [])
+        for row in loss_close_rows
         if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
     ]
     repair_rows.sort(
-        key=lambda row: float(
+        key=lambda row: _maybe_float(
             row.get("repair_replay_counterfactual_net_improvement_jpy")
-            or row.get("profit_capture_counterfactual_net_improvement_jpy")
-            or 0.0
-        ),
+        )
+        or _maybe_float(row.get("profit_capture_counterfactual_net_improvement_jpy"))
+        or 0.0,
         reverse=True,
     )
     repair_block_rows = [
         row
-        for row in (timing_payload.get("loss_close_regrets") or [])
+        for row in loss_close_rows
         if (
             isinstance(row, dict)
             and row.get("profit_capture_missed_before_loss_close")
@@ -2335,11 +2689,11 @@ def _profit_capture_miss_findings(
         )
     ]
     repair_block_rows.sort(
-        key=lambda row: float(
+        key=lambda row: _maybe_float(
             row.get("profit_capture_counterfactual_net_improvement_jpy")
-            or row.get("estimated_mfe_jpy_before_loss_close")
-            or 0.0
-        ),
+        )
+        or _maybe_float(row.get("estimated_mfe_jpy_before_loss_close"))
+        or 0.0,
         reverse=True,
     )
     if not repair_replay_contract_present:
@@ -2351,6 +2705,35 @@ def _profit_capture_miss_findings(
         next_action = (
             "Regenerate execution-timing-audit with the current runtime before treating "
             "TP-progress repair as proved or cleared."
+        )
+    elif replay_counts_invalid:
+        message = (
+            "execution-timing-audit replay counts are malformed, incomplete, or "
+            "arithmetically contradictory"
+        )
+        next_action = (
+            "Regenerate execution-timing-audit from the read-only ledger and complete M1 "
+            "bid/ask truth; keep the finding fail-closed until every total/pre/post count "
+            "is a consistent non-negative integer."
+        )
+    elif not replay_source_is_complete:
+        message = (
+            "execution-timing-audit cannot clear historical TP-progress misses because "
+            "its source, window, cap, price basis, or cycle clock is incomplete or stale"
+        )
+        next_action = (
+            "Regenerate the contracted 744h/6h M1 bid/ask execution-timing audit in the "
+            "current trader cycle before clearing this historical finding."
+        )
+    elif not repair_boundary_matches or not post_repair_status_matches_counts:
+        message = (
+            "execution-timing-audit replay boundary or declared live-evidence status "
+            "does not match its row-derived counts"
+        )
+        next_action = (
+            "Regenerate execution-timing-audit with the current replay contract; keep "
+            "historical TP-progress clearance fail-closed until boundary, status, and "
+            "row-derived counts agree."
         )
     elif post_repair_replay_missed > 0:
         message = (
@@ -2391,13 +2774,13 @@ def _profit_capture_miss_findings(
             next_action=next_action,
             evidence={
                 "generated_at_utc": timing_payload.get("generated_at_utc"),
-                "loss_closes_audited": int(summary.get("loss_closes_audited") or 0),
+                "loss_closes_audited": summary_count("loss_closes_audited"),
                 "loss_closes_profit_capture_missed": missed,
                 "loss_closes_profit_capture_missed_rate": _maybe_float(
                     summary.get("loss_closes_profit_capture_missed_rate")
                 ),
-                "stop_loss_closes_profit_capture_missed": int(
-                    summary.get("stop_loss_closes_profit_capture_missed") or 0
+                "stop_loss_closes_profit_capture_missed": summary_count(
+                    "stop_loss_closes_profit_capture_missed"
                 ),
                 "loss_close_estimated_capture_gap_jpy": _maybe_float(
                     summary.get("loss_close_estimated_capture_gap_jpy")
@@ -2414,6 +2797,16 @@ def _profit_capture_miss_findings(
                 ),
                 "repair_replay_contract": repair_replay_contract,
                 "repair_replay_contract_present": repair_replay_contract_present,
+                "malformed_replay_count_fields": malformed_count_fields,
+                "replay_split_counts_consistent": split_counts_are_consistent,
+                "replay_source_is_complete": replay_source_is_complete,
+                "loss_close_rows_are_complete": loss_close_rows_are_complete,
+                "loss_close_row_summary_counts_match": row_summary_counts_match,
+                "replay_age_seconds": (
+                    round(replay_age_seconds, 3)
+                    if replay_age_seconds is not None
+                    else None
+                ),
                 "loss_closes_repair_replay_triggered": repair_replay_missed,
                 "loss_closes_repair_replay_triggered_rate": _maybe_float(
                     summary.get("loss_closes_repair_replay_triggered_rate")
@@ -6014,6 +6407,12 @@ def _intent_findings(
             coverage_optimization=coverage_optimization,
             intents=intents,
         )
+        intent_artifact_freshness = _intent_artifact_freshness(
+            run_id=run_id,
+            coverage_optimization=coverage_optimization,
+            intents=intents,
+        )
+        live_readiness_breakdown = _intent_live_readiness_family_breakdown(intents)
         out.append(
             _finding(
                 run_id=run_id,
@@ -6021,17 +6420,17 @@ def _intent_findings(
                 layer="opportunity",
                 code="TARGET_OPEN_NO_LIVE_READY_LANES",
                 message="daily target is open but order_intents has no LIVE_READY lanes",
-                next_action=(
-                    "Refresh broker truth and regenerate intents after quotes/spreads become tradable; "
-                    "do not treat market-evidence noise as a strategy expansion defect yet."
-                    if coverage_refresh
-                    else "Refresh market context and inspect top live blockers instead of ending flat without a named gate."
+                next_action=_no_live_ready_next_action(
+                    coverage_refresh=coverage_refresh,
+                    intent_evidence_fresh=bool(intent_artifact_freshness.get("fresh")),
+                    live_readiness_breakdown=live_readiness_breakdown,
                 ),
                 evidence={
                     "active_trader_positions": len(active_positions),
                     "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                     "coverage_market_evidence_refresh": coverage_refresh,
                     "coverage_source_freshness": coverage_freshness,
+                    "intent_artifact_freshness": intent_artifact_freshness,
                     "opportunity_modes": _coverage_opportunity_mode_summary(
                         coverage_optimization,
                         stale_diagnostic_lists=bool(coverage_freshness),
@@ -6053,7 +6452,7 @@ def _intent_findings(
                         intents
                     ),
                     "forecast_arbitration_diagnostics": forecast_arbitration,
-                    "live_readiness_blocker_families": _intent_live_readiness_family_breakdown(intents),
+                    "live_readiness_blocker_families": live_readiness_breakdown,
                     "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                 },
             )
@@ -6288,6 +6687,75 @@ def _coverage_source_freshness(
     }
 
 
+def _intent_artifact_freshness(
+    *,
+    run_id: str,
+    coverage_optimization: dict[str, Any],
+    intents: dict[str, Any],
+) -> dict[str, Any]:
+    diagnostics = (
+        coverage_optimization.get("artifact_diagnostics")
+        if isinstance(coverage_optimization.get("artifact_diagnostics"), dict)
+        else {}
+    )
+    audit_at = _parse_explicit_utc(run_id)
+    intents_at = _parse_explicit_utc(intents.get("generated_at_utc"))
+    diagnostics_intents_at = _parse_explicit_utc(
+        diagnostics.get("intents_generated_at_utc")
+    )
+    coverage_at = _parse_explicit_utc(
+        coverage_optimization.get("generated_at_utc")
+    )
+    age_seconds = _maybe_float(diagnostics.get("intents_age_seconds"))
+    stale_after_seconds = _maybe_float(diagnostics.get("intents_stale_after_seconds"))
+    timestamps_match = bool(
+        intents_at is not None
+        and diagnostics_intents_at is not None
+        and intents_at == diagnostics_intents_at
+    )
+    chronology_valid = bool(
+        timestamps_match
+        and audit_at is not None
+        and coverage_at is not None
+        and intents_at is not None
+        and intents_at <= coverage_at <= audit_at
+    )
+    numeric_freshness_valid = bool(
+        age_seconds is not None
+        and math.isfinite(age_seconds)
+        and age_seconds >= 0.0
+        and stale_after_seconds is not None
+        and math.isfinite(stale_after_seconds)
+        and stale_after_seconds == COVERAGE_INTENTS_STALE_AFTER_SECONDS
+        and age_seconds <= stale_after_seconds
+    )
+    current_age_seconds = (
+        max(0.0, (audit_at - intents_at).total_seconds())
+        if chronology_valid and audit_at is not None and intents_at is not None
+        else None
+    )
+    fresh = bool(
+        diagnostics.get("intents_artifact_stale") is False
+        and chronology_valid
+        and numeric_freshness_valid
+        and current_age_seconds is not None
+        and current_age_seconds <= COVERAGE_INTENTS_STALE_AFTER_SECONDS
+    )
+    return {
+        "fresh": fresh,
+        "intents_artifact_stale": diagnostics.get("intents_artifact_stale"),
+        "intents_generated_at_utc": intents_at.isoformat() if intents_at else None,
+        "diagnostics_intents_generated_at_utc": (
+            diagnostics_intents_at.isoformat() if diagnostics_intents_at else None
+        ),
+        "coverage_generated_at_utc": coverage_at.isoformat() if coverage_at else None,
+        "intents_age_seconds_at_coverage": age_seconds,
+        "intents_stale_after_seconds": stale_after_seconds,
+        "timestamps_match": timestamps_match,
+        "chronology_valid": chronology_valid,
+    }
+
+
 def _coverage_code_counts(raw: Any, *, stale_diagnostic_lists: bool) -> list[dict[str, Any]]:
     if stale_diagnostic_lists:
         return []
@@ -6413,15 +6881,19 @@ def _coverage_runner_candidate_diagnostics(
 
 def _coverage_market_evidence_refresh(payload: dict[str, Any]) -> dict[str, Any] | None:
     diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
-    if not diagnostics.get("requires_market_evidence_refresh"):
+    if diagnostics.get("requires_market_evidence_refresh") is not True:
+        return None
+    all_lanes_spread_blocked = diagnostics.get("all_lanes_spread_blocked") is True
+    all_lanes_quote_stale = diagnostics.get("all_lanes_quote_stale") is True
+    if not (all_lanes_spread_blocked or all_lanes_quote_stale):
         return None
     action_items = payload.get("action_items") if isinstance(payload.get("action_items"), list) else []
     return {
         "coverage_status": payload.get("status"),
         "generated_at_utc": payload.get("generated_at_utc"),
         "requires_market_evidence_refresh": True,
-        "all_lanes_spread_blocked": bool(diagnostics.get("all_lanes_spread_blocked")),
-        "all_lanes_quote_stale": bool(diagnostics.get("all_lanes_quote_stale")),
+        "all_lanes_spread_blocked": all_lanes_spread_blocked,
+        "all_lanes_quote_stale": all_lanes_quote_stale,
         "quote_stale_result_count": int(diagnostics.get("quote_stale_result_count") or 0),
         "spread_normalized_candidate_count": int(diagnostics.get("spread_normalized_candidate_count") or 0),
         "spread_normalized_candidate_reward_jpy": _maybe_float(
@@ -8582,9 +9054,60 @@ def _intent_live_readiness_family_breakdown(intents: dict[str, Any]) -> dict[str
     dry_run_passed = _live_readiness_family_scope(intents, statuses={"DRY_RUN_PASSED"})
     return {
         "all_non_live_ready": all_non_live["families"],
+        "nearest_all_non_live_ready_candidates": all_non_live["nearest_candidates"],
         "dry_run_passed": dry_run_passed["families"],
         "nearest_live_ready_candidates": dry_run_passed["nearest_candidates"],
     }
+
+
+def _no_live_ready_next_action(
+    *,
+    coverage_refresh: dict[str, Any] | None,
+    intent_evidence_fresh: bool,
+    live_readiness_breakdown: dict[str, Any],
+) -> str:
+    if not intent_evidence_fresh:
+        return (
+            "Regenerate order intents from fresh broker, quote, spread, and market-context "
+            "evidence before naming a lane-specific repair."
+        )
+    if coverage_refresh:
+        return (
+            "Refresh broker truth and regenerate intents after quotes/spreads become tradable; "
+            "do not treat market-evidence noise as a strategy expansion defect yet."
+        )
+    candidates = live_readiness_breakdown.get("nearest_live_ready_candidates")
+    if not isinstance(candidates, list) or not candidates:
+        candidates = live_readiness_breakdown.get("nearest_all_non_live_ready_candidates")
+    nearest = candidates[0] if isinstance(candidates, list) and candidates else None
+    if not isinstance(nearest, dict):
+        return (
+            "Refresh market context and inspect top live blockers instead of ending flat "
+            "without a named gate."
+        )
+    lane_id = str(nearest.get("lane_id") or "").strip()
+    raw_blocker_codes = nearest.get("authoritative_live_blocker_codes")
+    blocker_codes = (
+        [str(code).strip() for code in raw_blocker_codes]
+        if isinstance(raw_blocker_codes, list)
+        and raw_blocker_codes
+        and all(isinstance(code, str) and code.strip() for code in raw_blocker_codes)
+        else []
+    )
+    authoritative_codes_complete = (
+        nearest.get("authoritative_live_blocker_codes_complete") is True
+        and len(blocker_codes) == len(set(blocker_codes))
+    )
+    if not lane_id or not authoritative_codes_complete:
+        return (
+            "Refresh market context and inspect top live blockers instead of ending flat "
+            "without a named gate."
+        )
+    return (
+        f"Narrow the next repair to `{lane_id}` and prove or resolve all of its named "
+        f"blocker(s): {', '.join(blocker_codes)}. Keep every gate fail-closed; do not "
+        "repeat a broad market refresh while the current intent evidence remains fresh."
+    )
 
 
 def _live_readiness_family_scope(
@@ -8689,6 +9212,9 @@ def _nearest_live_ready_candidate(
     risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
     families = sorted({str(issue.get("family") or "other") for issue in issues})
     blockers = [_nearest_live_ready_blocker(issue) for issue in issues[:6]]
+    authoritative_codes, authoritative_codes_complete = (
+        _authoritative_live_blocker_codes(result)
+    )
     return {
         "lane_id": str(result.get("lane_id") or ""),
         "status": str(result.get("status") or ""),
@@ -8706,9 +9232,65 @@ def _nearest_live_ready_candidate(
         "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
         "blocker_families": families,
         "blocker_family_count": len(families),
-        "blocker_count": len(issues),
+        "blocker_count": (
+            len(authoritative_codes) if authoritative_codes_complete else len(issues)
+        ),
         "blockers": blockers,
+        "authoritative_live_blocker_codes": authoritative_codes,
+        "authoritative_live_blocker_codes_complete": authoritative_codes_complete,
     }
+
+
+def _authoritative_live_blocker_codes(
+    result: dict[str, Any],
+) -> tuple[list[str], bool]:
+    if "live_blocker_codes" not in result:
+        return [], False
+    raw_codes = result.get("live_blocker_codes")
+    if not isinstance(raw_codes, list) or not raw_codes:
+        return [], False
+    codes: list[str] = []
+    for raw in raw_codes:
+        if not isinstance(raw, str):
+            return [], False
+        code = raw.strip()
+        if not code or code in codes:
+            return [], False
+        codes.append(code)
+
+    raw_live_blockers = result.get("live_blockers", [])
+    if not isinstance(raw_live_blockers, list) or any(
+        not isinstance(item, str) or not item.strip() for item in raw_live_blockers
+    ):
+        return codes, False
+    normalized_live_blockers = [item.strip() for item in raw_live_blockers]
+    if len(normalized_live_blockers) != len(set(normalized_live_blockers)):
+        return codes, False
+    live_blocker_messages = set(normalized_live_blockers)
+    structured_block_codes: set[str] = set()
+    coded_structured_messages: set[str] = set()
+    for key in ("risk_issues", "strategy_issues", "live_strategy_issues"):
+        raw_issues = result.get(key, [])
+        if not isinstance(raw_issues, list):
+            return codes, False
+        for issue in raw_issues:
+            if not isinstance(issue, dict):
+                return codes, False
+            severity = str(issue.get("severity") or "").upper()
+            message = str(issue.get("message") or "").strip()
+            if severity != "BLOCK" and message not in live_blocker_messages:
+                continue
+            code = str(issue.get("code") or "").strip()
+            if not code:
+                return codes, False
+            structured_block_codes.add(code)
+            if message:
+                coded_structured_messages.add(message)
+    complete = bool(
+        structured_block_codes == set(codes)
+        and live_blocker_messages.issubset(coded_structured_messages)
+    )
+    return codes, complete
 
 
 def _nearest_live_ready_blocker(issue: dict[str, Any]) -> dict[str, Any]:
@@ -8717,6 +9299,9 @@ def _nearest_live_ready_blocker(issue: dict[str, Any]) -> dict[str, Any]:
         "message": str(issue.get("message") or ""),
         "source": str(issue.get("source") or ""),
     }
+    code = str(issue.get("code") or "").strip().upper()
+    if code:
+        blocker["code"] = code
     evidence = issue.get("strategy_profile_evidence")
     if isinstance(evidence, dict):
         blocker["strategy_profile_evidence"] = evidence
@@ -8743,7 +9328,9 @@ def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
     seen: set[tuple[str, str]] = set()
     structured_issue_seen = False
 
-    for raw in result.get("risk_issues") or []:
+    raw_risk_issues = result.get("risk_issues", [])
+    risk_issues = raw_risk_issues if isinstance(raw_risk_issues, list) else []
+    for raw in risk_issues:
         if not _risk_issue_blocks_live_readiness(raw):
             continue
         structured_issue_seen = _append_live_readiness_issue(
@@ -8752,7 +9339,13 @@ def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
             raw,
             source="risk_issues",
         ) or structured_issue_seen
-    for raw in result.get("live_strategy_issues") or []:
+    raw_live_strategy_issues = result.get("live_strategy_issues", [])
+    live_strategy_issues = (
+        raw_live_strategy_issues
+        if isinstance(raw_live_strategy_issues, list)
+        else []
+    )
+    for raw in live_strategy_issues:
         if not _strategy_issue_blocks_live_readiness(raw):
             continue
         structured_issue_seen = _append_live_readiness_issue(
@@ -8762,7 +9355,11 @@ def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
             source="live_strategy_issues",
         ) or structured_issue_seen
     if "live_strategy_issues" not in result:
-        for raw in result.get("strategy_issues") or []:
+        raw_strategy_issues = result.get("strategy_issues", [])
+        strategy_issues = (
+            raw_strategy_issues if isinstance(raw_strategy_issues, list) else []
+        )
+        for raw in strategy_issues:
             if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
                 continue
             structured_issue_seen = _append_live_readiness_issue(
@@ -8772,7 +9369,11 @@ def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
                 source="strategy_issues",
             ) or structured_issue_seen
     if not structured_issue_seen:
-        for raw in result.get("live_blockers") or []:
+        raw_live_blockers = result.get("live_blockers", [])
+        live_blockers = (
+            raw_live_blockers if isinstance(raw_live_blockers, list) else []
+        )
+        for raw in live_blockers:
             _append_live_readiness_issue(
                 issues,
                 seen,
@@ -9960,6 +10561,12 @@ def _report_nearest_candidate_text(raw: Any) -> str:
         if isinstance(payload.get("nearest_live_ready_candidates"), list)
         else []
     )
+    if not candidates:
+        candidates = (
+            payload.get("nearest_all_non_live_ready_candidates")
+            if isinstance(payload.get("nearest_all_non_live_ready_candidates"), list)
+            else []
+        )
     parts: list[str] = []
     for item in candidates[:4]:
         if not isinstance(item, dict):
@@ -10173,6 +10780,23 @@ def _parse_utc(value: Any) -> datetime | None:
         return _to_utc(dt)
     except (ValueError, OverflowError, OSError):
         return None
+
+
+def _parse_explicit_utc(value: Any) -> datetime | None:
+    """Parse proof timestamps only when their timezone is explicit."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _to_utc(value: datetime) -> datetime:
