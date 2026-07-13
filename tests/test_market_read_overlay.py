@@ -26,6 +26,7 @@ from quant_rabbit.market_read_overlay import (
     canonical_json_sha256,
     execution_envelope_payload,
     prepare_market_read_baseline,
+    projection_calibration_evidence,
     revalidate_codex_market_read_artifacts,
     validate_codex_market_read_provenance,
 )
@@ -36,10 +37,50 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context_evidence,
     technical_context_sha256,
 )
+from quant_rabbit.strategy.projection_ledger import LedgerEntry, write_ledger
 
 
 NOW = datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc)
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+
+
+def _projection_trial(
+    base: datetime,
+    index: int,
+    *,
+    status: str,
+    direction: str = "UP",
+    regime: str = "TREND",
+    pair: str = "EUR_USD",
+) -> LedgerEntry:
+    up = direction == "UP"
+    emitted_at = base + timedelta(hours=index)
+    evidence = (
+        "target touched before invalidation"
+        if status == "HIT"
+        else "invalidation touched before target"
+        if status == "MISS"
+        else "neither target nor invalidation touched"
+    )
+    return LedgerEntry(
+        timestamp_emitted_utc=emitted_at.isoformat(),
+        pair=pair,
+        signal_name="directional_forecast",
+        direction=direction,
+        lead_time_min=60,
+        confidence=0.24,
+        raw_confidence=0.80,
+        calibration_multiplier=0.30,
+        entry_price=1.1000,
+        predicted_target_price=1.1020 if up else 1.0980,
+        predicted_invalidation_price=1.0990 if up else 1.1010,
+        resolution_window_min=60,
+        resolution_status=status,
+        resolved_at_utc=(emitted_at + timedelta(hours=1)).isoformat(),
+        resolution_evidence=evidence,
+        regime_at_emission=regime,
+        cycle_id=f"{direction.lower()}-{index}-{status.lower()}",
+    )
 
 
 def _forecast_context_evidence(
@@ -195,6 +236,411 @@ class MarketReadOverlayTest(unittest.TestCase):
         )
         cost_patch.start()
         self.addCleanup(cost_patch.stop)
+
+    def test_projection_calibration_uses_independent_numeric_outcomes_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "projection_ledger.jsonl"
+            base = NOW - timedelta(hours=12)
+            statuses = ["HIT"] * 8 + ["MISS"] * 3 + ["TIMEOUT"]
+            write_ledger(
+                [
+                    _projection_trial(base, index, status=status)
+                    for index, status in enumerate(statuses)
+                ],
+                root,
+            )
+            os.utime(ledger, (NOW.timestamp(), NOW.timestamp()))
+
+            evidence = projection_calibration_evidence(
+                ledger,
+                scopes=[{"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}],
+                now=NOW,
+            )
+
+            self.assertEqual(evidence["status"], "VALID")
+            self.assertEqual(len(evidence["rows"]), 1)
+            row = evidence["rows"][0]
+            bucket = row["specific_bucket"]
+            self.assertEqual(row["calibration_name"], "directional_forecast_up")
+            self.assertEqual(bucket["bucket"], "EUR_USD:TREND")
+            self.assertEqual(bucket["samples"], 11)
+            self.assertEqual(bucket["economic_samples"], 12)
+            self.assertAlmostEqual(bucket["hit_rate"], 8 / 11, places=3)
+            self.assertAlmostEqual(bucket["economic_hit_rate"], 8 / 12, places=3)
+            self.assertEqual(bucket["timeout_count"], 1)
+            self.assertEqual(bucket["invalidation_first_count"], 3)
+            self.assertEqual(row["edge_status"], "PRECISION_FLOOR_FAILED_NO_EDGE")
+            self.assertFalse(row["precision_floor_eligible"])
+            self.assertFalse(evidence["selection_contract"]["raw_ledger_rows_exposed"])
+            self.assertNotIn("timestamp_emitted_utc", json.dumps(evidence))
+            material = dict(evidence)
+            claimed_sha = material.pop("evidence_sha256")
+            self.assertEqual(claimed_sha, canonical_json_sha256(material))
+
+            multi_regime = projection_calibration_evidence(
+                ledger,
+                scopes=[
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "TREND"},
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "RANGE"},
+                ],
+                now=NOW,
+            )
+            refs = [item["evidence_ref"] for item in multi_regime["rows"]]
+            self.assertEqual(len(refs), len(set(refs)))
+            self.assertIn(
+                "projection:calibration:EUR_USD:TREND:directional_forecast_up",
+                refs,
+            )
+
+    def test_projection_calibration_missing_empty_and_regimeless_never_fake_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "projection_ledger.jsonl"
+            scope = [{"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}]
+
+            missing = projection_calibration_evidence(ledger, scopes=scope, now=NOW)
+            self.assertEqual(missing["status"], "MISSING")
+            self.assertEqual(missing["rows"], [])
+
+            ledger.write_text("")
+            os.utime(ledger, (NOW.timestamp(), NOW.timestamp()))
+            empty = projection_calibration_evidence(ledger, scopes=scope, now=NOW)
+            self.assertEqual(empty["status"], "VALID")
+            self.assertIsNone(empty["rows"][0]["specific_bucket"])
+            self.assertIsNone(empty["rows"][0]["selected_bucket"])
+            self.assertEqual(
+                empty["rows"][0]["edge_status"],
+                "INSUFFICIENT_SAMPLES_NO_EDGE",
+            )
+
+            base = NOW - timedelta(hours=40)
+            write_ledger(
+                [_projection_trial(base, index, status="HIT") for index in range(40)],
+                root,
+            )
+            os.utime(ledger, (NOW.timestamp(), NOW.timestamp()))
+            regimeless = projection_calibration_evidence(
+                ledger,
+                scopes=[{"pair": "EUR_USD", "direction": "UP", "regime": None}],
+                now=NOW,
+            )["rows"][0]
+            self.assertTrue(regimeless["precision_floor_eligible"])
+            self.assertEqual(regimeless["specific_scope"], "PAIR_ALL_REGIMES")
+            self.assertFalse(regimeless["exact_pair_regime_edge"])
+            self.assertEqual(
+                regimeless["edge_status"],
+                "PAIR_ALL_REGIMES_CONTEXT_ONLY_NO_PAIR_REGIME_EDGE",
+            )
+
+    def test_projection_calibration_malformed_would_be_loss_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "projection_ledger.jsonl"
+            base = NOW - timedelta(hours=40)
+            write_ledger(
+                [_projection_trial(base, index, status="HIT") for index in range(40)],
+                root,
+            )
+            with ledger.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    '{"signal_name":"directional_forecast",'
+                    '"direction":"UP","resolution_status":"MISS"\n'
+                )
+
+            evidence = projection_calibration_evidence(
+                ledger,
+                scopes=[
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}
+                ],
+                now=NOW,
+            )
+
+            self.assertEqual(evidence["status"], "MALFORMED")
+            self.assertEqual(evidence["rows"], [])
+            self.assertEqual(evidence["parse_integrity"]["status"], "INVALID")
+            self.assertEqual(
+                evidence["parse_integrity"]["malformed_json_rows"],
+                1,
+            )
+            self.assertEqual(
+                evidence["parse_integrity"]["invalid_nonblank_rows"],
+                1,
+            )
+            material = dict(evidence)
+            claimed_sha = material.pop("evidence_sha256")
+            self.assertEqual(claimed_sha, canonical_json_sha256(material))
+
+    def test_projection_calibration_core_invalid_object_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "projection_ledger.jsonl"
+            base = NOW - timedelta(hours=40)
+            write_ledger(
+                [_projection_trial(base, index, status="HIT") for index in range(40)],
+                root,
+            )
+            with ledger.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "signal_name": "directional_forecast",
+                            "direction": "UP",
+                            "resolution_status": "MISS",
+                        }
+                    )
+                    + "\n"
+                )
+
+            evidence = projection_calibration_evidence(
+                ledger,
+                scopes=[
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}
+                ],
+                now=NOW,
+            )
+
+            self.assertEqual(evidence["status"], "MALFORMED")
+            self.assertEqual(evidence["rows"], [])
+            self.assertEqual(evidence["parse_integrity"]["status"], "INVALID")
+            self.assertEqual(
+                evidence["parse_integrity"]["unloadable_object_rows"],
+                1,
+            )
+
+    def test_projection_calibration_labels_pair_and_global_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "projection_ledger.jsonl"
+            base = NOW - timedelta(hours=30)
+            write_ledger(
+                [
+                    *[
+                        _projection_trial(base, index, status="HIT", regime="TREND")
+                        for index in range(5)
+                    ],
+                    *[
+                        _projection_trial(
+                            base,
+                            index + 5,
+                            status="HIT",
+                            regime="RANGE",
+                        )
+                        for index in range(5)
+                    ],
+                ],
+                root,
+            )
+            pair_fallback = projection_calibration_evidence(
+                ledger,
+                scopes=[{"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}],
+                now=NOW,
+            )["rows"][0]
+            self.assertEqual(pair_fallback["specific_bucket"]["samples"], 5)
+            self.assertEqual(
+                pair_fallback["selected_bucket"]["bucket"],
+                "EUR_USD:_all_regimes",
+            )
+            self.assertEqual(pair_fallback["selected_bucket"]["samples"], 10)
+            self.assertTrue(pair_fallback["fallback_used"])
+            self.assertFalse(pair_fallback["exact_pair_regime_edge"])
+            self.assertEqual(
+                pair_fallback["edge_status"],
+                "PRECISION_FLOOR_FAILED_NO_EDGE",
+            )
+
+            write_ledger(
+                [
+                    *[
+                        _projection_trial(base, index, status="HIT")
+                        for index in range(5)
+                    ],
+                    *[
+                        _projection_trial(
+                            base,
+                            index,
+                            status="HIT",
+                            pair="GBP_USD",
+                        )
+                        for index in range(30)
+                    ],
+                ],
+                root,
+            )
+            global_fallback = projection_calibration_evidence(
+                ledger,
+                scopes=[{"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}],
+                now=NOW,
+            )["rows"][0]
+            self.assertEqual(
+                global_fallback["selected_bucket"]["bucket"],
+                "_all_pairs:TREND",
+            )
+            self.assertTrue(global_fallback["precision_floor_eligible"])
+            self.assertTrue(global_fallback["fallback_used"])
+            self.assertFalse(global_fallback["exact_pair_regime_edge"])
+            self.assertEqual(
+                global_fallback["edge_status"],
+                "FALLBACK_CONTEXT_ONLY_NO_PAIR_REGIME_EDGE",
+            )
+
+    def test_projection_calibration_is_semantic_tamper_evident_and_cannot_upgrade_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _prepared_paths(
+                root,
+                baseline=_baseline(action="WAIT", lane_ids=[]),
+            )
+            projection = root / "projection_ledger.jsonl"
+            base = NOW - timedelta(hours=40)
+            up_rows = [
+                _projection_trial(base, index, status="HIT")
+                for index in range(40)
+            ]
+            write_ledger(up_rows, root)
+            old_mtime = (NOW - timedelta(days=1)).timestamp()
+            os.utime(projection, (old_mtime, old_mtime))
+            sources = {**_sources(paths), "projection_ledger": projection}
+            prepare_market_read_baseline(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                evidence_sources=sources,
+                now=NOW,
+            )
+            packet = json.loads(paths["packet"].read_text())
+            original_sha = packet["projection_calibration_evidence_sha256"]
+            self.assertEqual(
+                packet["projection_calibration_evidence"]["rows"][0]["pair"],
+                "EUR_USD",
+            )
+            selected_score = packet["projection_calibration_evidence"]["rows"][0]
+            self.assertTrue(selected_score["precision_floor_eligible"])
+            self.assertTrue(selected_score["exact_pair_regime_precision_context"])
+            self.assertFalse(selected_score["exact_pair_regime_edge"])
+            self.assertEqual(
+                selected_score["edge_status"],
+                "HISTORICAL_PAIR_REGIME_PRECISION_CONTEXT_ONLY_NO_EDGE",
+            )
+            self.assertEqual(
+                packet["projection_calibration_evidence"]["freshness_status"],
+                "CURRENT_RECOMPUTATION",
+            )
+            self.assertFalse(
+                packet["projection_calibration_evidence"][
+                    "selected_scope_outcome_recency_proven"
+                ]
+            )
+            self.assertFalse(
+                packet["projection_calibration_evidence"]["usage_policy"][
+                    "may_upgrade_non_trade_baseline_to_trade"
+                ]
+            )
+            _write_overlay(paths)
+
+            # A fresh different-direction append neither invalidates nor
+            # falsely refreshes the selected old UP outcome lineage.
+            down = _projection_trial(
+                base,
+                40,
+                status="HIT",
+                direction="DOWN",
+            )
+            write_ledger([*up_rows, down], root)
+            os.utime(projection, (NOW.timestamp(), NOW.timestamp()))
+            summary = apply_codex_market_read_overlay(
+                baseline_path=paths["baseline"],
+                packet_path=paths["packet"],
+                overlay_path=paths["overlay"],
+                output_path=paths["output"],
+                evidence_sources=sources,
+                now=NOW,
+            )
+            self.assertEqual(summary.action, "WAIT")
+            rebuilt = projection_calibration_evidence(
+                projection,
+                scopes=[
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}
+                ],
+                now=NOW,
+            )
+            self.assertEqual(
+                rebuilt["evidence_sha256"],
+                original_sha,
+            )
+
+            packet["projection_calibration_evidence"]["rows"][0][
+                "edge_status"
+            ] = "INSUFFICIENT_SAMPLES_NO_EDGE"
+            paths["packet"].write_text(json.dumps(packet))
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_PROJECTION_CALIBRATION_INVALID",
+            ):
+                apply_codex_market_read_overlay(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    overlay_path=paths["overlay"],
+                    output_path=paths["output"],
+                    evidence_sources=sources,
+                    now=NOW,
+                )
+
+    def test_projection_scope_falls_back_to_forced_canonical_direction(self) -> None:
+        scopes = market_read_overlay_module._projection_calibration_scopes_for_market_read(
+            baseline={"action": "WAIT", "market_read_first": _market_read()},
+            capital_allocation_board={},
+        )
+        self.assertEqual(
+            scopes,
+            [{"pair": "EUR_USD", "direction": "UP", "regime": None}],
+        )
+
+        technical = {
+            "status": "VALID",
+            "technical_context_v1": {"regime": {"dominant": "TREND_UP"}},
+        }
+        selected_board = {
+            "forecast_context_scope": "SELECTED_LANE",
+            "forecast_context": {
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "technical_context": technical,
+            },
+            "selected_lane": {
+                "pair": "EUR_USD",
+                "forecast": {
+                    "direction": "UP",
+                    "calibration_name": "directional_forecast_up",
+                },
+            },
+        }
+        self.assertEqual(
+            market_read_overlay_module._projection_calibration_scopes_for_market_read(
+                baseline={"action": "TRADE", "market_read_first": _market_read()},
+                capital_allocation_board=selected_board,
+            ),
+            [{"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}],
+        )
+        selected_board["selected_lane"]["forecast"][
+            "calibration_name"
+        ] = "directional_forecast_down"
+        self.assertEqual(
+            market_read_overlay_module._projection_calibration_scopes_for_market_read(
+                baseline={"action": "TRADE", "market_read_first": _market_read()},
+                capital_allocation_board=selected_board,
+            ),
+            [],
+        )
+        self.assertEqual(
+            market_read_overlay_module._projection_calibration_scopes_for_market_read(
+                baseline={"action": "TRADE", "market_read_first": _market_read()},
+                capital_allocation_board={
+                    "forecast_context_scope": "FORCED_PREDICTION",
+                    "forecast_context": {"pair": "EUR_USD", "direction": "UP"},
+                },
+            ),
+            [],
+        )
 
     def test_missing_ledger_source_cannot_be_replaced_by_cwd_sentinel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

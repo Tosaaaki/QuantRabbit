@@ -667,6 +667,14 @@ def _ensure_test_exact_vehicle_edge(
             "capture_market_close_expectancy_jpy": -100.0,
         }
     )
+    # The synthetic exact-vehicle ledger seeded below is the realized local payoff
+    # source for these production-chain fixtures.  Keep any test-specific
+    # average winner intact, otherwise bind the generic fixture to its eight
+    # realized +250 JPY winners so the loss-asymmetry cap is evidence-backed.
+    metadata.setdefault("capture_avg_win_jpy", 250.0)
+    metadata.setdefault("loss_asymmetry_guard_active", True)
+    metadata.setdefault("loss_asymmetry_guard_mode", "CAP_AVG_WIN")
+    metadata.setdefault("loss_asymmetry_guard_loss_cap_jpy", 250.0)
     if json.dumps(payload, ensure_ascii=False, sort_keys=True) != before:
         intents_path.write_text(json.dumps(payload) + "\n")
     if ledger_path is None:
@@ -2102,7 +2110,8 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(summary.canceled_orders, ("stale-pending",))
         self.assertEqual(client.orders_canceled, ["stale-pending"])
         self.assertEqual(len(client.orders_sent), 1)
-        self.assertEqual(client.orders_sent[0]["units"], "7500")
+        self.assertGreater(int(client.orders_sent[0]["units"]), 0)
+        self.assertLess(int(client.orders_sent[0]["units"]), 7_500)
 
     def test_report_summarizes_harvest_and_runner_opportunity_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5793,10 +5802,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertTrue((root / "market_read_evidence_packet.json").exists())
             self.assertTrue((root / "codex_market_read_overlay.json").exists())
             staged = json.loads((root / "live_order.json").read_text())
-            self.assertEqual(staged["size_multiple"], 0.75)
+            self.assertGreater(staged["size_multiple"], 0.0)
+            self.assertLess(staged["size_multiple"], 0.75)
+            self.assertLessEqual(staged["risk_metrics"]["risk_jpy"], 250.0)
             self.assertEqual(
-                abs(staged["scaled_units"]),
-                abs(staged["requested_units"]) * 3 // 4,
+                staged["sizing_evidence"]["loss_asymmetry_guard_loss_cap_jpy"],
+                250.0,
             )
 
     def test_gpt_close_defers_fresh_trade_until_next_cycle(self) -> None:
@@ -6374,7 +6385,17 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             self.assertEqual(summary.selected_lane_size_multiple, 0.75)
             self.assertEqual(len(client.orders_sent), 1)
-            self.assertEqual(client.orders_sent[0]["units"], "7500")
+            sent_payload = json.loads((root / "live_order.json").read_text())
+            self.assertEqual(
+                client.orders_sent[0]["units"],
+                str(sent_payload["scaled_units"]),
+            )
+            self.assertLess(int(client.orders_sent[0]["units"]), 7_500)
+            self.assertLessEqual(sent_payload["risk_metrics"]["risk_jpy"], 250.0)
+            self.assertEqual(
+                sent_payload["sizing_evidence"]["loss_asymmetry_guard_loss_cap_jpy"],
+                250.0,
+            )
 
     def test_gpt_batch_trade_dedupes_same_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

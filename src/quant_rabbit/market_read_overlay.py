@@ -31,7 +31,10 @@ from quant_rabbit.predictive_scout import (
     predictive_scout_geometry_claimed,
     predictive_scout_metadata_supported,
 )
-from quant_rabbit.risk import FORECAST_LIVE_PRECISION_MIN_SAMPLES
+from quant_rabbit.risk import (
+    FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+    FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+)
 from quant_rabbit.strategy.forecast_technical_context import (
     CONFIDENCE_SEMANTICS,
     build_forecast_technical_context,
@@ -127,6 +130,10 @@ NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
 WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
 WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
 FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V3"
+PROJECTION_CALIBRATION_EVIDENCE_CONTRACT = (
+    "QR_INDEPENDENT_PROJECTION_CALIBRATION_EVIDENCE_V1"
+)
+MAX_PROJECTION_CALIBRATION_ROWS = 4
 FORECAST_REPLAY_METRIC_FIELDS = (
     "n",
     "hit_rate",
@@ -183,6 +190,460 @@ def canonical_json_sha256(payload: Any) -> str:
 
 def market_read_sha256(market_read: Any) -> str:
     return canonical_json_sha256(market_read if isinstance(market_read, dict) else {})
+
+
+def projection_calibration_evidence(
+    path: Path | None,
+    *,
+    scopes: list[Mapping[str, Any]],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a bounded scorecard for current directional forecasts only."""
+
+    # The enclosing GPT/market-read receipt owns wall-clock freshness. Validate
+    # its clock here, but never infer selected-outcome recency from global file
+    # mtime (an unrelated append could otherwise promote an old scope).
+    current = _utc_now(now)
+    normalized_scopes = _normalize_projection_calibration_scopes(scopes)
+    unchecked_parse_integrity = _projection_parse_integrity_evidence(
+        status="NOT_CHECKED"
+    )
+    base: dict[str, Any] = {
+        "contract": PROJECTION_CALIBRATION_EVIDENCE_CONTRACT,
+        "evidence_ref": "projection:calibration",
+        "statistics_source": "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+        "freshness_basis": (
+            "CURRENT_PACKET_POINT_IN_TIME_RECOMPUTATION_OF_STABLE_LEDGER"
+        ),
+        "selected_scope_outcome_recency_proven": False,
+        "selection_contract": {
+            "scope_source": "CURRENT_SELECTED_OR_FORCED_DIRECTIONAL_FORECAST_ONLY",
+            "canonical_signal_only": True,
+            "selection_uses_outcome": False,
+            "independent_non_overlap_trials_required": True,
+            "future_emissions_excluded_before_trial_selection": True,
+            "resolved_at_must_be_observable_by_packet_clock": True,
+            "full_resolution_window_must_be_observable_by_packet_clock": True,
+            "raw_ledger_rows_exposed": False,
+            "max_rows": MAX_PROJECTION_CALIBRATION_ROWS,
+        },
+        "thresholds": {
+            "precision_floor_min_samples": FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+            "precision_floor_min_wilson95_lower": (
+                FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+            ),
+        },
+        "usage_policy": {
+            "read_only": True,
+            "live_permission": False,
+            "may_grant_gateway_permission": False,
+            "may_upgrade_non_trade_baseline_to_trade": False,
+            "may_veto_dampen_or_rank_existing_live_ready_only": True,
+            "insufficient_sample_edge_claim_forbidden": True,
+            "fallback_bucket_must_not_be_relabelled_as_pair_regime_edge": True,
+            "metadata_hit_rate_claims_are_not_this_evidence": True,
+        },
+        "requested_scopes": normalized_scopes,
+        "omitted_scope_count": max(0, len(scopes) - len(normalized_scopes)),
+        "parse_integrity": unchecked_parse_integrity,
+        "rows": [],
+    }
+    if path is None:
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": "MISSING",
+                "freshness_status": "MISSING",
+                "parse_integrity": _projection_parse_integrity_evidence(
+                    status="MISSING"
+                ),
+            }
+        )
+    try:
+        before = path.stat()
+    except OSError:
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": "MISSING",
+                "freshness_status": "MISSING",
+                "parse_integrity": _projection_parse_integrity_evidence(
+                    status="MISSING"
+                ),
+            }
+        )
+
+    if not normalized_scopes:
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": "NO_SELECTED_SCOPE",
+                "freshness_status": "NOT_COMPUTED",
+            }
+        )
+
+    try:
+        from quant_rabbit.strategy.projection_ledger import (
+            CONFIDENCE_MIN_SAMPLES,
+            GLOBAL_CONFIDENCE_MIN_SAMPLES,
+            LEDGER_FILENAME,
+            compute_hit_rates,
+        )
+
+        if path.name != LEDGER_FILENAME:
+            raise ValueError(
+                f"projection calibration source must be named {LEDGER_FILENAME}"
+            )
+        hit_rates_result = compute_hit_rates(
+            path.parent,
+            as_of=current,
+            include_parse_integrity=True,
+        )
+        if not isinstance(hit_rates_result, tuple):
+            raise TypeError("projection calibration diagnostics are unavailable")
+        hit_rates, raw_parse_integrity = hit_rates_result
+        after = path.stat()
+    except (OSError, ValueError, TypeError) as exc:
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": "UNAVAILABLE",
+                "freshness_status": "FAILED",
+                "parse_integrity": _projection_parse_integrity_evidence(
+                    status="UNAVAILABLE"
+                ),
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+            }
+        )
+    parse_integrity = _projection_parse_integrity_evidence(
+        status=str(raw_parse_integrity.get("status") or "UNAVAILABLE"),
+        malformed_json_rows=raw_parse_integrity.get("malformed_json_rows"),
+        non_object_rows=raw_parse_integrity.get("non_object_rows"),
+        unloadable_object_rows=raw_parse_integrity.get("unloadable_object_rows"),
+    )
+    snapshot_token = raw_parse_integrity.get("_source_snapshot_token")
+    source_changed = (
+        _projection_source_stat_token(before) != snapshot_token
+        or _projection_source_stat_token(after) != snapshot_token
+        or parse_integrity["status"] == "SOURCE_CHANGED_DURING_READ"
+    )
+    if source_changed:
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": "SOURCE_CHANGED_DURING_READ",
+                "freshness_status": "UNKNOWN",
+                "parse_integrity": {
+                    **parse_integrity,
+                    "status": "SOURCE_CHANGED_DURING_READ",
+                },
+            }
+        )
+    if parse_integrity["status"] != "VALID":
+        evidence_status = (
+            "MALFORMED"
+            if parse_integrity["status"] == "INVALID"
+            else "UNAVAILABLE"
+        )
+        return _address_projection_calibration_evidence(
+            {
+                **base,
+                "status": evidence_status,
+                "freshness_status": "FAILED",
+                "parse_integrity": parse_integrity,
+            }
+        )
+
+    rows: list[dict[str, Any]] = []
+    for scope in normalized_scopes:
+        pair = str(scope["pair"])
+        direction = str(scope["direction"])
+        regime = scope.get("regime")
+        rows.append(
+            _projection_calibration_row(
+                hit_rates=hit_rates,
+                pair=pair,
+                direction=direction,
+                regime=str(regime) if regime is not None else None,
+                pair_min_samples=int(CONFIDENCE_MIN_SAMPLES),
+                global_min_samples=int(GLOBAL_CONFIDENCE_MIN_SAMPLES),
+            )
+        )
+    return _address_projection_calibration_evidence(
+        {
+            **base,
+            "status": "VALID",
+            "freshness_status": "CURRENT_RECOMPUTATION",
+            "parse_integrity": parse_integrity,
+            "rows": rows,
+        }
+    )
+
+
+def _address_projection_calibration_evidence(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    material = dict(payload)
+    material.pop("evidence_sha256", None)
+    return {**material, "evidence_sha256": canonical_json_sha256(material)}
+
+
+def _projection_parse_integrity_evidence(
+    *,
+    status: str,
+    malformed_json_rows: Any = 0,
+    non_object_rows: Any = 0,
+    unloadable_object_rows: Any = 0,
+) -> dict[str, Any]:
+    """Return only semantic parse failures, never valid-row/file identities."""
+
+    def count(value: Any) -> int:
+        return (
+            value
+            if isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 0
+            else 0
+        )
+
+    malformed = count(malformed_json_rows)
+    non_object = count(non_object_rows)
+    unloadable = count(unloadable_object_rows)
+    return {
+        "status": str(status or "UNAVAILABLE"),
+        "invalid_nonblank_rows": malformed + non_object + unloadable,
+        "malformed_json_rows": malformed,
+        "non_object_rows": non_object,
+        "unloadable_object_rows": unloadable,
+    }
+
+
+def _projection_source_stat_token(
+    stat: os.stat_result,
+) -> tuple[int, int, int, int, int]:
+    """Match the projection parser's private open-file coherence token."""
+
+    return (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+    )
+
+
+def _normalize_projection_calibration_scopes(
+    scopes: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for raw_scope in scopes:
+        if not isinstance(raw_scope, Mapping):
+            continue
+        pair = str(raw_scope.get("pair") or "").strip().upper()
+        direction = _forecast_direction_label(raw_scope.get("direction"))
+        if pair not in DEFAULT_TRADER_PAIRS or direction not in {"UP", "DOWN", "RANGE"}:
+            continue
+        regime = _projection_calibration_regime(raw_scope.get("regime"))
+        key = (pair, direction, regime)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(
+            {
+                "pair": pair,
+                "direction": direction,
+                "regime": regime,
+                "calibration_name": f"directional_forecast_{direction.lower()}",
+            }
+        )
+        if len(normalized) >= MAX_PROJECTION_CALIBRATION_ROWS:
+            break
+    return normalized
+
+
+def _projection_calibration_regime(value: Any) -> str | None:
+    text = str(value or "").strip().upper()
+    if not text or text == "UNKNOWN":
+        return None
+    if "RANGE" in text:
+        return "RANGE"
+    if "TREND" in text:
+        return "TREND"
+    if text in {"UNCLEAR", "TRANSITION", "BREAKOUT_PENDING"}:
+        return "UNCLEAR"
+    return text[:20]
+
+
+def _projection_calibration_row(
+    *,
+    hit_rates: Mapping[str, Any],
+    pair: str,
+    direction: str,
+    regime: str | None,
+    pair_min_samples: int,
+    global_min_samples: int,
+) -> dict[str, Any]:
+    calibration_name = f"directional_forecast_{direction.lower()}"
+    by_bucket = hit_rates.get(calibration_name)
+    by_bucket = by_bucket if isinstance(by_bucket, Mapping) else {}
+    specific_key = f"{pair}:{regime}" if regime is not None else f"{pair}:_all_regimes"
+    keys = [specific_key, f"{pair}:_all_regimes"]
+    if regime is not None:
+        keys.append(f"_all_pairs:{regime}")
+    keys.append("_all_pairs:_all_regimes")
+    keys = list(dict.fromkeys(keys))
+    selected: tuple[str, Mapping[str, Any]] | None = None
+    for key in keys:
+        candidate = by_bucket.get(key)
+        if not isinstance(candidate, Mapping):
+            continue
+        minimum = global_min_samples if key.startswith("_all_pairs") else pair_min_samples
+        effective_samples = _projection_effective_samples(candidate)
+        if effective_samples >= minimum:
+            selected = (key, candidate)
+            break
+    selected_payload = (
+        _projection_calibration_bucket_payload(
+            selected[0],
+            selected[1],
+            pair_min_samples=pair_min_samples,
+            global_min_samples=global_min_samples,
+        )
+        if selected is not None
+        else None
+    )
+    specific_payload = (
+        _projection_calibration_bucket_payload(
+            specific_key,
+            by_bucket[specific_key],
+            pair_min_samples=pair_min_samples,
+            global_min_samples=global_min_samples,
+        )
+        if isinstance(by_bucket.get(specific_key), Mapping)
+        else None
+    )
+    precision_floor_eligible = bool(
+        selected_payload is not None
+        and selected_payload["samples"] >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and selected_payload["economic_samples"]
+        >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and selected_payload["hit_rate_wilson95_lower"] is not None
+        and selected_payload["hit_rate_wilson95_lower"]
+        >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and selected_payload["economic_hit_rate_wilson95_lower"] is not None
+        and selected_payload["economic_hit_rate_wilson95_lower"]
+        >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    )
+    exact_pair_regime_precision_context = bool(
+        regime is not None
+        and precision_floor_eligible
+        and selected_payload is not None
+        and selected_payload["bucket"] == specific_key
+    )
+    if selected_payload is None:
+        edge_status = "INSUFFICIENT_SAMPLES_NO_EDGE"
+    elif not precision_floor_eligible:
+        edge_status = "PRECISION_FLOOR_FAILED_NO_EDGE"
+    elif regime is None and selected_payload["bucket"] == specific_key:
+        edge_status = "PAIR_ALL_REGIMES_CONTEXT_ONLY_NO_PAIR_REGIME_EDGE"
+    elif not exact_pair_regime_precision_context:
+        edge_status = "FALLBACK_CONTEXT_ONLY_NO_PAIR_REGIME_EDGE"
+    else:
+        edge_status = "HISTORICAL_PAIR_REGIME_PRECISION_CONTEXT_ONLY_NO_EDGE"
+    evidence_ref = (
+        f"projection:calibration:{pair}:{regime or '_all_regimes'}:"
+        f"{calibration_name}"
+    )
+    return {
+        "evidence_ref": evidence_ref,
+        "pair": pair,
+        "direction": direction,
+        "regime": regime,
+        "calibration_name": calibration_name,
+        "specific_bucket_key": specific_key,
+        "specific_scope": "PAIR_REGIME" if regime is not None else "PAIR_ALL_REGIMES",
+        "specific_bucket": specific_payload,
+        "selected_bucket": selected_payload,
+        "fallback_used": bool(
+            selected_payload is not None
+            and selected_payload["bucket"] != specific_key
+        ),
+        "edge_status": edge_status,
+        "precision_floor_eligible": precision_floor_eligible,
+        "exact_pair_regime_precision_context": (
+            exact_pair_regime_precision_context
+        ),
+        "exact_pair_regime_edge": False,
+        "insufficient_sample_edge_claim_forbidden": True,
+        "decision_effect": "VETO_DAMPEN_OR_RANK_EXISTING_LIVE_READY_ONLY",
+        "live_permission": False,
+    }
+
+
+def _projection_effective_samples(bucket: Mapping[str, Any]) -> int:
+    value = bucket.get("calibration_samples", bucket.get("samples", 0))
+    parsed = _optional_int(value)
+    return max(0, parsed or 0)
+
+
+def _projection_calibration_bucket_payload(
+    key: str,
+    bucket: Mapping[str, Any],
+    *,
+    pair_min_samples: int,
+    global_min_samples: int,
+) -> dict[str, Any]:
+    samples = max(0, _optional_int(bucket.get("samples")) or 0)
+    calibration_samples = max(
+        0,
+        _optional_int(bucket.get("calibration_samples")) or samples,
+    )
+    economic_samples = max(
+        0,
+        _optional_int(bucket.get("economic_samples")) or calibration_samples,
+    )
+    hit_rate = _optional_float(bucket.get("hit_rate"))
+    economic_hit_rate = _optional_float(bucket.get("economic_hit_rate"))
+    timeout_rate = _optional_float(
+        bucket.get("timeout_rate", bucket.get("target_timeout_rate"))
+    )
+    timeout_count = _optional_int(
+        bucket.get("timeout_count", bucket.get("target_timeout_count"))
+    )
+    invalidation_rate = _optional_float(bucket.get("invalidation_first_rate"))
+    invalidation_count = _optional_int(bucket.get("invalidation_first_count"))
+    minimum = global_min_samples if key.startswith("_all_pairs") else pair_min_samples
+    return {
+        "bucket": key,
+        "scope": _projection_bucket_scope(key),
+        "samples": samples,
+        "calibration_samples": calibration_samples,
+        "hit_rate": hit_rate,
+        "hit_rate_wilson95_lower": hit_rate_wilson_lower(hit_rate, samples),
+        "economic_samples": economic_samples,
+        "economic_hit_rate": economic_hit_rate,
+        "economic_hit_rate_wilson95_lower": hit_rate_wilson_lower(
+            economic_hit_rate,
+            economic_samples,
+        ),
+        "timeout_count": max(0, timeout_count or 0),
+        "timeout_rate": timeout_rate,
+        "invalidation_first_count": max(0, invalidation_count or 0),
+        "invalidation_first_rate": invalidation_rate,
+        "confidence_min_samples": minimum,
+        "confidence_sample_sufficient": calibration_samples >= minimum,
+    }
+
+
+def _projection_bucket_scope(key: str) -> str:
+    if key == "_all_pairs:_all_regimes" or key == "_all_pairs":
+        return "ALL_PAIRS_ALL_REGIMES"
+    if key.startswith("_all_pairs:"):
+        return "ALL_PAIRS_REGIME"
+    if key.endswith(":_all_regimes") or ":" not in key:
+        return "PAIR_ALL_REGIMES"
+    return "PAIR_REGIME"
 
 
 def baseline_core_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -399,12 +860,39 @@ def apply_codex_market_read_overlay(
         code="MARKET_READ_CAPITAL_ALLOCATION_BOARD_STALE",
         label="rebuilt capital-allocation board",
     )
+    stored_projection_calibration = packet.get(
+        "projection_calibration_evidence"
+    )
+    if not isinstance(stored_projection_calibration, Mapping):
+        raise MarketReadOverlayError(
+            "MARKET_READ_PROJECTION_CALIBRATION_INVALID",
+            "stored packet lacks bounded projection calibration evidence",
+        )
+    stored_projection_material = dict(stored_projection_calibration)
+    stored_projection_sha = str(
+        stored_projection_material.pop("evidence_sha256", "") or ""
+    )
+    _require_sha_match(
+        actual=canonical_json_sha256(stored_projection_material),
+        claimed=stored_projection_sha,
+        code="MARKET_READ_PROJECTION_CALIBRATION_INVALID",
+        label="stored projection calibration evidence",
+    )
+    _require_sha_match(
+        actual=str(rebuilt.get("projection_calibration_evidence_sha256") or ""),
+        claimed=stored_projection_sha,
+        code="MARKET_READ_PROJECTION_CALIBRATION_STALE",
+        label="rebuilt projection calibration evidence",
+    )
     stored_material = {
         "schema_version": packet.get("schema_version"),
         "baseline_sha256": packet.get("baseline_sha256"),
         "sources": packet.get("sources"),
         "capital_allocation_board_sha256": packet.get(
             "capital_allocation_board_sha256"
+        ),
+        "projection_calibration_evidence_sha256": packet.get(
+            "projection_calibration_evidence_sha256"
         ),
     }
     _require_sha_match(
@@ -430,6 +918,7 @@ def apply_codex_market_read_overlay(
         stable_metadata = dict(raw_metadata)
         stable_metadata.pop("qr_trader_run_watchdog", None)
         stable_metadata.pop("market_read_predictions", None)
+        stable_metadata.pop("projection_ledger", None)
         body["source_metadata"] = stable_metadata
     if canonical_json_sha256(stored_packet_body) != canonical_json_sha256(
         rebuilt_packet_body
@@ -1751,6 +2240,11 @@ def _build_evidence_packet(
                 "size_bytes": None,
                 "generated_at_utc": None,
             }
+        elif name == "projection_ledger":
+            # The 100MB+ append ledger is not a prompt artifact.  Bind the
+            # selected semantic calibration evidence below instead of reading
+            # and hashing every raw row a second time.
+            sources[name] = _source_descriptor_without_hash(path)
         else:
             sources[name] = _source_descriptor(path)
     execution_ledger_path = normalized_sources.get("execution_ledger")
@@ -1832,6 +2326,9 @@ def _build_evidence_packet(
                 ),
             }
             continue
+        if name == "projection_ledger":
+            # Filled after the selected pair/signal scope is known.
+            continue
         material_sources[name] = {
             "path": item["path"],
             "exists": item["exists"],
@@ -1865,11 +2362,32 @@ def _build_evidence_packet(
         as_of=prepared_at,
     )
     allocation_board_sha = canonical_json_sha256(capital_allocation_board)
+    projection_calibration = projection_calibration_evidence(
+        normalized_sources.get("projection_ledger"),
+        scopes=_projection_calibration_scopes_for_market_read(
+            baseline=baseline,
+            capital_allocation_board=capital_allocation_board,
+        ),
+        now=prepared_at,
+    )
+    projection_source = sources.get("projection_ledger")
+    if isinstance(projection_source, Mapping):
+        material_sources["projection_ledger"] = {
+            "path": projection_source.get("path"),
+            "exists": projection_source.get("exists"),
+            "material_contract": PROJECTION_CALIBRATION_EVIDENCE_CONTRACT,
+            "calibration_evidence_sha256": projection_calibration.get(
+                "evidence_sha256"
+            ),
+        }
     material = {
         "schema_version": MARKET_READ_OVERLAY_SCHEMA_VERSION,
         "baseline_sha256": baseline_sha256,
         "sources": material_sources,
         "capital_allocation_board_sha256": allocation_board_sha,
+        "projection_calibration_evidence_sha256": (
+            projection_calibration.get("evidence_sha256")
+        ),
     }
     packet_sha = canonical_json_sha256(material)
     overrides_path = normalized_sources.get("trader_overrides")
@@ -1895,6 +2413,7 @@ def _build_evidence_packet(
         ),
         "recent_resolved_predictions": recent_predictions,
         "forecast_replay_scorecard": forecast_replay_scorecard,
+        "projection_calibration_evidence": projection_calibration,
         "execution_ledger_allocation_surface": execution_ledger_surface,
         "capital_allocation_board": capital_allocation_board,
         "capital_allocation_board_sha256": allocation_board_sha,
@@ -1914,9 +2433,134 @@ def _build_evidence_packet(
             "directional_and_range_geometry_must_be_numeric": True,
             "forecast_replay_scorecard_is_read_only": True,
             "forecast_replay_scorecard_grants_live_permission": False,
+            "projection_calibration_is_read_only": True,
+            "projection_calibration_grants_live_permission": False,
+            "projection_calibration_may_upgrade_non_trade_to_trade": False,
+            "projection_calibration_insufficient_sample_edge_forbidden": True,
             "market_read_first": market_read_contract_payload(),
         },
     }
+
+
+def _projection_calibration_scopes_for_market_read(
+    *,
+    baseline: Mapping[str, Any],
+    capital_allocation_board: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    scope_kind = str(
+        capital_allocation_board.get("forecast_context_scope") or ""
+    ).strip().upper()
+    baseline_action = str(baseline.get("action") or "").strip().upper()
+    if baseline_action == "TRADE" and scope_kind != "SELECTED_LANE":
+        return []
+    context = capital_allocation_board.get("forecast_context")
+    context = context if isinstance(context, Mapping) else {}
+    pair = str(context.get("pair") or "").strip().upper()
+    direction = _forecast_direction_label(context.get("direction"))
+    technical_context = context.get("technical_context")
+    if scope_kind == "SELECTED_LANE":
+        lane = capital_allocation_board.get("selected_lane")
+        lane = lane if isinstance(lane, Mapping) else {}
+        forecast = lane.get("forecast")
+        forecast = forecast if isinstance(forecast, Mapping) else {}
+        lane_pair = str(lane.get("pair") or "").strip().upper()
+        lane_direction = _forecast_direction_label(forecast.get("direction"))
+        expected = (
+            f"directional_forecast_{lane_direction.lower()}"
+            if lane_direction in {"UP", "DOWN", "RANGE"}
+            else None
+        )
+        calibration = str(forecast.get("calibration_name") or "").strip().lower()
+        technical = technical_context if isinstance(technical_context, Mapping) else {}
+        if (
+            lane_pair not in DEFAULT_TRADER_PAIRS
+            or pair != lane_pair
+            or direction != lane_direction
+            or calibration != expected
+            or technical.get("status") != "VALID"
+        ):
+            return []
+    elif scope_kind != "FORCED_PREDICTION":
+        pair = ""
+        direction = None
+        technical_context = None
+    if (
+        pair not in DEFAULT_TRADER_PAIRS
+        or direction not in {"UP", "DOWN", "RANGE"}
+    ):
+        if baseline_action == "TRADE":
+            return []
+        market_read = baseline.get("market_read_first")
+        market_read = market_read if isinstance(market_read, Mapping) else {}
+        forced = market_read.get("best_trade_if_forced")
+        forced = forced if isinstance(forced, Mapping) else {}
+        pair = str(forced.get("pair") or "").strip().upper()
+        direction = _forecast_direction_label(forced.get("direction"))
+        technical_context = None
+    if pair not in DEFAULT_TRADER_PAIRS or direction not in {"UP", "DOWN", "RANGE"}:
+        return []
+    return [
+        {
+            "pair": pair,
+            "direction": direction,
+            "regime": _projection_regime_from_technical_context(
+                technical_context
+            ),
+        }
+    ]
+
+
+def projection_calibration_scopes_from_lanes(
+    lanes: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Extract canonical directional selectors from current GPT lane packets."""
+
+    scopes: list[Mapping[str, Any]] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for lane in lanes:
+        if (
+            not isinstance(lane, Mapping)
+            or str(lane.get("status") or "").strip().upper() != "LIVE_READY"
+        ):
+            continue
+        forecast = lane.get("forecast")
+        forecast = forecast if isinstance(forecast, Mapping) else {}
+        direction = _forecast_direction_label(forecast.get("forecast_direction"))
+        pair = str(lane.get("pair") or "").strip().upper()
+        expected_calibration = (
+            f"directional_forecast_{direction.lower()}" if direction else None
+        )
+        calibration_name = str(
+            forecast.get("forecast_directional_calibration_name") or ""
+        ).strip().lower()
+        if (
+            pair not in DEFAULT_TRADER_PAIRS
+            or direction not in {"UP", "DOWN", "RANGE"}
+            or calibration_name != expected_calibration
+        ):
+            continue
+        regime = _projection_regime_from_technical_context(
+            forecast.get("technical_context")
+        )
+        key = (pair, direction, regime)
+        if key in seen:
+            continue
+        seen.add(key)
+        scopes.append({"pair": pair, "direction": direction, "regime": regime})
+        if len(scopes) >= 4:
+            break
+    return scopes
+
+
+def _projection_regime_from_technical_context(value: Any) -> str | None:
+    envelope = value if isinstance(value, Mapping) else {}
+    body = envelope.get("technical_context_v1")
+    body = body if isinstance(body, Mapping) else {}
+    regime = body.get("regime")
+    regime = regime if isinstance(regime, Mapping) else {}
+    return _projection_calibration_regime(
+        regime.get("primary") or regime.get("dominant")
+    )
 
 
 def _forecast_replay_scorecard(
@@ -5360,6 +6004,26 @@ def _source_descriptor(path: Path) -> dict[str, Any]:
         "sha256": hashlib.sha256(raw).hexdigest(),
         "size_bytes": len(raw),
         "generated_at_utc": generated_at,
+    }
+
+
+def _source_descriptor_without_hash(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {
+            "path": str(path),
+            "exists": False,
+            "sha256": None,
+            "size_bytes": None,
+            "generated_at_utc": None,
+        }
+    return {
+        "path": str(path),
+        "exists": path.is_file(),
+        "sha256": None,
+        "size_bytes": int(stat.st_size) if path.is_file() else None,
+        "generated_at_utc": None,
     }
 
 

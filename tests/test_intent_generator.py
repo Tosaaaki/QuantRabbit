@@ -27,7 +27,6 @@ from quant_rabbit.models import (
 from quant_rabbit.risk import MARGIN_AWARE_BASKET_BUFFER
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
-    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
     MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
     OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE,
@@ -36,6 +35,7 @@ from quant_rabbit.strategy.intent_generator import (
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
     POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
+    RANGE_WATCH_MATRIX_MAX_AGE_SECONDS,
     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
     _annotate_oanda_campaign_current_risk_firepower,
     _append_current_range_phase_lanes,
@@ -53,6 +53,7 @@ from quant_rabbit.strategy.intent_generator import (
     _oanda_m5_rotation_state_for,
     _predictive_scout_nav_risk_metadata,
     _profitability_acceptance_month_residual_issue,
+    _range_rail_limit_watch_only_metadata_can_trade,
     _range_indicators_for_lane,
     _range_seed_direction,
     _same_day_loss_streak_issues,
@@ -2177,7 +2178,7 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(path, packaged)
 
-    def test_matching_oanda_campaign_firepower_does_not_need_one_unit_floor_lift(self) -> None:
+    def test_matching_oanda_campaign_firepower_cannot_create_one_unit_floor_lift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_oanda_campaign_firepower_report(root, exit_shape="tp2_sl1")
@@ -2187,7 +2188,7 @@ class IntentGeneratorTest(unittest.TestCase):
                         "status": "NEGATIVE_EXPECTANCY",
                         "overall": {
                             "trades": 210,
-                            "avg_win_jpy": 50.0,
+                            "avg_win_jpy": 0.05,
                             "avg_loss_jpy": 1100.0,
                             "payoff_ratio": 0.045,
                             "breakeven_payoff_at_win_rate": 0.7,
@@ -2234,17 +2235,17 @@ class IntentGeneratorTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
             self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
-            self.assertEqual(result["intent"]["units"], 398)
-            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 50.0)
+            self.assertEqual(result["intent"]["units"], 0)
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 0.05)
             self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
-            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 0.05)
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
             self.assertEqual(
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
             )
             self.assertTrue(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
-            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
             self.assertIn(
                 OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE,
@@ -6594,15 +6595,103 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["forecast_range_low_price"], 1.1710)
         self.assertEqual(metadata["forecast_range_high_price"], 1.1760)
         self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
-        self.assertNotIn("FORECAST_WATCH_ONLY", issue_codes)
+        self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
         self.assertIn("RANGE_PHASE_NOT_ROTATION", issue_codes)
 
-    def test_range_forecast_box_supplies_rotation_rails_when_chart_rails_are_missing(self) -> None:
+    def test_range_rail_watch_only_override_requires_current_scoped_matrix(self) -> None:
+        generated_at = datetime.now(timezone.utc)
+        metadata = {
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.56,
+            "forecast_range_low_price": 1.1724,
+            "forecast_range_high_price": 1.1748,
+            "geometry_model": "RANGE_RAIL_LIMIT",
+            "range_entry_side": "support",
+            "range_tp_is_inside_box": True,
+            "range_sl_outside_box": True,
+            "market_context_matrix_ref": "matrix:EUR_USD:LONG",
+            "market_context_matrix_pair": "EUR_USD",
+            "market_context_matrix_side": "LONG",
+            "market_context_matrix_generated_at_utc": generated_at.isoformat(),
+            "matrix_support_count": 1,
+            "matrix_reject_count": 2,
+        }
+
+        self.assertFalse(
+            _range_rail_limit_watch_only_metadata_can_trade(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                metadata=metadata,
+                validation_time_utc=generated_at,
+            )
+        )
+        self.assertTrue(
+            _range_rail_limit_watch_only_metadata_can_trade(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                metadata={**metadata, "matrix_reject_count": 1},
+                validation_time_utc=generated_at,
+            )
+        )
+        missing_binding = {
+            key: value
+            for key, value in metadata.items()
+            if not key.startswith("market_context_matrix_")
+        }
+        malformed_count = {**metadata, "matrix_support_count": "1"}
+        stale = {
+            **metadata,
+            "market_context_matrix_generated_at_utc": (
+                generated_at
+                - timedelta(seconds=RANGE_WATCH_MATRIX_MAX_AGE_SECONDS + 1)
+            ).isoformat(),
+        }
+        unscoped = {**metadata, "market_context_matrix_ref": "matrix:GBP_USD:LONG"}
+        missing_count = {
+            key: value
+            for key, value in metadata.items()
+            if key != "matrix_support_count"
+        }
+        malformed_side = {**metadata, "market_context_matrix_side": "long"}
+        for candidate in (
+            missing_binding,
+            missing_count,
+            malformed_count,
+            malformed_side,
+            stale,
+            unscoped,
+        ):
+            with self.subTest(candidate=candidate):
+                self.assertFalse(
+                    _range_rail_limit_watch_only_metadata_can_trade(
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        order_type=OrderType.LIMIT,
+                        metadata=candidate,
+                        validation_time_utc=generated_at,
+                    )
+                )
+        self.assertTrue(
+            _range_rail_limit_watch_only_metadata_can_trade(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                metadata={**metadata, "matrix_reject_count": 1},
+                # Production refresh writes the matrix before refreshing the
+                # broker snapshot; the reverse order is also valid on reuse.
+                validation_time_utc=generated_at - timedelta(seconds=30),
+            )
+        )
+
+    def test_range_forecast_box_watch_only_override_obeys_matrix_balance(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             output = root / "intents.json"
             charts = root / "pair_charts.json"
+            matrix = _market_context_matrix(root)
             charts.write_text(
                 json.dumps(
                     {
@@ -6666,36 +6755,73 @@ class IntentGeneratorTest(unittest.TestCase):
                     campaign_plan=_campaign(root),
                     strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
                     pair_charts_path=charts,
+                    market_context_matrix_path=matrix,
                     output_path=output,
                     report_path=root / "intents.md",
                     max_loss_jpy=500.0,
                 ).run(snapshot_path=_snapshot(root))
 
-            payload = json.loads(output.read_text())
+                supported_payload = json.loads(output.read_text())
+                matrix_payload = json.loads(matrix.read_text())
+                long_matrix = matrix_payload["pairs"]["EUR_USD"]["LONG"]
+                long_matrix["support_count"] = 1
+                long_matrix["reject_count"] = 2
+                long_matrix["strongest_reject"] = "directional counterevidence dominates the rail"
+                matrix.write_text(json.dumps(matrix_payload))
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=charts,
+                    market_context_matrix_path=matrix,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+                rejected_payload = json.loads(output.read_text())
 
-        seed = next(
+        supported_seed = next(
             item
-            for item in payload["results"]
+            for item in supported_payload["results"]
             if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
         )
-        metadata = seed["intent"]["metadata"]
-        issue_codes = {issue["code"] for issue in seed["risk_issues"]}
+        supported_metadata = supported_seed["intent"]["metadata"]
+        supported_issue_codes = {issue["code"] for issue in supported_seed["risk_issues"]}
 
-        self.assertTrue(metadata["forecast_seed"])
-        self.assertTrue(metadata["forecast_watch_only"])
-        self.assertEqual(metadata["forecast_direction"], "RANGE")
-        self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
-        self.assertEqual(metadata["range_indicator_source"], "forecast_range_box")
-        self.assertEqual(metadata["range_support"], 1.1724)
-        self.assertEqual(metadata["range_resistance"], 1.1748)
-        self.assertEqual(metadata["range_entry_side"], "support")
-        self.assertTrue(metadata["range_tp_is_inside_box"])
-        self.assertTrue(metadata["range_sl_outside_box"])
-        self.assertTrue(metadata["forecast_watch_only_live_override"])
-        self.assertIn("Range rail override", metadata["required_receipt"])
-        self.assertIn("range rail override", seed["intent"]["market_context"]["event_risk"])
-        self.assertNotIn("FORECAST_WATCH_ONLY", issue_codes)
-        self.assertEqual(seed["status"], "LIVE_READY")
+        self.assertTrue(supported_metadata["forecast_seed"])
+        self.assertTrue(supported_metadata["forecast_watch_only"])
+        self.assertEqual(supported_metadata["forecast_direction"], "RANGE")
+        self.assertEqual(supported_metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+        self.assertEqual(supported_metadata["range_indicator_source"], "forecast_range_box")
+        self.assertEqual(supported_metadata["range_support"], 1.1724)
+        self.assertEqual(supported_metadata["range_resistance"], 1.1748)
+        self.assertEqual(supported_metadata["range_entry_side"], "support")
+        self.assertTrue(supported_metadata["range_tp_is_inside_box"])
+        self.assertTrue(supported_metadata["range_sl_outside_box"])
+        self.assertEqual(supported_metadata["matrix_support_count"], 4)
+        self.assertEqual(supported_metadata["matrix_reject_count"], 1)
+        self.assertTrue(supported_metadata["forecast_watch_only_live_override"])
+        self.assertIn("Range rail override", supported_metadata["required_receipt"])
+        self.assertIn(
+            "range rail override",
+            supported_seed["intent"]["market_context"]["event_risk"],
+        )
+        self.assertNotIn("FORECAST_WATCH_ONLY", supported_issue_codes)
+        self.assertEqual(supported_seed["status"], "LIVE_READY")
+
+        rejected_seed = next(
+            item
+            for item in rejected_payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        rejected_metadata = rejected_seed["intent"]["metadata"]
+        rejected_issue_codes = {issue["code"] for issue in rejected_seed["risk_issues"]}
+
+        self.assertEqual(rejected_metadata["matrix_support_count"], 1)
+        self.assertEqual(rejected_metadata["matrix_reject_count"], 2)
+        self.assertFalse(rejected_metadata["forecast_watch_only_live_override"])
+        self.assertNotIn("Range rail override", rejected_metadata["required_receipt"])
+        self.assertIn("FORECAST_WATCH_ONLY", rejected_issue_codes)
+        self.assertNotEqual(rejected_seed["status"], "LIVE_READY")
 
     def test_range_forecast_box_adds_existing_opposite_side_rotation_counterpart(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
@@ -11738,7 +11864,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, market_issue_codes)
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", market_issue_codes)
 
-    def test_oanda_firepower_seed_exposes_acceptance_repair_under_guardian_p0(self) -> None:
+    def test_oanda_firepower_seed_stays_capacity_only_under_guardian_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_acceptance_style_p0_and_negative_capture(root)
@@ -11785,28 +11911,30 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(summary.live_ready, 0)
             self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
-            self.assertTrue(metadata["positive_rotation_live_ready"])
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 600.0)
+            self.assertFalse(metadata["positive_rotation_live_ready"])
             self.assertEqual(
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
             )
-            self.assertFalse(metadata["positive_rotation_oanda_campaign_audit_only"])
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_live_permission"])
-            self.assertFalse(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_audit_only"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_live_permission"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
             self.assertEqual(
                 metadata["positive_rotation_minimum_floor_reach_basis"],
-                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE",
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
             )
-            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
-            self.assertNotIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
             self.assertIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", issue_codes)
-            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertIn(
                 "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
                 result["live_blocker_codes"],
             )
 
-    def test_oanda_firepower_seed_can_use_normal_cap_when_scaled_pace_reaches_floor(self) -> None:
+    def test_oanda_firepower_seed_cannot_use_normal_cap_when_scaled_pace_reaches_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_profitability_p0_and_negative_capture(root)
@@ -11851,41 +11979,29 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
-            self.assertEqual(summary.live_ready, 1)
-            self.assertEqual(result["status"], "LIVE_READY")
-            self.assertEqual(
-                metadata["loss_asymmetry_guard_mode"],
-                LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
-            )
-            self.assertTrue(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
             self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
-            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
-            self.assertGreater(
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 600.0)
+            self.assertLessEqual(
                 result["risk_metrics"]["risk_jpy"],
                 metadata["loss_asymmetry_guard_loss_cap_jpy"],
             )
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_normal_cap_relaxed"])
-            self.assertTrue(
-                metadata[
-                    "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable"
-                ]
-            )
-            self.assertLessEqual(
-                metadata["positive_rotation_oanda_campaign_normal_cap_required_minimum_trades"],
-                metadata["positive_rotation_oanda_campaign_normal_cap_target_trades_per_day"],
-            )
-            self.assertTrue(metadata["positive_rotation_live_ready"])
-            self.assertFalse(metadata["positive_rotation_oanda_campaign_audit_only"])
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_live_permission"])
-            self.assertFalse(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
+            self.assertNotIn("positive_rotation_oanda_campaign_normal_cap_relaxed", metadata)
+            self.assertFalse(metadata["positive_rotation_live_ready"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_audit_only"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_live_permission"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
             self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", issue_codes)
             self.assertEqual(
                 metadata["positive_rotation_minimum_floor_reach_basis"],
-                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE",
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
             )
-            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
-            self.assertNotIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
-            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
 
     def test_oanda_firepower_seed_does_not_relax_when_daily_floor_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -12,6 +12,8 @@ from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
     canonical_json_sha256,
     execution_envelope_payload,
+    projection_calibration_evidence,
+    projection_calibration_scopes_from_lanes,
     quote_basis_by_pair_from_broker_payload,
     revalidate_codex_market_read_artifacts,
     validate_codex_market_read_provenance,
@@ -176,7 +178,13 @@ def _decision_cites_pending_cancel_timing_evidence(evidence_refs: tuple[str, ...
 def _decision_cites_projection_evidence(evidence_refs: tuple[str, ...]) -> bool:
     for ref in evidence_refs:
         text = str(ref or "").strip()
-        if text in {"projection:ledger", "projection:expired_pending"}:
+        if text in {
+            "projection:ledger",
+            "projection:expired_pending",
+            "projection:calibration",
+        }:
+            return True
+        if text.startswith("projection:calibration:"):
             return True
         if text.startswith("projection:expired_pending:"):
             return True
@@ -202,7 +210,18 @@ def _projection_row_ref(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _projection_ledger_packet(path: Path, *, now: datetime | None = None) -> dict[str, Any]:
+def _projection_ledger_packet(
+    path: Path,
+    *,
+    now: datetime | None = None,
+    calibration_scopes: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    calibration = projection_calibration_evidence(
+        path,
+        scopes=list(calibration_scopes or []),
+        now=current,
+    )
     packet: dict[str, Any] = {
         "evidence_ref": "projection:ledger",
         "path": str(path),
@@ -212,10 +231,10 @@ def _projection_ledger_packet(path: Path, *, now: datetime | None = None) -> dic
         "status_counts": {},
         "expired_pending_count": 0,
         "expired_pending_examples": [],
+        "calibration_evidence": calibration,
     }
     if not path.exists():
         return packet
-    now = now or datetime.now(timezone.utc)
     status_counts: dict[str, int] = {}
     expired: list[dict[str, Any]] = []
     malformed = 0
@@ -236,7 +255,7 @@ def _projection_ledger_packet(path: Path, *, now: datetime | None = None) -> dic
                 rows += 1
                 status = str(row.get("resolution_status") or "PENDING").upper()
                 status_counts[status] = status_counts.get(status, 0) + 1
-                if status == "PENDING" and _projection_row_expired(row, now=now):
+                if status == "PENDING" and _projection_row_expired(row, now=current):
                     expired.append(row)
     except OSError as exc:
         packet["status"] = "unreadable"
@@ -2554,7 +2573,6 @@ class GPTTraderBrain:
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
-        projection_ledger = _projection_ledger_packet(self.projection_ledger_path)
         operator_precedent = _load_optional_json(self.operator_precedent_path)
         manual_market_context = _load_optional_json(self.manual_market_context_path)
         trader_overrides = _load_optional_json(self.trader_overrides_path)
@@ -2607,6 +2625,10 @@ class GPTTraderBrain:
                 pair_set.add(active_pair)
         pairs = tuple(sorted(pair_set))
         currencies = _currencies_from_pairs(pairs)
+        projection_ledger = _projection_ledger_packet(
+            self.projection_ledger_path,
+            calibration_scopes=projection_calibration_scopes_from_lanes(lanes),
+        )
         refs = _allowed_refs(
             snapshot=snapshot,
             target=target,
@@ -2661,6 +2683,14 @@ class GPTTraderBrain:
                 "manual_market_context_gates_only_precedent_usage": True,
                 "user_alpha_requires_continuation_or_exact_blocker": True,
                 "market_read_feedback_is_read_only_advisory": True,
+                "projection_calibration_statistics_source": (
+                    "projection_ledger.compute_hit_rates independent non-overlap trials"
+                ),
+                "projection_calibration_insufficient_sample_edge_forbidden": True,
+                "projection_calibration_fallback_scope_must_be_explicit": True,
+                "projection_calibration_may_only_veto_dampen_or_rank_live_ready": True,
+                "projection_calibration_cannot_upgrade_wait_to_trade": True,
+                "projection_calibration_grants_live_permission": False,
                 "soft_close_advisory_non_blocking": (
                     "position_close_recommendations include blocks_non_close_actions; "
                     "when false, do not choose CLOSE from that advisory on the entry branch "
@@ -2814,6 +2844,7 @@ class GPTTraderBrain:
                 "",
                 "- `decision_provenance.author_kind` identifies the decision author; deterministic verification remains the execution gate.",
                 "- A fresh schema-v2 `CODEX_MARKET_READ` overlay may accept the deterministic lane at 0.5/0.75/1.0 of its risk-capped units, or veto a baseline `TRADE` to `WAIT` / `REQUEST_EVIDENCE`. It cannot upgrade a non-trade baseline, choose another lane, exceed baseline units, expand risk, or grant live permission.",
+                "- `projection_ledger.calibration_evidence` is computed only from independent `compute_hit_rates` trials. Use its exact specific/fallback bucket labels; insufficient samples, failed Wilson floors, or all-pair fallbacks must not be described as a pair-regime edge. Current packet recomputation does not prove selected-scope outcome recency: every row is historical precision context with `exact_pair_regime_edge=false` until an independent outcome-time lineage exists. It may veto, dampen, or rank an already-LIVE_READY lane only and cannot turn WAIT / REQUEST_EVIDENCE into TRADE or grant live permission.",
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
@@ -7839,6 +7870,17 @@ def _allowed_refs(
                 refs.append(f"self_improvement:finding:{code}")
     if projection_ledger:
         refs.append("projection:ledger")
+        calibration = projection_ledger.get("calibration_evidence")
+        if isinstance(calibration, dict):
+            refs.append(
+                str(calibration.get("evidence_ref") or "projection:calibration")
+            )
+            for row in calibration.get("rows", []) or []:
+                if not isinstance(row, dict):
+                    continue
+                ref = str(row.get("evidence_ref") or "").strip()
+                if ref:
+                    refs.append(ref)
         expired = _optional_int(projection_ledger.get("expired_pending_count")) or 0
         if expired > 0:
             refs.append("projection:expired_pending")
@@ -9414,6 +9456,7 @@ def _lane_forecast_packet(
             "forecast_regime_family_weighting_sha256",
             "forecast_regime_family_selected_method",
             "forecast_regime_family_direction",
+            "forecast_directional_calibration_name",
         ),
     )
     packet["technical_context"] = normalize_forecast_technical_context_evidence(

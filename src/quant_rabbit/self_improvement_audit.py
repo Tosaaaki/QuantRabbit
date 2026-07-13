@@ -4245,6 +4245,9 @@ def _directional_forecast_quality_findings(
         row for row in rows
         if str(row.get("signal_name") or "").strip() == "directional_forecast"
     ]
+    source_index_by_id = {
+        id(row): index for index, row in enumerate(source_directional)
+    }
     invalid_range_emission_atr_context_rows = sum(
         1
         for row in source_directional
@@ -4277,7 +4280,7 @@ def _directional_forecast_quality_findings(
     independence["deduped_raw_schema_rows"] = (
         len(raw_schema_clock_source) - len(deduped_raw_schema_clock_source)
     )
-    legacy_directional = [
+    legacy_clock_source = [
         row
         for row in source_directional
         if (
@@ -4285,13 +4288,27 @@ def _directional_forecast_quality_findings(
             or _directional_forecast_calibration_schema_state(row) == "legacy"
         )
     ]
-    independence["legacy_rows_unchanged"] = len(legacy_directional)
+    deduped_legacy_clock_source = _deduped_directional_calibration_rows(
+        legacy_clock_source
+    )
+    independent_legacy_rows, legacy_independence = (
+        _select_independent_legacy_directional_calibration_rows(
+            deduped_legacy_clock_source
+        )
+    )
+    legacy_independence["legacy_source_rows_before_dedupe"] = len(
+        legacy_clock_source
+    )
+    legacy_independence["deduped_legacy_rows"] = (
+        len(legacy_clock_source) - len(deduped_legacy_clock_source)
+    )
     selected_ids = {
-        id(row) for row in legacy_directional + independent_new_schema_rows
+        id(row) for row in independent_legacy_rows + independent_new_schema_rows
     }
-    directional = [
-        row for row in source_directional if id(row) in selected_ids
-    ]
+    directional = _chronological_directional_calibration_rows(
+        [row for row in source_directional if id(row) in selected_ids],
+        source_index_by_id=source_index_by_id,
+    )
     selected_new_schema_ids = {
         id(row) for row in independent_new_schema_rows
     }
@@ -4300,12 +4317,14 @@ def _directional_forecast_quality_findings(
             "raw_confidence_when_present_else_legacy_confidence"
         ),
         "independent_non_overlap_scope": (
-            "new_raw_schema_pair_until_resolution_window_end"
+            "new_raw_schema_pair_and_legacy_pair_signal_direction_"
+            "until_resolution_window_end"
         ),
         "invalid_range_emission_atr_context_rows_excluded": (
             invalid_range_emission_atr_context_rows
         ),
         **independence,
+        **legacy_independence,
     }
     if len(directional) < FORECAST_CALIBRATION_MIN_SAMPLES:
         if (
@@ -4343,6 +4362,43 @@ def _directional_forecast_quality_findings(
                         **cohort_evidence,
                         "examples": [
                             _projection_ref(row) for row in source_directional[:8]
+                        ],
+                    },
+                )
+            ]
+        collapsed_rows = (
+            int(independence.get("deduped_raw_schema_rows") or 0)
+            + int(independence.get("skipped_overlapping_raw_schema_rows") or 0)
+            + int(legacy_independence.get("deduped_legacy_rows") or 0)
+            + int(legacy_independence.get("skipped_overlapping_legacy_rows") or 0)
+        )
+        if (
+            len(source_directional) >= FORECAST_CALIBRATION_MIN_SAMPLES
+            and collapsed_rows > 0
+        ):
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="forecast",
+                    code="DIRECTIONAL_FORECAST_INDEPENDENT_SAMPLE_SHORTFALL",
+                    message=(
+                        f"directional_forecast has {len(source_directional)} ledger row(s) "
+                        f"but only {len(directional)} independent trial(s) after exact "
+                        "dedupe and truth-window overlap removal"
+                    ),
+                    next_action=(
+                        "Collect independent post-window forecasts before treating repeated "
+                        "same-window observations as forecast accuracy evidence."
+                    ),
+                    evidence={
+                        "rows": len(source_directional),
+                        "selected_trial_rows": len(directional),
+                        "collapsed_rows": collapsed_rows,
+                        "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
+                        **cohort_evidence,
+                        "examples": [
+                            _projection_ref(row) for row in directional[:8]
                         ],
                     },
                 )
@@ -4811,27 +4867,25 @@ def _select_independent_directional_calibration_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
     """Mirror replay non-overlap for new raw-confidence forecast rows.
 
-    Legacy rows retain their prior audit semantics. New rows are sorted by
-    emission time; after accepting one pair forecast, every later direction or
-    RANGE flip before that row's resolution-window end is excluded because it
-    shares future truth.
+    Rows are sorted by emission time; after accepting one pair forecast, every
+    later direction or RANGE flip before that row's resolution-window end is
+    excluded because it shares future truth. Legacy rows use the separate
+    generic projection clock below.
     """
 
     selected_indexes: set[int] = set()
     raw_candidates: list[tuple[datetime, int, dict[str, Any], datetime]] = []
-    legacy_rows = 0
+    non_raw_schema_rows = 0
     raw_schema_input_rows = 0
     invalid_raw_schema_rows = 0
     ex_ante_ineligible_rows = 0
     for index, row in enumerate(rows):
         if not _directional_forecast_calibration_schema_scoped(row):
-            selected_indexes.add(index)
-            legacy_rows += 1
+            non_raw_schema_rows += 1
             continue
         schema_state = _directional_forecast_calibration_schema_state(row)
         if schema_state == "legacy":
-            selected_indexes.add(index)
-            legacy_rows += 1
+            non_raw_schema_rows += 1
             continue
         raw_schema_input_rows += 1
         if schema_state == "invalid":
@@ -4874,7 +4928,74 @@ def _select_independent_directional_calibration_rows(
         "skipped_overlapping_raw_schema_rows": skipped_overlapping_rows,
         "invalid_raw_schema_rows_excluded": invalid_raw_schema_rows,
         "ex_ante_ineligible_raw_schema_rows_excluded": ex_ante_ineligible_rows,
-        "legacy_rows_unchanged": legacy_rows,
+        "non_raw_schema_rows_excluded": non_raw_schema_rows,
+    }
+
+
+def _select_independent_legacy_directional_calibration_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int | bool]]:
+    """Mirror the projection ledger's outcome-blind generic trial clock.
+
+    Legacy forecasts predate the raw-confidence schema, but they still share
+    future truth when the same ``(pair, signal, direction)`` is emitted inside
+    an accepted forecast's resolution window. PENDING and truth-missing rows
+    own their window before outcome eligibility is considered. Generic legacy
+    windows retain the verifier's finite-positive contract without applying
+    the newer directional schema's 24-hour ceiling.
+    """
+
+    selected_indexes: set[int] = set()
+    candidates: list[tuple[datetime, int, dict[str, Any], datetime]] = []
+    invalid_rows = 0
+    cycle_rows = 0
+    no_cycle_rows = 0
+    for index, row in enumerate(rows):
+        if row.get("cycle_id"):
+            cycle_rows += 1
+        else:
+            no_cycle_rows += 1
+        emitted_at = _parse_utc(row.get("timestamp_emitted_utc"))
+        window_min = _finite_float(row.get("resolution_window_min"))
+        window_end = (
+            _safe_calibration_window_end(emitted_at, window_min)
+            if emitted_at is not None and window_min is not None
+            else None
+        )
+        if window_end is None:
+            invalid_rows += 1
+            continue
+        candidates.append((emitted_at, index, row, window_end))
+
+    accepted_until: dict[tuple[str, str, str], datetime] = {}
+    skipped_overlapping_rows = 0
+    for emitted_at, index, row, window_end in sorted(
+        candidates,
+        key=lambda item: (item[0], item[1]),
+    ):
+        identity = (
+            str(row.get("pair") or "").strip().upper(),
+            str(row.get("signal_name") or "").strip(),
+            str(row.get("direction") or "").strip().upper(),
+        )
+        current_until = accepted_until.get(identity)
+        if current_until is not None and emitted_at < current_until:
+            skipped_overlapping_rows += 1
+            continue
+        selected_indexes.add(index)
+        accepted_until[identity] = window_end
+
+    selected = [
+        row for index, row in enumerate(rows) if index in selected_indexes
+    ]
+    return selected, {
+        "legacy_independent_non_overlap": True,
+        "legacy_cycle_input_rows": cycle_rows,
+        "legacy_no_cycle_input_rows": no_cycle_rows,
+        "legacy_valid_input_rows": len(candidates),
+        "legacy_selected_rows": len(candidates) - skipped_overlapping_rows,
+        "skipped_overlapping_legacy_rows": skipped_overlapping_rows,
+        "invalid_legacy_rows_excluded": invalid_rows,
     }
 
 
@@ -4897,6 +5018,47 @@ def _safe_directional_calibration_window_end(
         return emitted_at + timedelta(minutes=window_min)
     except (OverflowError, ValueError):
         return None
+
+
+def _safe_calibration_window_end(
+    emitted_at: datetime,
+    window_min: float,
+) -> datetime | None:
+    """Return a generic projection expiry without the new-schema 24h cap."""
+
+    if not math.isfinite(window_min) or window_min <= 0.0:
+        return None
+    try:
+        return emitted_at + timedelta(minutes=window_min)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _chronological_directional_calibration_rows(
+    rows: list[dict[str, Any]],
+    *,
+    source_index_by_id: dict[int, int],
+) -> list[dict[str, Any]]:
+    """Chronologize selected trials before any quality-window slicing."""
+
+    dated: list[tuple[datetime, int, dict[str, Any]]] = []
+    invalid: list[tuple[int, dict[str, Any]]] = []
+    for slot, row in enumerate(rows):
+        source_index = source_index_by_id.get(id(row), slot)
+        emitted_at = _parse_utc(row.get("timestamp_emitted_utc"))
+        if emitted_at is None:
+            invalid.append((source_index, row))
+            continue
+        dated.append((emitted_at, source_index, row))
+    if len(dated) < 2 and not invalid:
+        return rows
+    return [
+        row
+        for _emitted_at, _source_index, row in sorted(
+            dated,
+            key=lambda item: (item[0], item[1]),
+        )
+    ] + [row for _source_index, row in sorted(invalid)]
 
 
 def _directional_forecast_calibration_schema_state(row: dict[str, Any]) -> str:
@@ -5039,7 +5201,38 @@ def _deduped_directional_calibration_rows(
     for index, row in enumerate(rows):
         cycle_id = row.get("cycle_id")
         if not cycle_id:
-            key: tuple[Any, ...] = ("no-cycle", index)
+            emitted_at = _parse_utc(row.get("timestamp_emitted_utc"))
+            if emitted_at is None:
+                key: tuple[Any, ...] = ("no-cycle-invalid-time", index)
+            else:
+                key = (
+                    "no-cycle",
+                    str(row.get("pair") or "").strip().upper(),
+                    str(row.get("signal_name") or "").strip(),
+                    str(row.get("direction") or "").strip().upper(),
+                    emitted_at.replace(microsecond=0).isoformat(),
+                    _directional_calibration_key_price(row.get("confidence")),
+                    _directional_calibration_key_price(row.get("lead_time_min")),
+                    _directional_calibration_key_price(
+                        row.get("resolution_window_min")
+                    ),
+                    _directional_calibration_key_price(row.get("entry_price")),
+                    _directional_calibration_key_price(
+                        row.get("predicted_target_price")
+                    ),
+                    _directional_calibration_key_price(
+                        row.get("predicted_invalidation_price")
+                    ),
+                    _directional_calibration_key_price(
+                        row.get("predicted_range_low_price")
+                    ),
+                    _directional_calibration_key_price(
+                        row.get("predicted_range_high_price")
+                    ),
+                    str(row.get("regime_at_emission") or "UNCLEAR")
+                    .strip()
+                    .upper(),
+                )
         else:
             key = (
                 cycle_id,

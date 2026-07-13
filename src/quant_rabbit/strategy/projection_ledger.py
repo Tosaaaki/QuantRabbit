@@ -667,6 +667,137 @@ def load_ledger(data_root: Path) -> List[LedgerEntry]:
         return []
 
 
+def _load_ledger_snapshot_with_parse_integrity(
+    data_root: Path,
+) -> tuple[List[LedgerEntry], dict[str, Any]]:
+    """Parse one shared-locked ledger snapshot with fail-closed diagnostics.
+
+    ``load_ledger`` intentionally preserves its historical best-effort behavior
+    for operational callers.  Evidence packets need a stricter contract: a
+    malformed nonblank row must not disappear while the remaining wins are
+    scored.  Stats and diagnostics are therefore derived from this same parsed
+    snapshot.  The private source token is used only for coherence checks and
+    must not enter semantic evidence (an unrelated valid append is not selected
+    calibration evidence).
+    """
+
+    path = _ledger_path(data_root)
+    diagnostics: dict[str, Any] = {
+        "status": "VALID",
+        "invalid_nonblank_rows": 0,
+        "malformed_json_rows": 0,
+        "non_object_rows": 0,
+        "unloadable_object_rows": 0,
+        "_source_snapshot_token": None,
+    }
+    try:
+        handle = path.open("r", encoding="utf-8")
+    except FileNotFoundError:
+        diagnostics["status"] = "MISSING"
+        return [], diagnostics
+    except OSError:
+        diagnostics["status"] = "UNREADABLE"
+        return [], diagnostics
+
+    entries: List[LedgerEntry] = []
+    with handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+        try:
+            before_token = _projection_open_file_token(os.fstat(handle.fileno()))
+            try:
+                handle.seek(0)
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        diagnostics["malformed_json_rows"] += 1
+                        continue
+                    if not isinstance(payload, dict):
+                        diagnostics["non_object_rows"] += 1
+                        continue
+                    try:
+                        entry = LedgerEntry.from_dict(payload)
+                    except (TypeError, ValueError, AttributeError, OverflowError):
+                        diagnostics["unloadable_object_rows"] += 1
+                        continue
+                    if not _strict_ledger_entry_loadable(payload, entry):
+                        diagnostics["unloadable_object_rows"] += 1
+                        continue
+                    entries.append(entry)
+            except (UnicodeDecodeError, OSError):
+                # A decoding/read failure may not expose a trustworthy line
+                # boundary.  Count it as one unloadable row and reject the
+                # whole scorecard instead of scoring a partial prefix.
+                diagnostics["unloadable_object_rows"] += 1
+            after_token = _projection_open_file_token(os.fstat(handle.fileno()))
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    diagnostics["_source_snapshot_token"] = after_token
+    diagnostics["invalid_nonblank_rows"] = sum(
+        int(diagnostics[key])
+        for key in (
+            "malformed_json_rows",
+            "non_object_rows",
+            "unloadable_object_rows",
+        )
+    )
+    if before_token != after_token:
+        diagnostics["status"] = "SOURCE_CHANGED_DURING_READ"
+    elif diagnostics["invalid_nonblank_rows"]:
+        diagnostics["status"] = "INVALID"
+    return entries, diagnostics
+
+
+def _strict_ledger_entry_loadable(
+    payload: dict[str, Any],
+    entry: LedgerEntry,
+) -> bool:
+    """Validate the core persisted row before strict calibration reads.
+
+    ``LedgerEntry.from_dict`` is deliberately permissive for legacy operational
+    readers and converts missing or malformed values into safe sentinels.  That
+    behavior is not sufficient for a scorecard: a still-valid JSON object such
+    as ``{"signal_name": ...}`` could otherwise make one losing observation
+    disappear without incrementing parse-integrity failures.
+    """
+
+    for key in ("timestamp_emitted_utc", "pair", "signal_name", "direction"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return False
+    if not (
+        entry.lead_time_min_valid
+        and entry.confidence_valid
+        and entry.resolution_window_min_valid
+        and entry.lead_time_min >= 0.0
+        and entry.resolution_window_min > 0.0
+    ):
+        return False
+    emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+    if emitted_at is None:
+        return False
+    status = str(entry.resolution_status or "")
+    if status not in {"PENDING", "HIT", "MISS", "TIMEOUT"}:
+        return False
+    if status != "PENDING":
+        resolved_at = _projection_emitted_at(entry.resolved_at_utc)
+        if resolved_at is None or resolved_at < emitted_at:
+            return False
+    raw_present = entry.raw_confidence_field_present
+    multiplier_present = entry.calibration_multiplier_field_present
+    if raw_present != multiplier_present:
+        return False
+    if raw_present and (
+        entry.raw_confidence is None or entry.calibration_multiplier is None
+    ):
+        return False
+    return True
+
+
 def _load_ledger_from_handle(handle: IO[str]) -> List[LedgerEntry]:
     out: List[LedgerEntry] = []
     handle.seek(0)
@@ -1601,7 +1732,12 @@ def compute_hit_rates(
     data_root: Path,
     *,
     lookback: int = HIT_RATE_LOOKBACK,
-) -> Dict[str, Dict[str, Dict[str, float]]]:
+    as_of: datetime | None = None,
+    include_parse_integrity: bool = False,
+) -> (
+    Dict[str, Dict[str, Dict[str, float]]]
+    | tuple[Dict[str, Dict[str, Dict[str, float]]], dict[str, Any]]
+):
     """Per `(signal_name, pair, regime)` hit-rate from last `lookback`
     resolved entries.
 
@@ -1622,6 +1758,29 @@ def compute_hit_rates(
     pushed out by high-volume pairs, which makes bad local history fall back
     to broad all-pair calibration and overstate confidence.
     """
+    point_in_time = _normalise_calibration_as_of(as_of)
+    if point_in_time is not None or include_parse_integrity:
+        if include_parse_integrity:
+            entries, parse_integrity = _load_ledger_snapshot_with_parse_integrity(
+                data_root
+            )
+        else:
+            entries = load_ledger(data_root)
+            parse_integrity = {}
+        # Point-in-time packet clocks vary every cycle.  Do not grow an
+        # unbounded as-of cache, and do not let a result computed before a
+        # resolution/window boundary survive after that boundary when the file
+        # itself did not change.
+        out = _compute_hit_rates_uncached(
+            data_root,
+            lookback=lookback,
+            entries=entries,
+            as_of=point_in_time,
+        )
+        if include_parse_integrity:
+            return out, dict(parse_integrity)
+        return out
+
     path = _ledger_path(data_root)
     cache_id = (_projection_file_cache_id(path), int(lookback))
     stat_token = _projection_file_cache_stat(path)
@@ -1638,18 +1797,38 @@ def _compute_hit_rates_uncached(
     data_root: Path,
     *,
     lookback: int,
+    entries: list[LedgerEntry] | None = None,
+    as_of: datetime | None = None,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
-    entries = load_ledger(data_root)
+    if entries is None:
+        entries = load_ledger(data_root)
 
-    # New directional rows define trials ex ante.  In particular, a PENDING or
-    # truth-missing first forecast still owns its pair/window and must suppress
-    # an overlapping later HIT.  Selecting only resolved outcomes first leaks
-    # future knowledge into calibration.  Keep legacy and non-directional rows
-    # on their historical outcome-then-dedupe path.
+    # Ex-ante trial selection sees only forecasts that actually existed at the
+    # packet clock.  Outcome observability is checked later so an unresolved
+    # first forecast still owns its overlap window and cannot be replaced by a
+    # later winner.
+    selection_entries = (
+        entries
+        if as_of is None
+        else [
+            entry
+            for entry in entries
+            if (
+                (emitted_at := _projection_emitted_at(entry.timestamp_emitted_utc))
+                is not None
+                and emitted_at <= as_of
+            )
+        ]
+    )
+
+    # Trials are fixed from emission-time facts before outcomes are inspected.
+    # In particular, a PENDING or truth-missing first forecast still owns its
+    # pair/window and must suppress an overlapping later HIT.  Selecting only
+    # resolved outcomes first leaks future knowledge into calibration.
     new_directional = _deduped_calibration_entries(
         [
             entry
-            for entry in entries
+            for entry in selection_entries
             if _directional_forecast_schema_scoped(entry)
             and _directional_calibration_schema_state(entry) != "legacy"
         ]
@@ -1660,26 +1839,35 @@ def _compute_hit_rates_uncached(
     new_resolved = [
         entry
         for entry in independent_new_directional
-        if _calibration_outcome_eligible(entry)
+        if _calibration_outcome_eligible_as_of(entry, as_of=as_of)
     ]
 
-    legacy_and_non_directional_resolved = _deduped_calibration_entries(
+    legacy_and_non_directional = _deduped_calibration_entries(
         [
             entry
-            for entry in entries
+            for entry in selection_entries
             if (
                 not _directional_forecast_schema_scoped(entry)
                 or _directional_calibration_schema_state(entry) == "legacy"
             )
-            and _calibration_outcome_eligible(entry)
         ]
     )
+    independent_legacy_and_non_directional, _legacy_independence = (
+        _select_independent_legacy_and_non_directional_calibration_entries(
+            legacy_and_non_directional
+        )
+    )
+    legacy_and_non_directional_resolved = [
+        entry
+        for entry in independent_legacy_and_non_directional
+        if _calibration_outcome_eligible_as_of(entry, as_of=as_of)
+    ]
     resolved_ids = {
         id(entry)
         for entry in new_resolved + legacy_and_non_directional_resolved
     }
     resolved = [entry for entry in entries if id(entry) in resolved_ids]
-    resolved = _chronological_new_directional_slots(
+    resolved = _chronological_calibration_entries(
         resolved,
         source_index_by_id={id(entry): index for index, entry in enumerate(entries)},
     )
@@ -1756,52 +1944,83 @@ def _calibration_outcome_eligible(entry: LedgerEntry) -> bool:
     ) or _projection_timing_penalty_eligible(entry)
 
 
-def _chronological_new_directional_slots(
+def _calibration_outcome_eligible_as_of(
+    entry: LedgerEntry,
+    *,
+    as_of: datetime | None,
+) -> bool:
+    """Require point-in-time outcome and full-window observability.
+
+    A stored HIT/MISS label is not evidence at an earlier packet clock merely
+    because it is present in today's append-only file.  When an ``as_of`` clock
+    is supplied, both the recorded resolution timestamp and the complete
+    emission-to-expiry truth window must already be observable.  Default
+    callers without ``as_of`` retain the historical behavior.
+    """
+
+    if not _calibration_outcome_eligible(entry):
+        return False
+    if as_of is None:
+        return True
+    emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+    resolved_at = _projection_emitted_at(entry.resolved_at_utc)
+    window_min = _optional_finite_float(entry.resolution_window_min)
+    if emitted_at is None or resolved_at is None or window_min is None:
+        return False
+    window_end = (
+        _safe_projection_window_end(emitted_at, window_min)
+        if (
+            _directional_forecast_schema_scoped(entry)
+            and _directional_calibration_schema_state(entry) != "legacy"
+        )
+        else _safe_calibration_window_end(emitted_at, window_min)
+    )
+    return bool(
+        window_end is not None
+        and emitted_at <= window_end <= resolved_at <= as_of
+    )
+
+
+def _chronological_calibration_entries(
     entries: list[LedgerEntry],
     *,
     source_index_by_id: dict[int, int],
 ) -> list[LedgerEntry]:
-    """Chronologize only selected new-schema slots before lookback slicing.
+    """Chronologize selected trials before bucket lookback slicing.
 
-    Backfilled rows can be appended after newer outcomes.  The non-overlap clock
-    already evaluates new trials by emission time, so their bucket lookback must
-    use that same order.  Legacy and non-directional entries retain their exact
-    source slots and relative order; only the contents of selected new-schema
-    slots are rearranged.  Source index is the deterministic tie-break for equal
-    timestamps.
+    Backfilled rows can be appended after newer outcomes.  Every non-overlap
+    clock evaluates trials by emission time, so every bucket lookback must use
+    that same order.  Otherwise an old legacy row appended by a repair can evict
+    the genuinely newest trial.  Source index is the deterministic tie-break for
+    equal timestamps.
     """
 
-    new_slots: list[int] = []
-    new_rows: list[tuple[datetime, int, LedgerEntry]] = []
+    rows: list[tuple[datetime, int, LedgerEntry]] = []
+    invalid_rows: list[tuple[int, LedgerEntry]] = []
     for slot, entry in enumerate(entries):
-        if (
-            not _directional_forecast_schema_scoped(entry)
-            or _directional_calibration_schema_state(entry) != "new"
-        ):
-            continue
         emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
         if emitted_at is None:
-            # Ex-ante selection rejects this case. Stay defensive without
-            # changing legacy/source ordering should a caller reuse the helper.
+            # Ex-ante selection rejects invalid timestamps.  Keep this branch
+            # defensive for direct callers and place invalid rows last in their
+            # original order.
+            invalid_rows.append((source_index_by_id.get(id(entry), slot), entry))
             continue
-        new_slots.append(slot)
-        new_rows.append(
+        rows.append(
             (
                 emitted_at,
                 source_index_by_id.get(id(entry), slot),
                 entry,
             )
         )
-    if len(new_rows) < 2:
+    if len(rows) < 2 and not invalid_rows:
         return entries
-
-    ordered = list(entries)
-    for slot, (_emitted_at, _source_index, entry) in zip(
-        new_slots,
-        sorted(new_rows, key=lambda item: (item[0], item[1])),
-    ):
-        ordered[slot] = entry
-    return ordered
+    return [
+        entry
+        for _emitted_at, _source_index, entry in sorted(
+            rows,
+            key=lambda item: (item[0], item[1]),
+        )
+    ] + [entry for _source_index, entry in sorted(invalid_rows)]
 
 
 def _calibration_invalidation_first_like(entry: LedgerEntry) -> bool:
@@ -1895,6 +2114,28 @@ def _projection_file_cache_stat(path: Path) -> tuple[int, int]:
     return (int(stat.st_size), int(stat.st_mtime_ns))
 
 
+def _projection_open_file_token(stat: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Identify one open-file snapshot for internal coherence checks only."""
+
+    return (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+    )
+
+
+def _normalise_calibration_as_of(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        raise TypeError("as_of must be a datetime or None")
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _deduped_calibration_entries(entries: list[LedgerEntry]) -> list[LedgerEntry]:
     """Collapse historical duplicate projection writes for calibration only.
 
@@ -1907,6 +2148,85 @@ def _deduped_calibration_entries(entries: list[LedgerEntry]) -> list[LedgerEntry
         key = _calibration_dedupe_key(entry, fallback_index=index)
         latest[key] = (index, entry)
     return [entry for _index, entry in sorted(latest.values(), key=lambda item: item[0])]
+
+
+def _select_independent_legacy_and_non_directional_calibration_entries(
+    entries: list[LedgerEntry],
+) -> tuple[list[LedgerEntry], dict[str, int | bool]]:
+    """Collapse legacy/non-directional telemetry into independent trials.
+
+    Before ``cycle_id`` existed, one market observation could be written once
+    per candidate lane.  Those rows often differ only by a few milliseconds and
+    share the same entire resolution window.  Treating each write as a Bernoulli
+    trial can turn a handful of market moves into a fabricated 100/100 edge.
+
+    Exact cycle duplicates have already been removed by
+    ``_deduped_calibration_entries``.  Cycle-tagged rows still enter this clock:
+    different targets or different cycles inside one truth window are correlated,
+    not additional Bernoulli trials.  Select the earliest forecast for each
+    ``(pair, signal, direction)`` and reject every later emission strictly inside
+    its truth window.  This is outcome-blind: PENDING and truth-missing rows
+    reserve their window before HIT/MISS/TIMEOUT eligibility is evaluated by the
+    caller.
+
+    Generic projections may legitimately exceed the new directional schema's
+    24-hour cap (for example, macro-event horizons).  Preserve the verifier's
+    finite-positive window contract here and reject only values whose timedelta
+    cannot be represented.
+    """
+
+    selected_indexes: set[int] = set()
+    candidates: list[tuple[datetime, int, LedgerEntry, datetime]] = []
+    invalid_rows = 0
+    cycle_rows = 0
+    no_cycle_rows = 0
+    for index, entry in enumerate(entries):
+        if entry.cycle_id:
+            cycle_rows += 1
+        else:
+            no_cycle_rows += 1
+        emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+        window_min = _optional_finite_float(entry.resolution_window_min)
+        window_end = (
+            _safe_calibration_window_end(emitted_at, window_min)
+            if emitted_at is not None and window_min is not None
+            else None
+        )
+        if window_end is None:
+            invalid_rows += 1
+            continue
+        candidates.append((emitted_at, index, entry, window_end))
+
+    accepted_until: dict[tuple[str, str, str], datetime] = {}
+    skipped_overlapping_rows = 0
+    for emitted_at, index, entry, window_end in sorted(
+        candidates,
+        key=lambda item: (item[0], item[1]),
+    ):
+        identity = (
+            str(entry.pair or "").strip().upper(),
+            str(entry.signal_name or "").strip(),
+            str(entry.direction or "").strip().upper(),
+        )
+        current_until = accepted_until.get(identity)
+        if current_until is not None and emitted_at < current_until:
+            skipped_overlapping_rows += 1
+            continue
+        selected_indexes.add(index)
+        accepted_until[identity] = window_end
+
+    selected = [
+        entry for index, entry in enumerate(entries) if index in selected_indexes
+    ]
+    return selected, {
+        "independent_non_overlap": True,
+        "cycle_input_rows": cycle_rows,
+        "no_cycle_input_rows": no_cycle_rows,
+        "valid_input_rows": len(candidates),
+        "selected_rows": len(candidates) - skipped_overlapping_rows,
+        "skipped_overlapping_rows": skipped_overlapping_rows,
+        "invalid_rows": invalid_rows,
+    }
 
 
 def _select_independent_directional_calibration_entries(
@@ -2122,9 +2442,45 @@ def _safe_projection_window_end(
         return None
 
 
+def _safe_calibration_window_end(
+    emitted_at: datetime,
+    window_min: float,
+) -> Optional[datetime]:
+    """Return a generic projection expiry without the new-schema 24h cap."""
+
+    if not math.isfinite(window_min) or window_min <= 0.0:
+        return None
+    try:
+        return emitted_at + timedelta(minutes=window_min)
+    except (OverflowError, ValueError):
+        return None
+
+
 def _calibration_dedupe_key(entry: LedgerEntry, *, fallback_index: int) -> tuple[Any, ...]:
     if not entry.cycle_id:
-        return ("no-cycle", fallback_index)
+        emitted_at = _projection_emitted_at(entry.timestamp_emitted_utc)
+        if emitted_at is None:
+            return ("no-cycle-invalid-time", fallback_index)
+        emitted_second = emitted_at.replace(microsecond=0).isoformat()
+        confidence = _optional_finite_float(entry.confidence)
+        lead_time = _optional_finite_float(entry.lead_time_min)
+        resolution_window = _optional_finite_float(entry.resolution_window_min)
+        return (
+            "no-cycle",
+            str(entry.pair or "").strip().upper(),
+            str(entry.signal_name or "").strip(),
+            str(entry.direction or "").strip().upper(),
+            emitted_second,
+            round(confidence, 8) if confidence is not None else None,
+            round(lead_time, 8) if lead_time is not None else None,
+            round(resolution_window, 8) if resolution_window is not None else None,
+            _round_key_price(entry.entry_price),
+            _round_key_price(entry.predicted_target_price),
+            _round_key_price(entry.predicted_invalidation_price),
+            _round_key_price(entry.predicted_range_low_price),
+            _round_key_price(entry.predicted_range_high_price),
+            str(entry.regime_at_emission or "UNCLEAR").strip().upper(),
+        )
     return _projection_key(
         cycle_id=entry.cycle_id,
         pair=entry.pair,

@@ -25,6 +25,7 @@ from quant_rabbit.market_read_overlay import (
     execution_envelope_payload,
     market_read_sha256,
     prepare_market_read_baseline,
+    projection_calibration_scopes_from_lanes,
 )
 from quant_rabbit.month_scale_residual_gate import (
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
@@ -35,6 +36,7 @@ from quant_rabbit.gpt_trader import (
     _draft_candidate_lane_ids,
     _draft_margin_aware_basket,
     _lane_forecast_packet,
+    _projection_ledger_packet,
     draft_trader_decision,
     post_stop_thesis_review,
 )
@@ -44,6 +46,7 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context,
     build_forecast_technical_context_evidence,
 )
+from quant_rabbit.strategy.projection_ledger import LedgerEntry, write_ledger
 
 
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
@@ -161,6 +164,52 @@ class GPTTraderBrainTest(unittest.TestCase):
         )
         self.assertIsNone(packet["technical_context"]["technical_context_v1"])
         self.assertFalse(packet["technical_context"]["live_permission"])
+
+    def test_projection_scope_requires_explicit_canonical_forecast_lineage(self) -> None:
+        lane = {
+            "pair": "EUR_USD",
+            "direction": "LONG",
+            "status": "LIVE_READY",
+            "forecast": {},
+        }
+        self.assertEqual(projection_calibration_scopes_from_lanes([lane]), [])
+
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_directional_calibration_name": "directional_forecast_up",
+        }
+        lane["forecast"] = _lane_forecast_packet(metadata, pair="EUR_USD")
+        self.assertEqual(
+            projection_calibration_scopes_from_lanes([lane]),
+            [{"pair": "EUR_USD", "direction": "UP", "regime": None}],
+        )
+
+        metadata["forecast_directional_calibration_name"] = (
+            "directional_forecast_down"
+        )
+        lane["forecast"] = _lane_forecast_packet(metadata, pair="EUR_USD")
+        self.assertEqual(projection_calibration_scopes_from_lanes([lane]), [])
+
+        metadata["forecast_directional_calibration_name"] = (
+            "directional_forecast_up"
+        )
+        lane["forecast"] = _lane_forecast_packet(metadata, pair="EUR_USD")
+        duplicate_lanes = [dict(lane) for _index in range(4)]
+        gbp_lane = {**lane, "pair": "GBP_USD"}
+        self.assertEqual(
+            [
+                item["pair"]
+                for item in projection_calibration_scopes_from_lanes(
+                    [*duplicate_lanes, gbp_lane]
+                )
+            ],
+            ["EUR_USD", "GBP_USD"],
+        )
+        blocked = [{**lane, "status": "BLOCK"} for _index in range(4)]
+        self.assertEqual(
+            projection_calibration_scopes_from_lanes([*blocked, gbp_lane]),
+            [{"pair": "GBP_USD", "direction": "UP", "regime": None}],
+        )
 
     def test_lane_packet_does_not_forward_rehashed_oversized_unknown_reason(self) -> None:
         evidence = _forecast_context_evidence("EUR_USD", 1.1001)
@@ -5067,6 +5116,70 @@ class GPTTraderBrainTest(unittest.TestCase):
             projection = payload["input_packet"]["projection_ledger"]
             self.assertEqual(projection["expired_pending_count"], 1)
             self.assertIn("projection:expired_pending", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_projection_packet_uses_independent_score_not_raw_row_majority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            base = now - timedelta(hours=2)
+
+            def trial(minute: int, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.24,
+                    raw_confidence=0.80,
+                    calibration_multiplier=0.30,
+                    entry_price=1.1000,
+                    predicted_target_price=1.1020,
+                    predicted_invalidation_price=1.0990,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolved_at_utc=(
+                        base + timedelta(minutes=minute + 60)
+                    ).isoformat(),
+                    resolution_evidence=(
+                        "target touched before invalidation"
+                        if status == "HIT"
+                        else "invalidation touched before target"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            entries = [trial(0, "MISS", "first-independent-miss")]
+            entries.extend(
+                trial(minute, "HIT", f"overlapping-hit-{minute}")
+                for minute in range(1, 60)
+            )
+            entries.append(trial(60, "MISS", "boundary-independent-miss"))
+            write_ledger(entries, root)
+
+            packet = _projection_ledger_packet(
+                root / "projection_ledger.jsonl",
+                now=now,
+                calibration_scopes=[
+                    {"pair": "EUR_USD", "direction": "UP", "regime": "TREND"}
+                ],
+            )
+
+            self.assertEqual(packet["status_counts"], {"MISS": 2, "HIT": 59})
+            calibration = packet["calibration_evidence"]
+            self.assertEqual(
+                calibration["statistics_source"],
+                "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+            )
+            row = calibration["rows"][0]
+            self.assertEqual(row["specific_bucket"]["samples"], 2)
+            self.assertEqual(row["specific_bucket"]["hit_rate"], 0.0)
+            self.assertIsNone(row["selected_bucket"])
+            self.assertEqual(row["edge_status"], "INSUFFICIENT_SAMPLES_NO_EDGE")
+            self.assertFalse(calibration["selection_contract"]["raw_ledger_rows_exposed"])
+            self.assertNotIn("overlapping-hit-1", json.dumps(calibration))
+            self.assertFalse(calibration["usage_policy"]["live_permission"])
 
     def test_wait_with_projection_ref_can_pause_attack_trade_for_expired_pending_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

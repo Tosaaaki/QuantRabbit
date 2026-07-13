@@ -114,6 +114,153 @@ def _bypass_final_pre_post_boundary(self, **kwargs):
 
 
 class LiveOrderGatewayTest(unittest.TestCase):
+    def test_forged_firepower_explicit_cap_cannot_widen_gateway_avg_winner_cap(self) -> None:
+        cap = execution_module._loss_asymmetry_cap_from_metadata(
+            {
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_RELAXED",
+                "loss_asymmetry_guard_loss_cap_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
+            }
+        )
+
+        self.assertEqual(cap, 600.0)
+
+    def test_gateway_avg_winner_cap_does_not_under_size_hedge_protection(self) -> None:
+        cap = execution_module._loss_asymmetry_cap_from_metadata(
+            {
+                "position_intent": "HEDGE",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 250.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_loss_cap_jpy": 250.0,
+            }
+        )
+
+        self.assertIsNone(cap)
+
+    def test_gateway_rejects_nonfinite_forged_loss_asymmetry_fields(self) -> None:
+        base = {
+            "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            "capture_avg_win_jpy": 600.0,
+            "capture_avg_loss_jpy": 1100.0,
+            "loss_asymmetry_guard_active": True,
+            "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_RELAXED",
+            "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+        }
+        base_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1760,
+            sl=1.1710,
+            thesis="gateway must reject non-finite loss-asymmetry metadata",
+            metadata=base,
+        )
+        gateway = object.__new__(LiveOrderGateway)
+
+        for field in (
+            "capture_avg_win_jpy",
+            "capture_avg_loss_jpy",
+            "loss_asymmetry_guard_loss_cap_jpy",
+        ):
+            for forged_value in (float("inf"), "1e309"):
+                with self.subTest(field=field, forged_value=forged_value):
+                    metadata = {**base, field: forged_value}
+                    issue = execution_module._loss_asymmetry_nonfinite_issue(metadata)
+                    self.assertIsNotNone(issue)
+                    assert issue is not None
+                    self.assertEqual(issue.code, "LOSS_ASYMMETRY_GUARD_NONFINITE")
+                    self.assertIsNone(
+                        execution_module._positive_float(forged_value)
+                    )
+                    result = gateway._clip_intent_to_attached_stop_cap(
+                        intent=replace(base_intent, metadata=metadata),
+                        risk=SimpleNamespace(metrics=None),
+                        snapshot=SimpleNamespace(),
+                        max_loss_jpy=1000.0,
+                        portfolio_loss_cap=None,
+                        cumulative_risk_jpy=0.0,
+                        validate_live_enabled=True,
+                        allow_basket_pending=False,
+                        portfolio_position_cap=1,
+                        requested_units=1000,
+                        size_multiple=1.0,
+                        order_request={},
+                        order_build_issues=[],
+                    )
+                    gateway_issues = result[5]
+                    self.assertEqual(
+                        [item.code for item in gateway_issues],
+                        ["LOSS_ASYMMETRY_GUARD_NONFINITE"],
+                    )
+
+    def test_attached_stop_gateway_requires_positive_average_winner(self) -> None:
+        base_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1730,
+            tp=1.1760,
+            sl=1.1710,
+            thesis="attached-stop gateway must not trust a declared cap alone",
+        )
+        activation_cases = (
+            {
+                "capture_economics_status": "POSITIVE_EXPECTANCY",
+                "loss_asymmetry_guard_active": True,
+            },
+            {
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "loss_asymmetry_guard_active": False,
+            },
+        )
+        gateway = object.__new__(LiveOrderGateway)
+
+        for activation in activation_cases:
+            for average_winner in (None, 0.0, -1.0):
+                with self.subTest(
+                    activation=activation,
+                    average_winner=average_winner,
+                ):
+                    metadata = {
+                        **activation,
+                        "capture_avg_loss_jpy": 1100.0,
+                        "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                    }
+                    if average_winner is not None:
+                        metadata["capture_avg_win_jpy"] = average_winner
+                    self.assertIsNone(
+                        execution_module._loss_asymmetry_cap_from_metadata(metadata)
+                    )
+                    result = gateway._clip_intent_to_attached_stop_cap(
+                        intent=replace(base_intent, metadata=metadata),
+                        risk=SimpleNamespace(metrics=None),
+                        snapshot=SimpleNamespace(),
+                        max_loss_jpy=1000.0,
+                        portfolio_loss_cap=None,
+                        cumulative_risk_jpy=0.0,
+                        validate_live_enabled=True,
+                        allow_basket_pending=False,
+                        portfolio_position_cap=1,
+                        requested_units=1000,
+                        size_multiple=1.0,
+                        order_request={},
+                        order_build_issues=[],
+                    )
+
+                    self.assertEqual(
+                        [item.code for item in result[5]],
+                        ["LOSS_ASYMMETRY_GUARD_CAP_MISSING"],
+                    )
+
     def setUp(self) -> None:
         self._guardian_tmp = tempfile.TemporaryDirectory()
         self._original_per_trade_reader = execution_module._per_trade_risk_from_state

@@ -8,7 +8,6 @@ is allowed to address.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 
@@ -49,12 +48,6 @@ TP_HARVEST_REPAIR_EXEMPT_P0_CODES = frozenset(
     }
 )
 OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
-OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS = (
-    "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
-)
-OANDA_CAMPAIGN_NORMAL_CAP_WEIGHTED_PACE_BASIS = (
-    "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
-)
 
 
 def forecast_adverse_path_new_risk_blocker(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -257,12 +250,15 @@ def intent_matches_profitability_worst_segment(
 def oanda_firepower_repair_current_risk_reaches_minimum(
     metadata: dict[str, Any] | None,
 ) -> bool:
-    """Require current-risk 5% firepower before OANDA-only P0 repair escapes.
+    """Reject OANDA-only firepower as a profitability-P0 escape.
 
     Local TP-proven repair lanes are judged by realized broker TP evidence.
-    OANDA campaign firepower is historical audit evidence, so when a live
-    daily-target state lets us scale that audit lens to the executable order
-    risk, an underpowered result must not bypass a profitability P0.
+    OANDA campaign firepower remains historical capacity/ranking evidence even
+    when current-risk or hypothetical normal-cap scaling reaches the daily
+    floor. It cannot create live permission or replace exact local TP proof.
+
+    The non-OANDA return stays true for compatibility with callers that apply
+    this final check to already TP-proven local repair modes.
     """
 
     if not isinstance(metadata, dict):
@@ -270,21 +266,7 @@ def oanda_firepower_repair_current_risk_reaches_minimum(
     mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
     if mode != OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE:
         return True
-    if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
-        return False
-    basis = str(metadata.get("positive_rotation_minimum_floor_reach_basis") or "").strip().upper()
-    normal_cap_reachable = _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(
-        metadata,
-        basis=basis,
-    )
-    if basis == OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS and not normal_cap_reachable:
-        return False
-    current_risk_reachable = metadata.get(
-        "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"
-    )
-    if current_risk_reachable is False and not normal_cap_reachable:
-        return False
-    return True
+    return False
 
 
 def p0_code_exempted_by_tp_harvest_repair(code: str, *, p0_repair_selected: bool) -> bool:
@@ -382,44 +364,6 @@ def forecast_adverse_path_exempted_by_tp_harvest_repair(
     ):
         return False
     return tp_harvest_forecast_adverse_path_repair_shape(intent_or_lane, meta)
-
-
-def _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(
-    metadata: dict[str, Any],
-    *,
-    basis: str,
-) -> bool:
-    if basis != OANDA_CAMPAIGN_NORMAL_CAP_WEIGHTED_PACE_BASIS:
-        return False
-    if (
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable")
-        is not True
-    ):
-        return False
-    required = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_required_minimum_trades")
-    )
-    target = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_target_trades_per_day")
-    )
-    observed = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day")
-    )
-    weighted_return = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade")
-    )
-    if (
-        required is None
-        or target is None
-        or observed is None
-        or weighted_return is None
-        or required < 0
-        or target <= 0
-        or observed < 0
-        or weighted_return <= 0
-    ):
-        return False
-    return required == 0 or (required <= target and required <= math.floor(observed))
 
 
 def _pending_churn_lane_keys(payload: dict[str, Any]) -> list[dict[str, Any]]:

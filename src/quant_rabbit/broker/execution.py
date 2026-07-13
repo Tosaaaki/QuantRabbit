@@ -96,6 +96,8 @@ from quant_rabbit.risk import (
     RiskEngine,
     RiskIssue,
     RiskPolicy,
+    _loss_asymmetry_tp_proof_collection_shape_allowed,
+    _loss_asymmetry_tp_relaxation_shape_allowed,
     _min_lot_test_override_active,
     resolve_max_loss_jpy,
 )
@@ -4078,6 +4080,22 @@ class LiveOrderGateway:
         order_request: dict[str, Any] | None,
         order_build_issues: list[dict[str, str]],
     ):
+        asymmetry_metadata_issue = _loss_asymmetry_nonfinite_issue(intent.metadata or {})
+        if asymmetry_metadata_issue is None:
+            asymmetry_metadata_issue = _loss_asymmetry_avg_win_issue(
+                intent,
+                getattr(risk, "metrics", None),
+            )
+        if asymmetry_metadata_issue is not None:
+            return (
+                intent,
+                risk,
+                order_request,
+                None,
+                size_multiple,
+                [asymmetry_metadata_issue],
+                order_build_issues,
+            )
         metrics = risk.metrics
         attached_stop = _attached_stop_risk_metrics(intent, order_request, metrics)
         cap = _attached_stop_effective_loss_cap_jpy(
@@ -8927,6 +8945,12 @@ def _nonnegative_int(value: object) -> int:
 
 
 def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
+    # HEDGE orders manage existing exposure instead of adding ordinary fresh
+    # one-way risk.  RiskEngine and the independent gateway evidence check both
+    # exempt this shape, so the attached-stop sizing boundary must not silently
+    # reintroduce the average-winner cap and under-size the protection order.
+    if str(metadata.get("position_intent") or "NEW").strip().upper() == "HEDGE":
+        return None
     mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
     if mode == "TP_PROVEN_RELAXED":
         return None
@@ -8938,21 +8962,117 @@ def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
         "on",
     }
     avg_win = _positive_float(metadata.get("capture_avg_win_jpy"))
-    avg_loss = _positive_float(metadata.get("capture_avg_loss_jpy"))
-    if not active and not (status == "NEGATIVE_EXPECTANCY" and avg_win is not None and avg_loss is not None and avg_loss > avg_win):
+    guard_required = active or status == "NEGATIVE_EXPECTANCY"
+    if not guard_required or avg_win is None:
         return None
     explicit_cap = _positive_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
-    if explicit_cap is not None:
-        return explicit_cap
-    return avg_win
+    candidates = [value for value in (explicit_cap, avg_win) if value is not None]
+    # A legacy/forged firepower receipt may claim the normal cap in its
+    # explicit/effective fields. The executable attached-stop boundary must use
+    # the tighter observed average winner just like RiskEngine.
+    return min(candidates) if candidates else None
+
+
+def _loss_asymmetry_avg_win_issue(
+    intent: OrderIntent,
+    metrics: RiskMetrics | None,
+) -> RiskIssue | None:
+    """Require the realized local average winner at the attached-stop boundary.
+
+    This gateway check is independent of ``RiskEngine`` so a hand-built or
+    stale receipt cannot use a declared/OANDA cap after deleting the current
+    capture-economics basis. Exact TP-proven and one-unit local TP collection
+    receipts keep their existing evidence-bound exceptions.
+    """
+
+    metadata = intent.metadata or {}
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return None
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not (active or status == "NEGATIVE_EXPECTANCY"):
+        return None
+    mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    if mode == "TP_PROVEN_RELAXED" and _loss_asymmetry_tp_relaxation_shape_allowed(
+        intent,
+        metadata,
+    ):
+        return None
+    if (
+        mode == "TP_PROOF_COLLECTION_MIN_LOT"
+        and metrics is not None
+        and _loss_asymmetry_tp_proof_collection_shape_allowed(
+            intent,
+            metadata,
+            metrics,
+        )
+    ):
+        return None
+    if _positive_float(metadata.get("capture_avg_win_jpy")) is not None:
+        return None
+    return RiskIssue(
+        "LOSS_ASYMMETRY_GUARD_CAP_MISSING",
+        "the attached-stop gateway requires finite positive "
+        "capture_avg_win_jpy from realized local payoff evidence for ordinary "
+        "fresh risk under an active loss-asymmetry guard or "
+        "NEGATIVE_EXPECTANCY; a declared, effective, or legacy OANDA "
+        "firepower cap cannot substitute.",
+    )
+
+
+def _loss_asymmetry_nonfinite_issue(metadata: dict[str, Any]) -> RiskIssue | None:
+    mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not (active or status == "NEGATIVE_EXPECTANCY" or mode):
+        return None
+    invalid_fields: list[str] = []
+    for key in (
+        "capture_avg_win_jpy",
+        "capture_avg_loss_jpy",
+        "loss_asymmetry_guard_loss_cap_jpy",
+    ):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            invalid_fields.append(key)
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            invalid_fields.append(key)
+            continue
+        if not math.isfinite(parsed):
+            invalid_fields.append(key)
+    if not invalid_fields:
+        return None
+    return RiskIssue(
+        "LOSS_ASYMMETRY_GUARD_NONFINITE",
+        "loss-asymmetry metadata contains a non-finite or malformed numeric "
+        f"field ({', '.join(invalid_fields)}); refresh capture-economics before "
+        "building or sending a broker order.",
+    )
 
 
 def _positive_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return parsed if parsed > 0 else None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
 
 
 def _nonnegative_float(value: object) -> float | None:

@@ -2288,15 +2288,51 @@ class VerifyTest(unittest.TestCase):
 
 
 class HitRatesTest(unittest.TestCase):
+    @staticmethod
+    def _point_in_time_directional_trial(
+        *,
+        emitted_at: datetime,
+        resolved_at: datetime,
+        status: str,
+        cycle_id: str,
+        window_min: float = 60.0,
+    ) -> LedgerEntry:
+        return LedgerEntry(
+            timestamp_emitted_utc=emitted_at.isoformat(),
+            pair="EUR_USD",
+            signal_name="directional_forecast",
+            direction="UP",
+            lead_time_min=60,
+            confidence=0.24,
+            raw_confidence=0.80,
+            calibration_multiplier=0.30,
+            entry_price=1.1000,
+            predicted_target_price=1.1020,
+            predicted_invalidation_price=1.0990,
+            resolution_window_min=window_min,
+            resolution_status=status,
+            resolved_at_utc=resolved_at.isoformat(),
+            resolution_evidence=(
+                "target touched before invalidation"
+                if status == "HIT"
+                else "invalidation touched before target"
+            ),
+            regime_at_emission="TREND",
+            cycle_id=cycle_id,
+        )
+
     def test_compute_hit_rates_per_pair_regime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
             entries = []
             # 3 HITs and 1 MISS for bb_squeeze on EUR_USD in TREND regime
-            for status in ["HIT", "HIT", "HIT", "MISS"]:
+            for index, status in enumerate(["HIT", "HIT", "HIT", "MISS"]):
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 5, 14, tzinfo=timezone.utc)
+                        + timedelta(minutes=index * 20)
+                    ).isoformat(),
                     pair="EUR_USD", signal_name="bb_squeeze", direction="EITHER",
                     lead_time_min=10, confidence=0.7,
                     entry_price=1.0, predicted_target_price=None,
@@ -2322,7 +2358,10 @@ class HitRatesTest(unittest.TestCase):
             entries = []
             for idx, status in enumerate(["HIT"] * 9 + ["MISS"] + ["TIMEOUT"] * 10):
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc=f"2026-05-14T00:{idx:02d}:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 5, 14, tzinfo=timezone.utc)
+                        + timedelta(minutes=idx * 20)
+                    ).isoformat(),
                     pair="EUR_USD",
                     signal_name="session_expansion_ny",
                     direction="EITHER",
@@ -2341,7 +2380,10 @@ class HitRatesTest(unittest.TestCase):
                     cycle_id=f"cycle-{idx}",
                 ))
             entries.append(LedgerEntry(
-                timestamp_emitted_utc="2026-05-14T02:00:00Z",
+                timestamp_emitted_utc=(
+                    datetime(2026, 5, 14, tzinfo=timezone.utc)
+                    + timedelta(minutes=20 * 20)
+                ).isoformat(),
                 pair="EUR_USD",
                 signal_name="session_expansion_ny",
                 direction="EITHER",
@@ -2373,9 +2415,13 @@ class HitRatesTest(unittest.TestCase):
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
 
+            statuses = ["HIT", "HIT", "MISS", "HIT"]
             entries = [
                 LedgerEntry(
-                    timestamp_emitted_utc="2026-06-16T00:00:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 6, 16, tzinfo=timezone.utc)
+                        + timedelta(minutes=index * 120)
+                    ).isoformat(),
                     pair="EUR_USD",
                     signal_name="directional_forecast",
                     direction="RANGE",
@@ -2391,7 +2437,7 @@ class HitRatesTest(unittest.TestCase):
                     resolution_status=status,
                     regime_at_emission="RANGE",
                 )
-                for status in ["HIT", "HIT", "MISS", "HIT"]
+                for index, status in enumerate(statuses)
             ]
             write_ledger(entries, root)
 
@@ -2415,8 +2461,12 @@ class HitRatesTest(unittest.TestCase):
             from quant_rabbit.strategy.projection_ledger import write_ledger
 
             def entry(status: str, cycle_id: str) -> LedgerEntry:
+                minute = 0 if cycle_id == "cycle-1" else 20
                 return LedgerEntry(
-                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 5, 14, tzinfo=timezone.utc)
+                        + timedelta(minutes=minute)
+                    ).isoformat(),
                     pair="EUR_USD",
                     signal_name="bb_squeeze",
                     direction="EITHER",
@@ -2451,6 +2501,138 @@ class HitRatesTest(unittest.TestCase):
             self.assertEqual(second["bb_squeeze"]["EUR_USD:TREND"]["samples"], 1)
             self.assertEqual(third["bb_squeeze"]["EUR_USD:TREND"]["samples"], 2)
             self.assertAlmostEqual(third["bb_squeeze"]["EUR_USD:TREND"]["hit_rate"], 0.5)
+
+    def test_as_of_excludes_future_emissions_before_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            as_of = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+            observed = self._point_in_time_directional_trial(
+                emitted_at=as_of - timedelta(hours=2),
+                resolved_at=as_of - timedelta(hours=1),
+                status="MISS",
+                cycle_id="observed-miss",
+            )
+            future = self._point_in_time_directional_trial(
+                emitted_at=as_of + timedelta(minutes=1),
+                resolved_at=as_of + timedelta(hours=1, minutes=1),
+                status="HIT",
+                cycle_id="future-hit",
+            )
+            write_ledger([observed, future], root)
+
+            bucket = compute_hit_rates(root, as_of=as_of)[
+                "directional_forecast_up"
+            ]["EUR_USD:TREND"]
+
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 0.0)
+
+    def test_as_of_requires_resolution_and_full_window_to_be_observable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            as_of = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+            base = as_of - timedelta(hours=4)
+            eligible = self._point_in_time_directional_trial(
+                emitted_at=base,
+                resolved_at=base + timedelta(hours=1),
+                status="MISS",
+                cycle_id="eligible-miss",
+            )
+            resolved_in_future = self._point_in_time_directional_trial(
+                emitted_at=base + timedelta(hours=1),
+                resolved_at=as_of + timedelta(seconds=1),
+                status="HIT",
+                cycle_id="future-resolution-hit",
+            )
+            incomplete_window = self._point_in_time_directional_trial(
+                emitted_at=as_of - timedelta(minutes=30),
+                resolved_at=as_of - timedelta(minutes=1),
+                status="HIT",
+                cycle_id="incomplete-window-hit",
+            )
+            prematurely_resolved = self._point_in_time_directional_trial(
+                emitted_at=base + timedelta(hours=2),
+                resolved_at=base + timedelta(hours=2, minutes=30),
+                status="HIT",
+                cycle_id="premature-resolution-hit",
+            )
+            write_ledger(
+                [
+                    eligible,
+                    resolved_in_future,
+                    incomplete_window,
+                    prematurely_resolved,
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root, as_of=as_of)[
+                "directional_forecast_up"
+            ]["EUR_USD:TREND"]
+
+            self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["hit_rate"], 0.0)
+
+    def test_as_of_boundary_recomputes_without_ledger_stat_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            emitted_at = datetime(2026, 7, 13, 10, tzinfo=timezone.utc)
+            resolved_at = emitted_at + timedelta(hours=1)
+            write_ledger(
+                [
+                    self._point_in_time_directional_trial(
+                        emitted_at=emitted_at,
+                        resolved_at=resolved_at,
+                        status="HIT",
+                        cycle_id="boundary-hit",
+                    )
+                ],
+                root,
+            )
+            ledger_stat = (root / "projection_ledger.jsonl").stat()
+
+            before = compute_hit_rates(
+                root,
+                as_of=resolved_at - timedelta(microseconds=1),
+            )
+            at_boundary = compute_hit_rates(root, as_of=resolved_at)
+            after_stat = (root / "projection_ledger.jsonl").stat()
+
+            self.assertNotIn("directional_forecast_up", before)
+            self.assertEqual(
+                at_boundary["directional_forecast_up"]["EUR_USD:TREND"]["samples"],
+                1,
+            )
+            self.assertEqual(ledger_stat.st_size, after_stat.st_size)
+            self.assertEqual(ledger_stat.st_mtime_ns, after_stat.st_mtime_ns)
+
+    def test_strict_snapshot_reports_non_object_and_core_invalid_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "projection_ledger.jsonl").write_text(
+                "[]\n{}\n",
+                encoding="utf-8",
+            )
+
+            result = compute_hit_rates(
+                root,
+                as_of=datetime(2026, 7, 13, tzinfo=timezone.utc),
+                include_parse_integrity=True,
+            )
+
+            self.assertIsInstance(result, tuple)
+            hit_rates, parse_integrity = result
+            self.assertEqual(hit_rates, {})
+            self.assertEqual(parse_integrity["status"], "INVALID")
+            self.assertEqual(parse_integrity["non_object_rows"], 1)
+            self.assertEqual(parse_integrity["unloadable_object_rows"], 1)
+            self.assertEqual(parse_integrity["invalid_nonblank_rows"], 2)
 
     def test_compute_hit_rates_dedupes_historical_cycle_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2503,9 +2685,9 @@ class HitRatesTest(unittest.TestCase):
             from quant_rabbit.strategy.projection_ledger import write_ledger
             entries = []
             # TREND: 4 HITs
-            for _ in range(4):
+            for index in range(4):
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    timestamp_emitted_utc=f"2026-05-14T0{index // 3}:{(index * 20) % 60:02d}:00Z",
                     pair="EUR_USD", signal_name="sig_x", direction="UP",
                     lead_time_min=10, confidence=0.7,
                     entry_price=1.0, predicted_target_price=None,
@@ -2513,9 +2695,13 @@ class HitRatesTest(unittest.TestCase):
                     regime_at_emission="TREND",
                 ))
             # RANGE: 4 MISSes
-            for _ in range(4):
+            for index in range(4):
+                minute = 80 + index * 20
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 5, 14, tzinfo=timezone.utc)
+                        + timedelta(minutes=minute)
+                    ).isoformat(),
                     pair="EUR_USD", signal_name="sig_x", direction="UP",
                     lead_time_min=10, confidence=0.7,
                     entry_price=1.0, predicted_target_price=None,
@@ -2527,6 +2713,223 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:TREND"]["hit_rate"], 1.0)
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:RANGE"]["hit_rate"], 0.0)
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:_all_regimes"]["hit_rate"], 0.5)
+
+    def test_no_cycle_detector_rows_use_outcome_blind_non_overlap_trials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 5, 14, tzinfo=timezone.utc)
+
+            def trial(*, second: int, status: str, regime: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(seconds=second)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="liquidity_sweep_low",
+                    direction="DOWN",
+                    lead_time_min=15,
+                    confidence=0.9,
+                    entry_price=1.17087,
+                    predicted_target_price=1.17085,
+                    resolution_window_min=30,
+                    resolution_status=status,
+                    regime_at_emission=regime,
+                )
+
+            entries = [
+                trial(second=index, status="HIT", regime="TREND")
+                for index in range(100)
+            ]
+            entries.append(
+                trial(second=30 * 60, status="MISS", regime="UNCLEAR")
+            )
+            write_ledger(entries, root)
+
+            hit_rates = compute_hit_rates(root)
+            all_regimes = hit_rates["liquidity_sweep_low_down"][
+                "EUR_USD:_all_regimes"
+            ]
+
+            self.assertEqual(all_regimes["samples"], 2)
+            self.assertEqual(all_regimes["hit_rate"], 0.5)
+            self.assertEqual(
+                hit_rates["liquidity_sweep_low_down"]["EUR_USD:TREND"]["samples"],
+                1,
+            )
+            self.assertEqual(
+                hit_rates["liquidity_sweep_low_down"]["EUR_USD:UNCLEAR"]["samples"],
+                1,
+            )
+
+    def test_pending_cycle_trial_owns_window_before_outcome_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 5, 14, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                minute: int,
+                status: str,
+                regime: str,
+                cycle_id: str,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="liquidity_sweep_low",
+                    direction="DOWN",
+                    lead_time_min=15,
+                    confidence=0.9,
+                    entry_price=1.17087,
+                    predicted_target_price=1.17085,
+                    resolution_window_min=30,
+                    resolution_status=status,
+                    regime_at_emission=regime,
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=0,
+                        status="PENDING",
+                        regime="UNCLEAR",
+                        cycle_id="pending-owner",
+                    ),
+                    trial(
+                        minute=5,
+                        status="HIT",
+                        regime="TREND",
+                        cycle_id="overlapping-hit",
+                    ),
+                    trial(
+                        minute=30,
+                        status="MISS",
+                        regime="TREND",
+                        cycle_id="boundary-miss",
+                    ),
+                ],
+                root,
+            )
+
+            hit_rates = compute_hit_rates(root)
+
+            self.assertNotIn("EUR_USD:UNCLEAR", hit_rates["liquidity_sweep_low_down"])
+            self.assertEqual(
+                hit_rates["liquidity_sweep_low_down"]["EUR_USD:TREND"]["samples"],
+                1,
+            )
+            self.assertEqual(
+                hit_rates["liquidity_sweep_low_down"]["EUR_USD:TREND"]["hit_rate"],
+                0.0,
+            )
+
+    def test_cycle_rows_with_distinct_targets_share_one_non_overlap_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 5, 14, tzinfo=timezone.utc)
+
+            def trial(
+                *,
+                minute: int,
+                status: str,
+                cycle_id: str,
+                target: float,
+            ) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(minutes=minute)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="liquidity_sweep_low",
+                    direction="DOWN",
+                    lead_time_min=15,
+                    confidence=0.9,
+                    entry_price=1.17087,
+                    predicted_target_price=target,
+                    resolution_window_min=30,
+                    resolution_status=status,
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(
+                        minute=0,
+                        status="HIT",
+                        cycle_id="same-cycle",
+                        target=1.17085,
+                    ),
+                    # Exact-cycle dedupe intentionally keeps a distinct target,
+                    # but the shared truth window must still suppress it.
+                    trial(
+                        minute=0,
+                        status="HIT",
+                        cycle_id="same-cycle",
+                        target=1.17080,
+                    ),
+                    trial(
+                        minute=5,
+                        status="HIT",
+                        cycle_id="different-cycle-same-window",
+                        target=1.17075,
+                    ),
+                    trial(
+                        minute=30,
+                        status="MISS",
+                        cycle_id="boundary-cycle",
+                        target=1.17070,
+                    ),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["liquidity_sweep_low_down"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(bucket["samples"], 2)
+            self.assertEqual(bucket["hit_rate"], 0.5)
+
+    def test_generic_window_over_24_hours_remains_a_valid_trial_clock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            base = datetime(2026, 5, 14, tzinfo=timezone.utc)
+
+            def trial(*, hour: int, status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(base + timedelta(hours=hour)).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="macro_event_nowcast_consumption",
+                    direction="UP",
+                    lead_time_min=24 * 60,
+                    confidence=0.8,
+                    entry_price=1.17,
+                    predicted_target_price=None,
+                    resolution_window_min=48 * 60,
+                    resolution_status=status,
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger(
+                [
+                    trial(hour=0, status="HIT", cycle_id="long-window-owner"),
+                    trial(hour=24, status="HIT", cycle_id="inside-long-window"),
+                    trial(hour=48, status="MISS", cycle_id="long-window-boundary"),
+                ],
+                root,
+            )
+
+            bucket = compute_hit_rates(root)["macro_event_nowcast_consumption"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(bucket["samples"], 2)
+            self.assertEqual(bucket["hit_rate"], 0.5)
 
     def test_directional_forecast_hit_rates_are_split_by_direction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2567,7 +2970,10 @@ class HitRatesTest(unittest.TestCase):
                     else "target 1.10200 touched before invalidation 1.09900"
                 )
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc=f"2026-06-16T00:0{index}:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 6, 16, tzinfo=timezone.utc)
+                        + timedelta(hours=index)
+                    ).isoformat(),
                     pair="EUR_USD",
                     signal_name="directional_forecast",
                     direction="UP",
@@ -3258,7 +3664,7 @@ class HitRatesTest(unittest.TestCase):
             self.assertEqual(bucket["samples"], 1)
             self.assertEqual(bucket["hit_rate"], 0.0)
 
-    def test_mixed_legacy_slots_stay_fixed_while_new_rows_are_chronologized(self) -> None:
+    def test_mixed_legacy_and_new_rows_share_chronological_lookback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
@@ -3329,9 +3735,9 @@ class HitRatesTest(unittest.TestCase):
                 "EUR_USD:TREND"
             ]
             self.assertEqual(bucket["samples"], 2)
-            self.assertEqual(bucket["hit_rate"], 1.0)
+            self.assertEqual(bucket["hit_rate"], 0.5)
 
-    def test_legacy_and_non_directional_lookback_remain_source_ordered(self) -> None:
+    def test_legacy_and_non_directional_backfills_use_emission_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
@@ -3401,9 +3807,9 @@ class HitRatesTest(unittest.TestCase):
             hit_rates = compute_hit_rates(root, lookback=1)
             self.assertEqual(
                 hit_rates["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"],
-                0.0,
+                1.0,
             )
-            self.assertEqual(hit_rates["sig_x"]["EUR_USD:TREND"]["hit_rate"], 0.0)
+            self.assertEqual(hit_rates["sig_x"]["EUR_USD:TREND"]["hit_rate"], 1.0)
 
     def test_invalid_or_partial_raw_schema_never_falls_back_to_legacy_confidence(self) -> None:
         base_payload = {
@@ -3738,7 +4144,10 @@ class HitRatesTest(unittest.TestCase):
             for index in range(12):
                 entries.append(
                     LedgerEntry(
-                        timestamp_emitted_utc=f"2026-06-16T00:{index:02d}:00Z",
+                        timestamp_emitted_utc=(
+                            datetime(2026, 6, 16, tzinfo=timezone.utc)
+                            + timedelta(hours=index)
+                        ).isoformat(),
                         pair="EUR_USD",
                         signal_name="directional_forecast",
                         direction="UP",
@@ -3757,7 +4166,10 @@ class HitRatesTest(unittest.TestCase):
             for index in range(4):
                 entries.append(
                     LedgerEntry(
-                        timestamp_emitted_utc=f"2026-06-16T01:{index:02d}:00Z",
+                        timestamp_emitted_utc=(
+                            datetime(2026, 6, 16, tzinfo=timezone.utc)
+                            + timedelta(hours=12 + index)
+                        ).isoformat(),
                         pair="EUR_USD",
                         signal_name="directional_forecast",
                         direction="UP",
@@ -3792,7 +4204,10 @@ class HitRatesTest(unittest.TestCase):
             for index in range(12):
                 entries.append(
                     LedgerEntry(
-                        timestamp_emitted_utc=f"2026-06-16T00:{index:02d}:00Z",
+                        timestamp_emitted_utc=(
+                            datetime(2026, 6, 16, tzinfo=timezone.utc)
+                            + timedelta(hours=index)
+                        ).isoformat(),
                         pair="EUR_USD",
                         signal_name="directional_forecast",
                         direction="UP",
@@ -3811,7 +4226,10 @@ class HitRatesTest(unittest.TestCase):
             for index in range(4):
                 entries.append(
                     LedgerEntry(
-                        timestamp_emitted_utc=f"2026-06-16T01:{index:02d}:00Z",
+                        timestamp_emitted_utc=(
+                            datetime(2026, 6, 16, tzinfo=timezone.utc)
+                            + timedelta(hours=12 + index)
+                        ).isoformat(),
                         pair="EUR_USD",
                         signal_name="directional_forecast",
                         direction="UP",
@@ -3862,7 +4280,7 @@ class HitRatesTest(unittest.TestCase):
                     cycle_id="cycle-no-touch",
                 ),
                 LedgerEntry(
-                    timestamp_emitted_utc="2026-06-16T00:01:00Z",
+                    timestamp_emitted_utc="2026-06-16T01:00:00Z",
                     pair="EUR_USD",
                     signal_name="directional_forecast",
                     direction="UP",
@@ -3897,7 +4315,10 @@ class HitRatesTest(unittest.TestCase):
 
             entries = [
                 LedgerEntry(
-                    timestamp_emitted_utc=f"2026-06-16T00:{idx:02d}:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 6, 16, tzinfo=timezone.utc)
+                        + timedelta(hours=idx)
+                    ).isoformat(),
                     pair="EUR_CHF",
                     signal_name="directional_forecast",
                     direction="DOWN",
@@ -3941,7 +4362,10 @@ class HitRatesTest(unittest.TestCase):
             entries = []
             for idx in range(10):
                 entries.append(LedgerEntry(
-                    timestamp_emitted_utc=f"2026-05-14T00:{idx:02d}:00Z",
+                    timestamp_emitted_utc=(
+                        datetime(2026, 5, 14, tzinfo=timezone.utc)
+                        + timedelta(hours=idx)
+                    ).isoformat(),
                     pair="GBP_CHF",
                     signal_name="directional_forecast",
                     direction="DOWN",

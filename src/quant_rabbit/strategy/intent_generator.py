@@ -553,6 +553,13 @@ RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT = 0.5
 # by a box-derived fraction so geometry stays at the executable rail while the
 # spread/risk gates keep stressed markets blocked.
 RANGE_RAIL_ENTRY_BUFFER_BOX_MAX_FRACTION = 0.25
+# A market-context refresh can legitimately finish before or after the broker
+# snapshot used by intent generation, and the full multi-asset refresh plus
+# ledger reconciliation can take longer than the 20-second quote clock.  Keep
+# the RANGE watch-only veto reachable for one bounded chart cycle while still
+# rejecting old artifacts.  Twelve minutes matches the existing guardian chart
+# freshness contract; this evidence can veto but never grant permission alone.
+RANGE_WATCH_MATRIX_MAX_AGE_SECONDS = 12 * 60
 # Range-rail TP must clear the RiskEngine spread floor again at broker-send
 # time, after quote refresh. The floor therefore needs a generator-side cushion
 # for ordinary spread flicker; the live RiskEngine gate remains the authority.
@@ -5732,6 +5739,7 @@ class IntentGenerator:
             loss_asymmetry_guard=loss_asymmetry_guard,
             exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
             exact_vehicle_net_metrics=exact_vehicle_net_metrics,
+            validation_time_utc=validation_time_utc,
         )
         risk_policy = RiskPolicy(
             block_new_entries_with_pending_entry_orders=False,
@@ -6687,8 +6695,6 @@ OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE = (
 )
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
-LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
-LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE = "OANDA_CAMPAIGN_FIREPOWER_RELAXED"
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 # OANDA firepower vehicle keys encode their validated exit geometry as
 # `tpX_slY`. Current intent geometry may be rounded to broker ticks and
@@ -6981,262 +6987,6 @@ def _loss_asymmetry_tp_proof_collection_min_lot_plan(
         out["positive_rotation_proof_collection_direction_bias_conflict_observed"] = True
         out["positive_rotation_direction_bias"] = evidence["direction_bias"]
     return effective, out
-
-
-def _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
-    *,
-    lane: dict[str, Any],
-    metadata: dict[str, Any],
-    pair: str,
-    side: Side,
-    method: TradeMethod,
-    order_type: OrderType,
-    position_metadata: dict[str, Any],
-    tp_execution_metadata: dict[str, Any],
-    entry: float,
-    tp: float,
-    sl: float,
-    snapshot: BrokerSnapshot,
-    data_root: Path | None,
-) -> tuple[float | None, dict[str, Any]]:
-    """Let audited OANDA firepower seeds reach the production lot floor.
-
-    This mirrors the thin exact-TP proof collection path, but only for matching
-    high-precision OANDA firepower vehicles. It never raises risk above the
-    normal equity-derived per-trade cap and does not grant live permission.
-    """
-
-    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "CAP_AVG_WIN":
-        return None, {}
-    if lane.get("oanda_campaign_firepower_seed") is not True:
-        return None, {}
-    if order_type == OrderType.MARKET:
-        return None, {}
-    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
-        return None, {}
-    if tp_execution_metadata.get("attach_take_profit_on_fill") is not True:
-        return None, {}
-    if str(tp_execution_metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return None, {}
-    if str(tp_execution_metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return None, {}
-    if str(tp_execution_metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return None, {}
-    current_cap = _optional_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
-    normal_cap = _optional_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
-    min_lot_loss = _min_lot_loss_budget_jpy(pair=pair, entry=entry, sl=sl, snapshot=snapshot)
-    if current_cap is None or normal_cap is None or min_lot_loss is None:
-        return None, {}
-    oanda_firepower = _oanda_campaign_firepower_evidence_for_values(
-        pair=pair,
-        side=side,
-        method=method,
-        current_reward_risk=_geometry_reward_risk(entry=entry, tp=tp, sl=sl),
-        allowed_vehicle_keys=_oanda_campaign_source_vehicle_keys(lane),
-        allowed_exit_shapes=_oanda_campaign_source_exit_shapes(lane),
-        data_root=data_root,
-    )
-    if oanda_firepower is None:
-        return None, {}
-    if oanda_firepower["vehicle_match"] is not True:
-        return None, {}
-    if oanda_firepower["minimum_floor_reachable"] is not True:
-        return None, {}
-    matching_return = _optional_float(
-        oanda_firepower.get("matching_vehicle_estimated_return_pct_per_active_day")
-    )
-    if matching_return is None or matching_return <= 0:
-        return None, {}
-    normal_cap_units = _risk_budgeted_units(
-        pair,
-        entry,
-        sl,
-        max_loss_jpy=normal_cap,
-        snapshot=snapshot,
-        side=side,
-        position_intent=str(position_metadata.get("position_intent") or ""),
-        loss_budget_target=True,
-    )
-    normal_cap_risk = _loss_budget_for_units_jpy(
-        pair=pair,
-        entry=entry,
-        sl=sl,
-        units=normal_cap_units,
-        snapshot=snapshot,
-    )
-    normal_cap_firepower = _oanda_campaign_normal_cap_firepower_reach_plan(
-        oanda_firepower,
-        risk_jpy=normal_cap_risk,
-        data_root=data_root,
-    )
-    if (
-        normal_cap_units >= MIN_PRODUCTION_LOT_UNITS
-        and normal_cap_risk is not None
-        and normal_cap_risk > current_cap
-        and normal_cap_firepower is not None
-        and normal_cap_firepower.get("minimum_floor_reachable") is True
-    ):
-        out = {
-            "loss_asymmetry_guard_mode": (
-                LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
-            ),
-            "loss_asymmetry_guard_relaxed": True,
-            "loss_asymmetry_guard_relaxation_reason": (
-                "matching OANDA high-precision non-market attached-TP HARVEST "
-                "firepower vehicle has enough aggregate current-risk firepower to "
-                "cover the remaining 5% floor inside today's target trade pace; "
-                "use the normal equity-derived per-trade cap while keeping all "
-                "forecast, spread, strategy, broker-truth, and gateway gates active"
-            ),
-            "loss_asymmetry_guard_effective_max_loss_jpy": round(normal_cap, 4),
-            "positive_rotation_oanda_campaign_normal_cap_relaxed": True,
-            "positive_rotation_oanda_campaign_original_cap_jpy": round(current_cap, 4),
-            "positive_rotation_oanda_campaign_normal_cap_jpy": round(normal_cap, 4),
-            "positive_rotation_oanda_campaign_normal_cap_units": int(normal_cap_units),
-            "positive_rotation_oanda_campaign_normal_cap_risk_jpy": round(
-                normal_cap_risk, 4
-            ),
-        }
-        out.update(normal_cap_firepower)
-        _annotate_oanda_campaign_firepower_metadata(out, oanda_firepower)
-        return normal_cap, out
-    if min_lot_loss <= current_cap or min_lot_loss > normal_cap:
-        return None, {}
-    effective = math.ceil(min_lot_loss * 10_000.0) / 10_000.0
-    out: dict[str, Any] = {
-        "loss_asymmetry_guard_mode": LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
-        "loss_asymmetry_guard_relaxed": False,
-        "loss_asymmetry_guard_relaxation_reason": (
-            "matching OANDA high-precision non-market attached-TP HARVEST firepower "
-            "vehicle cannot fund production lot under the average-winner cap; lift "
-            "only to the minimum lot loss budget inside the normal per-trade cap"
-        ),
-        "loss_asymmetry_guard_effective_max_loss_jpy": round(effective, 4),
-        "positive_rotation_oanda_campaign_min_lot_sizing": True,
-        "positive_rotation_oanda_campaign_min_lot_units": MIN_PRODUCTION_LOT_UNITS,
-        "positive_rotation_oanda_campaign_min_lot_loss_jpy": round(effective, 4),
-        "positive_rotation_oanda_campaign_original_cap_jpy": round(current_cap, 4),
-        "positive_rotation_oanda_campaign_normal_cap_jpy": round(normal_cap, 4),
-    }
-    _annotate_oanda_campaign_firepower_metadata(out, oanda_firepower)
-    return effective, out
-
-
-def _loss_budget_for_units_jpy(
-    *,
-    pair: str,
-    entry: float,
-    sl: float,
-    units: int,
-    snapshot: BrokerSnapshot,
-) -> float | None:
-    if units <= 0:
-        return None
-    pip_factor = PIP_FACTORS[pair]
-    stop_pips = abs(entry - sl) * pip_factor
-    if stop_pips <= 0:
-        return None
-    quote_to_jpy = _quote_to_jpy(pair, snapshot)
-    if quote_to_jpy is None:
-        return None
-    return abs(units) * stop_pips * quote_to_jpy / pip_factor
-
-
-def _oanda_campaign_normal_cap_firepower_reach_plan(
-    oanda_firepower: dict[str, Any],
-    *,
-    risk_jpy: float | None,
-    data_root: Path | None,
-) -> dict[str, Any] | None:
-    """Return current-risk firepower metrics for a normal-cap OANDA repair.
-
-    The OANDA artifact is audit-only, so this does not grant live permission.
-    It only answers whether relaxing the loss-asymmetry cap back to the normal
-    equity-derived per-trade cap gives the verified high-precision route enough
-    aggregate firepower to cover the remaining 5% floor inside today's target
-    trade pace.
-    """
-
-    if risk_jpy is None or risk_jpy <= 0:
-        return None
-    root = data_root or (ROOT / "data")
-    path = root / "daily_target_state.json"
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    start_balance = _optional_float(payload.get("start_balance_jpy"))
-    remaining_minimum_raw = _optional_float(payload.get("remaining_minimum_jpy"))
-    if remaining_minimum_raw is None:
-        return None
-    remaining_minimum = max(0.0, remaining_minimum_raw)
-    target_trades = int(_optional_float(payload.get("target_trades_per_day")) or 0)
-    lens_pct = _optional_float(oanda_firepower.get("per_trade_risk_pct_lens"))
-    weighted_return = _optional_float(
-        oanda_firepower.get("high_precision_weighted_return_pct_per_trade_at_risk_lens")
-    )
-    observed_attempts = _optional_float(
-        oanda_firepower.get("high_precision_observed_attempts_per_active_day")
-    )
-    unique_vehicles = int(
-        _optional_float(oanda_firepower.get("high_precision_unique_vehicle_count")) or 0
-    )
-    if (
-        start_balance is None
-        or start_balance <= 0
-        or target_trades <= 0
-        or lens_pct is None
-        or lens_pct <= 0
-        or weighted_return is None
-        or weighted_return <= 0
-        or unique_vehicles <= 0
-    ):
-        return None
-    current_risk_pct = risk_jpy / start_balance * 100.0
-    risk_scale = current_risk_pct / lens_pct
-    weighted_current = weighted_return * risk_scale
-    remaining_minimum_pct = remaining_minimum / start_balance * 100.0
-    required_minimum_trades = (
-        math.ceil(remaining_minimum_pct / weighted_current)
-        if remaining_minimum_pct > 0 and weighted_current > 0
-        else 0
-    )
-    observed_attempts_floor = int(math.floor(observed_attempts or 0.0))
-    minimum_floor_reachable = (
-        required_minimum_trades == 0
-        or (
-            required_minimum_trades <= target_trades
-            and required_minimum_trades <= observed_attempts_floor
-        )
-    )
-    return {
-        "positive_rotation_oanda_campaign_normal_cap_current_risk_pct": round(
-            current_risk_pct, 6
-        ),
-        "positive_rotation_oanda_campaign_normal_cap_risk_scale": round(risk_scale, 6),
-        "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade": round(
-            weighted_current, 6
-        ),
-        "positive_rotation_oanda_campaign_normal_cap_remaining_minimum_pct": round(
-            remaining_minimum_pct, 6
-        ),
-        "positive_rotation_oanda_campaign_normal_cap_required_minimum_trades": (
-            required_minimum_trades
-        ),
-        "positive_rotation_oanda_campaign_normal_cap_target_trades_per_day": target_trades,
-        "positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day": (
-            round(observed_attempts, 6) if observed_attempts is not None else None
-        ),
-        "positive_rotation_oanda_campaign_normal_cap_unique_vehicles": unique_vehicles,
-        "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable": (
-            minimum_floor_reachable
-        ),
-        "minimum_floor_reachable": minimum_floor_reachable,
-    }
 
 
 def _loss_asymmetry_tp_relaxation(
@@ -8686,68 +8436,6 @@ def _oanda_campaign_firepower_live_repair_allowed(intent: OrderIntent) -> bool:
     return True
 
 
-def _oanda_campaign_firepower_live_grade_basis(
-    metadata: dict[str, Any],
-    current_firepower: dict[str, Any] | None,
-) -> str | None:
-    """Return the exact-shape firepower basis that may replace local TP proof."""
-
-    if current_firepower is None:
-        return None
-    if current_firepower.get("minimum_floor_reachable") is True:
-        return "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
-    if _oanda_campaign_normal_cap_current_risk_reaches_floor(metadata, current_firepower):
-        return "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
-    return None
-
-
-def _oanda_campaign_normal_cap_current_risk_reaches_floor(
-    metadata: dict[str, Any],
-    current_firepower: dict[str, Any],
-) -> bool:
-    if metadata.get("positive_rotation_oanda_campaign_normal_cap_relaxed") is not True:
-        return False
-    if (
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable")
-        is not True
-    ):
-        return False
-    normal_cap_risk = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_risk_jpy")
-    )
-    current_risk = _optional_float(current_firepower.get("current_risk_jpy"))
-    required_trades = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_required_minimum_trades")
-    )
-    target_trades = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_target_trades_per_day")
-    )
-    observed_attempts = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day")
-    )
-    weighted_return = _optional_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade")
-    )
-    if (
-        normal_cap_risk is None
-        or current_risk is None
-        or required_trades is None
-        or target_trades is None
-        or observed_attempts is None
-        or weighted_return is None
-        or weighted_return <= 0
-        or current_risk > normal_cap_risk + 1e-6
-    ):
-        return False
-    return (
-        required_trades == 0
-        or (
-            required_trades <= target_trades
-            and required_trades <= math.floor(observed_attempts)
-        )
-    )
-
-
 def _positive_rotation_daily_firepower_issue(
     intent: OrderIntent,
     *,
@@ -8779,15 +8467,6 @@ def _positive_rotation_daily_firepower_issue(
         if current_firepower is None:
             return None
         if current_firepower.get("minimum_floor_reachable") is not True:
-            if _oanda_campaign_normal_cap_current_risk_reaches_floor(
-                metadata,
-                current_firepower,
-            ):
-                metadata["positive_rotation_minimum_floor_reachable"] = True
-                metadata["positive_rotation_minimum_floor_reach_basis"] = (
-                    "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
-                )
-                return None
             current_risk_pct = _optional_float(current_firepower.get("current_risk_pct"))
             estimated_return_pct = _optional_float(
                 current_firepower.get("estimated_return_pct_per_active_day")
@@ -9001,36 +8680,7 @@ def _capture_positive_rotation_live_issue(
             metadata,
             data_root=data_root,
         )
-        live_grade_basis = _oanda_campaign_firepower_live_grade_basis(
-            metadata,
-            current_firepower,
-        )
         metadata["positive_rotation_mode"] = POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
-        if live_grade_basis is not None:
-            metadata["positive_rotation_live_ready"] = True
-            metadata["positive_rotation_oanda_campaign_audit_only"] = False
-            metadata["positive_rotation_oanda_campaign_live_permission"] = True
-            metadata["positive_rotation_oanda_campaign_local_tp_proof_required"] = False
-            metadata["positive_rotation_oanda_campaign_live_permission_reason"] = (
-                "exact non-market attached-TP HARVEST vehicle matches OANDA "
-                "campaign firepower and reaches the 5% floor after current-risk "
-                "or normal-cap scaling"
-            )
-            metadata["positive_rotation_minimum_floor_reachable"] = True
-            metadata["positive_rotation_minimum_floor_reach_basis"] = live_grade_basis
-            if current_firepower is not None and current_firepower.get("target_reachable") is True:
-                metadata["positive_rotation_target_reachable"] = True
-                metadata["positive_rotation_target_reach_basis"] = live_grade_basis
-            metadata["positive_rotation_basis"] = (
-                "capture_economics is negative overall and local broker-TP scope "
-                "is missing, but this non-market attached-TP HARVEST receipt "
-                "matches an OANDA campaign_firepower high-precision vehicle. "
-                "The vehicle remains exact-shape only, and the current-risk / "
-                "normal-cap firepower check proves the remaining 5% floor is "
-                "reachable without bypassing forecast, telemetry, spread, "
-                "strategy, guardian, broker-truth, or gateway gates."
-            )
-            return None
         metadata["positive_rotation_live_ready"] = False
         metadata["positive_rotation_oanda_campaign_audit_only"] = True
         metadata["positive_rotation_oanda_campaign_live_permission"] = False
@@ -9101,9 +8751,9 @@ def _capture_positive_rotation_live_issue(
                 "OANDA campaign firepower is not live-grade for this receipt yet; "
                 "under NEGATIVE_EXPECTANCY it may rank and size mining candidates, "
                 "but it cannot make a repair/live lane executable until this exact "
-                "HARVEST vehicle either has positive local TAKE_PROFIT_ORDER proof "
-                "or reaches the 5% floor through exact-shape OANDA bid/ask replay "
-                "after current-risk / normal-cap scaling."
+                "HARVEST vehicle has positive local TAKE_PROFIT_ORDER proof. "
+                "Current-risk, normal-cap, or OANDA bid/ask replay firepower is "
+                "capacity evidence only and cannot replace realized local payoff."
             ),
             "severity": "BLOCK",
         }
@@ -9155,6 +8805,7 @@ def _intent_from_lane(
     loss_asymmetry_guard: dict[str, Any] | None = None,
     exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
     exact_vehicle_net_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
+    validation_time_utc: datetime | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -9528,26 +9179,6 @@ def _intent_from_lane(
     if proof_collection_loss_cap is not None:
         effective_max_loss_jpy = proof_collection_loss_cap
         loss_asymmetry_metadata.update(proof_collection_metadata)
-    oanda_firepower_loss_cap, oanda_firepower_metadata = (
-        _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
-            lane=lane,
-            metadata={**loss_asymmetry_metadata, **tp_execution_metadata},
-            pair=pair,
-            side=side,
-            method=method,
-            order_type=order_type,
-            position_metadata=position_metadata,
-            tp_execution_metadata=tp_execution_metadata,
-            entry=entry,
-            tp=tp,
-            sl=sl,
-            snapshot=snapshot,
-            data_root=data_root,
-        )
-    )
-    if oanda_firepower_loss_cap is not None:
-        effective_max_loss_jpy = oanda_firepower_loss_cap
-        loss_asymmetry_metadata.update(oanda_firepower_metadata)
     predictive_scout_metadata = _predictive_scout_runtime_metadata(
         lane,
         snapshot=snapshot,
@@ -9657,12 +9288,14 @@ def _intent_from_lane(
             }
         )
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
+    matrix_metadata = matrix_summary_for_intent(market_context_matrix, pair, side.value)
     required_receipt, watch_override_reason = _forecast_watch_live_override_receipt(
         lane,
         side,
         order_type,
-        chart_context=chart_context,
+        chart_context={**(chart_context or {}), **matrix_metadata},
         geometry_metadata=geometry_metadata,
+        validation_time_utc=validation_time_utc,
     )
     event_blockers = list(lane.get("blockers") or [])
     if watch_override_reason:
@@ -9681,7 +9314,6 @@ def _intent_from_lane(
         regime_context = f"{method.value} campaign lane"
     location_story = str((chart_context or {}).get("market_location_story") or "")
     lane_story = " | ".join(str(item) for item in lane.get("story_examples", [])[:2])
-    matrix_metadata = matrix_summary_for_intent(market_context_matrix, pair, side.value)
     news_metadata = _intent_news_evidence_metadata(pair, data_root=data_root, source_metadata=lane)
     matrix_story = ""
     if matrix_metadata:
@@ -12301,6 +11933,7 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
 
 def _range_rail_limit_watch_only_can_trade(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
     return _range_rail_limit_watch_only_metadata_can_trade(
+        pair=intent.pair,
         side=intent.side,
         order_type=intent.order_type,
         metadata=metadata,
@@ -12309,9 +11942,11 @@ def _range_rail_limit_watch_only_can_trade(intent: OrderIntent, metadata: dict[s
 
 def _range_rail_limit_watch_only_metadata_can_trade(
     *,
+    pair: str,
     side: Side,
     order_type: OrderType,
     metadata: dict[str, Any],
+    validation_time_utc: datetime | None = None,
 ) -> bool:
     """Let measured RANGE rail LIMITs graduate past watch-only.
 
@@ -12320,7 +11955,9 @@ def _range_rail_limit_watch_only_metadata_can_trade(
     SL outside it is different: the broker order waits at the rail, so live
     permission should be decided by forecast confidence, range geometry, risk,
     strategy, spread, telemetry, and gateway validation rather than by the
-    auto-lane evidence counter alone.
+    auto-lane evidence counter alone. A fresh, exact pair/side matrix binding is
+    mandatory, and directional matrix counterevidence still wins when its
+    reject count strictly exceeds its support count.
     """
 
     if order_type != OrderType.LIMIT:
@@ -12328,6 +11965,37 @@ def _range_rail_limit_watch_only_metadata_can_trade(
     if not _is_range_rotation_forecast_metadata(metadata):
         return False
     if not _range_rotation_rail_side_matches_metadata(side=side, metadata=metadata):
+        return False
+    matrix_pair = str(metadata.get("market_context_matrix_pair") or "").strip()
+    matrix_side = str(metadata.get("market_context_matrix_side") or "").strip()
+    expected_pair = str(pair).strip().upper()
+    expected_ref = f"matrix:{expected_pair}:{side.value}"
+    if (
+        not expected_pair
+        or matrix_pair != expected_pair
+        or matrix_side != side.value
+        or str(metadata.get("market_context_matrix_ref") or "").strip() != expected_ref
+    ):
+        return False
+    matrix_support_count = metadata.get("matrix_support_count")
+    matrix_reject_count = metadata.get("matrix_reject_count")
+    if (
+        type(matrix_support_count) is not int
+        or type(matrix_reject_count) is not int
+        or matrix_support_count < 0
+        or matrix_reject_count < 0
+    ):
+        return False
+    matrix_generated_at = _parse_telemetry_time(
+        metadata.get("market_context_matrix_generated_at_utc")
+    )
+    validation_time = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
+    if matrix_generated_at is None:
+        return False
+    matrix_age_seconds = abs((validation_time - matrix_generated_at).total_seconds())
+    if matrix_age_seconds > RANGE_WATCH_MATRIX_MAX_AGE_SECONDS:
+        return False
+    if matrix_reject_count > matrix_support_count:
         return False
     confidence = _optional_float(metadata.get("forecast_confidence"))
     if confidence is None or confidence < _forecast_live_min_confidence(metadata):
@@ -12541,6 +12209,7 @@ def _forecast_watch_live_override_receipt(
     *,
     chart_context: dict[str, Any] | None,
     geometry_metadata: dict[str, Any] | None,
+    validation_time_utc: datetime | None = None,
 ) -> tuple[str, str | None]:
     original = str(lane.get("required_receipt") or "")
     if not bool(lane.get("forecast_watch_only")):
@@ -12557,9 +12226,11 @@ def _forecast_watch_live_override_receipt(
         }
     )
     if _range_rail_limit_watch_only_metadata_can_trade(
+        pair=str(lane.get("pair") or ""),
         side=side,
         order_type=order_type,
         metadata=source,
+        validation_time_utc=validation_time_utc,
     ):
         receipt = (
             "Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current "

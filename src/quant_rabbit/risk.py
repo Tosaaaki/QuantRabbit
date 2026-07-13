@@ -113,19 +113,9 @@ HEDGE_CONTINUATION_MAX_SCALE = 0.35
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
-LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
+# Public legacy receipt label retained for compatibility and forged-packet
+# regression coverage. It is deliberately not an accepted relaxation mode.
 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE = "OANDA_CAMPAIGN_FIREPOWER_RELAXED"
-POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
-SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
-OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
-    "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
-    "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
-}
-# Mirrors intent_generator's OANDA vehicle RR tolerance. This is a receipt
-# consistency bound, not a market-risk setting: RiskEngine rechecks replayed
-# receipts against the same audited vehicle geometry that generated them.
-OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE = 0.10
-OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE = 0.05
 CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
 SPREAD_FLOOR_COMPARISON_EPSILON_PIPS = 1e-6
 
@@ -362,13 +352,6 @@ def _range_countertrend_low_rr_issue(
         adverse_side = "LONG"
     if not (adverse_lean and adverse_regime):
         return None
-    oanda_tolerance_issue = _oanda_campaign_firepower_countertrend_rr_tolerance_issue(
-        intent,
-        metrics,
-        policy,
-    )
-    if oanda_tolerance_issue is not None:
-        return oanda_tolerance_issue
     return RiskIssue(
         "RANGE_COUNTERTREND_RR_TOO_LOW",
         f"{intent.pair} {intent.side.value} RANGE_ROTATION is counter to {adverse_side}-leaning "
@@ -400,96 +383,6 @@ def _range_countertrend_evidence_text(intent: OrderIntent) -> str:
         elif value is not None:
             parts.append(str(value))
     return " ".join(parts).upper()
-
-
-def _oanda_campaign_firepower_countertrend_rr_tolerance_issue(
-    intent: OrderIntent,
-    metrics: RiskMetrics,
-    policy: RiskPolicy,
-) -> RiskIssue | None:
-    """Downgrade one narrow OANDA HARVEST repair shape to WARN.
-
-    A RANGE rail fade can sit just below 1R after broker precision and attached
-    HARVEST TP anchoring, while still matching the audited OANDA campaign
-    vehicle that generated the repair lane. This is not a generic low-RR escape:
-    the receipt must prove non-market attached-TP HARVEST shape, range-box
-    geometry, P0 repair mode, current vehicle match, and matching-vehicle
-    positive active-day return. RiskEngine also recomputes the RR tolerance so
-    stale or hand-written metadata cannot turn a 0.6R fade into a live send.
-    """
-
-    metadata = intent.metadata or {}
-    if intent.order_type == OrderType.MARKET:
-        return None
-    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
-        return None
-    if metadata.get("attach_take_profit_on_fill") is not True:
-        return None
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return None
-    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return None
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return None
-    if str(metadata.get("positive_rotation_mode") or "") != POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE:
-        return None
-    if metadata.get("positive_rotation_live_ready") is not True:
-        return None
-    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
-        return None
-    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
-        return None
-    if metadata.get("self_improvement_p0_repair_live_ready") is not True:
-        return None
-    if (
-        str(metadata.get("self_improvement_p0_repair_mode") or "")
-        != SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
-    ):
-        return None
-    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
-        return None
-    if metadata.get("range_tp_is_inside_box") is not True:
-        return None
-    if metadata.get("range_sl_outside_box") is not True:
-        return None
-    entry_side = str(metadata.get("range_entry_side") or "").upper()
-    if intent.side == Side.LONG and entry_side != "SUPPORT":
-        return None
-    if intent.side == Side.SHORT and entry_side != "RESISTANCE":
-        return None
-    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
-    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
-        return None
-    matching_return = _to_float(
-        metadata.get(
-            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
-        )
-    )
-    if matching_return is None or matching_return <= 0.0:
-        return None
-    current_rr = _to_float(metadata.get("positive_rotation_oanda_campaign_current_reward_risk"))
-    if current_rr is None or not math.isclose(current_rr, metrics.reward_risk, abs_tol=1e-6):
-        return None
-    expected_rr = _to_float(
-        metadata.get("positive_rotation_oanda_campaign_matching_vehicle_expected_reward_risk")
-    )
-    if expected_rr is None or expected_rr < policy.technical_harvest_min_reward_risk:
-        return None
-    if metrics.reward_risk < policy.range_min_reward_risk:
-        return None
-    tolerance = max(
-        OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE,
-        abs(expected_rr) * OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE,
-    )
-    if expected_rr - metrics.reward_risk > tolerance + 1e-9:
-        return None
-    return RiskIssue(
-        "OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE",
-        f"{intent.pair} {intent.side.value} RANGE_ROTATION is countertrend, but the non-market "
-        f"attached-TP HARVEST repair receipt matches the audited OANDA vehicle within RR tolerance "
-        f"({metrics.reward_risk:.2f}x vs vehicle {expected_rr:.2f}x); keep all other live gates active.",
-        severity="WARN",
-    )
 
 
 def _uses_technical_harvest_reward_floor(intent: OrderIntent) -> bool:
@@ -735,14 +628,26 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
     """Block fresh entries whose planned loss exceeds the proven average winner.
 
     The guard activates only from machine-readable capture_economics metadata.
-    It is deliberately JPY-value-free: when recent realized exits are
-    NEGATIVE_EXPECTANCY and the average loss is larger than the average win,
-    the observed average winner becomes the temporary per-entry loss ceiling.
+    It is deliberately JPY-value-free: an explicit active guard or
+    NEGATIVE_EXPECTANCY status makes the observed average winner the temporary
+    per-entry loss ceiling for every ordinary, non-exempt fresh-risk shape.
     """
     metadata = intent.metadata or {}
     if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return []
     mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    active = _truthy_metadata(metadata.get("loss_asymmetry_guard_active"))
+    invalid_numeric_fields = _invalid_loss_asymmetry_numeric_fields(metadata)
+    if invalid_numeric_fields and (active or status == "NEGATIVE_EXPECTANCY" or mode):
+        return [
+            RiskIssue(
+                "LOSS_ASYMMETRY_GUARD_NONFINITE",
+                "loss-asymmetry metadata contains a non-finite or malformed numeric "
+                f"field ({', '.join(invalid_numeric_fields)}); refresh capture-economics "
+                "before adding fresh one-way risk.",
+            )
+        ]
     if _truthy_metadata(metadata.get("capture_economics_stale")) or mode == CAPTURE_ECONOMICS_STALE_BLOCK_CODE:
         generated_at = str(metadata.get("capture_economics_generated_at_utc") or "unknown")
         latest_close = str(metadata.get("capture_economics_latest_realized_ts_utc") or "unknown")
@@ -778,49 +683,38 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             )
         ):
             return []
-    if mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE:
-        proof_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
-        normal_cap = _to_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
-        original_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
-        if (
-            proof_cap is not None
-            and normal_cap is not None
-            and original_cap is not None
-            and original_cap < proof_cap <= normal_cap
-            and metrics.risk_jpy <= proof_cap + 1e-9
-            and _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
-                intent,
-                metadata,
-                metrics,
-            )
-        ):
-            return []
-    if (
-        mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
-        and _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(intent, metadata, metrics)
-    ):
-        return []
-    status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
     avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
-    active = _truthy_metadata(metadata.get("loss_asymmetry_guard_active"))
-    if not active and not (
-        status == "NEGATIVE_EXPECTANCY"
-        and avg_win is not None
-        and avg_win > 0
-        and avg_loss is not None
-        and avg_loss > avg_win
-    ):
+    guard_required = active or status == "NEGATIVE_EXPECTANCY"
+    if guard_required and (avg_win is None or avg_win <= 0):
+        return [
+            RiskIssue(
+                "LOSS_ASYMMETRY_GUARD_CAP_MISSING",
+                "ordinary fresh risk under an active loss-asymmetry guard or "
+                "NEGATIVE_EXPECTANCY requires a finite positive "
+                "capture_avg_win_jpy from realized local payoff evidence; a "
+                "declared, effective, or legacy OANDA firepower cap cannot "
+                "substitute. Refresh capture-economics before live send.",
+            )
+        ]
+    if not guard_required:
         return []
-    cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
-    if cap is None or cap <= 0:
-        cap = avg_win
+    declared_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    cap_candidates = [
+        value
+        for value in (declared_cap, avg_win)
+        if value is not None and value > 0
+    ]
+    # A receipt may lie about either its effective or declared cap. Under an
+    # active NEGATIVE_EXPECTANCY guard, the tighter positive value wins; OANDA
+    # firepower metadata can never widen the observed average-winner ceiling.
+    cap = min(cap_candidates) if cap_candidates else None
     if cap is None or cap <= 0:
         return [
             RiskIssue(
                 "LOSS_ASYMMETRY_GUARD_CAP_MISSING",
-                "loss-asymmetry guard is active but capture_avg_win_jpy / "
-                "loss_asymmetry_guard_loss_cap_jpy is missing; refresh capture-economics "
+                "loss-asymmetry guard is active but no finite positive local "
+                "average-winner cap is available; refresh capture-economics "
                 "before live send.",
             )
         ]
@@ -949,57 +843,6 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
     return pessimistic_expectancy > 0
 
 
-def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
-    intent: OrderIntent,
-    metadata: dict,
-    metrics: RiskMetrics,
-) -> bool:
-    """Validate OANDA firepower min-lot metadata before accepting the cap lift."""
-
-    if intent.order_type == OrderType.MARKET:
-        return False
-    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
-        return False
-    if metadata.get("attach_take_profit_on_fill") is not True:
-        return False
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return False
-    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_min_lot_sizing") is not True:
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
-        return False
-    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
-    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
-        return False
-    matching_return = _to_float(
-        metadata.get(
-            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
-        )
-    )
-    if matching_return is None or matching_return <= 0:
-        return False
-    min_lot_loss = _to_float(metadata.get("positive_rotation_oanda_campaign_min_lot_loss_jpy"))
-    effective_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
-    min_lot_units = _to_int(metadata.get("positive_rotation_oanda_campaign_min_lot_units"))
-    if min_lot_loss is None or effective_cap is None or min_lot_loss > effective_cap + 1e-9:
-        return False
-    if min_lot_units != MIN_PRODUCTION_LOT_UNITS:
-        return False
-    return _exact_min_lot_cap_lift_matches(
-        intent,
-        metadata,
-        metrics,
-        units_key="positive_rotation_oanda_campaign_min_lot_units",
-        loss_key="positive_rotation_oanda_campaign_min_lot_loss_jpy",
-    )
-
-
 def _exact_min_lot_cap_lift_matches(
     intent: OrderIntent,
     metadata: dict,
@@ -1047,89 +890,6 @@ def _exact_min_lot_cap_lift_matches(
             rel_tol=1e-6,
             abs_tol=1e-4,
         )
-    )
-
-
-def _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
-    intent: OrderIntent,
-    metadata: dict,
-    metrics: RiskMetrics,
-) -> bool:
-    """Validate OANDA firepower normal-cap relaxation metadata."""
-
-    if intent.order_type == OrderType.MARKET:
-        return False
-    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
-        return False
-    if metadata.get("attach_take_profit_on_fill") is not True:
-        return False
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return False
-    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_normal_cap_relaxed") is not True:
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
-        return False
-    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
-        return False
-    if (
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable")
-        is not True
-    ):
-        return False
-    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
-    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
-        return False
-    original_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
-    normal_cap = _to_float(metadata.get("positive_rotation_oanda_campaign_normal_cap_jpy"))
-    effective_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
-    if (
-        original_cap is None
-        or normal_cap is None
-        or effective_cap is None
-        or not (original_cap < effective_cap <= normal_cap)
-        or metrics.risk_jpy > effective_cap + 1e-9
-    ):
-        return False
-    required_trades = _to_int(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_required_minimum_trades")
-    )
-    target_trades = _to_int(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_target_trades_per_day")
-    )
-    observed_attempts = _to_float(
-        metadata.get("positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day")
-    )
-    if (
-        required_trades is None
-        or target_trades is None
-        or observed_attempts is None
-        or required_trades < 0
-    ):
-        return False
-    if required_trades > 0 and (
-        required_trades > target_trades
-        or required_trades > int(math.floor(observed_attempts))
-    ):
-        return False
-    matching_return = _to_float(
-        metadata.get(
-            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
-        )
-    )
-    weighted_return = _to_float(
-        metadata.get(
-            "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade"
-        )
-    )
-    return (
-        weighted_return is not None
-        and weighted_return > 0
-        and matching_return is not None
-        and matching_return > 0
     )
 
 
@@ -1261,9 +1021,33 @@ def _to_float(value) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _invalid_loss_asymmetry_numeric_fields(metadata: dict) -> list[str]:
+    invalid: list[str] = []
+    for key in (
+        "capture_avg_win_jpy",
+        "capture_avg_loss_jpy",
+        "loss_asymmetry_guard_loss_cap_jpy",
+    ):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            invalid.append(key)
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            invalid.append(key)
+            continue
+        if not math.isfinite(parsed):
+            invalid.append(key)
+    return invalid
 
 
 def _to_int(value) -> int | None:

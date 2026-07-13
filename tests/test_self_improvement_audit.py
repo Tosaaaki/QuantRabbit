@@ -26,6 +26,8 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_ACTION_REQUIRED,
     STATUS_BLOCKED,
     SelfImprovementAuditor,
+    _chronological_directional_calibration_rows,
+    _deduped_directional_calibration_rows,
     _effect_metrics,
     _directional_forecast_invalidation_first_like,
     _directional_forecast_no_touch_timeout_like,
@@ -40,6 +42,7 @@ from quant_rabbit.self_improvement_audit import (
     _report_perspective_alignment_text,
     _root_cause_focus,
     _select_independent_directional_calibration_rows,
+    _select_independent_legacy_directional_calibration_rows,
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
 )
@@ -2867,6 +2870,93 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(stats["raw_schema_selected_rows"], 1)
         self.assertEqual(stats["ex_ante_ineligible_raw_schema_rows_excluded"], 4)
 
+    def test_legacy_directional_hundred_overlaps_collapse_before_quality_audit(self) -> None:
+        base = _NOW - timedelta(hours=2)
+        rows: list[dict[str, object]] = []
+        for index in range(100):
+            rows.append(
+                {
+                    "timestamp_emitted_utc": (
+                        base + timedelta(seconds=index)
+                    ).isoformat(),
+                    "pair": "EUR_USD",
+                    "direction": "UP",
+                    "confidence": 0.80,
+                    "entry_price": 1.1700,
+                    "regime_at_emission": "TREND",
+                    "signal_name": "directional_forecast",
+                    "lead_time_min": 60.0,
+                    "predicted_target_price": 1.1720,
+                    "predicted_invalidation_price": 1.1680,
+                    "resolution_window_min": 60.0,
+                    "resolution_status": "PENDING" if index == 0 else "HIT",
+                    "resolution_evidence": (
+                        "" if index == 0 else "target touched before invalidation"
+                    ),
+                }
+            )
+
+        deduped = _deduped_directional_calibration_rows(rows)
+        selected, stats = (
+            _select_independent_legacy_directional_calibration_rows(deduped)
+        )
+
+        self.assertEqual(len(deduped), 100)
+        self.assertEqual(selected, [rows[0]])
+        self.assertEqual(stats["legacy_selected_rows"], 1)
+        self.assertEqual(stats["skipped_overlapping_legacy_rows"], 99)
+
+        codes = self._directional_audit_codes(rows)
+        finding = codes["DIRECTIONAL_FORECAST_INDEPENDENT_SAMPLE_SHORTFALL"]
+        evidence = finding["evidence"]
+        self.assertEqual(evidence["rows"], 100)
+        self.assertEqual(evidence["selected_trial_rows"], 1)
+        self.assertEqual(evidence["skipped_overlapping_legacy_rows"], 99)
+
+    def test_legacy_exact_dedupe_then_global_chronology_matches_projection_ledger(self) -> None:
+        base = _NOW - timedelta(hours=4)
+
+        def row(timestamp: datetime, *, status: str) -> dict[str, object]:
+            return {
+                "timestamp_emitted_utc": timestamp.isoformat(),
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.80,
+                "entry_price": 1.1700,
+                "regime_at_emission": "TREND",
+                "signal_name": "directional_forecast",
+                "lead_time_min": 60.0,
+                "predicted_target_price": 1.1720,
+                "predicted_invalidation_price": 1.1680,
+                "resolution_window_min": 60.0,
+                "resolution_status": status,
+                "resolution_evidence": "target touched before invalidation",
+            }
+
+        newer = row(base + timedelta(hours=2), status="MISS")
+        duplicate_old_pending = row(
+            base + timedelta(microseconds=100_000),
+            status="PENDING",
+        )
+        duplicate_old_resolved = row(
+            base + timedelta(microseconds=900_000),
+            status="HIT",
+        )
+        source = [newer, duplicate_old_pending, duplicate_old_resolved]
+
+        deduped = _deduped_directional_calibration_rows(source)
+        selected, stats = (
+            _select_independent_legacy_directional_calibration_rows(deduped)
+        )
+        chronological = _chronological_directional_calibration_rows(
+            selected,
+            source_index_by_id={id(item): index for index, item in enumerate(source)},
+        )
+
+        self.assertEqual(deduped, [newer, duplicate_old_resolved])
+        self.assertEqual(stats["legacy_selected_rows"], 2)
+        self.assertEqual(chronological, [duplicate_old_resolved, newer])
+
     def _directional_audit_codes(
         self,
         rows: list[dict[str, object]],
@@ -3525,8 +3615,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["samples"], 10)
         self.assertEqual(evidence["hit_count"], 0)
         self.assertAlmostEqual(evidence["hit_rate"], 0.0)
-        self.assertEqual(evidence["range_samples_excluded"], 20)
-        self.assertEqual(evidence["total_calibrated_samples"], 30)
+        # Legacy RANGE rows are emitted hourly with a two-hour truth window,
+        # so only the ten exact-boundary trials are independent.
+        self.assertEqual(evidence["range_samples_excluded"], 10)
+        self.assertEqual(evidence["skipped_overlapping_legacy_rows"], 10)
+        self.assertEqual(evidence["total_calibrated_samples"], 20)
 
     def test_directional_forecast_no_touch_misses_are_target_timeout_not_hit_rate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

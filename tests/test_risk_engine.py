@@ -26,6 +26,9 @@ from quant_rabbit.risk import (
     RiskPolicy,
     _guardian_tuning_override_issues,
 )
+from quant_rabbit.self_improvement_guards import (
+    oanda_firepower_repair_current_risk_reaches_minimum,
+)
 from tests.support_bidask_rules import (
     bidask_rules_env,
     write_bidask_replay_fixture_rules,
@@ -644,6 +647,62 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
+    def test_loss_asymmetry_guard_requires_positive_average_winner(self) -> None:
+        base_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="declared cap cannot replace missing realized average winner",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="ordinary entry remains under payoff repair",
+                chart_story="trend staircase",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+        )
+        activation_cases = (
+            {
+                "capture_economics_status": "POSITIVE_EXPECTANCY",
+                "loss_asymmetry_guard_active": True,
+            },
+            {
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "loss_asymmetry_guard_active": False,
+            },
+        )
+
+        for activation in activation_cases:
+            for average_winner in (None, 0.0, -1.0):
+                with self.subTest(
+                    activation=activation,
+                    average_winner=average_winner,
+                ):
+                    metadata = {
+                        **activation,
+                        "capture_avg_loss_jpy": 1100.0,
+                        # This positive declared cap used to substitute for a
+                        # deleted/nonpositive realized average winner.
+                        "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                    }
+                    if average_winner is not None:
+                        metadata["capture_avg_win_jpy"] = average_winner
+                    decision = _capped_engine(
+                        policy=RiskPolicy(max_loss_jpy=1000.0)
+                    ).validate(
+                        replace(base_intent, metadata=metadata),
+                        snapshot(),
+                    )
+
+                    self.assertFalse(decision.allowed)
+                    self.assertIn(
+                        "LOSS_ASYMMETRY_GUARD_CAP_MISSING",
+                        {issue.code for issue in decision.issues},
+                    )
+
     def test_tp_proven_relaxed_loss_asymmetry_uses_normal_loss_cap(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
@@ -785,7 +844,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
-    def test_oanda_firepower_min_lot_cap_lift_is_bound_to_exact_one_unit_receipt(self) -> None:
+    def test_oanda_firepower_min_lot_legacy_receipt_cannot_lift_even_one_unit(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.LONG,
@@ -832,8 +891,8 @@ class RiskEngineTest(unittest.TestCase):
             snapshot(),
         )
 
-        self.assertTrue(decision.allowed, decision.block_reasons)
-        self.assertNotIn(
+        self.assertFalse(decision.allowed)
+        self.assertIn(
             "LOSS_ASYMMETRY_GUARD_EXCEEDED",
             {issue.code for issue in decision.issues},
         )
@@ -935,7 +994,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
-    def test_oanda_firepower_relaxed_mode_allows_matching_normal_cap_shape(self) -> None:
+    def test_forged_oanda_firepower_relaxed_mode_cannot_bypass_avg_winner_cap(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.LONG,
@@ -960,7 +1019,10 @@ class RiskEngineTest(unittest.TestCase):
                 "loss_asymmetry_guard_mode": (
                     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
                 ),
-                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                # A forged legacy packet may claim both the declared and
+                # effective normal cap. RiskEngine must still bind the loss
+                # ceiling to the observed average winner.
+                "loss_asymmetry_guard_loss_cap_jpy": 1000.0,
                 "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
                 "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
@@ -991,10 +1053,83 @@ class RiskEngineTest(unittest.TestCase):
             snapshot(),
         )
 
-        self.assertTrue(decision.allowed)
-        self.assertNotIn(
+        self.assertFalse(decision.allowed)
+        self.assertIn(
             "LOSS_ASYMMETRY_GUARD_EXCEEDED",
             {issue.code for issue in decision.issues},
+        )
+
+    def test_loss_asymmetry_guard_rejects_nonfinite_forged_numeric_fields(self) -> None:
+        base_metadata = {
+            "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            "capture_avg_win_jpy": 600.0,
+            "capture_avg_loss_jpy": 1100.0,
+            "loss_asymmetry_guard_active": True,
+            "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_RELAXED",
+            "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=2000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="nonfinite capture metadata must fail closed",
+            market_context=MarketContext(
+                regime="RANGE current",
+                narrative="range lower rail",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses",
+            ),
+            metadata=base_metadata,
+        )
+
+        for field in (
+            "capture_avg_win_jpy",
+            "capture_avg_loss_jpy",
+            "loss_asymmetry_guard_loss_cap_jpy",
+        ):
+            for forged_value in (float("inf"), "1e309"):
+                with self.subTest(field=field, forged_value=forged_value):
+                    candidate = replace(
+                        intent,
+                        metadata={**base_metadata, field: forged_value},
+                    )
+                    decision = _capped_engine(
+                        policy=RiskPolicy(max_loss_jpy=1000.0)
+                    ).validate(candidate, snapshot())
+                    self.assertFalse(decision.allowed)
+                    self.assertIn(
+                        "LOSS_ASYMMETRY_GUARD_NONFINITE",
+                        {issue.code for issue in decision.issues},
+                    )
+
+    def test_oanda_firepower_cannot_exempt_profitability_p0_without_local_tp_proof(self) -> None:
+        metadata = {
+            "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+            "positive_rotation_live_ready": True,
+            "positive_rotation_minimum_floor_reachable": True,
+            "positive_rotation_minimum_floor_reach_basis": (
+                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
+            ),
+            "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": True,
+            "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable": True,
+            "positive_rotation_oanda_campaign_normal_cap_required_minimum_trades": 7,
+            "positive_rotation_oanda_campaign_normal_cap_target_trades_per_day": 10,
+            "positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day": 22.0,
+            "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade": 0.64,
+        }
+
+        self.assertFalse(
+            oanda_firepower_repair_current_risk_reaches_minimum(metadata)
+        )
+        self.assertTrue(
+            oanda_firepower_repair_current_risk_reaches_minimum(
+                {"positive_rotation_mode": "TP_PROVEN_HARVEST"}
+            )
         )
 
     def test_oanda_firepower_relaxed_mode_requires_matching_vehicle(self) -> None:
@@ -4484,7 +4619,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
         self.assertLess(decision.metrics.reward_risk, 1.0)
 
-    def test_oanda_firepower_range_countertrend_with_vehicle_rr_tolerance_warns(self) -> None:
+    def test_forged_oanda_firepower_cannot_downgrade_countertrend_rr_block(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,
@@ -4528,6 +4663,12 @@ class RiskEngineTest(unittest.TestCase):
                 "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": 1.2,
                 "self_improvement_p0_repair_live_ready": True,
                 "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_RELAXED",
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
                 "strongest_matrix_reject": "EUR_USD confluence score_balance=LONG_LEAN",
                 "strongest_matrix_warning": "EUR_USD dominant_regime=TREND_UP",
             },
@@ -4536,15 +4677,9 @@ class RiskEngineTest(unittest.TestCase):
         decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         codes = {issue.code for issue in decision.issues}
-        self.assertTrue(decision.allowed, decision.block_reasons)
-        self.assertNotIn("RANGE_COUNTERTREND_RR_TOO_LOW", codes)
-        self.assertIn("OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE", codes)
-        warn = next(
-            issue
-            for issue in decision.issues
-            if issue.code == "OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE"
-        )
-        self.assertEqual(warn.severity, "WARN")
+        self.assertFalse(decision.allowed)
+        self.assertIn("RANGE_COUNTERTREND_RR_TOO_LOW", codes)
+        self.assertNotIn("OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE", codes)
 
     def test_oanda_firepower_range_countertrend_outside_vehicle_rr_tolerance_blocks(self) -> None:
         intent = OrderIntent(

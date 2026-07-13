@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-13
+
+- Rebuilt legacy and non-directional projection calibration as outcome-blind independent trials: exact duplicates collapse first, the earliest `(pair, signal, direction)` row owns its full truth window even when unresolved, overlapping emissions no longer inflate hit rate, and all selected trials are ordered by emission time before lookback slicing. The self-improvement directional-quality audit now mirrors the same cohort instead of reporting the old inflated population.
+- Added a bounded, semantic, tamper-evident projection calibration scorecard to the GPT evidence packet. It uses only point-in-time independent `compute_hit_rates` results for the current selected/forced canonical directional forecast: future emissions are excluded before selection, resolution and the full truth window must both be observable by the packet clock, and any malformed/non-object/unloadable nonblank ledger row fails the scorecard closed. It exposes sample/economic/Wilson/timeout/invalidation metrics, parse-integrity diagnostics, and explicit fallback status, includes no raw ledger rows, and cannot upgrade a non-trade baseline or grant live permission.
+- Removed the remaining OANDA campaign-firepower loss-cap and countertrend-RR escapes across intent generation, RiskEngine, and LiveOrderGateway. Under negative expectancy, campaign replay is capacity evidence only; ordinary receipts now require a finite positive realized average winner at both RiskEngine and the attached-stop gateway, so deleting or replacing it with a declared/legacy cap fails closed, while the exact local TP proof-collection path remains available. The attached-stop sizing boundary now preserves the existing HEDGE exemption instead of silently shrinking protection orders with the ordinary fresh-risk cap.
+- Bound RANGE-rail watch-only decisions to a fresh, exact pair/side-scoped market-context matrix before receipt generation. Missing, malformed, stale, differently scoped, or reject-dominant evidence now remains `FORECAST_WATCH_ONLY` instead of becoming live-ready through rail geometry alone.
+
 ## 2026-07-02
 
 - Recorded the operator's 100,000 JPY capital injection in `data/capital_flows.json` / `docs/capital_flow_report.md` and split rolling 30d target reporting into raw equity and funding-adjusted performance. `capital-flow-report` safely regenerates the ignored live artifact/report; `required_*_funding_adjusted` fields are now explicit and authoritative for 30d 4x pace, while raw broker NAV remains the basis for risk, margin, and sizing.

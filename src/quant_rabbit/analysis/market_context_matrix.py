@@ -1,10 +1,9 @@
 """Build a pair/side market-context matrix from existing technical artifacts.
 
-The matrix is advisory evidence, not an execution gate. It is designed to
-raise decision quality without reducing trade count: every observation is
-reported as support/reject/warning/missing for the trader and verifier packet,
-but this module never changes lane status, units, risk budget, or live
-permission.
+The matrix is primarily attribution and decision-quality evidence.  It never
+grants live permission or changes sizing.  One fail-closed consumer may use a
+fresh, pair/side-scoped reject-dominant summary to veto a RANGE-rail watch-only
+override; a missing, stale, or malformed summary cannot authorize that escape.
 """
 
 from __future__ import annotations
@@ -175,10 +174,13 @@ def matrix_summary_for_intent(matrix: dict[str, Any] | None, pair: str, side: st
         return {}
     return {
         "market_context_matrix_ref": side_payload.get("evidence_ref"),
-        "matrix_support_count": side_payload.get("support_count", 0),
-        "matrix_reject_count": side_payload.get("reject_count", 0),
-        "matrix_warning_count": side_payload.get("warning_count", 0),
-        "matrix_missing_count": side_payload.get("missing_count", 0),
+        "market_context_matrix_pair": pair,
+        "market_context_matrix_side": side,
+        "market_context_matrix_generated_at_utc": matrix.get("generated_at_utc"),
+        "matrix_support_count": side_payload.get("support_count"),
+        "matrix_reject_count": side_payload.get("reject_count"),
+        "matrix_warning_count": side_payload.get("warning_count"),
+        "matrix_missing_count": side_payload.get("missing_count"),
         "strongest_matrix_support": side_payload.get("strongest_support"),
         "strongest_matrix_reject": side_payload.get("strongest_reject"),
         "strongest_matrix_warning": side_payload.get("strongest_warning"),

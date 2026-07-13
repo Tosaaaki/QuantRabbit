@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.attack_advisor import AttackAdvisor
@@ -2227,12 +2228,16 @@ def _write_projection_edge_rows(
     regime: str,
 ) -> None:
     rows: list[dict[str, object]] = []
+    base = datetime(2026, 6, 1, tzinfo=timezone.utc)
     for idx in range(100):
         status = "HIT" if idx < 96 else "MISS"
+        emitted_at = base + timedelta(minutes=idx * 5)
         rows.append(
             {
-                "timestamp_emitted_utc": f"2026-06-{1 + idx // 60:02d}T00:{idx % 60:02d}:00Z",
-                "resolved_at_utc": f"2026-06-{1 + idx // 60:02d}T00:{idx % 60:02d}:30Z",
+                "timestamp_emitted_utc": emitted_at.isoformat().replace("+00:00", "Z"),
+                "resolved_at_utc": (emitted_at + timedelta(seconds=30))
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "cycle_id": f"projection-edge-{status.lower()}-{idx}",
                 "pair": pair,
                 "signal_name": signal_name,
