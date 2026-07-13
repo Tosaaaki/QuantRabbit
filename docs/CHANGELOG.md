@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-07-14
+
+- Clarified the forward-holdout boundary after the operator flagged the misleading 2026-07-27 wording: a frozen cohort's maturity gates only its own evaluation, never V2 deployment, dry-run activation, current GPT/risk/gateway routing, or a separately authorized trading restart. The legacy V1 cohort stays immutable while V2 may deploy earlier and later opens an independent wholly post-activation evidence window.
+
 ## 2026-07-13
 
 - Rebuilt legacy and non-directional projection calibration as outcome-blind independent trials: exact duplicates collapse first, the earliest `(pair, signal, direction)` row owns its full truth window even when unresolved, overlapping emissions no longer inflate hit rate, and all selected trials are ordered by emission time before lookback slicing. The self-improvement directional-quality audit now mirrors the same cohort instead of reporting the old inflated population.
