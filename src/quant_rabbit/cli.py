@@ -57,6 +57,12 @@ from quant_rabbit.execution_timing_audit import (
 from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
+from quant_rabbit.live_runtime_lock import (
+    LiveLockAlreadyHeld,
+    acquire_live_lock_owner,
+    inherited_live_lock_is_valid,
+    release_live_lock_owner,
+)
 from quant_rabbit.market_read_overlay import (
     MarketReadOverlayError,
     apply_codex_market_read_overlay,
@@ -1752,11 +1758,15 @@ class _LiveRuntimeLockBusy(RuntimeError):
     pass
 
 
-def _acquire_cycle_runtime_lock(command: str) -> tuple[Path, str | None] | None:
+def _acquire_cycle_runtime_lock(
+    command: str,
+) -> tuple[Path, str | None, str, str | None] | None:
     """Acquire the shared live-cycle lock for consolidated runtime commands."""
     lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
     old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+    old_owner_token = os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN")
     restore_held = old_held
+    restore_owner_token = old_owner_token
     if old_held == "1":
         if _cycle_runtime_lock_env_is_valid(lock_dir):
             return None
@@ -1765,42 +1775,35 @@ def _acquire_cycle_runtime_lock(command: str) -> tuple[Path, str | None] | None:
             f"is not valid; acquiring {command} lock.\n"
         )
         restore_held = None
+        restore_owner_token = None
     try:
-        lock_dir.parent.mkdir(parents=True, exist_ok=True)
-        lock_dir.mkdir()
-    except FileExistsError as exc:
-        existing_pid = _cycle_runtime_lock_pid(lock_dir)
-        if existing_pid is not None and _pid_is_running(existing_pid):
-            raise _LiveRuntimeLockBusy(
-                f"[qr-vnext] another live runtime cycle is already running pid={existing_pid}; "
-                f"refusing {command} overlap."
-            ) from exc
-        sys.stderr.write(f"[qr-vnext] removing stale live runtime lock: {lock_dir}\n")
-        shutil.rmtree(lock_dir, ignore_errors=True)
-        try:
-            lock_dir.mkdir()
-        except FileExistsError as retry_exc:
-            retry_pid = _cycle_runtime_lock_pid(lock_dir)
-            detail = f" pid={retry_pid}" if retry_pid is not None else ""
-            raise _LiveRuntimeLockBusy(
-                f"[qr-vnext] another live runtime cycle acquired lock{detail}; refusing {command} overlap."
-            ) from retry_exc
-    (lock_dir / "pid").write_text(f"{os.getpid()}\n")
-    (lock_dir / "command").write_text(f"{command}\n")
-    (lock_dir / "started_at_utc").write_text(f"{datetime.now(timezone.utc).isoformat()}\n")
+        owner_token = acquire_live_lock_owner(lock_dir, command)
+    except LiveLockAlreadyHeld as exc:
+        detail = f" pid={exc.inspection.pid}" if exc.inspection.pid is not None else ""
+        raise _LiveRuntimeLockBusy(
+            f"[qr-vnext] another live runtime cycle is already running{detail}; "
+            f"refusing {command} overlap."
+        ) from exc
     os.environ["QR_AUTOTRADE_LOCK_HELD"] = "1"
-    return lock_dir, restore_held
+    os.environ["QR_AUTOTRADE_LOCK_OWNER_TOKEN"] = owner_token
+    return lock_dir, restore_held, owner_token, restore_owner_token
 
 
-def _release_cycle_runtime_lock(token: tuple[Path, str | None] | None) -> None:
+def _release_cycle_runtime_lock(
+    token: tuple[Path, str | None, str, str | None] | None,
+) -> None:
     if token is None:
         return
-    lock_dir, old_held = token
-    shutil.rmtree(lock_dir, ignore_errors=True)
+    lock_dir, old_held, owner_token, old_owner_token = token
+    release_live_lock_owner(lock_dir, owner_token)
     if old_held is None:
         os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
     else:
         os.environ["QR_AUTOTRADE_LOCK_HELD"] = old_held
+    if old_owner_token is None:
+        os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+    else:
+        os.environ["QR_AUTOTRADE_LOCK_OWNER_TOKEN"] = old_owner_token
 
 
 def _cycle_runtime_lock_pid(lock_dir: Path) -> int | None:
@@ -1811,10 +1814,10 @@ def _cycle_runtime_lock_pid(lock_dir: Path) -> int | None:
 
 
 def _cycle_runtime_lock_env_is_valid(lock_dir: Path) -> bool:
-    existing_pid = _cycle_runtime_lock_pid(lock_dir)
-    if existing_pid is None or not _pid_is_running(existing_pid):
-        return False
-    return existing_pid in {os.getpid(), os.getppid()}
+    return inherited_live_lock_is_valid(
+        lock_dir,
+        os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN"),
+    )
 
 
 def _pid_is_running(pid: int) -> bool:

@@ -2,6 +2,8 @@
 
 ## 2026-07-14
 
+- Fixed the shared live-runtime lock so a completed zombie shell cannot be mistaken for a still-running guardian during a full-suite or launchd timing race. A persistent Git-ignored OS-backed generation guard now serializes shell and direct-Python acquire/reap/release transitions, and exact owner tokens prevent an old stale-reap decision from deleting a new lock generation. The full wrapper waits from the canonical persisted guardian label even when `ps` is generic; shell and Python use the same whitespace-normalized process-birth identity plus zombie/PID-reuse/initialization-grace inspection; multiline, NUL-bearing, malformed, legacy, or unavailable birth identity for a live PID fails closed; and a bare or mismatched inherited `QR_AUTOTRADE_LOCK_HELD=1` can no longer bypass a different owner.
+
 - Clarified the forward-holdout boundary after the operator flagged the misleading 2026-07-27 wording: a frozen cohort's maturity gates only its own evaluation, never V2 deployment, dry-run activation, current GPT/risk/gateway routing, or a separately authorized trading restart. The legacy V1 cohort stays immutable while V2 may deploy earlier and later opens an independent wholly post-activation evidence window.
 
 ## 2026-07-13

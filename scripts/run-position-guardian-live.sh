@@ -66,6 +66,14 @@ skip_if_live_lock_busy() {
   local existing_pid existing_command existing_label
   existing_pid="$(qr_live_lock_pid "$QR_AUTOTRADE_LOCK_DIR")"
   if ! qr_live_lock_pid_is_running "$existing_pid"; then
+    # `mkdir` becomes visible just before the owner PID is persisted. The
+    # guardian must yield during that initialization window, not race the full
+    # trader into stale-lock recovery and accidentally delete its new lock.
+    if [[ -d "$QR_AUTOTRADE_LOCK_DIR" && ! "$existing_pid" =~ ^[0-9]+$ \
+      && "$QR_POSITION_GUARDIAN_LOCK_BUSY_MODE" == "skip" ]]; then
+      echo "[run-position-guardian-live] live runtime lock owner metadata is initializing; skipped guardian cycle." >&2
+      exit 0
+    fi
     return 0
   fi
   existing_command="$(ps -p "$existing_pid" -o command= 2>/dev/null || true)"

@@ -12,6 +12,7 @@ data/
 secrets/
 .claude/
 .quant_rabbit_live.lock/
+.quant_rabbit_live.lock.acquire.guard
 
 # Accidentally-created top-level verdict marker files from operator-side
 # shell redirection around read-only position sidecars. The real reports live

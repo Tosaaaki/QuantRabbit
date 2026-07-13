@@ -5,10 +5,19 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from quant_rabbit.automation import _acquire_autotrade_lock
+from quant_rabbit.live_runtime_lock import (
+    LiveLockAlreadyHeld,
+    acquire_live_lock_owner,
+    inspect_live_lock,
+    live_lock_generation_guard,
+    release_live_lock_owner,
+    write_live_lock_owner,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -455,14 +464,16 @@ class LiveWrapperTest(unittest.TestCase):
             env["QR_RUN_POST_GATEWAY_SIDECARS"] = "0"
             env["QR_AUTOTRADE_LOCK_WAIT_SECONDS"] = "5"
             env["QR_AUTOTRADE_LOCK_POLL_SECONDS"] = "0.1"
-            holder = root / "run-position-guardian-live.sh"
-            holder.write_text("#!/usr/bin/env bash\nsleep 1\n")
-            holder.chmod(0o755)
-            proc = subprocess.Popen([str(holder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Deliberately use a generic OS command: only the persisted owner
+            # label identifies this holder as the position guardian.
+            proc = subprocess.Popen(["sleep", "1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 lock_dir = root / "lock"
                 lock_dir.mkdir()
                 (lock_dir / "pid").write_text(f"{proc.pid}\n")
+                # The lock's persisted owner label is authoritative even when
+                # `ps` contains no guardian script name.
+                (lock_dir / "command").write_text("run-position-guardian-live\n")
 
                 result = subprocess.run(
                     ["bash", str(WRAPPER), "--send"],
@@ -482,7 +493,462 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(capture.exists())
             self.assertIn("waiting up to 5s", result.stderr)
-            self.assertIn("removing defunct lock holder", result.stderr)
+            # Depending on when the parent observes exit, the holder is either
+            # already absent or briefly a zombie. Both are safely reclaimable.
+            self.assertRegex(
+                result.stderr,
+                r"removing (?:defunct lock holder pid=\d+:|stale lock:)",
+            )
+
+    def test_live_lock_removes_recycled_pid_owner_before_acquire(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "command").write_text("run-autotrade-live\n")
+            (lock_dir / "process_started_at").write_text("Mon Jan  1 00:00:00 2001\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        "set -euo pipefail; "
+                        "source \"$QR_HELPER\"; "
+                        "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 0 '' 0.1; "
+                        "qr_live_lock_release"
+                    ),
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(lock_dir.exists())
+            self.assertIn("removing recycled-pid lock holder", result.stderr)
+
+    def test_live_lock_malformed_birth_metadata_stays_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "command").write_text("run-autotrade-live\n")
+            (lock_dir / "process_started_at").write_text("malformed-owner-evidence\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        "set -euo pipefail; "
+                        "source \"$QR_HELPER\"; "
+                        "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 0 '' 0.1"
+                    ),
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertTrue(lock_dir.exists())
+            self.assertIn("another autotrade cycle is already running", result.stderr)
+
+    def test_live_lock_multiline_or_nul_birth_metadata_stays_fail_closed(self) -> None:
+        current_birth = subprocess.run(
+            ["ps", "-p", str(os.getpid()), "-o", "lstart="],
+            env={**os.environ, "LC_ALL": "C"},
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout.strip()
+        payloads = {
+            "multiple-lines": f"{current_birth}\njunk\n".encode(),
+            "nul-byte": current_birth.encode() + b"\x00\n",
+        }
+        for label, payload in payloads.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lock_dir = root / "lock"
+                lock_dir.mkdir()
+                (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+                (lock_dir / "command").write_text("run-autotrade-live\n")
+                (lock_dir / "process_started_at").write_bytes(payload)
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                        "QR_LOCK_DIR": str(lock_dir),
+                    }
+                )
+
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        (
+                            "set -euo pipefail; "
+                            "source \"$QR_HELPER\"; "
+                            "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 0 '' 0.1"
+                        ),
+                    ],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertTrue(lock_dir.exists())
+
+    def test_live_lock_preserves_owner_during_pid_initialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            holder = root / "delayed-lock-owner.sh"
+            holder.write_text(
+                "#!/usr/bin/env bash\n"
+                "sleep 0.02\n"
+                "printf '%s\\n' \"$$\" > \"$QR_LOCK_DIR/pid\"\n"
+                "printf '%s\\n' run-position-guardian-live > \"$QR_LOCK_DIR/command\"\n"
+                "sleep 0.7\n"
+            )
+            holder.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                    "QR_LIVE_LOCK_INIT_GRACE_SECONDS": "0.5",
+                }
+            )
+            proc = subprocess.Popen(
+                [str(holder)],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        (
+                            "set -euo pipefail; "
+                            "source \"$QR_HELPER\"; "
+                            "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 2 "
+                            "run-position-guardian-live 0.05; "
+                            "qr_live_lock_release"
+                        ),
+                    ],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            finally:
+                proc.wait(timeout=2)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(lock_dir.exists())
+            self.assertIn("lock owner metadata is initializing", result.stderr)
+            self.assertIn("waiting up to 2s", result.stderr)
+
+    def test_position_guardian_yields_to_initializing_full_trader_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            (root / "lock").mkdir()
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(capture.exists())
+            self.assertIn("owner metadata is initializing", result.stderr)
+            self.assertIn("skipped guardian cycle", result.stderr)
+
+    def test_two_contenders_cannot_both_reap_and_acquire_stale_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text("99999999\n")
+            results = _run_competing_shell_lockers(root, delay_owner_write=False)
+
+            self.assertEqual(sorted(result.returncode for result in results), [0, 75])
+            self.assertEqual(len((root / "winners").read_text().splitlines()), 1)
+
+    def test_two_contenders_cannot_delete_initializing_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = _run_competing_shell_lockers(root, delay_owner_write=True)
+
+            self.assertEqual(sorted(result.returncode for result in results), [0, 75])
+            self.assertEqual(len((root / "winners").read_text().splitlines()), 1)
+
+    def test_shell_and_python_share_generation_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                }
+            )
+            with live_lock_generation_guard(lock_dir):
+                proc = subprocess.Popen(
+                    [
+                        "bash",
+                        "-c",
+                        (
+                            "set -euo pipefail; "
+                            "source \"$QR_HELPER\"; "
+                            "qr_live_lock_guard_acquire \"$QR_LOCK_DIR\"; "
+                            "printf acquired; "
+                            "qr_live_lock_guard_release"
+                        ),
+                    ],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                time.sleep(0.2)
+                self.assertIsNone(proc.poll(), "shell bypassed Python's generation guard")
+
+            stdout, stderr = proc.communicate(timeout=2)
+            self.assertEqual(proc.returncode, 0, stderr)
+            self.assertEqual(stdout, "acquired")
+
+    def test_shell_contender_preserves_active_python_owner_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            token = acquire_live_lock_owner(lock_dir, "python-owner")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                }
+            )
+            try:
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        (
+                            "set -euo pipefail; "
+                            "source \"$QR_HELPER\"; "
+                            "qr_live_lock_acquire \"$QR_LOCK_DIR\" shell-contender 0 '' 0.1"
+                        ),
+                    ],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertEqual((lock_dir / "token").read_text().strip(), token)
+            finally:
+                self.assertTrue(release_live_lock_owner(lock_dir, token))
+
+    def test_python_contender_preserves_active_shell_owner_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            ready = root / "ready"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                    "QR_READY_FILE": str(ready),
+                }
+            )
+            proc = subprocess.Popen(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        "set -euo pipefail; "
+                        "source \"$QR_HELPER\"; "
+                        "qr_live_lock_acquire \"$QR_LOCK_DIR\" shell-owner 0 '' 0.1; "
+                        "printf ready > \"$QR_READY_FILE\"; "
+                        "sleep 0.7; "
+                        "qr_live_lock_release"
+                    ),
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            deadline = time.monotonic() + 2
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), "shell owner did not acquire lock")
+            try:
+                with self.assertRaises(LiveLockAlreadyHeld):
+                    acquire_live_lock_owner(
+                        lock_dir,
+                        "python-contender",
+                        init_grace_seconds=0,
+                    )
+            finally:
+                stdout, stderr = proc.communicate(timeout=2)
+            self.assertEqual(proc.returncode, 0, f"{stdout}\n{stderr}")
+
+    def test_python_release_preserves_reacquired_generation_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            with live_lock_generation_guard(lock_dir):
+                lock_dir.mkdir()
+                old_token = write_live_lock_owner(lock_dir, "old-owner")
+                (lock_dir / "token").write_text("new-owner-token\n")
+
+            self.assertFalse(release_live_lock_owner(lock_dir, old_token))
+            self.assertTrue(lock_dir.exists())
+            self.assertEqual((lock_dir / "token").read_text(), "new-owner-token\n")
+
+    def test_python_acquire_reaps_zombie_and_recycled_pid_generations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            zombie_lock = root / "zombie-lock"
+            proc = subprocess.Popen(["sleep", "0.05"])
+            time.sleep(0.15)
+            try:
+                zombie_lock.mkdir()
+                (zombie_lock / "pid").write_text(f"{proc.pid}\n")
+                zombie_token = acquire_live_lock_owner(
+                    zombie_lock,
+                    "python-zombie-reaper",
+                    init_grace_seconds=0,
+                )
+                self.assertEqual(inspect_live_lock(zombie_lock).status, "ACTIVE")
+                self.assertTrue(release_live_lock_owner(zombie_lock, zombie_token))
+            finally:
+                proc.wait(timeout=2)
+
+            recycled_lock = root / "recycled-lock"
+            recycled_lock.mkdir()
+            (recycled_lock / "pid").write_text(f"{os.getpid()}\n")
+            (recycled_lock / "process_started_at").write_text(
+                "Mon Jan  1 00:00:00 2001\n"
+            )
+            recycled_token = acquire_live_lock_owner(
+                recycled_lock,
+                "python-recycled-reaper",
+                init_grace_seconds=0,
+            )
+            self.assertEqual(inspect_live_lock(recycled_lock).status, "ACTIVE")
+            self.assertTrue(release_live_lock_owner(recycled_lock, recycled_token))
+
+    def test_python_acquire_keeps_malformed_active_birth_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "process_started_at").write_text(
+                "Tue Jul 14 00:00:00 2026\njunk\n"
+            )
+
+            with self.assertRaises(LiveLockAlreadyHeld):
+                acquire_live_lock_owner(lock_dir, "python-contender", init_grace_seconds=0)
+            self.assertTrue(lock_dir.exists())
+            self.assertEqual(inspect_live_lock(lock_dir).status, "ACTIVE_IDENTITY_UNAVAILABLE")
+
+    def test_python_identity_normalizes_internal_process_birth_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            current_birth = subprocess.run(
+                ["ps", "-p", str(os.getpid()), "-o", "lstart="],
+                env={**os.environ, "LC_ALL": "C"},
+                text=True,
+                stdout=subprocess.PIPE,
+                check=True,
+            ).stdout.strip()
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "process_started_at").write_text(
+                "  " + current_birth.replace(" ", "   ") + "  \n"
+            )
+
+            inspection = inspect_live_lock(lock_dir)
+            self.assertTrue(inspection.active)
+            self.assertEqual(inspection.status, "ACTIVE")
+
+    def test_python_acquire_preserves_delayed_owner_during_initialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            ready = root / "holder-ready"
+            holder = root / "delayed-python-owner.sh"
+            holder.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf ready > \"$QR_READY_FILE\"\n"
+                "sleep 0.05\n"
+                "printf '%s\\n' \"$$\" > \"$QR_LOCK_DIR/pid\"\n"
+                "sleep 0.7\n"
+            )
+            holder.chmod(0o755)
+            proc = subprocess.Popen(
+                [str(holder)],
+                env={
+                    **os.environ,
+                    "QR_LOCK_DIR": str(lock_dir),
+                    "QR_READY_FILE": str(ready),
+                },
+            )
+            try:
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists(), "delayed owner did not start")
+                with self.assertRaises(LiveLockAlreadyHeld):
+                    acquire_live_lock_owner(
+                        lock_dir,
+                        "python-initialization-contender",
+                        init_grace_seconds=0.3,
+                    )
+                self.assertEqual(inspect_live_lock(lock_dir).pid, proc.pid)
+            finally:
+                proc.wait(timeout=2)
 
     def test_position_guardian_skips_when_full_trader_lock_is_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -728,6 +1194,105 @@ class LiveWrapperTest(unittest.TestCase):
             finally:
                 _restore_env("QR_AUTOTRADE_LOCK_DIR", original_lock_dir)
                 _restore_env("QR_AUTOTRADE_LOCK_HELD", original_lock_held)
+
+    def test_forged_held_env_cannot_bypass_another_direct_send_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            proc = subprocess.Popen(["sleep", "2"])
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{proc.pid}\n")
+            old_lock_dir = os.environ.get("QR_AUTOTRADE_LOCK_DIR")
+            old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+            old_owner_token = os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN")
+            os.environ["QR_AUTOTRADE_LOCK_DIR"] = str(lock_dir)
+            os.environ["QR_AUTOTRADE_LOCK_HELD"] = "1"
+            os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+            try:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "another autotrade cycle is already running",
+                ):
+                    _acquire_autotrade_lock(send=True)
+                self.assertTrue(lock_dir.exists())
+            finally:
+                proc.terminate()
+                proc.wait(timeout=2)
+                _restore_env("QR_AUTOTRADE_LOCK_DIR", old_lock_dir)
+                _restore_env("QR_AUTOTRADE_LOCK_HELD", old_held)
+                _restore_env("QR_AUTOTRADE_LOCK_OWNER_TOKEN", old_owner_token)
+
+
+def _run_competing_shell_lockers(
+    root: Path,
+    *,
+    delay_owner_write: bool,
+) -> list[subprocess.CompletedProcess[str]]:
+    ready = root / "ready"
+    start = root / "start"
+    winners = root / "winners"
+    env = os.environ.copy()
+    env.update(
+        {
+            "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+            "QR_LOCK_DIR": str(root / "lock"),
+            "QR_READY_FILE": str(ready),
+            "QR_START_FILE": str(start),
+            "QR_WINNERS_FILE": str(winners),
+            "QR_LIVE_LOCK_INIT_GRACE_SECONDS": "0.05",
+        }
+    )
+    delayed_owner = ""
+    if delay_owner_write:
+        delayed_owner = (
+            "eval \"$(declare -f qr_live_lock_write_owner | "
+            "sed '1s/qr_live_lock_write_owner/qr_live_lock_write_owner_impl/')\"; "
+            "qr_live_lock_write_owner() { sleep 0.3; "
+            "qr_live_lock_write_owner_impl \"$@\"; }; "
+        )
+    command = (
+        "set -euo pipefail; "
+        "source \"$QR_HELPER\"; "
+        + delayed_owner
+        + "printf '%s\\n' \"$$\" >> \"$QR_READY_FILE\"; "
+        "while [[ ! -f \"$QR_START_FILE\" ]]; do sleep 0.01; done; "
+        "qr_live_lock_acquire \"$QR_LOCK_DIR\" contender 0 '' 0.01; "
+        "printf '%s\\n' \"$$\" >> \"$QR_WINNERS_FILE\"; "
+        "sleep 0.5; "
+        "qr_live_lock_release"
+    )
+    processes = [
+        subprocess.Popen(
+            ["bash", "-c", command],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if ready.exists() and len(ready.read_text().splitlines()) == 2:
+            break
+        time.sleep(0.01)
+    else:
+        for process in processes:
+            process.terminate()
+        raise AssertionError("competing lock processes did not reach the start barrier")
+    start.write_text("go\n")
+
+    results = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=5)
+        results.append(
+            subprocess.CompletedProcess(
+                process.args,
+                process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        )
+    return results
 
 
 def _wrapper_env(

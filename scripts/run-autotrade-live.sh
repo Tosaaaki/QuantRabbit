@@ -102,7 +102,7 @@ esac
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_AUTOTRADE_LOCK_WAIT_SECONDS="${QR_AUTOTRADE_LOCK_WAIT_SECONDS:-180}"
-readonly QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN="${QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN:-run-position-guardian-live.sh}"
+readonly QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN="${QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN:-run-position-guardian-live}"
 readonly QR_AUTOTRADE_LOCK_POLL_SECONDS="${QR_AUTOTRADE_LOCK_POLL_SECONDS:-2}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"
 readonly DEFAULT_SYNC_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
@@ -136,10 +136,12 @@ can_continue_after_sync_failure() {
     return 1
   fi
 
-  local dev_root main_branch live_head main_head line path lock_rel
+  local dev_root main_branch live_head main_head line path lock_rel lock_guard_rel
   dev_root="${QR_SYNC_DEV_ROOT:-$DEFAULT_SYNC_DEV_ROOT}"
   main_branch="${QR_SYNC_MAIN_BRANCH:-$DEFAULT_SYNC_MAIN_BRANCH}"
   lock_rel="${QR_AUTOTRADE_LOCK_DIR#$ROOT_DIR/}"
+  lock_guard_rel="${QR_AUTOTRADE_LOCK_DIR}.acquire.guard"
+  lock_guard_rel="${lock_guard_rel#$ROOT_DIR/}"
   live_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)" || return 1
   main_head="$(git -C "$dev_root" rev-parse "$main_branch" 2>/dev/null)" || return 1
   if [[ "$live_head" != "$main_head" ]]; then
@@ -150,6 +152,9 @@ can_continue_after_sync_failure() {
     [[ -z "$line" ]] && continue
     path="${line:3}"
     if [[ "$lock_rel" != "$QR_AUTOTRADE_LOCK_DIR" && ( "$path" == "$lock_rel" || "$path" == "$lock_rel/"* ) ]]; then
+      continue
+    fi
+    if [[ "$lock_guard_rel" != "${QR_AUTOTRADE_LOCK_DIR}.acquire.guard" && "$path" == "$lock_guard_rel" ]]; then
       continue
     fi
     if ! qr_is_runtime_drift_path "$path"; then

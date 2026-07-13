@@ -93,6 +93,12 @@ from quant_rabbit.gpt_trader import (
 )
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
+from quant_rabbit.live_runtime_lock import (
+    LiveLockAlreadyHeld,
+    acquire_live_lock_owner,
+    inherited_live_lock_is_valid,
+    release_live_lock_owner,
+)
 from quant_rabbit.market_read_overlay import (
     DEFAULT_OVERLAY_MAX_AGE_SECONDS,
     CODEX_MARKET_READ_AUTHOR,
@@ -1001,44 +1007,30 @@ def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool =
     return not any(_is_hard_prefilter_blocker(blocker, score=score) for blocker in blockers)
 
 
-def _acquire_autotrade_lock(*, send: bool) -> Path | None:
+def _acquire_autotrade_lock(
+    *, send: bool
+) -> tuple[Path, str, str | None, str | None] | None:
     """Acquire a nonblocking live-cycle lock for direct CLI sends.
 
     The shell wrapper also takes this lock and sets QR_AUTOTRADE_LOCK_HELD=1 so
     the in-process guard is reentrant. Direct `autotrade-cycle --send` calls do
     not pass through the wrapper, so this closes the duplicate-send surface.
     """
-    if not send or os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+    if not send:
         return None
     lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
-    try:
-        lock_dir.mkdir()
-    except FileExistsError:
-        existing_pid = _lock_pid(lock_dir)
-        if existing_pid and _pid_is_running(existing_pid):
-            raise RuntimeError(f"another autotrade cycle is already running pid={existing_pid}")
-        shutil.rmtree(lock_dir, ignore_errors=True)
-        try:
-            lock_dir.mkdir()
-        except FileExistsError as exc:
-            raise RuntimeError(f"failed to acquire autotrade lock: {lock_dir}") from exc
-    (lock_dir / "pid").write_text(f"{os.getpid()}\n")
-    return lock_dir
-
-
-def _lock_pid(lock_dir: Path) -> int | None:
-    try:
-        return int((lock_dir / "pid").read_text().strip())
-    except (OSError, TypeError, ValueError):
+    old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+    old_owner_token = os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN")
+    if old_held == "1" and inherited_live_lock_is_valid(lock_dir, old_owner_token):
         return None
-
-
-def _pid_is_running(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+        token = acquire_live_lock_owner(lock_dir, "direct-autotrade-cycle")
+    except LiveLockAlreadyHeld as exc:
+        detail = f" pid={exc.inspection.pid}" if exc.inspection.pid is not None else ""
+        raise RuntimeError(f"another autotrade cycle is already running{detail}") from exc
+    os.environ["QR_AUTOTRADE_LOCK_HELD"] = "1"
+    os.environ["QR_AUTOTRADE_LOCK_OWNER_TOKEN"] = token
+    return lock_dir, token, old_held, old_owner_token
 
 
 def _running_under_test_harness() -> bool:
@@ -1581,7 +1573,7 @@ class AutoTradeCycle:
         self._prevalidated_reusable_gpt_handoff: GptHandoffSummary | None = None
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
-        lock_dir = _acquire_autotrade_lock(send=send)
+        lock_owner = _acquire_autotrade_lock(send=send)
         try:
             self._sync_execution_ledger()
             summary = self._run(send=send)
@@ -1600,8 +1592,17 @@ class AutoTradeCycle:
                 pass
             raise
         finally:
-            if lock_dir is not None:
-                shutil.rmtree(lock_dir, ignore_errors=True)
+            if lock_owner is not None:
+                lock_dir, owner_token, old_held, old_owner_token = lock_owner
+                release_live_lock_owner(lock_dir, owner_token)
+                if old_held is None:
+                    os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+                else:
+                    os.environ["QR_AUTOTRADE_LOCK_HELD"] = old_held
+                if old_owner_token is None:
+                    os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                else:
+                    os.environ["QR_AUTOTRADE_LOCK_OWNER_TOKEN"] = old_owner_token
 
     def _sync_execution_ledger(self) -> None:
         if not self._execution_ledger_available():
