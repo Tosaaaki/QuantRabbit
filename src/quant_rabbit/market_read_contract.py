@@ -38,19 +38,21 @@ MARKET_READ_TAPE_STATES = frozenset({"TREND", "RANGE", "SQUEEZE", "FADE", "ROTAT
 MARKET_READ_LOCATIONS_24H = frozenset({"LOWER", "MIDDLE", "UPPER", "UNKNOWN"})
 MARKET_READ_THESIS_STATES = frozenset({"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY", "UNKNOWN"})
 MARKET_READ_VEHICLES = frozenset({"MARKET", "LIMIT", "STOP"})
+MARKET_READ_SECTION_FIELDS = {
+    "naked_read": MARKET_READ_NAKED_FIELDS,
+    "next_30m_prediction": MARKET_READ_PREDICTION_FIELDS,
+    "next_2h_prediction": MARKET_READ_PREDICTION_FIELDS,
+    "best_trade_if_forced": MARKET_READ_FORCED_TRADE_FIELDS,
+}
 
 
 def market_read_missing_fields(market_read: Mapping[str, Any]) -> list[str]:
     """Return missing or noncanonical semantic fields in deterministic order."""
 
     missing: list[str] = []
-    nested_requirements = (
-        ("naked_read", MARKET_READ_NAKED_FIELDS),
-        ("next_30m_prediction", MARKET_READ_PREDICTION_FIELDS),
-        ("next_2h_prediction", MARKET_READ_PREDICTION_FIELDS),
-        ("best_trade_if_forced", MARKET_READ_FORCED_TRADE_FIELDS),
-    )
-    for parent, fields in nested_requirements:
+    for unknown_section in sorted(set(market_read) - set(MARKET_READ_SECTION_FIELDS)):
+        missing.append(f"market_read_first.{unknown_section}")
+    for parent, fields in MARKET_READ_SECTION_FIELDS.items():
         section = market_read.get(parent)
         if not isinstance(section, Mapping):
             missing.append(parent)
@@ -59,6 +61,8 @@ def market_read_missing_fields(market_read: Mapping[str, Any]) -> list[str]:
             value = section.get(field_name)
             if not str(value or "").strip():
                 missing.append(f"{parent}.{field_name}")
+        for unknown_field in sorted(set(section) - set(fields)):
+            missing.append(f"{parent}.{unknown_field}")
 
     forced = market_read.get("best_trade_if_forced")
     vehicle = str(forced.get("vehicle") or "").strip().upper() if isinstance(forced, Mapping) else ""
@@ -83,16 +87,11 @@ def market_read_contract_payload() -> dict[str, Any]:
 
     return {
         "required_sections": [
-            "naked_read",
-            "next_30m_prediction",
-            "next_2h_prediction",
-            "best_trade_if_forced",
+            *MARKET_READ_SECTION_FIELDS,
         ],
         "required_fields": {
-            "naked_read": list(MARKET_READ_NAKED_FIELDS),
-            "next_30m_prediction": list(MARKET_READ_PREDICTION_FIELDS),
-            "next_2h_prediction": list(MARKET_READ_PREDICTION_FIELDS),
-            "best_trade_if_forced": list(MARKET_READ_FORCED_TRADE_FIELDS),
+            section: list(fields)
+            for section, fields in MARKET_READ_SECTION_FIELDS.items()
         },
         "enums": {
             "naked_read.tape_state": sorted(MARKET_READ_TAPE_STATES),

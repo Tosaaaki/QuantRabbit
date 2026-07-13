@@ -312,6 +312,34 @@ class WeekendTaskSwitchTest(unittest.TestCase):
                 pending_before["operation_id"],
             )
 
+    def test_pause_cannot_replace_restored_reconciliation_pending_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            paused = _run_switch("pause", env)
+            self.assertEqual(_ack_refresh(paused, env).returncode, 0)
+            restored = _run_switch("restore", env)
+            self.assertEqual(_ack_refresh(restored, env).returncode, 0)
+            _write_codex_status(codex_root, "qr-news-digest", "PAUSED")
+            reconciliation = _run_switch("restore", env)
+            self.assertEqual(reconciliation.returncode, 0)
+            state_before = json.loads(state_file.read_text())
+            self.assertEqual(state_before["mode"], "restored")
+
+            opposite = _run_switch("pause", env)
+
+            self.assertEqual(opposite.returncode, 1)
+            state_after = json.loads(state_file.read_text())
+            self.assertEqual(
+                state_after["codex_scheduler_refresh_pending"],
+                state_before["codex_scheduler_refresh_pending"],
+            )
+            self.assertEqual(state_after["mode"], "restored")
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
+
     def test_claude_quant_rabbit_weekday_tasks_are_snapshot_managed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env, codex_root, claude_root, _state_file = _env(Path(tmp))

@@ -1583,6 +1583,21 @@ class MarketReadOverlayTest(unittest.TestCase):
             ):
                 _apply(paths)
 
+    def test_overlay_rejects_unknown_market_read_alias_even_with_canonical_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            overlay = _overlay(paths)
+            overlay["market_read_first"]["naked_read"][
+                "known_winning_setup_state"
+            ] = "alias must not be accepted"
+            paths["overlay"].write_text(json.dumps(overlay))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_OVERLAY_SCHEMA_INVALID.*known_winning_setup_state",
+            ):
+                _apply(paths)
+
     def test_evidence_packet_exposes_exact_market_read_first_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
@@ -1778,6 +1793,29 @@ class MarketReadOverlayTest(unittest.TestCase):
                     "MARKET_READ_EVIDENCE_PACKET_STALE",
                 ):
                     _apply(paths)
+
+    def test_unknown_watchdog_issue_message_change_stales_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            watchdog = json.loads(paths["watchdog"].read_text())
+            watchdog["issues"] = [
+                {
+                    "code": "FUTURE_SAFETY_ISSUE",
+                    "message": "first safety meaning",
+                    "severity": "P0",
+                }
+            ]
+            paths["watchdog"].write_text(json.dumps(watchdog))
+            _reprepare(paths)
+            _write_overlay(paths)
+            watchdog["issues"][0]["message"] = "changed safety meaning"
+            paths["watchdog"].write_text(json.dumps(watchdog))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_PACKET_STALE",
+            ):
+                _apply(paths)
 
     def test_watchdog_material_safety_change_stales_ai_review(self) -> None:
         for mutation in ("status", "receipt_identity"):

@@ -112,6 +112,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # Do not interpret the separator in ``1.0840-1.0860`` as a negative sign.
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
 WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
+WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
 
 
 class MarketReadOverlayError(ValueError):
@@ -3489,11 +3490,12 @@ def _watchdog_material_issues(value: Any) -> Any:
         if not isinstance(item, Mapping):
             material.append(deepcopy(item))
             continue
+        issue_code = str(item.get("code") or "").strip().upper()
         material.append(
             {
                 key: deepcopy(field_value)
                 for key, field_value in item.items()
-                if key != "message"
+                if key != "message" or issue_code not in WATCHDOG_VOLATILE_MESSAGE_CODES
             }
         )
     return material
