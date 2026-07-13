@@ -28,7 +28,7 @@ from quant_rabbit.analysis.market_status import (
     write_report as write_market_status_report,
     write_snapshot as write_market_status_snapshot,
 )
-from quant_rabbit.broker.execution import LiveOrderGateway
+from quant_rabbit.broker.execution import LiveOrderGateway, verified_trade_size_multiple
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.webull import (
@@ -5189,6 +5189,15 @@ def main(argv: list[str] | None = None) -> int:
     p_stage.add_argument("--risk-equity-jpy", type=float, default=None)
     p_stage.add_argument("--send", action="store_true")
     p_stage.add_argument("--confirm-live", action="store_true")
+    p_stage.add_argument(
+        "--verified-decision",
+        type=Path,
+        default=None,
+        help=(
+            "Accepted gpt-trader-decision receipt required for a real fresh-entry send; "
+            "dry-run staging may omit it."
+        ),
+    )
     p_stage.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_stage.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_stage.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
@@ -5879,6 +5888,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "stage-live-order":
+        if args.send and args.verified_decision is None:
+            print(
+                json.dumps(
+                    {
+                        "error": (
+                            "stage-live-order --send requires --verified-decision "
+                            "pointing at a fresh accepted schema-v2 GPT TRADE receipt"
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         live_lock = None
         try:
             if args.send:
@@ -5893,6 +5917,7 @@ def main(argv: list[str] | None = None) -> int:
                 report_path=args.report,
                 live_enabled=os.environ.get("QR_LIVE_ENABLED") == "1",
                 self_improvement_audit=DEFAULT_SELF_IMPROVEMENT_AUDIT,
+                verified_decision_path=args.verified_decision,
                 max_loss_jpy=_resolve_max_loss_from_args(
                     max_loss_jpy=args.max_loss_jpy,
                     max_loss_pct=args.max_loss_pct,
@@ -5903,7 +5928,15 @@ def main(argv: list[str] | None = None) -> int:
                 execution_ledger_report_path=args.execution_ledger_report,
                 target_state_path=args.target_state,
                 target_report_path=args.target_report,
-            ).run(intents_path=args.intents, lane_id=args.lane_id, send=args.send, confirm_live=args.confirm_live)
+            ).run(
+                intents_path=args.intents,
+                lane_id=args.lane_id,
+                size_multiple=(
+                    verified_trade_size_multiple(args.verified_decision) or 1.0
+                ),
+                send=args.send,
+                confirm_live=args.confirm_live,
+            )
             ledger.record_gateway_receipt(kind="live_order", receipt_path=args.output)
             ledger.sync_oanda_transactions(client)
         except (RuntimeError, OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:

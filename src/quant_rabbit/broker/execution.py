@@ -274,10 +274,11 @@ class LiveOrderGateway:
             )
         )
         self.self_improvement_audit = self_improvement_audit
-        # When the automation cycle stages a receipt that gpt-trader-decision
-        # just verified, this points at the ACCEPTED verification artifact so
-        # the LATEST_GPT_DECISION_STALE audit finding can be recognized as
-        # already repaired. Manual stage-live-order paths leave it None.
+        # Every fresh-entry live send is bound to the ACCEPTED receipt that
+        # gpt-trader-decision just verified.  Dry-run/staging may leave this
+        # unset, but the broker boundary fails closed when ``send`` is true.
+        # This keeps direct/manual gateway invocation from bypassing the GPT
+        # lane and capital-allocation decision.
         self.verified_decision_path = verified_decision_path
         self.guardian_action_receipt_path = guardian_action_receipt_path
         self.qr_trader_run_watchdog_path = (
@@ -468,7 +469,8 @@ class LiveOrderGateway:
             selected_lane_id=selected_lane_id,
             intents_payload=intents_payload,
             send=send,
-            require_receipt=predictive_scout_intent_claimed(intent),
+            expected_sha256=verified_decision_sha_at_entry,
+            predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
             intent=intent,
             base_units=requested_units,
             authorized_size_multiple=authorized_size_multiple,
@@ -597,7 +599,8 @@ class LiveOrderGateway:
                 selected_lane_id=selected_lane_id,
                 intents_payload=intents_payload,
                 send=send,
-                require_receipt=predictive_scout_intent_claimed(intent),
+                expected_sha256=verified_decision_sha_at_entry,
+                predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
                 intent=intent,
                 base_units=requested_units,
                 authorized_size_multiple=authorized_size_multiple,
@@ -1353,7 +1356,8 @@ class LiveOrderGateway:
             selected_lane_id=selected_lane_id,
             intents_payload=intents_payload,
             send=send,
-            require_receipt=predictive_scout_intent_claimed(intent),
+            expected_sha256=verified_decision_sha_at_entry,
+            predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
             intent=intent,
             base_units=requested_units,
             authorized_size_multiple=authorized_size_multiple,
@@ -1480,7 +1484,8 @@ class LiveOrderGateway:
                 selected_lane_id=selected_lane_id,
                 intents_payload=intents_payload,
                 send=send,
-                require_receipt=predictive_scout_intent_claimed(intent),
+                expected_sha256=verified_decision_sha_at_entry,
+                predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
                 intent=intent,
                 base_units=requested_units,
                 authorized_size_multiple=authorized_size_multiple,
@@ -4252,7 +4257,7 @@ class LiveOrderGateway:
         ]
         if (
             receipt_status != "ACCEPTED"
-            or action not in {"TRADE", "ADD"}
+            or action != "TRADE"
             or not lane_id
             or lane_id not in selected_lanes
             or not isinstance(decision.get("market_read_first"), dict)
@@ -4267,7 +4272,7 @@ class LiveOrderGateway:
                 },
                 issue=RiskIssue(
                     "ORDINARY_ENTRY_CLAIM_RECEIPT_MISMATCH",
-                    "pre-POST one-shot claim requires the same ACCEPTED TRADE/ADD receipt to still name the selected lane",
+                    "pre-POST one-shot claim requires the same ACCEPTED schema-v2 TRADE receipt to still name the selected lane",
                 ).__dict__,
             )
 
@@ -8696,7 +8701,8 @@ def _gpt_verified_decision_live_send_issues(
     selected_lane_id: str | None,
     intents_payload: dict[str, Any],
     send: bool,
-    require_receipt: bool = False,
+    expected_sha256: str | None,
+    predictive_scout_trade_only: bool = False,
     intent: OrderIntent | None = None,
     base_units: int | None = None,
     authorized_size_multiple: float | None = None,
@@ -8707,25 +8713,34 @@ def _gpt_verified_decision_live_send_issues(
     if not send:
         return []
     if verified_decision_path is None:
-        if not require_receipt:
-            return []
         return [
             RiskIssue(
                 "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
-                "predictive SCOUT live send requires a fresh verified ACCEPTED TRADE receipt; "
+                "every fresh-entry live send requires a fresh verified ACCEPTED schema-v2 TRADE receipt; "
                 "direct gateway invocation without AI trader verification is forbidden",
             ).__dict__
         ]
-    if not verified_decision_path.exists():
+    try:
+        receipt_bytes = verified_decision_path.read_bytes()
+    except OSError as exc:
         return [
             RiskIssue(
-                "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
-                f"live fresh entry send requires a verified ACCEPTED TRADE receipt: {verified_decision_path}",
+                "GPT_VERIFIED_RECEIPT_UNREADABLE_FOR_LIVE_SEND",
+                f"verified GPT decision receipt is unreadable before live send: {verified_decision_path}: {exc}",
+            ).__dict__
+        ]
+    receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
+    if expected_sha256 is None or receipt_sha256 != expected_sha256:
+        return [
+            RiskIssue(
+                "GPT_VERIFIED_RECEIPT_BYTES_MISMATCH_FOR_LIVE_SEND",
+                "verified GPT decision bytes differ from the receipt frozen at gateway entry; "
+                "live allocation validation cannot switch between receipt versions",
             ).__dict__
         ]
     try:
-        payload = json.loads(verified_decision_path.read_text())
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        payload = json.loads(receipt_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         return [
             RiskIssue(
                 "GPT_VERIFIED_RECEIPT_UNREADABLE_FOR_LIVE_SEND",
@@ -8744,7 +8759,11 @@ def _gpt_verified_decision_live_send_issues(
                 f"verified GPT receipt status is {status or 'missing'}; fresh entry send requires ACCEPTED TRADE.",
             )
         )
-    allowed_actions = {"TRADE"} if require_receipt else {"TRADE", "ADD"}
+    # The current CODEX_MARKET_READ allocation schema exists only on TRADE.
+    # ADD/HEDGE are intent roles, not an alternate broker authorization: they
+    # still require an exact schema-v2 TRADE receipt so units cannot bypass the
+    # GPT-authored capital-allocation contract.
+    allowed_actions = {"TRADE"}
     if action not in allowed_actions:
         issues.append(
             RiskIssue(
@@ -8752,8 +8771,9 @@ def _gpt_verified_decision_live_send_issues(
                 f"verified GPT receipt action is {action or 'missing'}; "
                 + (
                     "predictive SCOUT requires an exact TRADE receipt (ADD is not a forward experiment authorization)."
-                    if require_receipt
-                    else "WAIT/REQUEST_EVIDENCE/non-TRADE cannot send fresh risk."
+                    if predictive_scout_trade_only
+                    else "ADD/WAIT/REQUEST_EVIDENCE/non-TRADE cannot send fresh risk; "
+                    "encode ADD/HEDGE as the intent role under a schema-v2 TRADE allocation."
                 ),
             )
         )
@@ -8763,7 +8783,7 @@ def _gpt_verified_decision_live_send_issues(
         issues.append(
             RiskIssue(
                 "GPT_SELECTED_LANE_MISSING_FOR_LIVE_SEND",
-                "verified GPT TRADE/ADD receipt must name selected_lane_id or selected_lane_ids.",
+                "verified GPT TRADE receipt must name selected_lane_id or selected_lane_ids.",
             )
         )
     if selected_lane_id and selected_receipt_lanes and selected_lane_id not in selected_receipt_lanes:
@@ -8802,7 +8822,7 @@ def _gpt_verified_decision_live_send_issues(
                 "fresh entry send requires current market_read_first on the verified GPT receipt.",
             )
         )
-    if require_receipt and intent is not None and isinstance(market_read, dict):
+    if predictive_scout_trade_only and intent is not None and isinstance(market_read, dict):
         if not _market_read_supports_intent(market_read, intent):
             issues.append(
                 RiskIssue(
@@ -8853,7 +8873,7 @@ def _gpt_verified_decision_live_send_issues(
                 "current intents before sending fresh risk.",
             )
         )
-    if require_receipt and intent is not None:
+    if predictive_scout_trade_only and intent is not None:
         now = datetime.now(timezone.utc)
         scout_generated = _parse_utc_timestamp(
             (intent.metadata or {}).get("predictive_scout_generated_at_utc")
@@ -8902,6 +8922,40 @@ def _gpt_verified_decision_live_send_issues(
                 )
 
     return [issue.__dict__ for issue in issues]
+
+
+def verified_trade_size_multiple(
+    verified_decision_path: Path | None,
+) -> float | None:
+    """Return the exact bounded GPT TRADE multiplier for gateway forwarding.
+
+    This is intentionally narrower than receipt verification.  Callers use it
+    only to preserve the GPT-authored number when invoking ``run``; the gateway
+    still re-reads and validates the complete receipt, allocation hashes,
+    selected units, lane, freshness, and final broker request.
+    """
+    if verified_decision_path is None or not verified_decision_path.exists():
+        return None
+    try:
+        payload = json.loads(verified_decision_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if str(payload.get("status") or "").upper() != "ACCEPTED":
+        return None
+    decision = payload.get("decision")
+    if not isinstance(decision, dict) or str(decision.get("action") or "").upper() != "TRADE":
+        return None
+    allocation = decision.get("capital_allocation")
+    if not isinstance(allocation, dict) or str(allocation.get("decision") or "").upper() != "ALLOCATE":
+        return None
+    raw_multiple = allocation.get("size_multiple")
+    if (
+        not isinstance(raw_multiple, (int, float))
+        or isinstance(raw_multiple, bool)
+        or float(raw_multiple) not in {0.5, 0.75, 1.0}
+    ):
+        return None
+    return float(raw_multiple)
 
 
 def _codex_capital_allocation_live_send_issues(

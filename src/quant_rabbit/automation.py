@@ -5666,7 +5666,7 @@ def _same_recovery_lane_family(a: str, b: str | None) -> bool:
 
 
 def _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:
-    """Campaign recovery needs a fresh accepted TRADE/ADD receipt."""
+    """Campaign recovery needs a fresh accepted schema-v2 TRADE receipt."""
 
     if gpt_summary is None:
         return False
@@ -5691,9 +5691,9 @@ def _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary: GptHandoffSum
         return True
     if action in {"WAIT", "REQUEST_EVIDENCE"}:
         return True
-    if action not in {"TRADE", "ADD"}:
+    if action != "TRADE":
         return True
-    if action in {"TRADE", "ADD"} and not gpt_summary.selected_lane_id and not gpt_summary.selected_lane_ids:
+    if not gpt_summary.selected_lane_id and not gpt_summary.selected_lane_ids:
         return True
     return False
 
@@ -5724,7 +5724,7 @@ def _gpt_campaign_recovery_block_status(gpt_summary: GptHandoffSummary) -> str:
         return "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"
     if "guardian receipt" in error or "normal_routing_allowed=false" in error:
         return "GUARDIAN_RECEIPT_BLOCKS_CAMPAIGN_RECOVERY"
-    if action not in {"TRADE", "ADD"}:
+    if action != "TRADE":
         return "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"
     return "GPT_REJECTED"
 

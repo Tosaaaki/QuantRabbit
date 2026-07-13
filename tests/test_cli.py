@@ -7952,5 +7952,97 @@ class PairChartsCommandTest(unittest.TestCase):
             self.assertEqual(len(printed["failures"]), 2)
 
 
+class StageLiveOrderReceiptGateTest(unittest.TestCase):
+    def test_send_requires_explicit_verified_gpt_decision_before_broker_access(self) -> None:
+        stdout = io.StringIO()
+        with (
+            mock.patch("quant_rabbit.cli.OandaExecutionClient") as client,
+            redirect_stdout(stdout),
+        ):
+            rc = main(
+                [
+                    "stage-live-order",
+                    "--lane-id",
+                    "lane:EUR_USD:LONG",
+                    "--send",
+                    "--confirm-live",
+                ]
+            )
+
+        self.assertEqual(rc, 2)
+        client.assert_not_called()
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("--verified-decision", payload["error"])
+
+    def test_send_forwards_exact_gpt_half_size_to_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "gpt_trader_decision.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "TRADE",
+                            "capital_allocation": {
+                                "decision": "ALLOCATE",
+                                "size_multiple": 0.5,
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summary = SimpleNamespace(
+                status="SENT",
+                lane_id="lane:EUR_USD:LONG",
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                sent=True,
+                risk_issues=0,
+                strategy_issues=0,
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=object()),
+                mock.patch("quant_rabbit.cli.ExecutionLedger"),
+                mock.patch("quant_rabbit.cli.LiveOrderGateway") as gateway,
+                mock.patch(
+                    "quant_rabbit.cli._acquire_cycle_runtime_lock",
+                    return_value=object(),
+                ),
+                mock.patch("quant_rabbit.cli._release_cycle_runtime_lock"),
+                redirect_stdout(stdout),
+            ):
+                gateway.return_value.run.return_value = summary
+                rc = main(
+                    [
+                        "stage-live-order",
+                        "--lane-id",
+                        "lane:EUR_USD:LONG",
+                        "--verified-decision",
+                        str(receipt),
+                        "--max-loss-jpy",
+                        "1000",
+                        "--execution-ledger-db",
+                        str(root / "execution_ledger.db"),
+                        "--execution-ledger-report",
+                        str(root / "execution_ledger.md"),
+                        "--send",
+                        "--confirm-live",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                gateway.return_value.run.call_args.kwargs["size_multiple"],
+                0.5,
+            )
+            self.assertEqual(
+                gateway.call_args.kwargs["verified_decision_path"],
+                receipt,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -30,6 +30,23 @@ class GuardianActionCycleTest(unittest.TestCase):
             target_report = root / "docs" / "daily_target_report.md"
             ledger = root / "data" / "execution_ledger.db"
             ledger_report = root / "docs" / "execution_ledger_report.md"
+            verified = root / "data" / "gpt_trader_decision.json"
+            verified.parent.mkdir(parents=True, exist_ok=True)
+            verified.write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "TRADE",
+                            "capital_allocation": {
+                                "decision": "ALLOCATE",
+                                "size_multiple": 0.75,
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             gateway_summary = SimpleNamespace(
                 status="BLOCKED",
                 lane_id=LANE_ID,
@@ -53,6 +70,7 @@ class GuardianActionCycleTest(unittest.TestCase):
                     target_report_path=target_report,
                     execution_ledger_db_path=ledger,
                     execution_ledger_report_path=ledger_report,
+                    verified_decision_path=verified,
                     live_enabled=True,
                 )
 
@@ -61,6 +79,11 @@ class GuardianActionCycleTest(unittest.TestCase):
             self.assertEqual(kwargs["target_report_path"], target_report)
             self.assertEqual(kwargs["execution_ledger_db_path"], ledger)
             self.assertEqual(kwargs["execution_ledger_report_path"], ledger_report)
+            self.assertEqual(kwargs["verified_decision_path"], verified)
+            self.assertEqual(
+                gateway_cls.return_value.run.call_args.kwargs["size_multiple"],
+                0.75,
+            )
             self.assertEqual(result["status"], "BLOCKED")
 
     def test_default_flags_off_verifies_without_execution(self) -> None:

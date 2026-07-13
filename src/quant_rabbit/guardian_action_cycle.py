@@ -32,6 +32,7 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_ACTION_REVIEW,
     DEFAULT_GUARDIAN_ESCALATION,
     DEFAULT_GUARDIAN_EVENTS,
+    DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
@@ -68,6 +69,7 @@ class GuardianActionCyclePaths:
     broker_snapshot: Path = DEFAULT_BROKER_SNAPSHOT
     daily_target_state: Path = DEFAULT_DAILY_TARGET_STATE
     order_intents: Path = DEFAULT_ORDER_INTENTS
+    gpt_decision: Path = DEFAULT_GPT_TRADER_DECISION
     action_review: Path = DEFAULT_GUARDIAN_ACTION_REVIEW
     result: Path = DEFAULT_ACTION_CYCLE_RESULT
     report: Path = DEFAULT_ACTION_CYCLE_REPORT
@@ -88,6 +90,7 @@ class GuardianActionCyclePaths:
             broker_snapshot=root / "data" / "broker_snapshot.json",
             daily_target_state=root / "data" / "daily_target_state.json",
             order_intents=root / "data" / "order_intents.json",
+            gpt_decision=root / "data" / "gpt_trader_decision.json",
             action_review=root / "docs" / "guardian_action_review.md",
             result=root / "data" / "guardian_action_cycle_result.json",
             report=root / "docs" / "guardian_action_cycle_report.md",
@@ -211,6 +214,7 @@ def run_guardian_action_cycle(
                 target_report_path=paths.root / "docs" / "daily_target_report.md",
                 execution_ledger_db_path=paths.root / "data" / "execution_ledger.db",
                 execution_ledger_report_path=paths.root / "docs" / "execution_ledger_report.md",
+                verified_decision_path=paths.gpt_decision,
                 live_enabled=flags["live_enabled"],
             )
         )
@@ -450,9 +454,13 @@ def _run_live_order_gateway(
     target_report_path: Path | None = None,
     execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
     execution_ledger_report_path: Path = DEFAULT_EXECUTION_LEDGER_REPORT,
+    verified_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
     live_enabled: bool | None = None,
 ) -> dict[str, Any]:
-    from quant_rabbit.broker.execution import LiveOrderGateway
+    from quant_rabbit.broker.execution import (
+        LiveOrderGateway,
+        verified_trade_size_multiple,
+    )
     from quant_rabbit.broker.oanda import OandaExecutionClient
 
     client = OandaExecutionClient()
@@ -465,7 +473,14 @@ def _run_live_order_gateway(
         target_report_path=target_report_path,
         execution_ledger_db_path=execution_ledger_db_path,
         execution_ledger_report_path=execution_ledger_report_path,
-    ).run(intents_path=intents_path, lane_id=lane_id, send=send, confirm_live=send)
+        verified_decision_path=verified_decision_path,
+    ).run(
+        intents_path=intents_path,
+        lane_id=lane_id,
+        size_multiple=(verified_trade_size_multiple(verified_decision_path) or 1.0),
+        send=send,
+        confirm_live=send,
+    )
     return {
         "status": summary.status,
         "lane_id": summary.lane_id,

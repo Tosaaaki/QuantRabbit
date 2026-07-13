@@ -70,6 +70,15 @@ class DecisionExecutionLineageTest(unittest.TestCase):
             self.assertEqual(lineage.decision_receipt_id, recorded["decision_receipt_id"])
             self.assertEqual(lineage.market_read_prediction_id, recorded["prediction_id"])
 
+            add_action = json.loads(json.dumps(payload))
+            add_action["decision"]["action"] = "ADD"
+            self.assertIsNone(
+                decision_lineage_from_verified_payload(
+                    add_action,
+                    selected_lane_id=LANE_ID,
+                )
+            )
+
             tampered = json.loads(json.dumps(payload))
             tampered["decision"]["confidence"] = "LOW"
             with self.assertRaisesRegex(

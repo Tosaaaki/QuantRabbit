@@ -122,6 +122,37 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self._original_final_pre_post_boundary = (
             execution_module.LiveOrderGateway._final_pre_post_boundary
         )
+        self._original_gpt_live_send_issues = (
+            execution_module._gpt_verified_decision_live_send_issues
+        )
+        self._enforce_missing_gpt_receipt = False
+
+        def preserve_legacy_gate_test_focus(
+            verified_decision_path: Path | None,
+            **kwargs: Any,
+        ) -> list[dict[str, str]]:
+            # Most tests in this long-lived suite isolate a different broker
+            # boundary.  Keep their historical no-receipt fixture focused on
+            # that boundary, while SCOUT and the explicit receipt regressions
+            # exercise the production gate below.  This is a test mock, not a
+            # production bypass flag.
+            if (
+                verified_decision_path is None
+                and not kwargs.get("predictive_scout_trade_only")
+                and not self._enforce_missing_gpt_receipt
+            ):
+                return []
+            return self._original_gpt_live_send_issues(
+                verified_decision_path,
+                **kwargs,
+            )
+
+        self._gpt_live_send_issues_patch = patch.object(
+            execution_module,
+            "_gpt_verified_decision_live_send_issues",
+            side_effect=preserve_legacy_gate_test_focus,
+        )
+        self._gpt_live_send_issues_patch.start()
         self._pre_post_reconcile_patch = patch.object(
             execution_module.LiveOrderGateway,
             "_pre_post_reconcile",
@@ -156,6 +187,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
         os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(guardian_paths["broker_snapshot"])
 
     def tearDown(self) -> None:
+        self._gpt_live_send_issues_patch.stop()
         self._execution_cost_floor_patch.stop()
         self._final_pre_post_boundary_patch.stop()
         self._pre_post_reconcile_patch.stop()
@@ -347,6 +379,34 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertEqual(exact, [])
         self.assertEqual(reduced, [])
 
+    def test_verified_trade_size_multiple_reads_only_exact_accepted_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "verified.json"
+            payload = {
+                "status": "ACCEPTED",
+                "decision": {
+                    "action": "TRADE",
+                    "capital_allocation": {
+                        "decision": "ALLOCATE",
+                        "size_multiple": 0.5,
+                    },
+                },
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(
+                execution_module.verified_trade_size_multiple(path),
+                0.5,
+            )
+
+            payload["decision"]["capital_allocation"]["size_multiple"] = True
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertIsNone(execution_module.verified_trade_size_multiple(path))
+
+            payload["decision"]["capital_allocation"]["size_multiple"] = 0.6
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertIsNone(execution_module.verified_trade_size_multiple(path))
+
     def test_codex_capital_allocation_rejects_caller_and_final_unit_mismatch(self) -> None:
         lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
         allocation = {
@@ -414,6 +474,79 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST",
             )
 
+    def test_live_allocation_validator_rejects_receipt_bytes_swapped_after_entry(self) -> None:
+        original_requirement = (
+            execution_module._codex_numeric_allocation_requirement_at_entry
+        )
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                verified = _write_ordinary_verified_decision(
+                    root,
+                    lane_id=lane_id,
+                    size_multiple=0.5,
+                )
+                replacement = _write_ordinary_verified_decision(
+                    root,
+                    lane_id=lane_id,
+                    size_multiple=1.0,
+                    suffix="replacement",
+                ).read_bytes()
+                client = FakeExecutionClient()
+
+                def freeze_then_swap(path, *, expected_sha256):
+                    result = original_requirement(
+                        path,
+                        expected_sha256=expected_sha256,
+                    )
+                    verified.write_bytes(replacement)
+                    return result
+
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=verified,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                )
+                with patch.object(
+                    execution_module,
+                    "_codex_numeric_allocation_requirement_at_entry",
+                    side_effect=freeze_then_swap,
+                ):
+                    if batch:
+                        summary = gateway.run_batch(
+                            intents_path=_intents(root, lane_id=lane_id),
+                            lane_ids=(lane_id,),
+                            size_multiples={lane_id: 1.0},
+                            send=True,
+                            confirm_live=True,
+                        )
+                    else:
+                        summary = gateway.run(
+                            intents_path=_intents(root, lane_id=lane_id),
+                            lane_id=lane_id,
+                            size_multiple=1.0,
+                            send=True,
+                            confirm_live=True,
+                        )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    payload["orders"][0]["risk_issues"]
+                    if batch
+                    else payload["risk_issues"]
+                )
+                self.assertIn(
+                    "GPT_VERIFIED_RECEIPT_BYTES_MISMATCH_FOR_LIVE_SEND",
+                    {issue["code"] for issue in risk_issues},
+                )
+
     def test_missing_verified_receipt_reports_single_change_issue_direct_and_batch(self) -> None:
         for batch in (False, True):
             with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
@@ -457,6 +590,54 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     sum(
                         issue["code"]
                         == "GPT_CAPITAL_ALLOCATION_RECEIPT_CHANGED_BEFORE_POST"
+                        for issue in risk_issues
+                    ),
+                    1,
+                )
+
+    def test_live_fresh_entry_without_verified_receipt_is_blocked_direct_and_batch(self) -> None:
+        self._enforce_missing_gpt_receipt = True
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                client = FakeExecutionClient()
+                gateway = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                )
+
+                if batch:
+                    summary = gateway.run_batch(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_ids=(lane_id,),
+                        send=True,
+                        confirm_live=True,
+                    )
+                else:
+                    summary = gateway.run(
+                        intents_path=_intents(root, lane_id=lane_id),
+                        lane_id=lane_id,
+                        send=True,
+                        confirm_live=True,
+                    )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                risk_issues = (
+                    payload["orders"][0]["risk_issues"]
+                    if batch
+                    else payload["risk_issues"]
+                )
+                self.assertEqual(
+                    sum(
+                        issue["code"]
+                        == "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND"
                         for issue in risk_issues
                     ),
                     1,
@@ -510,6 +691,40 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 codes = {issue["code"] for issue in risk_issues}
                 self.assertIn("GPT_CAPITAL_ALLOCATION_AUTHOR_MISMATCH", codes)
                 self.assertIn("GPT_CAPITAL_ALLOCATION_REQUIRED_FOR_LIVE_SEND", codes)
+
+    def test_add_action_receipt_cannot_bypass_trade_capital_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "lane:EUR_USD:LONG"
+            verified = _write_ordinary_verified_decision(
+                root,
+                lane_id=lane_id,
+                action="ADD",
+            )
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                verified_decision_path=verified,
+                execution_ledger_db_path=root / "execution_ledger.db",
+                live_enabled=True,
+            ).run(
+                intents_path=_intents(root, lane_id=lane_id),
+                lane_id=lane_id,
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
+                {issue["code"] for issue in payload["risk_issues"]},
+            )
 
     def test_verified_receipt_mutation_during_ordinary_reservation_blocks_direct_and_batch_post(self) -> None:
         original_reserve = LiveOrderGateway._reserve_ordinary_entry_post
@@ -5182,6 +5397,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 metadata={
                     "desk": "failure_trader",
                     "campaign_role": "NOW",
+                    "parent_lane_id": "lane:EUR_USD:SHORT",
+                    "forecast_cycle_id": "hedge-forecast-cycle-1",
                     "position_intent": "HEDGE",
                     "position_fill": "OPEN_ONLY",
                     "hedge_timing_class": "OPPOSITE_EXPOSURE",
@@ -5212,11 +5429,20 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 strategy_profile=_profile(root, direction="SHORT"),
                 output_path=root / "request.json",
                 report_path=root / "report.md",
+                verified_decision_path=_write_ordinary_verified_decision(
+                    root,
+                    lane_id="lane:EUR_USD:SHORT",
+                    direction="SHORT",
+                ),
                 live_enabled=True,
                 max_loss_jpy=2_000.0,
             ).run(intents_path=intents, lane_id="lane:EUR_USD:SHORT", send=True, confirm_live=True)
 
-            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(
+                summary.status,
+                "SENT",
+                msg=(root / "request.json").read_text(),
+            )
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
             self.assertEqual(client.orders[0]["units"], "-1000")
@@ -5690,7 +5916,6 @@ class LiveOrderGatewayTest(unittest.TestCase):
             add_receipt = _write_ordinary_verified_decision(
                 root,
                 lane_id=lane_id,
-                action="ADD",
                 suffix="add",
             )
             add_gateway = LiveOrderGateway(
@@ -8712,6 +8937,8 @@ def _write_ordinary_verified_decision(
     *,
     lane_id: str,
     action: str = "TRADE",
+    direction: str = "LONG",
+    size_multiple: float = 1.0,
     suffix: str = "",
 ) -> Path:
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -8724,7 +8951,7 @@ def _write_ordinary_verified_decision(
         "market_read_first": {
             "next_30m_prediction": {
                 "pair": "EUR_USD",
-                "direction": "LONG",
+                "direction": direction,
             }
         },
     }
@@ -8732,8 +8959,8 @@ def _write_ordinary_verified_decision(
         allocation = {
             "decision": "ALLOCATE",
             "lane_id": lane_id,
-            "size_multiple": 1.0,
-            "selected_units": 1000,
+            "size_multiple": size_multiple,
+            "selected_units": int(1000 * size_multiple),
             "allocation_board_sha256": "c" * 64,
             "rationale": "The verified lane supports the risk-capped baseline units.",
         }
@@ -8751,8 +8978,8 @@ def _write_ordinary_verified_decision(
             "author_kind": "CODEX_MARKET_READ",
             "capital_allocation_sha256": allocation_sha,
             "capital_allocation_board_sha256": "c" * 64,
-            "authorized_size_multiple": 1.0,
-            "authorized_units": 1000,
+            "authorized_size_multiple": size_multiple,
+            "authorized_units": int(1000 * size_multiple),
             "execution_cost_floor_sha256": (
                 _synthetic_execution_cost_floor()["proof_sha256"]
             ),

@@ -130,7 +130,7 @@ def decision_lineage_from_verified_payload(
     *,
     selected_lane_id: str,
 ) -> DecisionExecutionLineage | None:
-    """Return exact lineage only for this accepted TRADE/ADD lane.
+    """Return exact lineage only for this accepted schema-v2 TRADE lane.
 
     Non-entry or unrelated verified artifacts deliberately return ``None``;
     callers must not attach an old WAIT/CLOSE decision to a new order.  A
@@ -144,7 +144,7 @@ def decision_lineage_from_verified_payload(
     if not isinstance(decision, Mapping):
         return None
     action = str(decision.get("action") or "").strip().upper()
-    if action not in {"TRADE", "ADD"}:
+    if action != "TRADE":
         return None
     selected = _string_list(decision.get("selected_lane_ids"))
     primary = str(decision.get("selected_lane_id") or "").strip()
