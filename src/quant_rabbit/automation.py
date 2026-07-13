@@ -1578,6 +1578,7 @@ class AutoTradeCycle:
         self._ai_test_bot_backtest_refreshed = False
         self._suppress_gateway_receipt_recording = False
         self._stale_gpt_handoff_reason: str | None = None
+        self._prevalidated_reusable_gpt_handoff: GptHandoffSummary | None = None
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
@@ -1813,6 +1814,7 @@ class AutoTradeCycle:
     def _run(self, *, send: bool = False, _close_reentry_depth: int = 0) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         self._stale_gpt_handoff_reason = None
+        self._prevalidated_reusable_gpt_handoff = None
         stale_gpt_reason = self._external_gpt_decision_refresh_reason()
         if stale_gpt_reason is not None:
             source_path = getattr(self.gpt_provider, "source_path", None)
@@ -3377,6 +3379,13 @@ class AutoTradeCycle:
                         f"external GPT decision response already consumed by {label}; "
                         "refresh broker truth and write one current receipt"
                     )
+            # Pin only the exact, fully revalidated, still-unconsumed handoff
+            # for this cycle. Target/projection bookkeeping performed below
+            # can legitimately update evidence sidecars after this check; a
+            # second byte-level verification would then reject the very
+            # receipt this cycle just accepted. The live gateways still fetch
+            # broker truth and reapply position/risk limits before any send.
+            self._prevalidated_reusable_gpt_handoff = reusable_gpt
             return None
         for path, label in (
             (self.snapshot_path, "broker snapshot"),
@@ -4183,6 +4192,8 @@ class AutoTradeCycle:
                 issues=1,
                 error=self._stale_gpt_handoff_reason,
             )
+        if self._prevalidated_reusable_gpt_handoff is not None:
+            return self._prevalidated_reusable_gpt_handoff
         reusable = self._load_reusable_verified_gpt_handoff()
         if reusable is not None:
             return reusable

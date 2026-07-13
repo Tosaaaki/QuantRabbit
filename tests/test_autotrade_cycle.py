@@ -8114,6 +8114,95 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
                 self.assertIsNone(cycle._load_reusable_verified_gpt_handoff())
 
+    def test_prevalidated_gpt_handoff_survives_same_cycle_evidence_housekeeping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "codex_trader_decision_response.json"
+            verified_path = root / "gpt_trader_decision.json"
+            source_path.write_text("{}\n")
+            verified_path.write_text("{}\n")
+            reusable = GptHandoffSummary(
+                status="ACCEPTED",
+                action="REQUEST_EVIDENCE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+            )
+            cycle = object.__new__(AutoTradeCycle)
+            cycle.use_gpt_trader = True
+            cycle.gpt_provider = SimpleNamespace(source_path=source_path)
+            cycle.gpt_decision_path = verified_path
+            cycle._stale_gpt_handoff_reason = None
+            cycle._prevalidated_reusable_gpt_handoff = None
+
+            with mock.patch.object(
+                cycle,
+                "_load_reusable_verified_gpt_handoff",
+                return_value=reusable,
+            ) as initial_validation, mock.patch.object(
+                cycle,
+                "_gpt_consuming_receipts",
+                return_value=(),
+            ):
+                self.assertIsNone(cycle._external_gpt_decision_refresh_reason())
+                initial_validation.assert_called_once_with()
+
+            # The real cycle updates target/projection/advice evidence between
+            # its initial validation and the later gateway handoff. Those
+            # same-cycle writes must not force a second verification of the
+            # exact receipt that was already proven current and unconsumed.
+            (root / "ai_attack_advice.json").write_text('{"updated": true}\n')
+            with mock.patch.object(
+                cycle,
+                "_load_reusable_verified_gpt_handoff",
+                return_value=None,
+            ) as second_validation, mock.patch.object(
+                cycle,
+                "_run_market_status_for_gpt_handoff",
+            ) as market_status:
+                self.assertIs(cycle._run_gpt_handoff(), reusable)
+                second_validation.assert_not_called()
+                market_status.assert_not_called()
+
+    def test_consumed_gpt_handoff_is_not_prevalidated_for_same_cycle_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "codex_trader_decision_response.json"
+            verified_path = root / "gpt_trader_decision.json"
+            receipt_path = root / "autotrade_cycle_report.md"
+            for path in (source_path, verified_path, receipt_path):
+                path.write_text("{}\n")
+            reusable = GptHandoffSummary(
+                status="ACCEPTED",
+                action="REQUEST_EVIDENCE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+            )
+            cycle = object.__new__(AutoTradeCycle)
+            cycle.use_gpt_trader = True
+            cycle.gpt_provider = SimpleNamespace(source_path=source_path)
+            cycle.gpt_decision_path = verified_path
+            cycle._prevalidated_reusable_gpt_handoff = None
+
+            with mock.patch.object(
+                cycle,
+                "_load_reusable_verified_gpt_handoff",
+                return_value=reusable,
+            ), mock.patch.object(
+                cycle,
+                "_gpt_consuming_receipts",
+                return_value=((receipt_path, "autotrade report"),),
+            ), mock.patch.object(
+                cycle,
+                "_gpt_receipt_consumes_verified_handoff",
+                return_value=True,
+            ):
+                reason = cycle._external_gpt_decision_refresh_reason()
+
+            self.assertIn("already consumed by autotrade report", reason or "")
+            self.assertIsNone(cycle._prevalidated_reusable_gpt_handoff)
+
     def test_reuse_market_artifacts_requires_fresh_receipt_after_snapshot_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
