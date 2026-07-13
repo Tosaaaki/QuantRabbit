@@ -113,7 +113,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
 WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
 WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
-FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V1"
+FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V2"
 FORECAST_REPLAY_METRIC_FIELDS = (
     "n",
     "hit_rate",
@@ -1755,6 +1755,19 @@ def _forecast_replay_scorecard(
             dimension_fields=("horizon_bucket",),
             limit=16,
         ),
+        "by_primary_driver_family": _forecast_replay_rows(
+            segments.get("by_primary_driver_family"),
+            dimension_fields=("primary_driver_family",),
+            limit=16,
+        ),
+        "by_driver_family_presence": _forecast_replay_rows(
+            segments.get("by_driver_family_presence"),
+            dimension_fields=("driver_family",),
+            limit=32,
+        ),
+        "exit_policy_validation": _forecast_replay_exit_policy_validation(
+            payload.get("train_validation_exit_selection")
+        ),
     }
 
 
@@ -1854,6 +1867,44 @@ def _forecast_replay_experiment(value: Any) -> dict[str, Any] | None:
         "semantics_version": (
             semantics.get("version") if isinstance(semantics, Mapping) else None
         ),
+    }
+
+
+def _forecast_replay_exit_policy_validation(value: Any) -> dict[str, Any] | None:
+    """Expose train-selected exit geometry and its untouched validation result."""
+
+    if not isinstance(value, Mapping):
+        return None
+
+    def result(item: Any) -> dict[str, float | int | None] | None:
+        if not isinstance(item, Mapping):
+            return None
+        parsed: dict[str, float | int | None] = {}
+        for field in (
+            "n",
+            "take_profit_pips",
+            "stop_loss_pips",
+            "avg_realized_pips",
+            "profit_factor",
+            "win_rate",
+            "tp_rate",
+            "sl_rate",
+            "timeout_rate",
+        ):
+            number = _optional_float(item.get(field))
+            if field == "n" and number is not None and number >= 0 and number.is_integer():
+                parsed[field] = int(number)
+            else:
+                parsed[field] = number
+        return parsed
+
+    return {
+        "status": value.get("status"),
+        "train_n": _nonnegative_int(value.get("train_n")),
+        "validation_n": _nonnegative_int(value.get("validation_n")),
+        "validation_start_utc": value.get("validation_start_utc"),
+        "selected_by_train": result(value.get("selected_by_train")),
+        "validation": result(value.get("validation")),
     }
 
 

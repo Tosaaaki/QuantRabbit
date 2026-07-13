@@ -1672,6 +1672,52 @@ class MarketReadOverlayTest(unittest.TestCase):
                                     "avg_final_pips": -2.9177,
                                 }
                             ],
+                            "by_primary_driver_family": [
+                                {
+                                    "primary_driver_family": "RANGE_BREAKOUT_CONFIRMED",
+                                    "n": 51,
+                                    "hit_rate": 0.4902,
+                                    "avg_final_pips": 0.6039,
+                                    "avg_realized_r": -0.0788,
+                                }
+                            ],
+                            "by_driver_family_presence": [
+                                {
+                                    "driver_family": "MARKET_LOCATION",
+                                    "n": 171,
+                                    "hit_rate": 0.2982,
+                                    "avg_final_pips": -4.4877,
+                                    "avg_realized_r": -0.1613,
+                                }
+                            ],
+                        },
+                        "train_validation_exit_selection": {
+                            "status": "OK",
+                            "train_n": 354,
+                            "validation_n": 240,
+                            "validation_start_utc": "2026-07-07T11:12:49Z",
+                            "selected_by_train": {
+                                "n": 354,
+                                "take_profit_pips": 10.0,
+                                "stop_loss_pips": 2.0,
+                                "avg_realized_pips": -1.73,
+                                "profit_factor": 0.095,
+                                "win_rate": 0.034,
+                                "tp_rate": 0.011,
+                                "sl_rate": 0.952,
+                                "timeout_rate": 0.037,
+                            },
+                            "validation": {
+                                "n": 240,
+                                "take_profit_pips": 10.0,
+                                "stop_loss_pips": 2.0,
+                                "avg_realized_pips": -1.8,
+                                "profit_factor": 0.074,
+                                "win_rate": 0.025,
+                                "tp_rate": 0.008,
+                                "sl_rate": 0.971,
+                                "timeout_rate": 0.021,
+                            },
                         },
                     }
                 )
@@ -1692,6 +1738,7 @@ class MarketReadOverlayTest(unittest.TestCase):
                 "forecast_replay_scorecard"
             ]
             self.assertEqual(scorecard["status"], "VALID")
+            self.assertEqual(scorecard["contract"], "QR_FORECAST_REPLAY_SCORECARD_V2")
             self.assertEqual(scorecard["global"]["n"], 9420)
             self.assertEqual(scorecard["global"]["avg_final_pips"], -2.8666)
             self.assertEqual(scorecard["selected_pair"], "EUR_USD")
@@ -1709,6 +1756,30 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertFalse(scorecard["proof_eligible"])
             self.assertEqual(scorecard["scope"]["pair_filter"], ["EUR_USD", "GBP_JPY"])
             self.assertFalse(scorecard["scope"]["pair_direction_rows_truncated"])
+            self.assertEqual(
+                scorecard["by_primary_driver_family"][0]["primary_driver_family"],
+                "RANGE_BREAKOUT_CONFIRMED",
+            )
+            self.assertEqual(
+                scorecard["by_primary_driver_family"][0]["avg_final_pips"],
+                0.6039,
+            )
+            self.assertEqual(
+                scorecard["by_primary_driver_family"][0]["avg_realized_r"],
+                -0.0788,
+            )
+            self.assertEqual(
+                scorecard["by_driver_family_presence"][0]["driver_family"],
+                "MARKET_LOCATION",
+            )
+            self.assertEqual(
+                scorecard["exit_policy_validation"]["validation"]["profit_factor"],
+                0.074,
+            )
+            self.assertEqual(
+                scorecard["exit_policy_validation"]["validation"]["sl_rate"],
+                0.971,
+            )
             self.assertTrue(scorecard["read_only"])
             self.assertFalse(scorecard["live_permission"])
 
