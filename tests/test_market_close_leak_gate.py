@@ -116,6 +116,30 @@ class MarketCloseLeakGateTest(unittest.TestCase):
 
         self.assertIsNone(issue)
 
+    def test_payload_lane_method_fallback_ignores_trailing_order_vehicle(self) -> None:
+        for vehicle in ("LIMIT", "MARKET", "STOP"):
+            with self.subTest(vehicle=vehicle):
+                issue = market_close_leak_family_payload_issue(
+                    {
+                        "lane_id": (
+                            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:"
+                            f"{vehicle}"
+                        ),
+                        "intent": {
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "owner": "trader",
+                            "metadata": {},
+                        },
+                    }
+                )
+
+                self.assertIsNotNone(issue)
+                assert issue is not None
+                self.assertEqual(
+                    issue["code"], MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+                )
+
     def test_tp_proven_harvest_still_requires_close_and_timing_for_market_close_exit(self) -> None:
         issue = market_close_leak_family_block_issue(
             _family_intent(

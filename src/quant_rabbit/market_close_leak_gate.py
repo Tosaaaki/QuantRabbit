@@ -230,7 +230,12 @@ def _family_fields_match(*, pair: str, side: str, method: str) -> bool:
 
 def _method_from_lane_id(lane_id: str) -> str:
     parts = [part for part in str(lane_id or "").split(":") if part]
-    return parts[-1] if parts else ""
+    known_methods = {method.value for method in TradeMethod}
+    for part in reversed(parts):
+        normalized = _normal(part).replace("-", "_").replace(" ", "_")
+        if normalized in known_methods:
+            return normalized
+    return ""
 
 
 def _manual_excluded(metadata: dict[str, Any], *, owner: Owner | str | None) -> bool:
