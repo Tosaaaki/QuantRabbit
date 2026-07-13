@@ -47,7 +47,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Operator precedent audit JSON/report | `data/operator_precedent_audit.json` / `docs/operator_precedent_audit_report.md` |
 | Operator manual market-context audit JSON/report | `data/manual_market_context_audit.json` / `docs/manual_market_context_audit_report.md` |
 | Market-read prediction ledger/report | `data/market_read_predictions.jsonl` / `docs/market_read_score_report.md` |
-| Forecast forward holdout lock/evaluator (read-only; one predeclared candidate, never live permission) | `scripts/oanda_history_replay_forward_holdout.py` / legacy `config/forecast_forward_candidate_eurusd_baseline_v1.json` / situation-aware `config/forecast_forward_candidate_eurusd_situation_policy_v2.json` / `logs/reports/forecast_forward_holdout/` |
+| Forecast forward holdout lock/evaluator (read-only; one predeclared candidate, never live permission) | `scripts/oanda_history_replay_forward_holdout.py` / legacy `config/forecast_forward_candidate_eurusd_baseline_v1.json` / situation-aware `config/forecast_forward_candidate_eurusd_situation_policy_v2.json` / independent CAD/JPY downside candidate `config/forecast_forward_candidate_cadjpy_down_situation_policy_v2.json` / `logs/reports/forecast_forward_holdout/` |
 | GPT decision → broker execution links (append-only; explicit ids only) | `data/market_read_execution_links.jsonl` |
 | Hourly AI market-read handoff | `data/trader_decision_baseline.json` / `data/market_read_evidence_packet.json` / `data/codex_market_read_overlay.json` / `data/codex_trader_decision_response.json` |
 | Self-improvement audit JSON | `data/self_improvement_audit.json` |

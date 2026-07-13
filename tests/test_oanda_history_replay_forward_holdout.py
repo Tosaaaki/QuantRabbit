@@ -300,6 +300,22 @@ class ForwardHoldoutTest(unittest.TestCase):
         )
         forward._validate_candidate(situation_candidate)
 
+        cadjpy_candidate_path = (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "forecast_forward_candidate_cadjpy_down_situation_policy_v2.json"
+        )
+        cadjpy_candidate = json.loads(
+            cadjpy_candidate_path.read_text(encoding="utf-8")
+        )
+        self.assertEqual(cadjpy_candidate["pair"], "CAD_JPY")
+        self.assertEqual(cadjpy_candidate["direction"], "DOWN")
+        self.assertEqual(
+            cadjpy_candidate["exit_policy"],
+            {"stop_loss_pips": 7.0, "take_profit_pips": 10.0},
+        )
+        forward._validate_candidate(cadjpy_candidate)
+
     def test_selector_requires_verified_situation_receipt_and_matches_exact_policy(self) -> None:
         context = _context()
         evidence = forward.replay._technical_situation_evidence(
