@@ -1,0 +1,37 @@
+{
+  "acceptance": {
+    "max_daily_sample_share": 0.35,
+    "min_active_days": 5,
+    "min_avg_final_pips_exclusive": 0.0,
+    "min_avg_realized_r_exclusive": 0.0,
+    "min_directional_hit_wilson95_lower": 0.55,
+    "min_fixed_exit_avg_realized_pips_exclusive": 0.5,
+    "min_fixed_exit_profit_factor": 1.5,
+    "min_fixed_exit_win_wilson95_lower": 0.5,
+    "min_positive_day_rate": 0.6,
+    "min_samples": 30
+  },
+  "candidate_id": "EUR_USD_SITUATION_TECHNICAL_POLICY_V2",
+  "confidence_policy": {
+    "field": "calibrated",
+    "minimum": 0.55
+  },
+  "contract_kind": "QR_FORECAST_FORWARD_CANDIDATE_V2",
+  "direction": "ANY",
+  "exit_policy": {
+    "stop_loss_pips": 2.0,
+    "take_profit_pips": 10.0
+  },
+  "max_horizon_min": 240,
+  "pair": "EUR_USD",
+  "technical_selector": {
+    "technical_atr_band": "ANY",
+    "technical_family_direction_alignment": "ANY",
+    "technical_range_location_24h": "ANY",
+    "technical_regime": "ANY",
+    "technical_selected_method": "ANY",
+    "technical_situation": "ANY",
+    "technical_spread_band": "ANY",
+    "technical_structure_alignment": "ANY"
+  }
+}

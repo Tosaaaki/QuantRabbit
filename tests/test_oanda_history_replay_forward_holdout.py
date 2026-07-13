@@ -7,13 +7,17 @@ import os
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
-from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+    technical_context_sha256,
+)
 
 
 def _load_module():
@@ -95,12 +99,12 @@ def _fake_locked_truth_fetch(command: list[str]) -> None:
 
 def _candidate() -> dict:
     return {
-        "contract_kind": forward.CANDIDATE_KIND,
+        "contract_kind": forward.CANDIDATE_KIND_V2,
         "candidate_id": "TEST_EUR_USD_UP",
         "pair": "EUR_USD",
         "direction": "UP",
         "confidence_policy": {"field": "calibrated", "minimum": 0.0},
-        "technical_selector": {key: "ANY" for key in forward.SELECTOR_FIELDS},
+        "technical_selector": {key: "ANY" for key in forward.SELECTOR_FIELDS_V2},
         "max_horizon_min": 1,
         "exit_policy": {"take_profit_pips": 1.0, "stop_loss_pips": 1.0},
         "acceptance": {
@@ -254,6 +258,164 @@ class ForwardHoldoutTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "weaker than proof hard floor"):
                 forward._validate_candidate(weak)
 
+            invalid_selector = _candidate()
+            invalid_selector["technical_selector"]["technical_situation"] = "ny_trend"
+            with self.assertRaisesRegex(ValueError, "canonical uppercase"):
+                forward._validate_candidate(invalid_selector)
+
+            unsupported_selector = _candidate()
+            unsupported_selector["technical_selector"]["technical_selected_method"] = "INTUITION"
+            with self.assertRaisesRegex(ValueError, "value invalid"):
+                forward._validate_candidate(unsupported_selector)
+
+    def test_legacy_candidate_config_remains_readable_for_historical_audit(self) -> None:
+        config_path = (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "forecast_forward_candidate_eurusd_baseline_v1.json"
+        )
+        legacy_candidate = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(legacy_candidate["contract_kind"], forward.CANDIDATE_KIND)
+        self.assertEqual(
+            set(legacy_candidate["technical_selector"]),
+            set(forward.SELECTOR_FIELDS),
+        )
+        forward._validate_candidate(legacy_candidate)
+
+        situation_candidate_path = (
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "forecast_forward_candidate_eurusd_situation_policy_v2.json"
+        )
+        situation_candidate = json.loads(
+            situation_candidate_path.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            situation_candidate["contract_kind"],
+            forward.CANDIDATE_KIND_V2,
+        )
+        self.assertEqual(
+            set(situation_candidate["technical_selector"]),
+            set(forward.SELECTOR_FIELDS_V2),
+        )
+        forward._validate_candidate(situation_candidate)
+
+    def test_selector_requires_verified_situation_receipt_and_matches_exact_policy(self) -> None:
+        context = _context()
+        evidence = forward.replay._technical_situation_evidence(
+            context,
+            forecast_direction="UP",
+            pair="EUR_USD",
+            current_price=1.1001,
+        )
+        row = SimpleNamespace(
+            pair="EUR_USD",
+            direction="UP",
+            current_price=1.1001,
+            technical_context_v1=context,
+            technical_situation=evidence["technical_situation"],
+            technical_selected_method=evidence["technical_selected_method"],
+            technical_family_direction_alignment=evidence[
+                "technical_family_direction_alignment"
+            ],
+            technical_situation_evidence_status=evidence["status"],
+        )
+        selector = {key: "ANY" for key in forward.SELECTOR_FIELDS_V2}
+        selector.update(
+            {
+                "technical_situation": "NY_TREND",
+                "technical_selected_method": "TREND_CONTINUATION",
+                "technical_family_direction_alignment": "NON_DIRECTIONAL",
+            }
+        )
+        self.assertTrue(forward._selector_matches(row, selector))
+        selector["technical_situation"] = "ASIA_RANGE"
+        self.assertFalse(forward._selector_matches(row, selector))
+        selector["technical_situation"] = "NY_TREND"
+        selector["technical_selected_method"] = "RANGE_ROTATION"
+        self.assertFalse(forward._selector_matches(row, selector))
+        selector["technical_selected_method"] = "TREND_CONTINUATION"
+        selector["technical_family_direction_alignment"] = "ALIGNED"
+        self.assertFalse(forward._selector_matches(row, selector))
+
+        legacy = deepcopy(context)
+        for field in (
+            "regime_family_weighting",
+            "m5_failed_break_evidence",
+            "dynamic_tf_policy_evidence",
+            "dynamic_tf_policy_source_context",
+        ):
+            legacy.pop(field, None)
+        legacy["context_sha256"] = technical_context_sha256(legacy)
+        legacy_row = SimpleNamespace(
+            pair="EUR_USD",
+            direction="UP",
+            current_price=1.1001,
+            technical_context_v1=legacy,
+        )
+        self.assertFalse(
+            forward._selector_matches(
+                legacy_row,
+                {key: "ANY" for key in forward.SELECTOR_FIELDS_V2},
+            )
+        )
+        self.assertTrue(
+            forward._selector_matches(
+                legacy_row,
+                {key: "ANY" for key in forward.SELECTOR_FIELDS},
+            )
+        )
+
+        tampered = deepcopy(context)
+        tampered["regime_family_weighting"]["source_identity"]["selected_method"] = (
+            "RANGE_ROTATION"
+        )
+        tampered["context_sha256"] = technical_context_sha256(tampered)
+        tampered_row = SimpleNamespace(
+            pair="EUR_USD",
+            direction="UP",
+            current_price=1.1001,
+            technical_context_v1=tampered,
+        )
+        self.assertFalse(
+            forward._selector_matches(
+                tampered_row,
+                {key: "ANY" for key in forward.SELECTOR_FIELDS_V2},
+            )
+        )
+
+    def test_method_and_direction_invariants_are_scoped_to_predeclared_candidate(self) -> None:
+        aligned = SimpleNamespace(
+            technical_situation_evidence_status="VALID",
+            technical_selected_method="TREND_CONTINUATION",
+            technical_family_direction_alignment="ALIGNED",
+        )
+        no_method = SimpleNamespace(
+            technical_situation_evidence_status="VALID",
+            technical_selected_method="NONE",
+            technical_family_direction_alignment="NON_DIRECTIONAL",
+        )
+        contradicted = SimpleNamespace(
+            technical_situation_evidence_status="VALID",
+            technical_selected_method="TREND_CONTINUATION",
+            technical_family_direction_alignment="CONTRADICTED",
+        )
+
+        selected_counts = forward._situation_policy_invariant_counts([aligned])
+        all_counts = forward._situation_policy_invariant_counts(
+            [aligned, no_method, contradicted]
+        )
+
+        self.assertEqual(
+            selected_counts,
+            {
+                "directional_without_selected_method": 0,
+                "directional_family_contradictions": 0,
+            },
+        )
+        self.assertEqual(all_counts["directional_without_selected_method"], 1)
+        self.assertEqual(all_counts["directional_family_contradictions"], 1)
+
     def test_lock_requires_one_dedicated_empty_truth_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -382,6 +544,28 @@ class ForwardHoldoutTest(unittest.TestCase):
                         now=start,
                     )
                 )
+                legacy_context = deepcopy(forecast_row.technical_context_v1)
+                for field in (
+                    "regime_family_weighting",
+                    "m5_failed_break_evidence",
+                    "dynamic_tf_policy_evidence",
+                    "dynamic_tf_policy_source_context",
+                ):
+                    legacy_context.pop(field, None)
+                legacy_context["context_sha256"] = technical_context_sha256(
+                    legacy_context
+                )
+                outside_horizon = SimpleNamespace(**vars(forecast_row))
+                outside_horizon.horizon_min = 2
+                outside_horizon.technical_context_v1 = legacy_context
+                self.assertTrue(
+                    record_forecast(
+                        outside_horizon,
+                        data_root=root,
+                        cycle_id="outside-horizon-cycle",
+                        now=start,
+                    )
+                )
             mature = end + timedelta(minutes=1, seconds=5)
 
             with patch.object(
@@ -413,11 +597,38 @@ class ForwardHoldoutTest(unittest.TestCase):
             self.assertEqual(report["validation"]["fixed_exit"]["take_profit_pips"], 1.0)
             self.assertEqual(report["validation"]["fixed_exit"]["stop_loss_pips"], 1.0)
             self.assertFalse(report["live_permission_granted"])
+            self.assertEqual(report["cohort"]["direction_matched_rows"], 2)
+            self.assertEqual(report["cohort"]["horizon_eligible_rows"], 1)
             self.assertEqual(
                 report["cohort"]["truth_acquisition_receipts"]["verified_files"],
                 1,
             )
             self.assertNotIn("TRUTH_ACQUISITION_UNPROVEN_FILE", report["proof_blockers"])
+            self.assertNotIn(
+                "TECHNICAL_SITUATION_EVIDENCE_MISSING",
+                report["proof_blockers"],
+            )
+            self.assertEqual(
+                report["validation"]["technical_segments"]["by_situation"][0][
+                    "technical_situation"
+                ],
+                "NY_TREND",
+            )
+
+    def test_semantic_dependencies_bind_situation_selection_code(self) -> None:
+        dependency_names = {
+            Path(path).name for path in forward._semantic_dependency_sha256s()
+        }
+        self.assertTrue(
+            {
+                "directional_forecaster.py",
+                "failed_break_evidence.py",
+                "forecast_persistence_tracker.py",
+                "forecast_technical_context.py",
+                "regime_family_weighting.py",
+                "tf_weights.py",
+            }.issubset(dependency_names)
+        )
 
     def test_evaluate_rejects_truth_root_prepopulation_without_running_fetch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

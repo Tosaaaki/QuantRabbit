@@ -10,6 +10,7 @@ import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import quant_rabbit.capture_economics as capture_module
 from quant_rabbit.capture_economics import (
@@ -294,6 +295,65 @@ class CaptureEconomicsTest(unittest.TestCase):
                 "2026-05-06T15:30:50.236779206Z",
             )
             self.assertTrue(outcome.broker_time_consistent)
+
+    def test_nanosecond_outcomes_use_shared_legacy_safe_window_parser(self) -> None:
+        class LegacyDatetime:
+            @staticmethod
+            def fromisoformat(value: str) -> datetime:
+                timestamp = value.rsplit("+", 1)[0]
+                fraction = timestamp.split(".", 1)[1] if "." in timestamp else ""
+                if len(fraction) > 6:
+                    raise ValueError("legacy runtime rejects nanoseconds")
+                return datetime.fromisoformat(value)
+
+        row = RealizedOutcome(
+            ts_utc="2026-07-09T03:00:00.123456789Z",
+            trade_id="473003",
+            pair="EUR_USD",
+            side="LONG",
+            lane_id="range_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+            method="BREAKOUT_FAILURE",
+            exit_reason="TAKE_PROFIT_ORDER",
+            realized_pl_jpy=1251.68,
+        )
+        with patch.object(capture_module, "datetime", LegacyDatetime):
+            parsed = capture_module._outcome_timestamp(row)
+            week = capture_module._iso_week(row.ts_utc)
+            comparison = capture_module._recent_performance_comparison(
+                [row],
+                as_of=datetime(2026, 7, 10, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.microsecond if parsed is not None else None, 123456)
+        self.assertEqual(week, "2026-W28")
+        self.assertEqual(comparison["timestamp_parse_status"], "VALID")
+        self.assertEqual(comparison["timestamp_parse_failures"], 0)
+        self.assertEqual(comparison["recent_window"]["trades"], 1)
+
+    def test_recent_performance_fails_loud_on_unparseable_lifetime_timestamp(self) -> None:
+        row = RealizedOutcome(
+            ts_utc="not-a-timestamp",
+            trade_id="bad-time",
+            pair="EUR_USD",
+            side="LONG",
+            lane_id="range_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+            method="BREAKOUT_FAILURE",
+            exit_reason="TAKE_PROFIT_ORDER",
+            realized_pl_jpy=100.0,
+        )
+
+        comparison = capture_module._recent_performance_comparison(
+            [row],
+            as_of=datetime(2026, 7, 10, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(comparison["timestamp_parse_status"], "INVALID")
+        self.assertEqual(comparison["timestamp_input_rows"], 1)
+        self.assertEqual(comparison["timestamp_parsed_rows"], 0)
+        self.assertEqual(comparison["timestamp_parse_failures"], 1)
+        self.assertEqual(comparison["verdict"], "TIMESTAMP_PARSE_FAILED")
+        self.assertEqual(comparison["proof_status"], "TIMESTAMP_PARSE_FAILED")
 
     def test_entry_fill_raw_truth_must_match_every_normalized_identity_field(self) -> None:
         cases = {

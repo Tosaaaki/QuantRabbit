@@ -30,14 +30,15 @@ if str(SCRIPT_ROOT) not in sys.path:
 import oanda_history_replay_validate as replay  # noqa: E402
 
 
-LOCK_KIND = "QR_FORECAST_FORWARD_HOLDOUT_V1"
-RESULT_KIND = "QR_FORECAST_FORWARD_HOLDOUT_RESULT_V1"
-RESULT_HEAD_KIND = "QR_FORECAST_FORWARD_HOLDOUT_HEAD_V1"
-RESULT_REGISTRY_KIND = "QR_FORECAST_FORWARD_HOLDOUT_RESULT_REGISTRY_V1"
+LOCK_KIND = "QR_FORECAST_FORWARD_HOLDOUT_V2"
+RESULT_KIND = "QR_FORECAST_FORWARD_HOLDOUT_RESULT_V2"
+RESULT_HEAD_KIND = "QR_FORECAST_FORWARD_HOLDOUT_HEAD_V2"
+RESULT_REGISTRY_KIND = "QR_FORECAST_FORWARD_HOLDOUT_RESULT_REGISTRY_V2"
 CANDIDATE_KIND = "QR_FORECAST_FORWARD_CANDIDATE_V1"
-LOCK_SCHEMA_VERSION = 1
-RESULT_SCHEMA_VERSION = 1
-SEMANTICS_VERSION = "oanda-bidask-technical-context-forward-v1"
+CANDIDATE_KIND_V2 = "QR_FORECAST_FORWARD_CANDIDATE_V2"
+LOCK_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 2
+SEMANTICS_VERSION = "oanda-bidask-situation-technical-forward-v2"
 SELECTOR_FIELDS = (
     "technical_regime",
     "technical_atr_band",
@@ -45,6 +46,57 @@ SELECTOR_FIELDS = (
     "technical_range_location_24h",
     "technical_structure_alignment",
 )
+SITUATION_SELECTOR_FIELDS = (
+    "technical_situation",
+    "technical_selected_method",
+    "technical_family_direction_alignment",
+)
+SELECTOR_FIELDS_V2 = (*SELECTOR_FIELDS, *SITUATION_SELECTOR_FIELDS)
+SELECTOR_ALLOWED_VALUES = {
+    "technical_regime": {
+        "ANY",
+        "UNKNOWN",
+        "TREND_STRONG",
+        "TREND_WEAK",
+        "TREND_UP",
+        "TREND_DOWN",
+        "RANGE",
+        "BREAKOUT_PENDING",
+        "TRANSITION",
+        "IMPULSE_UP",
+        "IMPULSE_DOWN",
+        "FAILURE_RISK",
+    },
+    "technical_atr_band": {"ANY", "UNKNOWN", "LOW", "NORMAL", "HIGH"},
+    "technical_spread_band": {"ANY", "UNKNOWN", "TIGHT", "NORMAL", "WIDE"},
+    "technical_range_location_24h": {"ANY", "UNKNOWN", "LOWER", "MIDDLE", "UPPER"},
+    "technical_structure_alignment": {"ANY", "MISSING", "ALIGNED", "OPPOSED"},
+    "technical_situation": {
+        "ANY",
+        "ASIA_RANGE",
+        "ASIA_TREND",
+        "LONDON_IMPULSE",
+        "LONDON_TREND",
+        "NY_OVERLAP",
+        "NY_TREND",
+        "ROLLOVER_SWING",
+        "TRANSITION",
+    },
+    "technical_selected_method": {
+        "ANY",
+        "NONE",
+        "TREND_CONTINUATION",
+        "RANGE_ROTATION",
+        "BREAKOUT_FAILURE",
+        "EVENT_RISK",
+    },
+    "technical_family_direction_alignment": {
+        "ANY",
+        "ALIGNED",
+        "CONTRADICTED",
+        "NON_DIRECTIONAL",
+    },
+}
 CANDIDATE_KEYS = {
     "contract_kind",
     "candidate_id",
@@ -286,6 +338,8 @@ def create_lock(
         raise ValueError("holdout must be a future fixed [from,to) window")
     candidate = _load_json_object(candidate_path)
     _validate_candidate(candidate)
+    if candidate.get("contract_kind") != CANDIDATE_KIND_V2:
+        raise ValueError("new forward locks require situation-aware candidate V2")
     training = _load_json_object(training_report_path)
     training_to = _training_forecast_to(training)
     training_max_horizon = _training_max_horizon(training)
@@ -448,21 +502,51 @@ def evaluate_lock(
     )
     direction = str(candidate["direction"])
     direction_rows = [row for row in rows if direction == "ANY" or row.direction == direction]
-    context_missing_or_invalid = sum(1 for row in direction_rows if row.technical_context_status != "VALID")
+    horizon_rows = [
+        row
+        for row in direction_rows
+        if row.horizon_min <= float(candidate["max_horizon_min"])
+    ]
+    context_missing_or_invalid = sum(
+        1 for row in horizon_rows if row.technical_context_status != "VALID"
+    )
     context_incomplete = sum(
         1
-        for row in direction_rows
+        for row in horizon_rows
         if row.technical_context_status == "VALID"
         and not bool(((row.technical_context_v1 or {}).get("completeness") or {}).get("complete"))
     )
-    selected = [
+    situation_evidence_missing = sum(
+        1
+        for row in horizon_rows
+        if row.technical_situation_evidence_status
+        in {"TECHNICAL_CONTEXT_MISSING", "REGIME_FAMILY_WEIGHTING_MISSING"}
+    )
+    situation_evidence_invalid = sum(
+        1
+        for row in horizon_rows
+        if row.technical_situation_evidence_status
+        not in {
+            "VALID",
+            "TECHNICAL_CONTEXT_MISSING",
+            "REGIME_FAMILY_WEIGHTING_MISSING",
+        }
+    )
+    candidate_rows = [
         row
-        for row in direction_rows
+        for row in horizon_rows
         if row.technical_context_status == "VALID"
         and bool(((row.technical_context_v1 or {}).get("completeness") or {}).get("complete"))
-        and row.horizon_min <= float(candidate["max_horizon_min"])
         and _selector_matches(row, candidate["technical_selector"])
     ]
+    situation_invariants = _situation_policy_invariant_counts(candidate_rows)
+    directional_without_selected_method = situation_invariants[
+        "directional_without_selected_method"
+    ]
+    directional_family_contradictions = situation_invariants[
+        "directional_family_contradictions"
+    ]
+    selected = candidate_rows
     selected, independence = replay._select_independent_forecasts(selected)
     receipt_blockers = _forecast_receipt_blockers(
         forecast_path=forecast_path,
@@ -514,6 +598,10 @@ def evaluate_lock(
         pending_rows=len(pending),
         context_missing_or_invalid=context_missing_or_invalid,
         context_incomplete=context_incomplete,
+        situation_evidence_missing=situation_evidence_missing,
+        situation_evidence_invalid=situation_evidence_invalid,
+        directional_without_selected_method=directional_without_selected_method,
+        directional_family_contradictions=directional_family_contradictions,
     )
     blockers.extend(receipt_blockers)
     blockers.extend(truth_receipt_blockers)
@@ -553,10 +641,16 @@ def evaluate_lock(
             "matures_at_utc": _iso(matures_at),
             "forecast_rows_sha256": replay._forecast_rows_digest(selected),
             "truth_candles_sha256": replay._truth_candles_digest(candles),
+            "direction_matched_rows": len(direction_rows),
+            "horizon_eligible_rows": len(horizon_rows),
             "selected_rows": len(selected),
             "evaluated_rows": len(results),
             "context_missing_or_invalid_rows": context_missing_or_invalid,
             "context_incomplete_rows": context_incomplete,
+            "situation_evidence_missing_rows": situation_evidence_missing,
+            "situation_evidence_invalid_rows": situation_evidence_invalid,
+            "directional_without_selected_method_rows": directional_without_selected_method,
+            "directional_family_contradiction_rows": directional_family_contradictions,
             "unscorable_no_market_rows": len(no_market),
             "pending_future_truth_rows": len(pending),
             "load_stats": load_stats,
@@ -570,6 +664,28 @@ def evaluate_lock(
             "directional": directional,
             "fixed_exit": fixed_exit,
             "daily_stability": daily,
+            "technical_segments": {
+                "by_situation": replay._group(results, ("technical_situation",), min_n=1),
+                "by_selected_method": replay._group(
+                    results,
+                    ("technical_selected_method",),
+                    min_n=1,
+                ),
+                "by_family_direction_alignment": replay._group(
+                    results,
+                    ("technical_family_direction_alignment",),
+                    min_n=1,
+                ),
+                "by_situation_method_alignment": replay._group(
+                    results,
+                    (
+                        "technical_situation",
+                        "technical_selected_method",
+                        "technical_family_direction_alignment",
+                    ),
+                    min_n=1,
+                ),
+            },
         },
         "acceptance_checks": checks,
         "proof_eligible": not blockers,
@@ -884,7 +1000,8 @@ def _validate_result_registry_bytes(
 
 def _validate_candidate(candidate: Mapping[str, Any]) -> None:
     _strict_keys(candidate, CANDIDATE_KEYS, "candidate")
-    if candidate.get("contract_kind") != CANDIDATE_KIND:
+    candidate_kind = candidate.get("contract_kind")
+    if candidate_kind not in {CANDIDATE_KIND, CANDIDATE_KIND_V2}:
         raise ValueError("candidate contract_kind invalid")
     if not str(candidate.get("candidate_id") or "").strip():
         raise ValueError("candidate_id required")
@@ -901,10 +1018,19 @@ def _validate_candidate(candidate: Mapping[str, Any]) -> None:
     if not 0.0 <= minimum <= 1.0:
         raise ValueError("confidence minimum out of range")
     selector = _mapping(candidate.get("technical_selector"), "technical_selector")
-    _strict_keys(selector, set(SELECTOR_FIELDS), "technical_selector")
-    for key in SELECTOR_FIELDS:
-        if not str(selector.get(key) or "").strip():
-            raise ValueError(f"technical selector {key} required")
+    selector_fields = (
+        SELECTOR_FIELDS_V2
+        if candidate_kind == CANDIDATE_KIND_V2
+        else SELECTOR_FIELDS
+    )
+    _strict_keys(selector, set(selector_fields), "technical_selector")
+    for key in selector_fields:
+        value = selector.get(key)
+        normalized = str(value or "").strip().upper()
+        if not isinstance(value, str) or value != normalized:
+            raise ValueError(f"technical selector {key} must be canonical uppercase")
+        if normalized not in SELECTOR_ALLOWED_VALUES[key]:
+            raise ValueError(f"technical selector {key} value invalid")
     if _typed_finite(candidate.get("max_horizon_min"), "max_horizon_min") <= 0.0:
         raise ValueError("max_horizon_min must be positive")
     exit_policy = _mapping(candidate.get("exit_policy"), "exit_policy")
@@ -1006,6 +1132,8 @@ def _validate_lock(lock: Mapping[str, Any], *, lock_path: Path) -> None:
         raise ValueError("lock was not prepared before cohort")
     candidate = _mapping(lock.get("candidate"), "candidate")
     _validate_candidate(candidate)
+    if candidate.get("contract_kind") != CANDIDATE_KIND_V2:
+        raise ValueError("forward lock candidate semantics invalid")
     expected_maturity = (
         end
         + timedelta(minutes=float(candidate["max_horizon_min"]))
@@ -1496,7 +1624,46 @@ def _materialize_verified_truth(
 
 
 def _selector_matches(row: Any, selector: Mapping[str, Any]) -> bool:
+    selector_keys = set(selector)
+    if selector_keys == set(SELECTOR_FIELDS):
+        selector_fields = SELECTOR_FIELDS
+        require_situation_evidence = False
+    elif selector_keys == set(SELECTOR_FIELDS_V2):
+        selector_fields = SELECTOR_FIELDS_V2
+        require_situation_evidence = True
+    else:
+        return False
     context = row.technical_context_v1 or {}
+    if not require_situation_evidence:
+        evidence_status = "NOT_REQUIRED_FOR_V1"
+        technical_situation = "MISSING"
+        technical_selected_method = "MISSING"
+        technical_family_direction_alignment = "MISSING"
+    else:
+        evidence_status = getattr(row, "technical_situation_evidence_status", None)
+        if evidence_status is None:
+            evidence = replay._technical_situation_evidence(
+                context,
+                forecast_direction=row.direction,
+                pair=getattr(row, "pair", None),
+                current_price=getattr(row, "current_price", None),
+            )
+            evidence_status = evidence["status"]
+            technical_situation = evidence["technical_situation"]
+            technical_selected_method = evidence["technical_selected_method"]
+            technical_family_direction_alignment = evidence[
+                "technical_family_direction_alignment"
+            ]
+        else:
+            technical_situation = getattr(row, "technical_situation", "MISSING")
+            technical_selected_method = getattr(row, "technical_selected_method", "MISSING")
+            technical_family_direction_alignment = getattr(
+                row,
+                "technical_family_direction_alignment",
+                "MISSING",
+            )
+    if require_situation_evidence and evidence_status != "VALID":
+        return False
     values = {
         "technical_regime": _context_label(context, "regime", "primary"),
         "technical_atr_band": _context_label(context, "volatility", "primary_atr_band"),
@@ -1506,8 +1673,40 @@ def _selector_matches(row: Any, selector: Mapping[str, Any]) -> bool:
             context,
             forecast_direction=row.direction,
         ),
+        "technical_situation": technical_situation,
+        "technical_selected_method": technical_selected_method,
+        "technical_family_direction_alignment": technical_family_direction_alignment,
     }
-    return all(str(selector[key]).upper() == "ANY" or str(selector[key]).upper() == values[key] for key in SELECTOR_FIELDS)
+    return all(
+        str(selector[key]).upper() == "ANY"
+        or str(selector[key]).upper() == values[key]
+        for key in selector_fields
+    )
+
+
+def _situation_policy_invariant_counts(rows: Sequence[Any]) -> dict[str, int]:
+    """Count executable-policy contradictions only inside the locked candidate.
+
+    Missing/invalid receipts are still cohort-wide integrity blockers because
+    they could otherwise be selectively hidden.  A verified row excluded by a
+    predeclared exact selector is not part of that candidate's method/direction
+    thesis and therefore cannot invalidate it after the fact.
+    """
+
+    return {
+        "directional_without_selected_method": sum(
+            1
+            for row in rows
+            if row.technical_situation_evidence_status == "VALID"
+            and row.technical_selected_method == "NONE"
+        ),
+        "directional_family_contradictions": sum(
+            1
+            for row in rows
+            if row.technical_situation_evidence_status == "VALID"
+            and row.technical_family_direction_alignment == "CONTRADICTED"
+        ),
+    }
 
 
 def _integrity_blockers(
@@ -1521,12 +1720,20 @@ def _integrity_blockers(
     pending_rows: int,
     context_missing_or_invalid: int,
     context_incomplete: int,
+    situation_evidence_missing: int,
+    situation_evidence_invalid: int,
+    directional_without_selected_method: int,
+    directional_family_contradictions: int,
 ) -> list[str]:
     checks = {
         "NO_SELECTED_FORECASTS": selected_rows == 0,
         "SELECTED_FORECAST_TRUTH_INCOMPLETE": evaluated_rows != selected_rows,
         "TECHNICAL_CONTEXT_MISSING_OR_INVALID": context_missing_or_invalid > 0,
         "TECHNICAL_CONTEXT_INCOMPLETE": context_incomplete > 0,
+        "TECHNICAL_SITUATION_EVIDENCE_MISSING": situation_evidence_missing > 0,
+        "TECHNICAL_SITUATION_EVIDENCE_INVALID": situation_evidence_invalid > 0,
+        "DIRECTIONAL_FORECAST_WITHOUT_SELECTED_METHOD": directional_without_selected_method > 0,
+        "DIRECTIONAL_FORECAST_CONTRADICTS_TECHNICAL_FAMILY": directional_family_contradictions > 0,
         "CONFLICTING_FORECAST_ROWS": int(load_stats.get("skipped_conflicting_forecast_rows") or 0) > 0,
         "INVALID_FORECAST_ROWS": int(load_stats.get("skipped_invalid_rows") or 0) > 0,
         "CONFLICTING_PRICE_TRUTH": int(candle_stats.get("history_conflicting_candles") or 0) > 0,
@@ -2012,7 +2219,12 @@ def _semantic_dependency_sha256s() -> dict[str, str]:
         repo_root / "src/quant_rabbit/broker/oanda.py",
         repo_root / "src/quant_rabbit/instruments.py",
         repo_root / "src/quant_rabbit/paths.py",
+        repo_root / "src/quant_rabbit/strategy/directional_forecaster.py",
+        repo_root / "src/quant_rabbit/strategy/failed_break_evidence.py",
+        repo_root / "src/quant_rabbit/strategy/forecast_persistence_tracker.py",
         repo_root / "src/quant_rabbit/strategy/forecast_technical_context.py",
+        repo_root / "src/quant_rabbit/strategy/regime_family_weighting.py",
+        repo_root / "src/quant_rabbit/strategy/tf_weights.py",
     )
     return {
         str(path.resolve()): _sha256_bytes(path.read_bytes())

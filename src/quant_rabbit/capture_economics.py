@@ -3254,22 +3254,15 @@ def _lane_method(lane_id: str) -> str:
 
 
 def _iso_week(ts_utc: str) -> str:
-    try:
-        d = datetime.fromisoformat(ts_utc.replace("Z", "+00:00")).date()
-    except ValueError:
+    parsed = _parse_utc_instant(ts_utc)
+    if parsed is None:
         return "unknown"
-    year, week, _ = d.isocalendar()
+    year, week, _ = parsed.date().isocalendar()
     return f"{year}-W{week:02d}"
 
 
 def _outcome_timestamp(row: RealizedOutcome) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(row.ts_utc).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return _parse_utc_instant(row.ts_utc)
 
 
 def _recent_performance_comparison(
@@ -3280,10 +3273,14 @@ def _recent_performance_comparison(
     end = as_of.astimezone(timezone.utc)
     recent_start = end - timedelta(days=RECENT_PERFORMANCE_WINDOW_DAYS)
     prior_start = recent_start - timedelta(days=RECENT_PERFORMANCE_WINDOW_DAYS)
+    parsed_timestamps = [(row, _outcome_timestamp(row)) for row in rows]
+    timestamp_parse_failures = sum(
+        1 for _row, timestamp in parsed_timestamps if timestamp is None
+    )
     timestamped = [
         (row, timestamp)
-        for row in rows
-        if (timestamp := _outcome_timestamp(row)) is not None
+        for row, timestamp in parsed_timestamps
+        if timestamp is not None
     ]
     recent_rows = [row for row, timestamp in timestamped if recent_start <= timestamp <= end]
     prior_rows = [row for row, timestamp in timestamped if prior_start <= timestamp < recent_start]
@@ -3298,16 +3295,24 @@ def _recent_performance_comparison(
     historical_expectancy = _optional_float(
         historical.get("expectancy_jpy_per_trade")
     )
-    recent_sample_sufficient = recent_trades >= MIN_SAMPLE_FOR_VERDICT
-    baseline_sample_sufficient = historical_trades >= MIN_SAMPLE_FOR_VERDICT
+    timestamps_valid = timestamp_parse_failures == 0
+    recent_sample_sufficient = (
+        timestamps_valid and recent_trades >= MIN_SAMPLE_FOR_VERDICT
+    )
+    baseline_sample_sufficient = (
+        timestamps_valid and historical_trades >= MIN_SAMPLE_FOR_VERDICT
+    )
     positive = bool(
-        recent_trades
+        timestamps_valid
+        and recent_trades
         and recent_expectancy is not None
         and recent_expectancy > 0.0
         and recent_net is not None
         and recent_net > 0.0
     )
-    if recent_trades == 0:
+    if timestamp_parse_failures > 0:
+        verdict = "TIMESTAMP_PARSE_FAILED"
+    elif recent_trades == 0:
         verdict = "NO_RECENT_TRADES"
     elif not recent_sample_sufficient:
         verdict = "RECENT_POSITIVE_LOW_SAMPLE" if positive else "RECENT_NON_POSITIVE_LOW_SAMPLE"
@@ -3322,6 +3327,16 @@ def _recent_performance_comparison(
     return {
         "window_days": RECENT_PERFORMANCE_WINDOW_DAYS,
         "as_of_utc": end.isoformat(),
+        "timestamp_parse_status": (
+            "EMPTY"
+            if not rows
+            else "INVALID"
+            if timestamp_parse_failures > 0
+            else "VALID"
+        ),
+        "timestamp_input_rows": len(rows),
+        "timestamp_parsed_rows": len(timestamped),
+        "timestamp_parse_failures": timestamp_parse_failures,
         "recent_window": {
             "start_utc": recent_start.isoformat(),
             "end_utc": end.isoformat(),
@@ -3350,10 +3365,22 @@ def _recent_performance_comparison(
         # JPY/1,000u) lower-bound evidence must be added before this can be
         # called proof.
         "improvement_proven": False,
-        "proof_status": "NOT_AVAILABLE_RAW_JPY_POINT_ESTIMATE_ONLY",
+        "proof_status": (
+            "TIMESTAMP_PARSE_FAILED"
+            if timestamp_parse_failures > 0
+            else "NOT_AVAILABLE_RAW_JPY_POINT_ESTIMATE_ONLY"
+        ),
         "normalized_edge_proof_available": False,
-        "sample_gap": max(0, MIN_SAMPLE_FOR_VERDICT - recent_trades),
-        "baseline_sample_gap": max(0, MIN_SAMPLE_FOR_VERDICT - historical_trades),
+        "sample_gap": (
+            MIN_SAMPLE_FOR_VERDICT
+            if not timestamps_valid
+            else max(0, MIN_SAMPLE_FOR_VERDICT - recent_trades)
+        ),
+        "baseline_sample_gap": (
+            MIN_SAMPLE_FOR_VERDICT
+            if not timestamps_valid
+            else max(0, MIN_SAMPLE_FOR_VERDICT - historical_trades)
+        ),
         "lifetime_status_unchanged": True,
     }
 
@@ -3776,6 +3803,10 @@ def build_capture_economics(
             "",
             "## Recent Performance (Does Not Replace Lifetime Safety Status)",
             "",
+            f"- Timestamp parse: `{recent_performance.get('timestamp_parse_status')}`; "
+            f"parsed `{recent_performance.get('timestamp_parsed_rows')}` / "
+            f"`{recent_performance.get('timestamp_input_rows')}`, failures "
+            f"`{recent_performance.get('timestamp_parse_failures')}`",
             f"- Verdict: `{recent_performance.get('verdict')}`",
             f"- Recent {RECENT_PERFORMANCE_WINDOW_DAYS}d: "
             f"trades `{recent_performance['recent_window'].get('trades', 0)}`, "

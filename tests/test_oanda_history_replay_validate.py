@@ -8,10 +8,14 @@ import os
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
+from quant_rabbit.strategy.forecast_technical_context import (
+    build_forecast_technical_context,
+    technical_context_sha256,
+)
 
 
 def _load_module():
@@ -101,8 +105,183 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(stats["technical_context_missing_rows"], 0)
         self.assertEqual(stats["technical_context_invalid_rows"], 0)
         self.assertEqual(stats["technical_context_incomplete_rows"], 0)
+        self.assertEqual(stats["technical_situation_evidence_missing_rows"], 0)
+        self.assertEqual(stats["technical_situation_evidence_invalid_rows"], 0)
         self.assertEqual(rows[0].technical_context_status, "VALID")
         self.assertEqual(rows[0].technical_context_v1["context_sha256"], context["context_sha256"])
+        self.assertEqual(rows[0].technical_situation, "NY_TREND")
+        self.assertEqual(rows[0].technical_selected_method, "TREND_CONTINUATION")
+        self.assertEqual(rows[0].technical_family_direction_alignment, "NON_DIRECTIONAL")
+        self.assertEqual(rows[0].technical_situation_evidence_status, "VALID")
+
+    def test_forecast_loader_never_backfills_legacy_situation_evidence(self) -> None:
+        context = build_forecast_technical_context(
+            {
+                "confluence": {"dominant_regime": "RANGE"},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "RANGE", "atr_percentile": 50},
+                        "structure": {
+                            "structure_events": [
+                                {"kind": "CHOCH_UP", "index": 1, "close_confirmed": True}
+                            ]
+                        },
+                    }
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+        legacy = deepcopy(context)
+        for field in (
+            "regime_family_weighting",
+            "m5_failed_break_evidence",
+            "dynamic_tf_policy_evidence",
+            "dynamic_tf_policy_source_context",
+        ):
+            legacy.pop(field, None)
+        legacy["context_sha256"] = technical_context_sha256(legacy)
+        payload = {
+            "timestamp_utc": "2026-07-13T00:00:00Z",
+            "cycle_id": "legacy-context-cycle",
+            "pair": "EUR_USD",
+            "direction": "UP",
+            "confidence": 0.7,
+            "current_price": 1.1,
+            "horizon_min": 60,
+            "technical_context_v1": legacy,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertEqual(rows[0].technical_context_status, "VALID")
+        self.assertEqual(
+            rows[0].technical_situation_evidence_status,
+            "REGIME_FAMILY_WEIGHTING_MISSING",
+        )
+        self.assertEqual(rows[0].technical_situation, "MISSING")
+        self.assertEqual(rows[0].technical_selected_method, "MISSING")
+        self.assertEqual(rows[0].technical_family_direction_alignment, "MISSING")
+        self.assertEqual(stats["technical_situation_evidence_missing_rows"], 1)
+        self.assertEqual(stats["technical_situation_evidence_invalid_rows"], 0)
+
+    def test_forecast_loader_rejects_tampered_situation_receipt(self) -> None:
+        context = build_forecast_technical_context(
+            {
+                "confluence": {"dominant_regime": "TREND_UP"},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "TREND_WEAK", "atr_percentile": 50},
+                    }
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+        tampered = deepcopy(context)
+        tampered["regime_family_weighting"]["source_identity"]["situation"] = "ASIA_RANGE"
+        tampered["context_sha256"] = technical_context_sha256(tampered)
+        payload = {
+            "timestamp_utc": "2026-07-13T00:00:00Z",
+            "cycle_id": "tampered-context-cycle",
+            "pair": "EUR_USD",
+            "direction": "UP",
+            "confidence": 0.7,
+            "current_price": 1.1,
+            "horizon_min": 60,
+            "technical_context_v1": tampered,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertNotEqual(rows[0].technical_context_status, "VALID")
+        self.assertNotEqual(rows[0].technical_situation_evidence_status, "VALID")
+        self.assertEqual(rows[0].technical_situation, "MISSING")
+        self.assertEqual(stats["technical_situation_evidence_missing_rows"], 0)
+        self.assertEqual(stats["technical_situation_evidence_invalid_rows"], 1)
+
+    def test_forecast_loader_flags_directional_rows_without_method_or_with_contradiction(self) -> None:
+        no_method = build_forecast_technical_context(
+            {
+                "confluence": {"dominant_regime": "TRANSITION"},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "TRANSITION", "atr_percentile": 50},
+                        "structure": {
+                            "structure_events": [
+                                {"kind": "CHOCH_UP", "index": 1, "close_confirmed": True}
+                            ]
+                        },
+                    }
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+        contradiction = build_forecast_technical_context(
+            {
+                "confluence": {"dominant_regime": "TREND_UP"},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "TREND_WEAK", "atr_percentile": 50},
+                        "family_scores": {"trend_score": 20.0},
+                        "structure": {
+                            "structure_events": [
+                                {"kind": "BOS_UP", "index": 1, "close_confirmed": True}
+                            ]
+                        },
+                    }
+                ],
+            },
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+        payloads = [
+            {
+                "timestamp_utc": "2026-07-13T00:00:00Z",
+                "cycle_id": "no-method-cycle",
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.7,
+                "current_price": 1.1,
+                "horizon_min": 60,
+                "technical_context_v1": no_method,
+            },
+            {
+                "timestamp_utc": "2026-07-13T01:00:00Z",
+                "cycle_id": "contradiction-cycle",
+                "pair": "EUR_USD",
+                "direction": "DOWN",
+                "confidence": 0.7,
+                "current_price": 1.1,
+                "horizon_min": 60,
+                "technical_context_v1": contradiction,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                "".join(json.dumps(payload) + "\n" for payload in payloads),
+                encoding="utf-8",
+            )
+            rows, stats = replay._load_forecasts(path)
+
+        self.assertEqual(rows[0].technical_selected_method, "NONE")
+        self.assertEqual(rows[1].technical_family_direction_alignment, "CONTRADICTED")
+        self.assertEqual(stats["technical_selected_method_none_rows"], 1)
+        self.assertEqual(stats["technical_family_direction_contradicted_rows"], 1)
 
     def test_candle_parser_rejects_incomplete_or_non_executable_bid_ask(self) -> None:
         base = {
@@ -1009,6 +1188,15 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         )
 
         self.assertEqual(first["experiment_id"], second["experiment_id"])
+        self.assertEqual(first["schema_version"], 2)
+        self.assertEqual(
+            first["semantics"]["version"],
+            "oanda-bidask-situation-technical-independent-v4",
+        )
+        self.assertIn(
+            "regime_family_weighting",
+            first["semantics"]["technical_situation_evidence"],
+        )
 
     def test_experiment_identity_changes_when_decision_threshold_changes(self) -> None:
         args = argparse.Namespace(
