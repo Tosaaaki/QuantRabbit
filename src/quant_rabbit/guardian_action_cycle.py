@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 from dataclasses import asdict, dataclass
@@ -8,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from quant_rabbit.guardian_events import GuardianEvent, review_guardian_action_receipt
+from quant_rabbit.guardian_events import (
+    GuardianEvent,
+    guardian_event_action_binding_issues,
+    review_guardian_action_receipt,
+)
 from quant_rabbit.models import (
     AccountSummary,
     BrokerOrder,
@@ -21,6 +26,10 @@ from quant_rabbit.models import (
     Quote,
     Side,
     TradeMethod,
+)
+from quant_rabbit.operator_manual import (
+    is_operator_manual_position,
+    operator_manual_packet,
 )
 from quant_rabbit.paths import (
     ROOT,
@@ -53,9 +62,9 @@ ENTRY_ACTIONS = {"TRADE", "ADD"}
 POSITION_ACTIONS = {"HARVEST", "REDUCE", "CANCEL_PENDING"}
 ALLOWED_BY_THESIS_STATE = {
     "ALIVE": {"TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION"},
-    "WOUNDED": {"HOLD", "HARVEST", "REDUCE"},
-    "INVALIDATED": {"REDUCE", "CANCEL_PENDING", "NO_ACTION"},
-    "EMERGENCY": {"REDUCE", "CANCEL_PENDING", "NO_ACTION"},
+    "WOUNDED": {"HOLD", "HARVEST", "REDUCE", "NO_ACTION"},
+    "INVALIDATED": {"HOLD", "REDUCE", "CANCEL_PENDING", "NO_ACTION"},
+    "EMERGENCY": {"HOLD", "REDUCE", "CANCEL_PENDING", "NO_ACTION"},
 }
 
 GatewayRunner = Callable[[str, bool], dict[str, Any]]
@@ -159,14 +168,6 @@ def run_guardian_action_cycle(
             order_intents_payload=order_intents,
         )
     )
-    manual_safety = _manual_exposure_safety(
-        receipt=receipt,
-        action=action,
-        snapshot_payload=snapshot_payload,
-        selected_event=selected_event,
-    )
-    strict_issues.extend(manual_safety["issues"])
-
     lock = _active_live_lock(paths.live_lock)
     if lock["active"]:
         strict_issues.append(_issue("ACTIVE_TRADER_OR_GATEWAY_LOCK", "active trader/gateway lock conflicts with guardian action cycle"))
@@ -193,6 +194,14 @@ def run_guardian_action_cycle(
                 strict_issues.append(_issue("BROKER_TRUTH_CHANGED", "broker truth changed after refresh; require next cycle"))
         else:
             strict_issues.append(_issue("BROKER_SNAPSHOT_STALE", "stale broker snapshot blocks guardian execution"))
+
+    manual_safety = _manual_exposure_safety(
+        receipt=receipt,
+        action=action,
+        snapshot_payload=refreshed_snapshot,
+        selected_event=selected_event,
+    )
+    strict_issues.extend(manual_safety["issues"])
 
     ledger_sync = {"status": "SKIPPED", "reason": "execution not requested or receipt not executable"}
     if flags["all_enabled"] and action in ENTRY_ACTIONS and not strict_issues:
@@ -360,6 +369,13 @@ def _strict_receipt_issues(
                     "TRADE/ADD requires selected event direction LONG or SHORT",
                 )
             )
+    if selected_event is not None:
+        issues.extend(
+            guardian_event_action_binding_issues(
+                receipt_action=action,
+                event_action_hint=selected_event.action_hint,
+            )
+        )
     if action in ENTRY_ACTIONS and canonical_pair in _technical_input_blocked_pairs(
         events_payload=events_payload,
         event_state_payload=event_state_payload,
@@ -549,24 +565,141 @@ def _manual_exposure_safety(
     snapshot_payload: dict[str, Any],
     selected_event: GuardianEvent | None,
 ) -> dict[str, Any]:
-    manual_positions = [
+    def explicitly_system_owned(item: dict[str, Any]) -> bool:
+        return (
+            str(item.get("owner") or "").lower() == Owner.TRADER.value
+            and not is_operator_manual_position(item)
+            and _position_units(item) not in {None, 0.0}
+        )
+
+    all_positions = [
         item
         for item in snapshot_payload.get("positions", []) or []
-        if str(item.get("owner") or "").lower() in {"manual", "unknown", "operator_manual"}
+        if isinstance(item, dict)
+    ]
+    manual_positions = [
+        item
+        for item in all_positions
+        if is_operator_manual_position(item)
+        or str(item.get("owner") or "").lower() in {"manual", "unknown", "operator_manual"}
+    ]
+    system_positions = [
+        item
+        for item in all_positions
+        if explicitly_system_owned(item)
     ]
     pair = str(receipt.get("pair") or (selected_event.pair if selected_event else "")).upper()
-    target_ids = {str(item) for item in receipt.get("trade_ids", []) or []}
-    target_ids |= {str(item) for item in receipt.get("close_trade_ids", []) or []}
-    target_ids |= {str(item) for item in receipt.get("reduce_trade_ids", []) or []}
+    target_ids = {
+        str(item).strip()
+        for field in ("trade_ids", "close_trade_ids", "reduce_trade_ids")
+        for item in (
+            receipt.get(field)
+            if isinstance(receipt.get(field), (list, tuple, set))
+            else []
+        )
+        if str(item).strip()
+    }
+    portfolio_scope = pair in {"PORTFOLIO", "GLOBAL", "ALL"}
     touched = [
         item
         for item in manual_positions
-        if (pair and str(item.get("pair") or "").upper() == pair) or str(item.get("trade_id") or "") in target_ids
+        if portfolio_scope
+        or (pair and str(item.get("pair") or "").upper() == pair)
+        or _position_trade_id(item) in target_ids
     ]
     touches_manual = bool(touched) or _truthy(receipt.get("touches_manual_exposure"))
+    manual_only_exposure = bool(all_positions) and len(manual_positions) == len(
+        all_positions
+    )
+    known_position_ids = {
+        _position_trade_id(item)
+        for item in all_positions
+        if _position_trade_id(item)
+    }
+    system_position_by_id = {
+        _position_trade_id(item): item
+        for item in system_positions
+        if _position_trade_id(item)
+    }
+    system_target_ids = sorted(
+        target_ids.intersection(system_position_by_id)
+    )
+    manual_position_ids = {
+        _position_trade_id(item)
+        for item in manual_positions
+        if _position_trade_id(item)
+    }
+    manual_target_ids = sorted(
+        target_ids.intersection(manual_position_ids)
+    )
+    non_system_target_ids = sorted(target_ids.difference(system_position_by_id))
+    unresolved_target_ids = sorted(target_ids.difference(known_position_ids))
+    pair_mismatch_target_ids = sorted(
+        trade_id
+        for trade_id in system_target_ids
+        if pair
+        and not portfolio_scope
+        and str(system_position_by_id[trade_id].get("pair") or "").upper()
+        != pair
+    )
+    event_target_ids = _selected_event_position_target_ids(selected_event)
+    event_unauthorized_target_ids = (
+        sorted(target_ids.difference(event_target_ids))
+        if event_target_ids
+        else []
+    )
+    position_action = action in {"REDUCE", "HARVEST"}
+    every_target_explicitly_system_owned = (
+        bool(target_ids)
+        and not non_system_target_ids
+        and not pair_mismatch_target_ids
+    )
+    executable_system_target_ids = (
+        system_target_ids
+        if position_action and every_target_explicitly_system_owned
+        else []
+    )
     issues: list[dict[str, str]] = []
     if touches_manual and _truthy(receipt.get("attach_sl")):
         issues.append(_issue("MANUAL_SL_FORBIDDEN", "guardian action must not attach SL to manual/unknown exposure"))
+    if position_action and (
+        manual_only_exposure
+        or manual_target_ids
+        or (not target_ids and touches_manual)
+    ):
+        issues.append(
+            _issue(
+                "OPERATOR_MANUAL_POSITION_ACTION_FORBIDDEN",
+                "guardian REDUCE/HARVEST cannot target operator-manual or "
+                "unknown exposure; only explicitly system-owned trade IDs may "
+                "be passed to a position gateway",
+            )
+        )
+    if position_action and not every_target_explicitly_system_owned:
+        issues.append(
+            _issue(
+                "EXPLICIT_SYSTEM_POSITION_TARGET_REQUIRED",
+                "guardian REDUCE/HARVEST requires one or more exact current "
+                "trader-owned trade IDs; empty, unknown, external, manual, "
+                "or cross-pair targets are forbidden",
+            )
+        )
+    if position_action and pair_mismatch_target_ids:
+        issues.append(
+            _issue(
+                "POSITION_TARGET_PAIR_MISMATCH",
+                "pair-scoped guardian position actions may target only exact "
+                "trader-owned positions on the selected event pair",
+            )
+        )
+    if position_action and event_unauthorized_target_ids:
+        issues.append(
+            _issue(
+                "POSITION_TARGET_NOT_AUTHORIZED_BY_EVENT",
+                "guardian REDUCE/HARVEST target IDs must be a subset of the "
+                "exact trade IDs carried by the selected current event",
+            )
+        )
     if touches_manual and action == "REDUCE":
         loss_side = [
             item
@@ -579,11 +712,74 @@ def _manual_exposure_safety(
         issues.append(_issue("MANUAL_THEME_ADD_BLOCKED", "system add into same manual theme requires explicit authorization or gateway proof"))
     return {
         "touches_manual_or_unknown_exposure": touches_manual,
+        "manual_only_exposure": manual_only_exposure,
         "manual_positions_seen": len(manual_positions),
         "manual_positions_touched": len(touched),
+        "requested_position_trade_ids": sorted(target_ids),
+        "manual_target_trade_ids": manual_target_ids,
+        "non_system_target_trade_ids": non_system_target_ids,
+        "unresolved_target_trade_ids": unresolved_target_ids,
+        "pair_mismatch_target_trade_ids": pair_mismatch_target_ids,
+        "selected_event_position_target_trade_ids": sorted(event_target_ids),
+        "event_unauthorized_target_trade_ids": event_unauthorized_target_ids,
+        "every_target_explicitly_system_owned": (
+            every_target_explicitly_system_owned
+        ),
+        "executable_system_reduction_target_trade_ids": (
+            executable_system_target_ids
+        ),
         "manual_pl_counts_as_system_pl": False,
         "issues": issues,
     }
+
+
+def _position_trade_id(item: dict[str, Any]) -> str:
+    for key in ("trade_id", "id", "tradeID"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _position_units(item: dict[str, Any]) -> float | None:
+    for key in ("units", "current_units", "currentUnits"):
+        try:
+            value = float(item.get(key))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            return value
+    return None
+
+
+def _selected_event_position_target_ids(
+    selected_event: GuardianEvent | None,
+) -> set[str]:
+    if selected_event is None or not isinstance(selected_event.details, dict):
+        return set()
+    details = selected_event.details
+    target_ids: set[str] = set()
+    sources = [details]
+    contract_trigger = details.get("contract_trigger")
+    if isinstance(contract_trigger, dict):
+        sources.append(contract_trigger)
+    for source in sources:
+        for field in (
+            "executable_reduction_target_trade_ids",
+            "system_reduction_candidate_trade_ids",
+            "trade_ids",
+            "close_trade_ids",
+            "reduce_trade_ids",
+        ):
+            values = source.get(field)
+            if isinstance(values, (list, tuple, set)):
+                target_ids.update(
+                    str(value).strip() for value in values if str(value).strip()
+                )
+        trade_id = str(source.get("trade_id") or "").strip()
+        if trade_id:
+            target_ids.add(trade_id)
+    return target_ids
 
 
 def _risk_result(
@@ -761,18 +957,26 @@ def _material_broker_truth_change(*, before: dict[str, Any], after: dict[str, An
 
 def _broker_truth_key(payload: dict[str, Any], *, pair: str) -> dict[str, Any]:
     pair = pair.upper()
+    portfolio_scope = pair in {"PORTFOLIO", "GLOBAL", "ALL"}
     positions = [
         {
-            "trade_id": item.get("trade_id"),
+            "trade_id": _position_trade_id(item),
             "pair": item.get("pair"),
             "side": item.get("side"),
-            "units": item.get("units"),
+            "units": _position_units(item),
             "owner": item.get("owner"),
+            "operator_manual": is_operator_manual_position(item),
+            "operator_manual_position": operator_manual_packet(item),
             "take_profit": item.get("take_profit"),
             "stop_loss": item.get("stop_loss"),
         }
         for item in payload.get("positions", []) or []
-        if not pair or str(item.get("pair") or "").upper() == pair
+        if isinstance(item, dict)
+        and (
+            portfolio_scope
+            or not pair
+            or str(item.get("pair") or "").upper() == pair
+        )
     ]
     orders = [
         {
@@ -784,7 +988,12 @@ def _broker_truth_key(payload: dict[str, Any], *, pair: str) -> dict[str, Any]:
             "owner": item.get("owner"),
         }
         for item in payload.get("orders", []) or []
-        if not pair or str(item.get("pair") or "").upper() == pair
+        if isinstance(item, dict)
+        and (
+            portfolio_scope
+            or not pair
+            or str(item.get("pair") or "").upper() == pair
+        )
     ]
     account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
     return {

@@ -38,8 +38,10 @@ from quant_rabbit.gpt_trader import (
     StaticTraderProvider,
     _draft_candidate_lane_ids,
     _draft_margin_aware_basket,
+    _guardian_receipt_consumption_trade_routing_issues,
     _lane_forecast_packet,
     _projection_ledger_packet,
+    _qr_trader_run_watchdog_packet,
     draft_trader_decision,
     post_stop_thesis_review,
 )
@@ -140,6 +142,112 @@ class GPTTraderBrainTest(unittest.TestCase):
         cost_patch.start()
         self.addCleanup(cost_patch.stop)
 
+    def _run_m15_recovery_trade_with_metadata(
+        self,
+        root: Path,
+        recovery_intent,
+        metadata: dict,
+    ) -> tuple[object, dict]:
+        """Run the real GPT packet/verifier path for one recovery mutation."""
+
+        files = _fixtures(root)
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+        reward = float(recovery_intent.entry) - float(recovery_intent.tp)
+        loss = float(recovery_intent.sl) - float(recovery_intent.entry)
+        result = _result(
+            lane_id=lane_id,
+            method="BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            side="SHORT",
+            metadata=metadata,
+        )
+        result["intent"].update(
+            {
+                "order_type": recovery_intent.order_type.value,
+                "units": recovery_intent.units,
+                "entry": recovery_intent.entry,
+                "tp": recovery_intent.tp,
+                "sl": recovery_intent.sl,
+                "thesis": recovery_intent.thesis,
+                "market_context": {
+                    "regime": recovery_intent.market_context.regime,
+                    "narrative": recovery_intent.market_context.narrative,
+                    "chart_story": recovery_intent.market_context.chart_story,
+                    "method": recovery_intent.market_context.method.value,
+                    "invalidation": recovery_intent.market_context.invalidation,
+                },
+            }
+        )
+        result["risk_metrics"] = {
+            "entry_price": recovery_intent.entry,
+            "loss_pips": loss * 10_000,
+            "reward_pips": reward * 10_000,
+            "risk_jpy": 100.0,
+            "reward_jpy": 100.0 * (reward / loss),
+            "reward_risk": reward / loss,
+            "spread_pips": 0.8,
+            "jpy_per_pip": 0.08,
+            "estimated_margin_jpy": 10.0,
+        }
+        files["intents"].write_text(json.dumps({"results": [result]}))
+        files["campaign"].write_text(
+            json.dumps(
+                {
+                    "lanes": [
+                        {
+                            "desk": "failure_trader",
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "method": "BREAKOUT_FAILURE",
+                            "adoption": "ORDER_INTENT_REQUIRED",
+                            "campaign_role": "NOW",
+                            "required_receipt": "verified M15 recovery",
+                        }
+                    ]
+                }
+            )
+        )
+        files["strategy"].write_text(
+            json.dumps(
+                {
+                    "profiles": [
+                        {
+                            "pair": "EUR_USD",
+                            "direction": "SHORT",
+                            "status": "CANDIDATE",
+                            "pretrade_net_jpy": 1000,
+                            "live_net_jpy": 1000,
+                            "live_worst_jpy": -100,
+                        }
+                    ]
+                }
+            )
+        )
+        files["story"].write_text(
+            json.dumps(
+                {
+                    "pair_profiles": [
+                        {
+                            "pair": "EUR_USD",
+                            "methods": {"BREAKOUT_FAILURE": 10},
+                            "themes": {"breakout_failure": 4},
+                            "examples": ["M15 upper-rail rejection"],
+                        }
+                    ]
+                }
+            )
+        )
+        decision = _trade_decision(
+            lane_id=lane_id,
+            method="BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="SHORT",
+        )
+        summary = _brain(root, files, decision).run(
+            snapshot_path=files["snapshot"]
+        )
+        return summary, json.loads((root / "gpt_decision.json").read_text())
+
     def test_lane_packet_preserves_verified_context_and_drops_tampered_body(self) -> None:
         evidence = _forecast_context_evidence("EUR_USD", 1.1001)
         metadata = {
@@ -167,6 +275,275 @@ class GPTTraderBrainTest(unittest.TestCase):
         )
         self.assertIsNone(packet["technical_context"]["technical_context_v1"])
         self.assertFalse(packet["technical_context"]["live_permission"])
+
+    def test_lane_packet_exposes_verified_m15_recovery_without_faking_standard_context(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _now, _chart_path, recovery_intent, _broker = (
+                _m15_recovery_fixture(Path(tmp))
+            )
+            intent = {
+                "pair": recovery_intent.pair,
+                "side": recovery_intent.side.value,
+                "order_type": recovery_intent.order_type.value,
+                "units": recovery_intent.units,
+                "entry": recovery_intent.entry,
+                "tp": recovery_intent.tp,
+                "sl": recovery_intent.sl,
+                "market_context": {
+                    "method": recovery_intent.market_context.method.value,
+                },
+                "metadata": recovery_intent.metadata,
+            }
+
+            packet = _lane_forecast_packet(
+                recovery_intent.metadata,
+                pair="EUR_USD",
+                intent=intent,
+            )
+
+            self.assertEqual(packet["technical_context"]["status"], "UNKNOWN")
+            recovery = packet["m15_recovery"]
+            self.assertEqual(recovery["status"], "VERIFIED")
+            self.assertEqual(
+                recovery["source_timeframes"],
+                ["M15", "M30", "H1", "H4", "D"],
+            )
+            self.assertEqual(recovery["forecast"]["direction"], "DOWN")
+            self.assertEqual(recovery["forecast"]["raw_confidence"], 0.758)
+            self.assertEqual(
+                recovery["exact_tp_proof"]["mode"],
+                "TP_PROOF_COLLECTION_HARVEST",
+            )
+            self.assertTrue(recovery["risk_revalidated"])
+            self.assertFalse(recovery["live_permission"])
+            self.assertEqual(len(recovery["packet_sha256"]), 64)
+
+            limit_packet = _lane_forecast_packet(
+                recovery_intent.metadata,
+                pair="EUR_USD",
+                intent={**intent, "order_type": "LIMIT"},
+            )["m15_recovery"]
+            self.assertEqual(limit_packet["status"], "INVALID")
+            self.assertIn(
+                "M15_RECOVERY_INTENT_SCOPE_INVALID",
+                limit_packet["validation_errors"],
+            )
+            self.assertIn(
+                "M15_RECOVERY_LANE_BINDING_CONTRACT_INVALID",
+                limit_packet["validation_errors"],
+            )
+
+            tampered_metadata = json.loads(
+                json.dumps(recovery_intent.metadata)
+            )
+            tampered_metadata["m15_recovery_micro_risk_revalidated"] = False
+            tampered_intent = {**intent, "metadata": tampered_metadata}
+            tampered = _lane_forecast_packet(
+                tampered_metadata,
+                pair="EUR_USD",
+                intent=tampered_intent,
+            )
+            self.assertEqual(tampered["m15_recovery"]["status"], "INVALID")
+            self.assertIn(
+                "M15_RECOVERY_RISK_OR_CONTEXT_SCOPE_INVALID",
+                tampered["m15_recovery"]["validation_errors"],
+            )
+
+            for mutation in ("empty", "missing"):
+                with self.subTest(mutation=mutation):
+                    partial_metadata = json.loads(
+                        json.dumps(recovery_intent.metadata)
+                    )
+                    for key in (
+                        "m15_recovery_micro_receipt",
+                        "forecast_m15_recovery_binding",
+                        "m15_recovery_lane_binding",
+                    ):
+                        if mutation == "empty":
+                            partial_metadata[key] = {}
+                        else:
+                            partial_metadata.pop(key, None)
+                    partial_intent = {**intent, "metadata": partial_metadata}
+                    partial = _lane_forecast_packet(
+                        partial_metadata,
+                        pair="EUR_USD",
+                        intent=partial_intent,
+                    )["m15_recovery"]
+                    self.assertEqual(partial["status"], "INVALID")
+                    self.assertNotEqual(partial["status"], "NOT_APPLICABLE")
+                    self.assertIn(
+                        "M15_RECOVERY_BINDING_MISSING",
+                        partial["validation_errors"],
+                    )
+
+    def test_rejects_trade_when_selected_m15_recovery_packet_is_invalid(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _now, _chart_path, recovery_intent, _broker = (
+                _m15_recovery_fixture(root)
+            )
+            lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+            metadata = json.loads(json.dumps(recovery_intent.metadata))
+            # Keep the upstream result deceptively LIVE_READY while breaking
+            # the recovery authorization chain.  The GPT verifier must consume
+            # the INVALID packet instead of treating it as display-only data.
+            metadata["m15_recovery_micro_risk_revalidated"] = False
+            reward = float(recovery_intent.entry) - float(recovery_intent.tp)
+            loss = float(recovery_intent.sl) - float(recovery_intent.entry)
+            result = {
+                "lane_id": lane_id,
+                "status": "LIVE_READY",
+                "risk_allowed": True,
+                "risk_issues": [],
+                "strategy_issues": [],
+                "live_blockers": [],
+                "intent": {
+                    "pair": recovery_intent.pair,
+                    "side": recovery_intent.side.value,
+                    "order_type": recovery_intent.order_type.value,
+                    "units": recovery_intent.units,
+                    "entry": recovery_intent.entry,
+                    "tp": recovery_intent.tp,
+                    "sl": recovery_intent.sl,
+                    "thesis": recovery_intent.thesis,
+                    "owner": "trader",
+                    "market_context": {
+                        "regime": recovery_intent.market_context.regime,
+                        "narrative": recovery_intent.market_context.narrative,
+                        "chart_story": recovery_intent.market_context.chart_story,
+                        "method": recovery_intent.market_context.method.value,
+                        "invalidation": recovery_intent.market_context.invalidation,
+                    },
+                    "metadata": metadata,
+                },
+                "risk_metrics": {
+                    "entry_price": recovery_intent.entry,
+                    "loss_pips": loss * 10_000,
+                    "reward_pips": reward * 10_000,
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 100.0 * (reward / loss),
+                    "reward_risk": reward / loss,
+                    "spread_pips": 0.8,
+                    "jpy_per_pip": 0.08,
+                    "estimated_margin_jpy": 10.0,
+                },
+            }
+            files["intents"].write_text(json.dumps({"results": [result]}))
+            files["campaign"].write_text(
+                json.dumps(
+                    {
+                        "lanes": [
+                            {
+                                "desk": "failure_trader",
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "adoption": "ORDER_INTENT_REQUIRED",
+                                "campaign_role": "NOW",
+                                "required_receipt": "verified M15 recovery",
+                            }
+                        ]
+                    }
+                )
+            )
+            files["strategy"].write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "CANDIDATE",
+                                "pretrade_net_jpy": 1000,
+                                "live_net_jpy": 1000,
+                                "live_worst_jpy": -100,
+                            }
+                        ]
+                    }
+                )
+            )
+            files["story"].write_text(
+                json.dumps(
+                    {
+                        "pair_profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "methods": {"BREAKOUT_FAILURE": 10},
+                                "themes": {"breakout_failure": 4},
+                                "examples": ["M15 upper-rail rejection"],
+                            }
+                        ]
+                    }
+                )
+            )
+            decision = _trade_decision(
+                lane_id=lane_id,
+                method="BREAKOUT_FAILURE",
+                pair="EUR_USD",
+                direction="SHORT",
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {
+                issue["code"] for issue in payload["verification_issues"]
+            }
+            self.assertIn("M15_RECOVERY_PACKET_NOT_VERIFIED", codes)
+            recovery_packet = payload["input_packet"]["lanes"][0][
+                "forecast"
+            ]["m15_recovery"]
+            self.assertEqual(recovery_packet["status"], "INVALID")
+            self.assertFalse(recovery_packet["risk_revalidated"])
+
+    def test_rejects_trade_when_m15_recovery_bindings_are_empty_or_missing(
+        self,
+    ) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        for mutation in ("empty", "missing"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _now, _chart_path, recovery_intent, _broker = (
+                    _m15_recovery_fixture(root)
+                )
+                metadata = json.loads(json.dumps(recovery_intent.metadata))
+                for key in (
+                    "m15_recovery_micro_receipt",
+                    "forecast_m15_recovery_binding",
+                    "m15_recovery_lane_binding",
+                ):
+                    if mutation == "empty":
+                        metadata[key] = {}
+                    else:
+                        metadata.pop(key, None)
+
+                summary, payload = self._run_m15_recovery_trade_with_metadata(
+                    root,
+                    recovery_intent,
+                    metadata,
+                )
+
+                self.assertEqual(summary.status, "REJECTED")
+                codes = {
+                    issue["code"] for issue in payload["verification_issues"]
+                }
+                self.assertIn("M15_RECOVERY_PACKET_NOT_VERIFIED", codes)
+                recovery_packet = payload["input_packet"]["lanes"][0][
+                    "forecast"
+                ]["m15_recovery"]
+                self.assertEqual(recovery_packet["status"], "INVALID")
+                self.assertIn(
+                    "M15_RECOVERY_BINDING_MISSING",
+                    recovery_packet["validation_errors"],
+                )
 
     def test_projection_scope_requires_explicit_canonical_forecast_lineage(self) -> None:
         lane = {
@@ -1806,6 +2183,106 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertFalse(consumption["normal_routing_allowed"])
             self.assertEqual(consumption["classifications"][0]["classification"], "NEEDS_OPERATOR_REVIEW")
             self.assertFalse(consumption["classifications"][0]["consumed_by_trader"])
+
+    def test_gpt_selected_ordinary_lane_observes_exact_p1_margin_warning_only_below_cap(self) -> None:
+        issue = {
+            "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+            "severity": "P1",
+            "message": "current P1 margin warning",
+            "receipt_event_id": "margin-p1-event",
+            "receipt_action": "HOLD",
+            "receipt_lifecycle": "EXPIRED",
+            "consumed_by_trader": False,
+            "emergency_or_margin_risk": True,
+            "normal_routing_allowed": False,
+            "event_type": "MARGIN_PRESSURE",
+            "event_severity": "P1",
+            "event_action_hint": "HOLD",
+            "event_details": {
+                "nav_jpy": 100_000.0,
+                "margin_used_jpy": 92_000.0,
+                "margin_available_jpy": 8_000.0,
+                "max_margin_utilization_pct": 95.0,
+                "fresh_entry_risk_block_active": False,
+                "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+                "fresh_entry_risk_observation_only": True,
+                "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+            },
+        }
+        packet = {
+            "qr_trader_run_watchdog": {
+                "status": "BLOCKED",
+                "runtime_status": "OK",
+                "issue_status": "P1",
+                "severity": "P1",
+                "guardian_receipt_issues": [issue],
+            },
+            "guardian_receipt_consumption": {
+                "status": "CURRENT_P1_BLOCKS_ROUTING",
+                "normal_routing_allowed": False,
+                "current_p0_p1_blocks_routing": True,
+                "classifications": [],
+            },
+            "guardian_receipt_operator_review": {},
+            "broker_snapshot": {
+                "account": {
+                    "nav_jpy": 100_000.0,
+                    "margin_used_jpy": 92_000.0,
+                    "margin_available_jpy": 8_000.0,
+                }
+            },
+            "lanes": [
+                {
+                    "lane_id": LANE_ID,
+                    "status": "LIVE_READY",
+                    "risk_metrics": {
+                        "margin_utilization_after_pct": 94.9,
+                        "max_margin_utilization_pct": 95.0,
+                    },
+                }
+            ],
+        }
+
+        observed = _guardian_receipt_consumption_trade_routing_issues(
+            packet,
+            selected_lane_ids=(LANE_ID,),
+        )
+
+        self.assertEqual(
+            [(item["code"], item["severity"]) for item in observed],
+            [("GUARDIAN_P1_MARGIN_PRESSURE_OBSERVED", "WARN")],
+        )
+
+        packet["lanes"][0]["risk_metrics"][
+            "margin_utilization_after_pct"
+        ] = 95.0001
+        blocked = _guardian_receipt_consumption_trade_routing_issues(
+            packet,
+            selected_lane_ids=(LANE_ID,),
+        )
+        self.assertTrue(any(item["severity"] == "BLOCK" for item in blocked))
+
+        compact = _qr_trader_run_watchdog_packet(
+            {
+                "status": "BLOCKED",
+                "runtime_status": "OK",
+                "issue_status": "P1",
+                "severity": "P1",
+                "issues": [issue],
+                "guardian_receipt": {"issues": [issue]},
+            }
+        )
+        for compact_issue in (
+            compact["issues"][0],
+            compact["guardian_receipt_issues"][0],
+        ):
+            self.assertEqual(compact_issue["event_type"], "MARGIN_PRESSURE")
+            self.assertEqual(compact_issue["event_severity"], "P1")
+            self.assertEqual(compact_issue["event_action_hint"], "HOLD")
+            self.assertEqual(
+                compact_issue["event_details"]["fresh_entry_margin_contract"],
+                "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+            )
 
     def test_rejects_trade_when_active_guardian_receipt_issue_has_no_classification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

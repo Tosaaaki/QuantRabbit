@@ -49,6 +49,8 @@ Kill switch: `QR_DISABLE_DIRECTIONAL_FORECASTER=1`.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -173,6 +175,18 @@ TECHNICAL_CANDLE_LATEST_COMPLETE_MAX_AGE_SECONDS: dict[str, int] = {
     "M5": 10 * 60,
 }
 
+# A transient fast-timeframe spread quarantine must not silently become a
+# full-size trade path.  This receipt only preserves a bounded M15/HTF forecast
+# and geometry candidate while M1/M5 rebuild their normal 30-clean-bar tail.
+# RiskEngine and the live gateway must independently revalidate the receipt
+# before a later change may grant live permission.
+M15_RECOVERY_MICRO_CONTRACT = "QR_M15_RECOVERY_MICRO_V1"
+M15_RECOVERY_MICRO_MODE = "M15_RECOVERY_MICRO"
+M15_RECOVERY_MICRO_MAX_UNITS = 999
+M15_RECOVERY_SOURCE_TIMEFRAME = "M15"
+M15_RECOVERY_M15_MAX_AGE_SECONDS = 30 * 60
+M15_RECOVERY_FORECAST_CONTRACT = "QR_M15_RECOVERY_FORECAST_V1"
+
 
 @dataclass(frozen=True)
 class DirectionalForecast:
@@ -196,6 +210,8 @@ class DirectionalForecast:
     range_high_price: Optional[float] = None
     range_width_pips: Optional[float] = None
     technical_context_v1: dict[str, Any] = field(default_factory=dict)
+    m15_recovery_receipt: dict[str, Any] = field(default_factory=dict)
+    m15_recovery_forecast_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         payload = {
@@ -224,6 +240,12 @@ class DirectionalForecast:
             payload["range_width_pips"] = round(self.range_width_pips, 3)
         if self.technical_context_v1:
             payload["technical_context_v1"] = self.technical_context_v1
+        if self.m15_recovery_receipt:
+            payload["m15_recovery_receipt"] = self.m15_recovery_receipt
+        if self.m15_recovery_forecast_evidence:
+            payload["m15_recovery_forecast_evidence"] = (
+                self.m15_recovery_forecast_evidence
+            )
         return payload
 
 
@@ -269,9 +291,12 @@ def _technical_candle_integrity_forecast_blockers(
     expected_pair: str,
     require_technical_candle_integrity: bool,
     now_utc: datetime | None,
+    _validated_evidence_out: dict[str, Any] | None = None,
 ) -> tuple[str, ...]:
     """Fail closed on blocked or self-contradictory production MBA evidence."""
 
+    if _validated_evidence_out is not None:
+        _validated_evidence_out.clear()
     if not isinstance(require_technical_candle_integrity, bool):
         return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
     forecast_now = _aware_utc_datetime(now_utc)
@@ -427,7 +452,488 @@ def _technical_candle_integrity_forecast_blockers(
         or forecast_blocking != bool(derived_blocking_codes)
     ):
         return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    if _validated_evidence_out is not None:
+        _validated_evidence_out.update(
+            {
+                "generated_at": generated_at,
+                "aggregate": raw,
+                "requested_timeframes": tuple(requested_timeframes),
+                "timeframes": timeframes,
+                "view_by_tf": view_by_tf,
+            }
+        )
     return tuple(blocking_codes) if forecast_blocking else ()
+
+
+def _m15_recovery_atr_pips(view: dict[str, Any]) -> float | None:
+    indicators = view.get("indicators")
+    if not isinstance(indicators, dict) or indicators.get("valid") is not True:
+        return None
+    atr_pips = _strict_finite_number(indicators.get("atr_pips"))
+    if atr_pips is None:
+        atr = _strict_finite_number(indicators.get("atr_14") or indicators.get("atr"))
+        pip_size = _strict_finite_number(indicators.get("pip_size"))
+        if atr is not None and pip_size is not None and pip_size > 0.0:
+            atr_pips = atr / pip_size
+    return atr_pips if atr_pips is not None and atr_pips > 0.0 else None
+
+
+def _m15_recovery_receipt_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _build_m15_recovery_micro_receipt(
+    pair_chart: Dict[str, Any],
+    *,
+    expected_pair: str,
+    now_utc: datetime | None,
+    current_spread_pips: object,
+    receipt_validated_at: datetime,
+) -> dict[str, Any] | None:
+    """Build a content-addressed, non-live M15 recovery candidate receipt."""
+
+    forecast_now = _aware_utc_datetime(now_utc)
+    validated_at = _aware_utc_datetime(receipt_validated_at)
+    if forecast_now is None or validated_at is None:
+        return None
+    evidence: dict[str, Any] = {}
+    blockers = _technical_candle_integrity_forecast_blockers(
+        pair_chart,
+        expected_pair=expected_pair,
+        require_technical_candle_integrity=True,
+        now_utc=forecast_now,
+        _validated_evidence_out=evidence,
+    )
+    # The only admissible aggregate block is historical fast-timeframe spread
+    # quarantine plus an incomplete clean-tail rebuild. Any structural receipt
+    # failure leaves `evidence` empty and therefore cannot enter this branch.
+    if blockers != (TECHNICAL_CANDLE_PROVENANCE_INVALID,) or not evidence:
+        return None
+    generated_at = evidence.get("generated_at")
+    if not isinstance(generated_at, datetime):
+        return None
+    validation_age = (forecast_now - validated_at).total_seconds()
+    if (
+        validated_at < generated_at
+        or validation_age < -TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS
+        or validation_age > TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS
+    ):
+        return None
+
+    timeframes = evidence["timeframes"]
+    view_by_tf = evidence["view_by_tf"]
+    fast_receipts: dict[str, dict[str, Any]] = {}
+    spread_caps: list[float] = []
+    recovering_fast_timeframes = 0
+    for tf in sorted(TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES):
+        item = timeframes.get(tf)
+        if not isinstance(item, dict):
+            return None
+        cap = _strict_finite_number(item.get("spread_cap_pips"))
+        tail = item.get("recent_clean_tail_count")
+        common_valid = bool(
+            item.get("recent_tail_state") == "CLEAN"
+            and item.get("malformed_count") == 0
+            and item.get("coverage_complete") is True
+            and item.get("provenance_complete") is True
+            and item.get("indicator_warmup_complete") is True
+            and _is_exact_nonnegative_int(tail)
+            and item.get("latest_complete_timestamp_utc")
+            == item.get("latest_clean_timestamp_utc")
+            and cap is not None
+            and cap > 0.0
+        )
+        recovering = bool(
+            common_valid
+            and item.get("evaluation_status") == "BLOCKED"
+            and item.get("forecast_blocking") is True
+            and item.get("codes")
+            == [
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID,
+            ]
+            and item.get("blocking_codes")
+            == [TECHNICAL_CANDLE_PROVENANCE_INVALID]
+            and item.get("contaminated_count", 0) > 0
+            and item.get("recent_clean_coverage_complete") is False
+            and 1 <= tail < TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+        )
+        recovered_codes = item.get("codes")
+        recovered_status = item.get("evaluation_status")
+        recovered_contaminated = item.get("contaminated_count", 0)
+        recovered = bool(
+            common_valid
+            and item.get("forecast_blocking") is False
+            and item.get("blocking_codes") == []
+            and item.get("recent_clean_coverage_complete") is True
+            and tail >= TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+            and (
+                (
+                    recovered_status == "PASS"
+                    and recovered_codes == []
+                    and recovered_contaminated == 0
+                )
+                or (
+                    recovered_status == "DEGRADED"
+                    and recovered_codes == [TECHNICAL_CANDLE_SPREAD_CONTAMINATED]
+                    and recovered_contaminated > 0
+                )
+            )
+        )
+        if not recovering and not recovered:
+            return None
+        if recovering:
+            recovering_fast_timeframes += 1
+        spread_caps.append(cap)
+        fast_receipts[tf] = {
+            "recovery_state": "RECOVERING" if recovering else "RECOVERED",
+            "evaluation_status": item["evaluation_status"],
+            "forecast_blocking": item["forecast_blocking"],
+            "codes": list(item["codes"]),
+            "blocking_codes": list(item["blocking_codes"]),
+            "latest_clean_timestamp_utc": item["latest_clean_timestamp_utc"],
+            "recent_clean_tail_count": tail,
+            "required_clean_tail_count": TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+            "contaminated_count": item["contaminated_count"],
+            "malformed_count": 0,
+            "spread_cap_pips": cap,
+        }
+    # The normal forecast path owns the fully recovered state.  This receipt
+    # exists only while at least one fast timeframe is still rebuilding its
+    # clean tail; the other may already have crossed the normal threshold.
+    if recovering_fast_timeframes == 0:
+        return None
+
+    # Every operating/higher timeframe must remain structurally valid and
+    # non-blocking. M15 is additionally the sole recovery ATR/geometry source.
+    for tf in evidence["requested_timeframes"]:
+        if tf in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES:
+            continue
+        item = timeframes.get(tf)
+        if (
+            not isinstance(item, dict)
+            or item.get("forecast_blocking") is not False
+            or item.get("blocking_codes") != []
+        ):
+            return None
+    m15_item = timeframes.get(M15_RECOVERY_SOURCE_TIMEFRAME)
+    m15_view = view_by_tf.get(M15_RECOVERY_SOURCE_TIMEFRAME)
+    if not isinstance(m15_item, dict) or not isinstance(m15_view, dict):
+        return None
+    m15_latest = _strict_aware_iso_datetime(
+        m15_item.get("latest_complete_timestamp_utc")
+    )
+    m15_atr_pips = _m15_recovery_atr_pips(m15_view)
+    m15_candles = (m15_view.get("indicators") or {}).get("candles_count")
+    if (
+        m15_item.get("evaluation_status") != "PASS"
+        or m15_item.get("codes") != []
+        or m15_item.get("malformed_count") != 0
+        or m15_item.get("recent_tail_state") != "CLEAN"
+        or m15_item.get("latest_complete_timestamp_utc")
+        != m15_item.get("latest_clean_timestamp_utc")
+        or m15_latest is None
+        or (forecast_now - m15_latest).total_seconds()
+        < -TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS
+        or (forecast_now - m15_latest).total_seconds()
+        > M15_RECOVERY_M15_MAX_AGE_SECONDS
+        or not _is_exact_nonnegative_int(m15_candles)
+        or m15_candles < TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+        or m15_atr_pips is None
+    ):
+        return None
+
+    current_spread = _strict_finite_number(current_spread_pips)
+    spread_cap = min(spread_caps) if spread_caps else None
+    if (
+        current_spread is None
+        or current_spread <= 0.0
+        or spread_cap is None
+        or current_spread > spread_cap
+    ):
+        return None
+    body: dict[str, Any] = {
+        "contract": M15_RECOVERY_MICRO_CONTRACT,
+        "mode": M15_RECOVERY_MICRO_MODE,
+        "status": "ELIGIBLE_FOR_MICRO_REVALIDATION",
+        "pair": expected_pair,
+        "chart_generated_at_utc": generated_at.isoformat(),
+        "m15_plus_scoring_input_sha256": (
+            m15_recovery_scoring_input_sha256(pair_chart)
+        ),
+        "validated_at_utc": validated_at.isoformat(),
+        "fast_timeframe_receipts": fast_receipts,
+        "geometry_source": {
+            "timeframe": M15_RECOVERY_SOURCE_TIMEFRAME,
+            "latest_clean_timestamp_utc": m15_item[
+                "latest_clean_timestamp_utc"
+            ],
+            "atr_pips": m15_atr_pips,
+            "candles_count": m15_candles,
+        },
+        "current_spread_pips": current_spread,
+        "spread_cap_pips": spread_cap,
+        "sizing": {
+            "max_units": M15_RECOVERY_MICRO_MAX_UNITS,
+            "full_size_allowed": False,
+            "minimum_units_override": False,
+        },
+        "live_permission": False,
+        "requires_risk_gateway_revalidation": True,
+        "manual_position_mutation_allowed": False,
+    }
+    return {**body, "receipt_sha256": _m15_recovery_receipt_hash(body)}
+
+
+def build_m15_recovery_micro_receipt(
+    pair_chart: Dict[str, Any],
+    *,
+    expected_pair: str,
+    now_utc: datetime | None,
+    current_spread_pips: object,
+) -> dict[str, Any] | None:
+    """Return a bounded recovery candidate, never a live permission."""
+
+    validated_at = _aware_utc_datetime(now_utc)
+    if validated_at is None:
+        return None
+    return _build_m15_recovery_micro_receipt(
+        pair_chart,
+        expected_pair=expected_pair,
+        now_utc=validated_at,
+        current_spread_pips=current_spread_pips,
+        receipt_validated_at=validated_at,
+    )
+
+
+def validate_m15_recovery_micro_receipt(
+    receipt: object,
+    *,
+    pair_chart: Dict[str, Any],
+    expected_pair: str,
+    now_utc: datetime | None,
+    current_spread_pips: object,
+) -> bool:
+    """Recompute the receipt from source evidence and recheck current spread."""
+
+    if not isinstance(receipt, dict):
+        return False
+    receipt_body = dict(receipt)
+    digest = receipt_body.pop("receipt_sha256", None)
+    if (
+        digest.__class__ is not str
+        or len(digest) != 64
+        or _m15_recovery_receipt_hash(receipt_body) != digest
+    ):
+        return False
+    validated_at = _strict_aware_iso_datetime(receipt.get("validated_at_utc"))
+    receipt_spread = _strict_finite_number(receipt.get("current_spread_pips"))
+    current_spread = _strict_finite_number(current_spread_pips)
+    cap = _strict_finite_number(receipt.get("spread_cap_pips"))
+    if (
+        validated_at is None
+        or receipt_spread is None
+        or current_spread is None
+        or current_spread <= 0.0
+        or cap is None
+        or current_spread > cap
+    ):
+        return False
+    expected = _build_m15_recovery_micro_receipt(
+        pair_chart,
+        expected_pair=expected_pair,
+        now_utc=now_utc,
+        current_spread_pips=receipt_spread,
+        receipt_validated_at=validated_at,
+    )
+    return expected == receipt
+
+
+def _m15_recovery_forecast_chart(pair_chart: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove fast-timeframe and mixed-TF aggregates from recovery scoring."""
+
+    allowed = {"M15", "M30", "H1", "H4", "D"}
+    chart = dict(pair_chart)
+    chart["views"] = [
+        view
+        for view in pair_chart.get("views") or []
+        if isinstance(view, dict)
+        and str(view.get("granularity") or "").upper() in allowed
+    ]
+    # `confluence` and the top-level scores aggregate M1/M5 evidence. Keep
+    # them out of a contract that explicitly claims M15+ forecast evidence.
+    chart["confluence"] = {}
+    chart["long_score"] = 0.0
+    chart["short_score"] = 0.0
+    return chart
+
+
+def m15_recovery_scoring_input_sha256(pair_chart: Dict[str, Any]) -> str:
+    """Bind every chart field visible to the M15+ recovery forecaster.
+
+    The ordinary candle-integrity receipt proves candle provenance and tail
+    state, but does not content-address derived regime/family/structure fields.
+    Hash the complete sanitized forecast input so Risk/Gateway revalidation
+    detects any change to those scoring values as well as the root clock.
+    """
+
+    return _m15_recovery_receipt_hash(
+        _m15_recovery_forecast_chart(pair_chart)
+    )
+
+
+def _m15_or_higher_signal(signal: object) -> bool:
+    """Accept only detector evidence with explicit M15+ provenance."""
+
+    allowed = {"M15", "M30", "H1", "H4", "D"}
+    for key in ("timeframe", "granularity", "source_timeframe"):
+        value = signal.get(key) if isinstance(signal, dict) else getattr(signal, key, None)
+        if value is not None:
+            return value.__class__ is str and value.upper() in allowed
+    values = signal.get("timeframes") if isinstance(signal, dict) else getattr(signal, "timeframes", None)
+    return (
+        isinstance(values, (list, tuple))
+        and bool(values)
+        and all(value.__class__ is str and value.upper() in allowed for value in values)
+    )
+
+
+def m15_or_higher_signal(signal: object) -> bool:
+    """Public contract helper shared by intent support/telemetry filtering."""
+
+    return _m15_or_higher_signal(signal)
+
+
+def m15_recovery_calibration_regime(
+    regime: str | None,
+    recovery_receipt: object,
+) -> str | None:
+    """Exclude mixed-fast confluence from every recovery calibration read."""
+
+    return None if isinstance(recovery_receipt, dict) and recovery_receipt else regime
+
+
+def _m15_recovery_signal_material(signal: object) -> dict[str, Any]:
+    """Freeze only bounded forecast inputs with explicit M15+ provenance."""
+
+    def value(key: str) -> object:
+        return signal.get(key) if isinstance(signal, dict) else getattr(signal, key, None)
+
+    material: dict[str, Any] = {
+        "type": type(signal).__name__,
+    }
+    for key in (
+        "name",
+        "direction",
+        "timeframe",
+        "granularity",
+        "source_timeframe",
+        "rationale",
+    ):
+        raw = value(key)
+        if raw.__class__ is str:
+            material[key] = raw[:512]
+    raw_timeframes = value("timeframes")
+    if isinstance(raw_timeframes, (list, tuple)):
+        material["timeframes"] = [
+            raw for raw in raw_timeframes if raw.__class__ is str
+        ][:8]
+    for key in (
+        "bonus",
+        "bonus_magnitude",
+        "confidence",
+        "lead_time_min",
+        "probability",
+        "target_price",
+        "invalidation_price",
+    ):
+        raw = _strict_finite_number(value(key))
+        if raw is not None:
+            material[key] = raw
+    return material
+
+
+def _m15_recovery_filtered_inputs_sha256(
+    *,
+    pattern_signals: list[Any],
+    projection_signals: list[Any],
+    correlation_signals: list[Any],
+    paths: list[Any],
+    reversal_long: object,
+    reversal_short: object,
+) -> str:
+    payload = {
+        "pattern_signals": [
+            _m15_recovery_signal_material(signal) for signal in pattern_signals
+        ],
+        "projection_signals": [
+            _m15_recovery_signal_material(signal) for signal in projection_signals
+        ],
+        "correlation_signals": [
+            _m15_recovery_signal_material(signal) for signal in correlation_signals
+        ],
+        "paths": [_m15_recovery_signal_material(signal) for signal in paths],
+        "reversal_long": (
+            _m15_recovery_signal_material(reversal_long)
+            if reversal_long is not None
+            else None
+        ),
+        "reversal_short": (
+            _m15_recovery_signal_material(reversal_short)
+            if reversal_short is not None
+            else None
+        ),
+    }
+    return _m15_recovery_receipt_hash(payload)
+
+
+def _m15_recovery_forecast_evidence(
+    *,
+    receipt: dict[str, Any],
+    pair: str,
+    current_price: float,
+    spread_pips: float | None,
+    filtered_input_sha256: str,
+    direction: str,
+    confidence: float,
+    raw_confidence: float,
+    calibration_multiplier: float,
+    component_scores: dict[str, float],
+    target_price: float | None,
+    invalidation_price: float | None,
+    horizon_min: int,
+) -> dict[str, Any]:
+    body = {
+        "contract": M15_RECOVERY_FORECAST_CONTRACT,
+        "source_recovery_receipt_sha256": receipt.get("receipt_sha256"),
+        "pair": pair,
+        "chart_generated_at_utc": receipt.get("chart_generated_at_utc"),
+        "forecast_current_price": current_price,
+        "forecast_spread_pips": spread_pips,
+        "filtered_input_sha256": filtered_input_sha256,
+        "raw_winner": direction,
+        "component_scores": {
+            key: float(value) for key, value in sorted(component_scores.items())
+        },
+        "final_direction": direction,
+        "raw_confidence": raw_confidence,
+        "calibration_multiplier": calibration_multiplier,
+        "calibration_scope": "M15_RECOVERY_CONSERVATIVE_DIRECTIONAL_PRIOR",
+        "confidence": confidence,
+        "target_price": target_price,
+        "invalidation_price": invalidation_price,
+        "horizon_min": horizon_min,
+        "geometry_source_timeframe": M15_RECOVERY_SOURCE_TIMEFRAME,
+        "live_permission": False,
+    }
+    return {**body, "evidence_sha256": _m15_recovery_receipt_hash(body)}
 
 
 def _is_unique_nonempty_string_list(value: object) -> bool:
@@ -1051,13 +1557,15 @@ def _collect_structural_levels(pair_chart: Dict[str, Any], *, side: str) -> list
 
 def _forecast_noise_floor_pips(
     pair_chart: Dict[str, Any],
+    *,
+    source_timeframes: frozenset[str] = frozenset({"M1", "M5"}),
 ) -> Optional[float]:
     floors: list[float] = []
     for view in pair_chart.get("views") or []:
         if not isinstance(view, dict):
             continue
         tf = str(view.get("granularity") or "").upper()
-        if tf not in {"M1", "M5"}:
+        if tf not in source_timeframes:
             continue
         indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
         atr_pips = _to_float((indicators or {}).get("atr_pips"))
@@ -1200,6 +1708,7 @@ def _forecast_geometry(
     direction: str,
     current_price: float,
     spread_pips: Optional[float] = None,
+    noise_source_timeframes: frozenset[str] = frozenset({"M1", "M5"}),
 ) -> tuple[Optional[float], Optional[float]]:
     """Return target/invalidation levels that are on the correct side.
 
@@ -1223,7 +1732,10 @@ def _forecast_geometry(
     # pass the live quote, but never let it alter prediction levels. The order
     # gateway owns spread feasibility and can block execution independently.
     _ = spread_pips
-    noise_floor_pips = _forecast_noise_floor_pips(pair_chart)
+    noise_floor_pips = _forecast_noise_floor_pips(
+        pair_chart,
+        source_timeframes=noise_source_timeframes,
+    )
 
     high_levels = _collect_structural_levels(pair_chart, side="HIGH")
     low_levels = _collect_structural_levels(pair_chart, side="LOW")
@@ -2150,17 +2662,27 @@ def synthesize_forecast(
         require_technical_candle_integrity=require_technical_candle_integrity,
         now_utc=now_utc,
     )
+    m15_recovery_receipt: dict[str, Any] = {}
+    m15_recovery_filtered_input_sha256 = ""
     if integrity_blockers:
-        return DirectionalForecast(
-            pair=pair, direction="UNCLEAR", confidence=0.0,
-            invalidation_price=None, target_price=None, horizon_min=0,
-            drivers_for=(), drivers_against=integrity_blockers,
-            rationale_summary=(
-                f"{','.join(integrity_blockers)}: technical candle provenance blocks directional forecast"
-            ),
-            current_price=current_price,
-            raw_confidence=0.0,
+        candidate = build_m15_recovery_micro_receipt(
+            pair_chart,
+            expected_pair=pair,
+            now_utc=now_utc,
+            current_spread_pips=spread_pips,
         )
+        if candidate is None:
+            return DirectionalForecast(
+                pair=pair, direction="UNCLEAR", confidence=0.0,
+                invalidation_price=None, target_price=None, horizon_min=0,
+                drivers_for=(), drivers_against=integrity_blockers,
+                rationale_summary=(
+                    f"{','.join(integrity_blockers)}: technical candle provenance blocks directional forecast"
+                ),
+                current_price=current_price,
+                raw_confidence=0.0,
+            )
+        m15_recovery_receipt = candidate
     technical_context_v1 = build_forecast_technical_context(
         pair_chart,
         pair=pair,
@@ -2170,6 +2692,42 @@ def synthesize_forecast(
         strategy_profile_path=strategy_profile_path,
         now_utc=now_utc,
     )
+    if m15_recovery_receipt:
+        pair_chart = _m15_recovery_forecast_chart(pair_chart)
+        pattern_signals = [
+            signal for signal in pattern_signals or [] if _m15_or_higher_signal(signal)
+        ]
+        projection_signals = [
+            signal for signal in projection_signals or [] if _m15_or_higher_signal(signal)
+        ]
+        correlation_signals = [
+            signal for signal in correlation_signals or [] if _m15_or_higher_signal(signal)
+        ]
+        paths = [signal for signal in paths or [] if _m15_or_higher_signal(signal)]
+        reversal_long = (
+            reversal_long if _m15_or_higher_signal(reversal_long) else None
+        )
+        reversal_short = (
+            reversal_short if _m15_or_higher_signal(reversal_short) else None
+        )
+        m15_recovery_filtered_input_sha256 = (
+            _m15_recovery_filtered_inputs_sha256(
+                pattern_signals=list(pattern_signals),
+                projection_signals=list(projection_signals),
+                correlation_signals=list(correlation_signals),
+                paths=list(paths),
+                reversal_long=reversal_long,
+                reversal_short=reversal_short,
+            )
+        )
+    # The caller's regime label comes from the raw top-level confluence,
+    # which aggregates M1/M5.  A recovery forecast explicitly excludes those
+    # inputs, so regime-specific calibration must also fall back to the
+    # all-regimes evidence rather than smuggling the fast tails back in.
+    calibration_regime = m15_recovery_calibration_regime(
+        regime,
+        m15_recovery_receipt,
+    )
     if _is_disabled():
         return DirectionalForecast(
             pair=pair, direction="UNCLEAR", confidence=0.0,
@@ -2178,6 +2736,7 @@ def synthesize_forecast(
             rationale_summary="forecaster disabled",
             current_price=current_price,
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
 
     up_score = 0.0
@@ -2219,7 +2778,7 @@ def synthesize_forecast(
             signal=s,
             pair=pair,
             hit_rates=hit_rates,
-            regime=regime,
+            regime=calibration_regime,
         )
         if known_weak_reason is not None:
             contributions.append(("IGNORED", 0.0, known_weak_reason))
@@ -2228,7 +2787,7 @@ def synthesize_forecast(
             signal=s,
             pair=pair,
             hit_rates=hit_rates,
-            regime=regime,
+            regime=calibration_regime,
         )
         mag = getattr(s, "bonus_magnitude", 0) * getattr(s, "confidence", 0) * cal_mult
         rationale = getattr(s, "rationale", "")
@@ -2289,6 +2848,7 @@ def synthesize_forecast(
             range_score=range_score,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
 
     # Pick winner
@@ -2296,12 +2856,18 @@ def synthesize_forecast(
     candidates.sort(key=lambda x: -x[1])
     winner, winner_score = candidates[0]
     runner_up_score = candidates[1][1]
-    family_adjusted_score, family_adjustment_reason = _regime_family_adjustment(
-        technical_context_v1,
-        winner,
-        winner_score,
-        runner_up_score,
-    )
+    if m15_recovery_receipt:
+        # The normal technical-context receipt includes M1/M5 families. The
+        # recovery forecast may publish it diagnostically, but must not use it
+        # to choose or veto the M15+ direction.
+        family_adjusted_score, family_adjustment_reason = winner_score, None
+    else:
+        family_adjusted_score, family_adjustment_reason = _regime_family_adjustment(
+            technical_context_v1,
+            winner,
+            winner_score,
+            runner_up_score,
+        )
     if family_adjusted_score != winner_score:
         contradicted_winner = winner
         if winner == "UP":
@@ -2347,6 +2913,7 @@ def synthesize_forecast(
                 "EITHER": either_score,
             },
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
     adjusted_winner_score, adjustment_reason = _countertrend_adjustment(
         pair_chart,
@@ -2384,6 +2951,7 @@ def synthesize_forecast(
             raw_confidence=0.0,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
     runner_up_score = candidates[1][1]
 
@@ -2406,6 +2974,7 @@ def synthesize_forecast(
             raw_confidence=0.0,
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
 
     # Decisiveness: need clear winner, not close call
@@ -2424,7 +2993,7 @@ def synthesize_forecast(
                 direction="RANGE",
                 raw_confidence=contested_range_confidence,
                 hit_rates=hit_rates,
-                regime=regime,
+                regime=calibration_regime,
             )
             evidence = "; ".join(range_phase.evidence[:3])
             rationale_summary = (
@@ -2459,6 +3028,7 @@ def synthesize_forecast(
                 range_high_price=range_phase.range_high_price,
                 range_width_pips=range_phase.range_width_pips,
                 technical_context_v1=technical_context_v1,
+                m15_recovery_receipt=m15_recovery_receipt,
             )
         # Too contested → UNCLEAR
         return DirectionalForecast(
@@ -2475,6 +3045,7 @@ def synthesize_forecast(
             raw_confidence=margin / max(winner_score, 1.0),
             component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
 
     raw_confidence = min(1.0, (margin / total) + 0.3)
@@ -2485,15 +3056,19 @@ def synthesize_forecast(
         direction=winner,
         raw_confidence=raw_confidence,
         hit_rates=hit_rates,
-        regime=regime,
+        regime=calibration_regime,
     )
 
-    weak_directional_range_confidence = _weak_directional_range_raw_confidence(
-        phase=range_phase,
-        winner=winner,
-        directional_confidence=calibrated_confidence,
-        winner_score=winner_score,
-        range_score=range_score,
+    weak_directional_range_confidence = (
+        None
+        if m15_recovery_receipt
+        else _weak_directional_range_raw_confidence(
+            phase=range_phase,
+            winner=winner,
+            directional_confidence=calibrated_confidence,
+            winner_score=winner_score,
+            range_score=range_score,
+        )
     )
     if weak_directional_range_confidence is not None:
         range_confidence, range_cal_mult = _calibrated_confidence(
@@ -2501,7 +3076,7 @@ def synthesize_forecast(
             direction="RANGE",
             raw_confidence=weak_directional_range_confidence,
             hit_rates=hit_rates,
-            regime=regime,
+            regime=calibration_regime,
         )
         evidence = "; ".join(range_phase.evidence[:3])
         rationale_summary = (
@@ -2537,6 +3112,7 @@ def synthesize_forecast(
             range_high_price=range_phase.range_high_price,
             range_width_pips=range_phase.range_width_pips,
             technical_context_v1=technical_context_v1,
+            m15_recovery_receipt=m15_recovery_receipt,
         )
 
     target_price, invalidation_price = _forecast_geometry(
@@ -2545,6 +3121,11 @@ def synthesize_forecast(
         direction=winner,
         current_price=current_price,
         spread_pips=spread_pips,
+        noise_source_timeframes=(
+            frozenset({M15_RECOVERY_SOURCE_TIMEFRAME})
+            if m15_recovery_receipt
+            else frozenset({"M1", "M5"})
+        ),
     )
     geometry_reason = ""
     if winner in {"UP", "DOWN"} and (target_price is None or invalidation_price is None):
@@ -2580,6 +3161,33 @@ def synthesize_forecast(
     if horizon_reason:
         drivers_for = (*drivers_for, horizon_reason)
 
+    component_scores = {
+        "UP": up_score,
+        "DOWN": down_score,
+        "RANGE": range_score,
+        "EITHER": either_score,
+    }
+    recovery_forecast_evidence = (
+        _m15_recovery_forecast_evidence(
+            receipt=m15_recovery_receipt,
+            pair=pair,
+            current_price=_round_price(pair, current_price),
+            spread_pips=spread_pips,
+            filtered_input_sha256=m15_recovery_filtered_input_sha256,
+            direction=winner,
+            confidence=calibrated_confidence,
+            raw_confidence=raw_confidence,
+            calibration_multiplier=cal_mult,
+            component_scores=component_scores,
+            target_price=target_price,
+            invalidation_price=invalidation_price,
+            horizon_min=horizon_min,
+        )
+        if m15_recovery_receipt
+        and winner in {"UP", "DOWN"}
+        and m15_recovery_filtered_input_sha256
+        else {}
+    )
     return DirectionalForecast(
         pair=pair, direction=winner, confidence=calibrated_confidence,
         invalidation_price=invalidation_price, target_price=target_price,
@@ -2593,9 +3201,11 @@ def synthesize_forecast(
         range_score=range_score,
         raw_confidence=raw_confidence,
         calibration_multiplier=cal_mult,
-        component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+        component_scores=component_scores,
         range_low_price=range_phase.range_low_price if winner == "RANGE" else None,
         range_high_price=range_phase.range_high_price if winner == "RANGE" else None,
         range_width_pips=range_phase.range_width_pips if winner == "RANGE" else None,
         technical_context_v1=technical_context_v1,
+        m15_recovery_receipt=m15_recovery_receipt,
+        m15_recovery_forecast_evidence=recovery_forecast_evidence,
     )

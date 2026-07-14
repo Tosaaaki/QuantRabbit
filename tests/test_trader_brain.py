@@ -5,6 +5,7 @@ import math
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -50,6 +51,7 @@ from quant_rabbit.strategy.trader_brain import (
     _oanda_universal_rotation_precision_score,
     _parse_chart_story_full,
     _forecast_lane_gate,
+    _fast_timeframe_override_applies,
     _selection_reward_risk_floor,
     _short_term_momentum_class,
     _strategy_index,
@@ -57,6 +59,7 @@ from quant_rabbit.strategy.trader_brain import (
     _size_multiple,
     _tf_lens_support,
     _tf_strength_multiplier,
+    _verified_m15_recovery_scoring_context,
     load_trader_settings,
 )
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
@@ -94,6 +97,435 @@ class _NonmatchingBidaskRulesMixin:
 
 
 class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
+
+    def test_m15_recovery_scoring_uses_only_bound_m15_plus_context(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _now, _chart_path, recovery_intent, _broker = (
+                _m15_recovery_fixture(Path(tmp))
+            )
+            payload = {
+                "pair": recovery_intent.pair,
+                "side": recovery_intent.side.value,
+                "order_type": recovery_intent.order_type.value,
+                "units": recovery_intent.units,
+                "entry": recovery_intent.entry,
+                "tp": recovery_intent.tp,
+                "sl": recovery_intent.sl,
+                "market_context": {
+                    "method": recovery_intent.market_context.method.value,
+                },
+                "metadata": recovery_intent.metadata,
+            }
+
+            context = _verified_m15_recovery_scoring_context(payload)
+
+            self.assertTrue(context.valid, msg=context.error)
+            self.assertEqual(context.selected_method, "BREAKOUT_FAILURE")
+            self.assertEqual(context.label, "m15_recovery")
+            self.assertEqual(context.weights["M1"], 0.0)
+            self.assertEqual(context.weights["M5"], 0.0)
+            self.assertAlmostEqual(sum(context.weights.values()), 1.0)
+            self.assertFalse(
+                _fast_timeframe_override_applies(
+                    recovery_claimed=True,
+                    scoring_context=context,
+                )
+            )
+
+            tampered = json.loads(json.dumps(payload))
+            tampered["metadata"]["forecast_raw_confidence"] = 0.1
+            invalid = _verified_m15_recovery_scoring_context(tampered)
+            self.assertFalse(invalid.valid)
+            self.assertIsNotNone(invalid.error)
+
+    def test_m15_recovery_full_score_does_not_reapply_unbound_fast_tf_gates(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _now, chart_path, recovery_intent, snapshot = (
+                _m15_recovery_fixture(root)
+            )
+            metadata = deepcopy(recovery_intent.metadata)
+            # These deliberately hostile M1/M5 annotations prove that the
+            # ordinary fast-TF gates would veto the lane if they were called.
+            # They are not part of the signed recovery source scope.
+            metadata.update(
+                {
+                    "chart_story_structural": (
+                        "M1(TREND_UP, ADX=30.0 RSI=60.0 ATR=1.0p ST=+ "
+                        "cloud=above struct=BOS_UP@1.1455); "
+                        "M5(TREND_UP, ADX=30.0 RSI=60.0 ATR=2.0p ST=+ "
+                        "cloud=above struct=BOS_UP@1.1455); "
+                        "M15(TREND_DOWN, ADX=25.0 RSI=42.0 ATR=9.5p ST=- "
+                        "cloud=below struct=BOS_DOWN@1.1440)"
+                    ),
+                    "m5_regime": "TREND_UP",
+                }
+            )
+            intent_payload = {
+                "pair": recovery_intent.pair,
+                "side": recovery_intent.side.value,
+                "order_type": recovery_intent.order_type.value,
+                "units": recovery_intent.units,
+                "entry": recovery_intent.entry,
+                "tp": recovery_intent.tp,
+                "sl": recovery_intent.sl,
+                "thesis": recovery_intent.thesis,
+                "owner": "trader",
+                "metadata": metadata,
+                "market_context": {
+                    "regime": recovery_intent.market_context.regime,
+                    "narrative": recovery_intent.market_context.narrative,
+                    "chart_story": recovery_intent.market_context.chart_story,
+                    "method": recovery_intent.market_context.method.value,
+                    "invalidation": recovery_intent.market_context.invalidation,
+                },
+            }
+            result = {
+                "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                "status": "LIVE_READY",
+                "risk_allowed": True,
+                "risk_metrics": {
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 100.0,
+                    "reward_risk": 1.0,
+                    "spread_pips": 0.8,
+                },
+                "risk_issues": [],
+                "live_blockers": [],
+                "intent": intent_payload,
+            }
+            pair_chart = json.loads(chart_path.read_text())["charts"][0]
+            for view in pair_chart.get("views", []):
+                timeframe = str(
+                    view.get("timeframe") or view.get("granularity") or ""
+                ).upper()
+                if timeframe in {"M5", "M15", "M30"}:
+                    view["regime"] = "TREND_UP"
+                    view.setdefault("indicators", {})["adx_14"] = 30.0
+                if timeframe == "M5":
+                    view["candles"] = [
+                        {"open": 1.0, "close": 1.1},
+                        {"open": 1.1, "close": 1.2},
+                        {"open": 1.2, "close": 1.3},
+                    ]
+            strategies = {
+                ("EUR_USD", "SHORT", "BREAKOUT_FAILURE"): {
+                    "status": "CANDIDATE",
+                    "pretrade_net_jpy": 1000,
+                    "live_net_jpy": 1000,
+                    "live_worst_jpy": -100,
+                    "positive_evidence_n": 120,
+                    "positive_tail_jpy": 100,
+                    "positive_best_jpy": 200,
+                    "seat_discovered": 10,
+                    "seat_orderable": 10,
+                    "seat_captured": 7,
+                }
+            }
+            stories = {
+                "EUR_USD": {
+                    "methods": {"BREAKOUT_FAILURE": 35},
+                    "themes": {"breakout_failure": 5},
+                    "examples": [],
+                }
+            }
+            campaign = {
+                result["lane_id"]: {
+                    "campaign_role": "NOW",
+                    "adoption": "ORDER_INTENT_REQUIRED",
+                    "target_reward_risk": 0.5,
+                }
+            }
+            brain = TraderBrain(
+                intents_path=root / "intents.json",
+                campaign_plan_path=root / "campaign.json",
+                strategy_profile_path=root / "strategy.json",
+                market_story_profile_path=root / "stories.json",
+                pair_charts_path=chart_path,
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            trader_overrides = mock.Mock()
+            news_themes = mock.Mock()
+            news_themes.for_pair.return_value = (99.0, "unsigned news promotion")
+            override_block = mock.Mock(return_value=(False, None))
+            with mock.patch.multiple(
+                "quant_rabbit.strategy.trader_brain",
+                check_entry_timing=mock.DEFAULT,
+                check_operating_tf_momentum=mock.DEFAULT,
+                technical_invalidation_confirmation_reason=mock.DEFAULT,
+                _pair_forecast=mock.DEFAULT,
+                detect_reversal=mock.DEFAULT,
+                detect_pattern_signals=mock.DEFAULT,
+                detect_forward_projections=mock.DEFAULT,
+                detect_correlation_lag=mock.DEFAULT,
+                detect_paths=mock.DEFAULT,
+                _method_theme_score=mock.DEFAULT,
+                _campaign_score=mock.DEFAULT,
+                _narrative_risk_score=mock.DEFAULT,
+                _direction_conflict_penalty=mock.DEFAULT,
+                _mtf_confluence_score=mock.DEFAULT,
+                _technical_harvest_precision_score=mock.DEFAULT,
+                _bidask_replay_precision_score=mock.DEFAULT,
+                _oanda_universal_rotation_precision_score=mock.DEFAULT,
+                aggregate_price_action_score=mock.DEFAULT,
+                regime_score_modifier=mock.DEFAULT,
+                _story_fusion_score=mock.DEFAULT,
+                overrides_block_check=override_block,
+                overrides_score_delta=mock.DEFAULT,
+            ) as excluded_layers:
+                score = brain._score_lane(
+                    result,
+                    strategies,
+                    stories,
+                    campaign,
+                    (),
+                    TraderSettings(
+                        size_multiple_min=0.5,
+                        size_multiple_max=1.0,
+                        size_multiple_anchor_score=1_000.0,
+                        size_multiple_per_score_point=0.001,
+                    ),
+                    loss_cap_jpy=500.0,
+                    full_pair_charts={"EUR_USD": pair_chart},
+                    attack_ranks={result["lane_id"]: 0},
+                    regime_snapshots={"EUR_USD": mock.Mock()},
+                    trader_overrides=trader_overrides,
+                    news_themes=news_themes,
+                    snapshot=snapshot,
+                    forecast_cache={},
+                    forecast_cycle_id="m15-recovery-score-test",
+                    data_root=root,
+                )
+
+            for name, layer in excluded_layers.items():
+                with self.subTest(excluded_layer=name):
+                    layer.assert_not_called()
+            override_block.assert_called_once_with(trader_overrides, result["lane_id"])
+            news_themes.for_pair.assert_not_called()
+            self.assertEqual(score.action, ACTION_SEND_ENTRY)
+            self.assertEqual(score.size_multiple, 1.0)
+            self.assertFalse(score.blockers)
+            joined = " ".join(score.rationale)
+            self.assertIn("bound M15 recovery forecast DOWN", joined)
+            self.assertIn("ordinary M1/M5 timing rechecks are excluded", joined)
+            self.assertIn("unbound generic reversal/pattern/projection", joined)
+            self.assertIn("story/news/advice/aggregate technical rescoring", joined)
+            self.assertNotIn("attack_advice rank", joined)
+            self.assertNotIn("matches lane target", joined)
+            self.assertIn("1.00R >= 1.00R", joined)
+
+            # A partial deletion remains a recovery claim.  It must not fall
+            # back to the ordinary regime-family receipt path and become
+            # selectable through unrelated M1/M5 material.
+            for mutation in ("empty", "missing"):
+                with self.subTest(mutation=mutation):
+                    partial_result = deepcopy(result)
+                    partial_metadata = partial_result["intent"]["metadata"]
+                    if mutation == "empty":
+                        partial_metadata["m15_recovery_micro_receipt"] = {}
+                    else:
+                        partial_metadata.pop(
+                            "m15_recovery_micro_receipt",
+                            None,
+                        )
+                    partial_score = brain._score_lane(
+                        partial_result,
+                        strategies,
+                        stories,
+                        campaign,
+                        (),
+                        TraderSettings(),
+                        loss_cap_jpy=500.0,
+                        full_pair_charts={"EUR_USD": pair_chart},
+                        snapshot=snapshot,
+                        forecast_cache={},
+                        forecast_cycle_id="m15-recovery-partial-delete",
+                        data_root=root,
+                    )
+                    self.assertEqual(partial_score.action, ACTION_NO_TRADE)
+                    self.assertFalse(partial_score.m15_recovery_verified)
+                    self.assertTrue(
+                        any(
+                            "regime_family_receipt_invalid" in blocker
+                            and "M15_RECOVERY" in blocker
+                            for blocker in partial_score.blockers
+                        ),
+                        partial_score.blockers,
+                    )
+
+    def test_m15_recovery_full_run_survives_opposite_unsigned_advice(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _now, chart_path, recovery_intent, snapshot = (
+                _m15_recovery_fixture(root)
+            )
+            metadata = deepcopy(recovery_intent.metadata)
+            metadata["chart_story_structural"] = (
+                "M1(TREND_UP, ADX=30.0 RSI=60.0 ATR=1.0p ST=+ "
+                "cloud=above struct=BOS_UP@1.1455); "
+                "M5(TREND_UP, ADX=30.0 RSI=60.0 ATR=2.0p ST=+ "
+                "cloud=above struct=BOS_UP@1.1455); "
+                "M15(TREND_DOWN, ADX=25.0 RSI=42.0 ATR=9.5p ST=- "
+                "cloud=below struct=BOS_DOWN@1.1440)"
+            )
+            lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+            reward = float(recovery_intent.entry) - float(recovery_intent.tp)
+            loss = float(recovery_intent.sl) - float(recovery_intent.entry)
+            reward_risk = reward / loss
+            intent_payload = {
+                "pair": recovery_intent.pair,
+                "side": recovery_intent.side.value,
+                "order_type": recovery_intent.order_type.value,
+                "units": recovery_intent.units,
+                "entry": recovery_intent.entry,
+                "tp": recovery_intent.tp,
+                "sl": recovery_intent.sl,
+                "thesis": recovery_intent.thesis,
+                "owner": "trader",
+                "metadata": metadata,
+                "market_context": {
+                    "regime": recovery_intent.market_context.regime,
+                    "narrative": recovery_intent.market_context.narrative,
+                    "chart_story": recovery_intent.market_context.chart_story,
+                    "method": recovery_intent.market_context.method.value,
+                    "invalidation": recovery_intent.market_context.invalidation,
+                },
+            }
+            (root / "intents.json").write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": lane_id,
+                                "status": "LIVE_READY",
+                                "risk_allowed": True,
+                                "risk_metrics": {
+                                    "risk_jpy": 100.0,
+                                    "reward_jpy": 100.0 * reward_risk,
+                                    "reward_risk": reward_risk,
+                                    "spread_pips": 0.8,
+                                    "estimated_margin_jpy": 10.0,
+                                },
+                                "risk_issues": [],
+                                "live_blockers": [],
+                                "intent": intent_payload,
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            (root / "campaign.json").write_text(
+                json.dumps(
+                    {
+                        "lanes": [
+                            {
+                                "desk": "failure_trader",
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "campaign_role": "NOW",
+                                "adoption": "ORDER_INTENT_REQUIRED",
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            (root / "strategy.json").write_text(
+                json.dumps(
+                    {
+                        "system_contract": {"loss_cap_jpy": 500.0},
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "pretrade_net_jpy": 1000,
+                                "live_net_jpy": 1000,
+                                "live_worst_jpy": -100,
+                                "positive_evidence_n": 120,
+                                "positive_tail_jpy": 100,
+                                "positive_best_jpy": 200,
+                                "seat_discovered": 10,
+                                "seat_orderable": 10,
+                                "seat_captured": 7,
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
+            (root / "stories.json").write_text(
+                json.dumps(
+                    {
+                        "pair_profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "methods": {"BREAKOUT_FAILURE": 35},
+                                "themes": {"breakout_failure": 5},
+                                "examples": [],
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            attack_path = root / "attack.json"
+            attack_path.write_text(
+                json.dumps(
+                    {
+                        "recommended_now_lane_ids": [
+                            "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            chart_payload = json.loads(chart_path.read_text())
+            chart_payload["charts"][0].setdefault("confluence", {}).update(
+                {"score_balance": "LONG_LEAN", "score_gap": 0.44}
+            )
+            chart_path.write_text(json.dumps(chart_payload) + "\n")
+            brain = TraderBrain(
+                intents_path=root / "intents.json",
+                campaign_plan_path=root / "campaign.json",
+                strategy_profile_path=root / "strategy.json",
+                market_story_profile_path=root / "stories.json",
+                trader_settings_path=root / "settings.json",
+                target_state_path=root / "missing_target.json",
+                attack_advice_path=attack_path,
+                pair_charts_path=chart_path,
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, lane_id)
+            self.assertEqual(len(decision.scores), 1)
+            score = decision.scores[0]
+            self.assertTrue(score.m15_recovery_verified)
+            self.assertEqual(score.action, ACTION_SEND_ENTRY)
+            self.assertFalse(
+                any("directional_gating_demoted" in item for item in score.blockers)
+            )
+            self.assertFalse(
+                any("attack_advice_veto" in item for item in score.rationale)
+            )
+            self.assertTrue(
+                any("preserves its bound direction" in item for item in score.rationale)
+            )
 
     def test_regime_family_mismatch_falls_back_to_compatible_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,6 +890,14 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
         self.assertEqual(
             _selection_reward_risk_floor(TradeMethod.BREAKOUT_FAILURE.value, {"regime_state": "TREND_UP"}),
             policy.min_reward_risk,
+        )
+        self.assertEqual(
+            _selection_reward_risk_floor(
+                TradeMethod.BREAKOUT_FAILURE.value,
+                {"regime_state": "TREND_UP"},
+                verified_m15_recovery=True,
+            ),
+            policy.technical_harvest_min_reward_risk,
         )
 
     def test_jpy_intervention_sizes_down_but_does_not_block(self) -> None:
@@ -4174,6 +4614,49 @@ class MTFConfluenceTest(unittest.TestCase):
         joined = " ".join(rationale)
         self.assertIn("aligned", joined)
 
+    def test_zero_weight_timeframes_cannot_add_confluence_bonus(self) -> None:
+        receipt_weights = {
+            "D": 0.0,
+            "H4": 0.0,
+            "H1": 0.0,
+            "M30": 0.4,
+            "M15": 0.6,
+            "M5": 0.0,
+            "M1": 0.0,
+        }
+        m15_only = (
+            "M15(TREND_DOWN, ADX=25.0 RSI=42.0 ATR=9.5p ST=- "
+            "cloud=below struct=BOS_DOWN@1.1440)"
+        )
+        aligned_fast = (
+            "M1(TREND_DOWN, ADX=35.0 RSI=40.0 ATR=1.0p ST=- "
+            "cloud=below struct=BOS_DOWN@1.1440); "
+            "M5(TREND_DOWN, ADX=35.0 RSI=40.0 ATR=2.0p ST=- "
+            "cloud=below struct=BOS_DOWN@1.1440); "
+            + m15_only
+        )
+        base_rationale: list[str] = []
+        mutated_rationale: list[str] = []
+
+        base_score = _mtf_confluence_score(
+            self._intent("SHORT", m15_only),
+            base_rationale,
+            [],
+            receipt_weights=receipt_weights,
+            receipt_label="m15_recovery",
+        )
+        mutated_score = _mtf_confluence_score(
+            self._intent("SHORT", aligned_fast),
+            mutated_rationale,
+            [],
+            receipt_weights=receipt_weights,
+            receipt_label="m15_recovery",
+        )
+
+        self.assertEqual(mutated_score, base_score)
+        self.assertNotIn("M1(", " ".join(mutated_rationale))
+        self.assertNotIn("M5(", " ".join(mutated_rationale))
+
     def test_no_chart_story_returns_zero(self) -> None:
         self.assertEqual(_mtf_confluence_score({"side": "LONG"}, [], []), 0.0)
 
@@ -4828,9 +5311,11 @@ class DirectionalGatingTest(unittest.TestCase):
         lane_id: str,
         pair: str,
         direction: str,
+        method: str = "TREND_CONTINUATION",
         score: float = 100.0,
         action: str = ACTION_SEND_ENTRY,
         estimated_margin_jpy: float | None = None,
+        m15_recovery_verified: bool = False,
     ):
         from quant_rabbit.strategy.trader_brain import LaneScore
 
@@ -4838,7 +5323,7 @@ class DirectionalGatingTest(unittest.TestCase):
             lane_id=lane_id,
             pair=pair,
             direction=direction,
-            method="TREND_CONTINUATION",
+            method=method,
             order_type="MARKET",
             entry=1.0,
             tp=1.01,
@@ -4850,6 +5335,52 @@ class DirectionalGatingTest(unittest.TestCase):
             rationale=(),
             size_multiple=1.0,
             estimated_margin_jpy=estimated_margin_jpy,
+            m15_recovery_verified=m15_recovery_verified,
+        )
+
+    def test_verified_m15_recovery_is_not_demoted_by_unsigned_long_majority(self) -> None:
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        recovery = self._make_score(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="SHORT",
+            method="BREAKOUT_FAILURE",
+            score=200.0,
+            m15_recovery_verified=True,
+        )
+        pair_charts = self._pair_charts(balance="LONG_LEAN", gap=0.44)
+        pair_charts["EUR_USD"]["confluence"].update(
+            {
+                "price_percentile_24h": 0.01,
+                "tf_agreement_score": 0.0,
+            }
+        )
+        attack_ranks = {
+            "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT": 1,
+        }
+
+        result = _apply_directional_gating(
+            (recovery,),
+            pair_charts,
+            attack_ranks,
+        )
+
+        self.assertEqual(result[0].action, ACTION_SEND_ENTRY)
+        self.assertEqual(result[0].score, 200.0)
+        self.assertFalse(
+            any("directional_gating_demoted" in item for item in result[0].blockers)
+        )
+        self.assertFalse(
+            any("attack_advice_veto" in item for item in result[0].rationale)
+        )
+        self.assertFalse(
+            any("price_percentile_" in item for item in result[0].rationale)
+        )
+        self.assertFalse(any("tf_disagreement" in item for item in result[0].rationale))
+        self.assertTrue(
+            any("preserves its bound direction" in item for item in result[0].rationale)
         )
 
     def test_c1_short_lean_with_short_majority_demotes_long(self) -> None:

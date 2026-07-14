@@ -40,6 +40,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_FORECAST_HISTORY,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
@@ -92,6 +93,26 @@ from quant_rabbit.strategy.lane_history_ledger import (
 )
 from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context_evidence,
+)
+from quant_rabbit.strategy.directional_forecaster import (
+    M15_RECOVERY_FORECAST_CONTRACT,
+    M15_RECOVERY_MICRO_CONTRACT,
+    M15_RECOVERY_MICRO_MAX_UNITS,
+    M15_RECOVERY_MICRO_MODE,
+    M15_RECOVERY_SOURCE_TIMEFRAME,
+    m15_recovery_calibration_regime,
+    m15_or_higher_signal,
+    validate_m15_recovery_micro_receipt,
+)
+from quant_rabbit.strategy.m15_recovery_contract import (
+    GEOMETRY_CONTRACT as M15_RECOVERY_GEOMETRY_CONTRACT,
+    LANE_CONTRACT as M15_RECOVERY_LANE_CONTRACT,
+    build_forecast_binding as build_m15_recovery_forecast_binding,
+    build_lane_binding as build_m15_recovery_lane_binding,
+    proof_source_receipt as m15_recovery_proof_source_receipt,
+    recovery_claimed as m15_recovery_claimed,
+    validate_forecast_binding as validate_m15_recovery_forecast_binding,
+    validate_lane_binding as validate_m15_recovery_lane_binding,
 )
 from quant_rabbit.strategy.range_vehicle_candidate_ledger import (
     bind_range_vehicle_candidate_ids,
@@ -1884,6 +1905,93 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     return context
 
 
+def _m15_recovery_charts_for_context(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]] | None:
+    """Return a pair-only M15+ view with every fast/aggregate input removed."""
+
+    if charts is None or not isinstance(charts.get(pair), dict):
+        return None
+    source = charts[pair]
+    allowed = {"M15", "M30", "H1", "H4", "D"}
+    filtered: dict[str, Any] = {
+        "generated_at_utc": source.get("generated_at_utc"),
+        "dominant_regime": source.get("M15__regime"),
+        "long_score": None,
+        "short_score": None,
+        "session": dict(source.get("session") or {}),
+        "chart_story": "",
+        "confluence": {},
+    }
+    for timeframe in sorted(allowed):
+        for suffix in (
+            "",
+            "__regime",
+            "__long_bias",
+            "__short_bias",
+            "__family_scores",
+            "__regime_reading",
+            "__recent_candles",
+        ):
+            key = f"{timeframe}{suffix}"
+            if key in source:
+                value = source[key]
+                filtered[key] = (
+                    dict(value)
+                    if isinstance(value, dict)
+                    else list(value)
+                    if isinstance(value, list)
+                    else value
+                )
+    raw_chart = source.get("__raw_chart")
+    if isinstance(raw_chart, dict):
+        raw_filtered = dict(raw_chart)
+        raw_filtered["views"] = [
+            dict(view)
+            for view in raw_chart.get("views") or []
+            if isinstance(view, dict)
+            and str(view.get("granularity") or "").upper() in allowed
+        ]
+        raw_filtered["confluence"] = {}
+        raw_filtered["long_score"] = 0.0
+        raw_filtered["short_score"] = 0.0
+        raw_filtered["chart_story"] = ""
+        filtered["__raw_chart"] = raw_filtered
+    return {pair: filtered}
+
+
+def _m15_recovery_chart_context_for(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    *,
+    current_price: float,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]] | None]:
+    recovery_charts = _m15_recovery_charts_for_context(pair, charts)
+    context = _chart_context_for(pair, recovery_charts)
+    forbidden_prefixes = ("m1_", "m5_", "oanda_m5_")
+    forbidden_keys = {
+        "chart_long_score",
+        "chart_short_score",
+        "chart_direction_bias",
+        "chart_score_balance",
+        "chart_score_gap",
+        "confluence",
+        "chart_story_structural",
+        "tf_agreement_score",
+    }
+    context = {
+        key: value
+        for key, value in context.items()
+        if key not in forbidden_keys
+        and not key.lower().startswith(forbidden_prefixes)
+    }
+    context["m15_recovery_context_contract"] = M15_RECOVERY_FORECAST_CONTRACT
+    context["m15_recovery_context_timeframes"] = ["M15", "M30", "H1", "H4", "D"]
+    context["m15_recovery_context_current_price"] = current_price
+    return context, recovery_charts
+
+
 def _price_range_low(conf: dict[str, Any], indicators: dict[str, Any], *, horizon: str) -> float | None:
     value = _optional_float(conf.get(f"price_range_{horizon}_low"))
     if value is not None:
@@ -1994,6 +2102,8 @@ def _market_location_context_for(
     current_price: float | None,
     charts: dict[str, dict[str, Any]] | None,
     levels_snapshot: dict[str, Any] | None,
+    *,
+    cluster_atr_timeframe: str = GEOMETRY_ATR_TIMEFRAME,
 ) -> dict[str, Any]:
     if current_price is None or charts is None:
         return {}
@@ -2041,7 +2151,11 @@ def _market_location_context_for(
     all_levels = structural_levels + snapshot_levels
     nearest_below = _nearest_level_records(all_levels, side="below", limit=LEVEL_CONTEXT_LIMIT)
     nearest_above = _nearest_level_records(all_levels, side="above", limit=LEVEL_CONTEXT_LIMIT)
-    cluster_radius_pips = _cluster_radius_pips(pair, charts)
+    cluster_radius_pips = _cluster_radius_pips(
+        pair,
+        charts,
+        timeframe=cluster_atr_timeframe,
+    )
     level_clusters = _level_clusters_near(pair, current_price, all_levels, cluster_radius_pips)
     story = _market_location_story(tf_map, nearest_below, nearest_above, level_clusters)
     return {
@@ -2170,8 +2284,13 @@ def _nearest_level_records(
     return filtered[:limit]
 
 
-def _cluster_radius_pips(pair: str, charts: dict[str, dict[str, Any]] | None) -> float | None:
-    atr = _atr_pips_for(pair, charts)
+def _cluster_radius_pips(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    *,
+    timeframe: str = GEOMETRY_ATR_TIMEFRAME,
+) -> float | None:
+    atr = _atr_pips_for(pair, charts, timeframe=timeframe)
     if atr is None or atr <= 0:
         return None
     return atr * LEVEL_CLUSTER_ATR_FRACTION
@@ -3496,6 +3615,15 @@ def _record_forecast_seed_telemetry(
 
         forecast_record = _forecast_with_pair(forecast, pair=pair)
         regime_label = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
+        recovery_receipt = getattr(
+            forecast_record,
+            "m15_recovery_receipt",
+            None,
+        )
+        regime_label = m15_recovery_calibration_regime(
+            regime_label,
+            recovery_receipt,
+        )
         emission_time = _ensure_utc(getattr(quote, "timestamp_utc", None))
         if not _quote_fresh_for_forecast_seed_telemetry(
             emission_time,
@@ -3753,18 +3881,31 @@ def _forecast_seed_for_pair(
         )
     except Exception:
         return None
+    recovery_receipt = getattr(forecast, "m15_recovery_receipt", None)
+    support_projection_signals = (
+        [
+            signal
+            for signal in projection_signals
+            if m15_or_higher_signal(signal)
+        ]
+        if isinstance(recovery_receipt, dict) and recovery_receipt
+        else list(projection_signals)
+    )
     market_support = _forecast_market_support_for_forecast(
         pair=pair,
         forecast=forecast,
-        projection_signals=projection_signals,
+        projection_signals=support_projection_signals,
         hit_rates=hit_rates,
-        regime=regime_label,
+        regime=m15_recovery_calibration_regime(
+            regime_label,
+            recovery_receipt,
+        ),
     )
     return _ForecastSeedProxy(
         forecast,
         pair=pair,
         market_support=market_support,
-        projection_signals=tuple(projection_signals),
+        projection_signals=tuple(support_projection_signals),
     )
 
 
@@ -4890,6 +5031,29 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
     component_scores = getattr(forecast, "component_scores", None)
     if not isinstance(component_scores, dict):
         component_scores = {}
+    recovery_receipt = getattr(forecast, "m15_recovery_receipt", None)
+    if not isinstance(recovery_receipt, dict):
+        recovery_receipt = {}
+    recovery_forecast_evidence = getattr(
+        forecast,
+        "m15_recovery_forecast_evidence",
+        None,
+    )
+    if not isinstance(recovery_forecast_evidence, dict):
+        recovery_forecast_evidence = {}
+    recovery_forecast_binding = (
+        build_m15_recovery_forecast_binding(
+            recovery_forecast_evidence,
+            cycle_id=cycle_id,
+        )
+        if recovery_receipt
+        and recovery_forecast_evidence.get("contract")
+        == M15_RECOVERY_FORECAST_CONTRACT
+        and cycle_id
+        else None
+    )
+    if not isinstance(recovery_forecast_binding, dict):
+        recovery_forecast_binding = {}
     payload = {
         "forecast_cycle_id": cycle_id,
         "forecast_direction": str(getattr(forecast, "direction", "") or ""),
@@ -4911,6 +5075,20 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
             for key, value in component_scores.items()
             if _optional_float(value) is not None
         },
+        "forecast_m15_recovery_receipt": dict(recovery_receipt),
+        "forecast_m15_recovery_mode": (
+            recovery_receipt.get("mode") if recovery_receipt else None
+        ),
+        "forecast_m15_recovery_live_permission": (
+            recovery_receipt.get("live_permission") if recovery_receipt else None
+        ),
+        "forecast_m15_recovery_evidence": dict(recovery_forecast_evidence),
+        "forecast_m15_recovery_binding": dict(recovery_forecast_binding),
+        "forecast_m15_recovery_binding_sha256": (
+            recovery_forecast_binding.get("binding_sha256")
+            if recovery_forecast_binding
+            else None
+        ),
         "forecast_technical_context": technical_context,
         "forecast_regime_family_weighting_sha256": (
             regime_family_weighting.get("receipt_sha256")
@@ -5718,7 +5896,27 @@ class IntentGenerator:
                 live_blocker_codes=("MISSING_QUOTE",),
                 note="Cannot build priced intent without a live quote.",
             )
+        pair_chart = _pair_chart_for(pair, pair_charts)
+        raw_recovery_receipt = lane.get("forecast_m15_recovery_receipt")
+        recovery_receipt_valid = False
+        receipt_validation_time = validation_time_utc or snapshot.fetched_at_utc
+        current_spread_pips = abs(quote.ask - quote.bid) * instrument_pip_factor(pair)
+        if isinstance(raw_recovery_receipt, dict) and raw_recovery_receipt:
+            recovery_receipt_valid = bool(
+                pair_chart is not None
+                and validate_m15_recovery_micro_receipt(
+                    raw_recovery_receipt,
+                    pair_chart=pair_chart,
+                    expected_pair=pair,
+                    now_utc=receipt_validation_time,
+                    current_spread_pips=current_spread_pips,
+                )
+            )
         atr_pips = _atr_pips_for(pair, pair_charts)
+        if recovery_receipt_valid:
+            atr_pips = _optional_float(
+                (raw_recovery_receipt.get("geometry_source") or {}).get("atr_pips")
+            )
         range_indicators = _range_indicators_for_lane(
             pair,
             pair_charts,
@@ -5726,12 +5924,53 @@ class IntentGenerator:
             current_price=quote.mid,
             method=method,
         )
-        pair_chart = _pair_chart_for(pair, pair_charts)
+        if recovery_receipt_valid and pair_charts is not None:
+            per_tf = pair_charts.get(pair) or {}
+            m15_indicators = per_tf.get(M15_RECOVERY_SOURCE_TIMEFRAME)
+            if isinstance(m15_indicators, dict):
+                range_indicators = dict(m15_indicators)
+                range_indicators["range_indicator_source"] = (
+                    "M15_RECOVERY_MICRO_VALIDATED"
+                )
         regime_state = _regime_state_for(pair, pair_charts)
         regime_reading = _regime_reading_for(pair, pair_charts)
+        if recovery_receipt_valid and pair_charts is not None:
+            per_tf = pair_charts.get(pair) or {}
+            m15_regime = per_tf.get(f"{M15_RECOVERY_SOURCE_TIMEFRAME}__regime")
+            regime_state = m15_regime if isinstance(m15_regime, str) else None
+            regime_reading = _regime_reading_for(
+                pair,
+                pair_charts,
+                timeframe=M15_RECOVERY_SOURCE_TIMEFRAME,
+            )
         session_bucket = _session_bucket_for(pair, pair_charts)
-        chart_context = _chart_context_for(pair, pair_charts)
-        chart_context.update(_market_location_context_for(pair, quote.mid, pair_charts, levels_snapshot))
+        if recovery_receipt_valid:
+            chart_context, recovery_context_charts = (
+                _m15_recovery_chart_context_for(
+                    pair,
+                    pair_charts,
+                    current_price=quote.mid,
+                )
+            )
+            chart_context.update(
+                _market_location_context_for(
+                    pair,
+                    quote.mid,
+                    recovery_context_charts,
+                    None,
+                    cluster_atr_timeframe=M15_RECOVERY_SOURCE_TIMEFRAME,
+                )
+            )
+        else:
+            chart_context = _chart_context_for(pair, pair_charts)
+            chart_context.update(
+                _market_location_context_for(
+                    pair,
+                    quote.mid,
+                    pair_charts,
+                    levels_snapshot,
+                )
+            )
         # Same-day loss-streak sizing backoff (AGENT_CONTRACT §8, 2026-06-10).
         # §6 instructs "size it down" instead of inventing prose blockers: each
         # consecutive trader-attributed realized loss on this pair today halves
@@ -5762,6 +6001,9 @@ class IntentGenerator:
             exact_vehicle_tp_metrics=exact_vehicle_tp_metrics,
             exact_vehicle_net_metrics=exact_vehicle_net_metrics,
             validation_time_utc=validation_time_utc,
+            m15_recovery_receipt=(
+                raw_recovery_receipt if recovery_receipt_valid else None
+            ),
         )
         risk_policy = RiskPolicy(
             block_new_entries_with_pending_entry_orders=False,
@@ -5775,6 +6017,16 @@ class IntentGenerator:
             guardian_receipt_consumption_path=data_root / "guardian_receipt_consumption.json" if data_root else None,
             guardian_receipt_operator_review_path=data_root / "guardian_receipt_operator_review.json" if data_root else None,
             guardian_receipt_broker_snapshot_path=data_root / "broker_snapshot.json" if data_root else None,
+            pair_charts_path=(
+                data_root / DEFAULT_PAIR_CHARTS.name
+                if data_root
+                else DEFAULT_PAIR_CHARTS
+            ),
+            forecast_history_path=(
+                data_root / "forecast_history.jsonl"
+                if data_root
+                else DEFAULT_FORECAST_HISTORY
+            ),
         ).validate(
             intent,
             snapshot,
@@ -5834,6 +6086,18 @@ class IntentGenerator:
             )
             # Force DRY_RUN_BLOCKED downstream.
             risk_allowed = False
+        if isinstance(raw_recovery_receipt, dict) and raw_recovery_receipt and not recovery_receipt_valid:
+            risk_issues.append(
+                {
+                    "code": "M15_RECOVERY_RECEIPT_INVALID",
+                    "message": (
+                        "forecast M15 recovery receipt failed content, source-chart, "
+                        "freshness, or current-spread revalidation"
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
+            risk_allowed = False
         # `_risk_budgeted_units` returns 0 only when the loss or margin budget
         # cannot fund even one broker integer unit. Sub-1,000 positive sizes
         # are valid; their spread economics are judged by the same per-unit
@@ -5880,14 +6144,50 @@ class IntentGenerator:
             if matrix_reject_issue["message"] not in live_blockers:
                 live_blockers = (*live_blockers, matrix_reject_issue["message"])
             risk_allowed = False
+        recovery_proof_before = (
+            m15_recovery_proof_source_receipt(intent.metadata)
+            if isinstance(
+                intent.metadata.get("m15_recovery_micro_receipt"),
+                dict,
+            )
+            and intent.metadata.get("m15_recovery_micro_receipt")
+            else None
+        )
         positive_rotation_issue = _capture_positive_rotation_live_issue(
             intent,
             data_root=data_root or self.data_root,
         )
+        recovery_proof_after = (
+            m15_recovery_proof_source_receipt(intent.metadata)
+            if recovery_proof_before is not None
+            else None
+        )
+        if (
+            recovery_proof_before is not None
+            and recovery_proof_after != recovery_proof_before
+        ):
+            mutation_issue = {
+                "code": "M15_RECOVERY_PROOF_MUTATED_AFTER_BINDING",
+                "message": (
+                    "M15 recovery TP-proof metadata changed after its producer "
+                    "lane binding and RiskEngine decision; rebuild the intent "
+                    "instead of upgrading evidence in place"
+                ),
+                "severity": "BLOCK",
+            }
+            risk_issues.append(mutation_issue)
+            live_blockers = (*live_blockers, mutation_issue["message"])
+            risk_allowed = False
         if positive_rotation_issue is not None:
             risk_issues.append(positive_rotation_issue)
             if positive_rotation_issue.get("severity") == "BLOCK":
                 live_blockers = (*live_blockers, positive_rotation_issue["message"])
+                risk_allowed = False
+        m15_recovery_issue = _m15_recovery_micro_live_issue(intent, risk)
+        if m15_recovery_issue is not None:
+            risk_issues.append(m15_recovery_issue)
+            if m15_recovery_issue.get("severity") == "BLOCK":
+                live_blockers = (*live_blockers, m15_recovery_issue["message"])
                 risk_allowed = False
         context_issues = _method_context_issues(intent)
         if context_issues:
@@ -6179,6 +6479,16 @@ class IntentGenerator:
             guardian_receipt_consumption_path=data_root / "guardian_receipt_consumption.json" if data_root else None,
             guardian_receipt_operator_review_path=data_root / "guardian_receipt_operator_review.json" if data_root else None,
             guardian_receipt_broker_snapshot_path=data_root / "broker_snapshot.json" if data_root else None,
+            pair_charts_path=(
+                data_root / DEFAULT_PAIR_CHARTS.name
+                if data_root
+                else DEFAULT_PAIR_CHARTS
+            ),
+            forecast_history_path=(
+                data_root / "forecast_history.jsonl"
+                if data_root
+                else DEFAULT_FORECAST_HISTORY
+            ),
         ).validate(intent, snapshot, for_live_send=True)
         risk_issues, live_blockers = _merge_live_send_preview_blockers(
             risk_issues,
@@ -6631,6 +6941,11 @@ def _normalize_vehicle(value: Any) -> str:
 
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
+    if m15_recovery_claimed(lane):
+        # Recovery is an active-confirmation path.  Never mint a passive LIMIT
+        # sibling from the same recovery receipt; ordinary failed-break and
+        # RANGE lanes keep their existing LIMIT variants below.
+        return (OrderType.STOP_ENTRY,)
     if lane.get("bidask_replay_precision_limit_only"):
         return (OrderType.LIMIT,)
     base = _order_type_for(method)
@@ -9299,6 +9614,87 @@ def _capture_positive_rotation_live_issue(
     }
 
 
+def _m15_recovery_micro_live_issue(
+    intent: OrderIntent,
+    risk_decision: Any | None = None,
+) -> dict[str, Any] | None:
+    """Classify recovery shape and require RiskEngine's current-source proof."""
+
+    metadata = intent.metadata if isinstance(intent.metadata, dict) else {}
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    if not isinstance(receipt, dict):
+        return None
+    forecast_direction = str(metadata.get("forecast_direction") or "").upper()
+    side_matches = (
+        (forecast_direction == "UP" and intent.side == Side.LONG)
+        or (forecast_direction == "DOWN" and intent.side == Side.SHORT)
+    )
+    mode = str(metadata.get("positive_rotation_mode") or "").upper()
+    proof_contract = positive_rotation_proof_acquisition_contract(intent)
+    shape_eligible = bool(
+        receipt.get("contract") == M15_RECOVERY_MICRO_CONTRACT
+        and receipt.get("mode") == M15_RECOVERY_MICRO_MODE
+        and receipt.get("live_permission") is False
+        and receipt.get("requires_risk_gateway_revalidation") is True
+        and receipt.get("manual_position_mutation_allowed") is False
+        and side_matches
+        and intent.order_type == OrderType.STOP_ENTRY
+        and _non_market_attached_harvest_shape(intent)
+        and mode in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}
+        and proof_contract.get("reachable") is True
+        and 1 <= abs(int(intent.units)) <= M15_RECOVERY_MICRO_MAX_UNITS
+    )
+    risk_issues = tuple(getattr(risk_decision, "issues", ()) or ())
+    risk_revalidated = bool(
+        any(
+            getattr(issue, "code", None) == "M15_RECOVERY_RISK_REVALIDATED"
+            and getattr(issue, "severity", None) == "WARN"
+            for issue in risk_issues
+        )
+        and not any(
+            str(getattr(issue, "code", "")).startswith("M15_RECOVERY_")
+            and getattr(issue, "severity", None) == "BLOCK"
+            for issue in risk_issues
+        )
+    )
+    metadata["m15_recovery_micro_shape_eligible"] = shape_eligible
+    metadata["m15_recovery_micro_positive_rotation_mode"] = mode or None
+    metadata["m15_recovery_micro_proof_contract"] = proof_contract
+    metadata["m15_recovery_micro_risk_revalidated"] = risk_revalidated
+    metadata["m15_recovery_micro_gateway_revalidated"] = False
+    metadata["m15_recovery_micro_live_permission"] = False
+    if shape_eligible and risk_revalidated:
+        return {
+            "code": "M15_RECOVERY_RISK_REVALIDATED",
+            "message": (
+                "M15 recovery micro candidate passed independent RiskEngine "
+                "source/spread/time/shape validation; the final gateway must "
+                "still re-read and match the same receipt before POST"
+            ),
+            "severity": "WARN",
+        }
+    if shape_eligible:
+        return {
+            "code": "M15_RECOVERY_LIVE_REVALIDATION_REQUIRED",
+            "message": (
+                "M15 recovery micro candidate matches a direction-aligned STOP-ENTRY "
+                "attached-TP HARVEST proof route and the 999-unit cap, but this exact "
+                "RiskEngine decision lacks the current-source success marker; keep it "
+                "non-live until risk revalidation passes"
+            ),
+            "severity": "BLOCK",
+        }
+    return {
+        "code": "M15_RECOVERY_NON_TP_HARVEST_BLOCKED",
+        "message": (
+            "M15 recovery is limited to a direction-aligned STOP-ENTRY attached-TP "
+            "TP_PROOF_COLLECTION_HARVEST or TP_PROVEN_HARVEST route with 1..999 units; "
+            "this intent does not satisfy that producer-revalidated shape"
+        ),
+        "severity": "BLOCK",
+    }
+
+
 def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
     metadata = intent.metadata or {}
     if not predictive_scout_metadata_supported(metadata):
@@ -9817,6 +10213,7 @@ def _intent_from_lane(
     exact_vehicle_tp_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
     exact_vehicle_net_metrics: dict[tuple[str, str, str, str], dict[str, Any]] | None = None,
     validation_time_utc: datetime | None = None,
+    m15_recovery_receipt: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -9850,20 +10247,43 @@ def _intent_from_lane(
         side,
     )
     stop_widen_mult = _effective_stop_widening_multiplier(method, regime_reading, chart_context)
-    entry, tp, sl = _geometry(
-        pair,
-        side,
-        order_type,
-        quote,
+    recovery_geometry_plan = _m15_recovery_geometry_plan(
+        lane=lane,
+        recovery_receipt=m15_recovery_receipt,
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        quote=quote,
         reward_risk=target_reward_risk,
-        atr_pips=atr_pips,
-        range_indicators=(
-            range_indicators if range_forecast_limit_geometry else None
-        ),
-        chart_indicators=range_indicators,
-        stop_widen_mult=stop_widen_mult,
+        execution_regime=execution_regime,
         chart_context=chart_context,
     )
+    recovery_geometry_metadata: dict[str, Any] = {}
+    if recovery_geometry_plan is not None:
+        (
+            entry,
+            tp,
+            sl,
+            tp_execution_metadata,
+            recovery_geometry_metadata,
+        ) = recovery_geometry_plan
+    else:
+        entry, tp, sl = _geometry(
+            pair,
+            side,
+            order_type,
+            quote,
+            reward_risk=target_reward_risk,
+            atr_pips=atr_pips,
+            range_indicators=(
+                range_indicators if range_forecast_limit_geometry else None
+            ),
+            chart_indicators=range_indicators,
+            stop_widen_mult=stop_widen_mult,
+            chart_context=chart_context,
+        )
+        tp_execution_metadata = {}
     position_metadata, recovery_target_units = _position_metadata_and_recovery_target_units(
         pair=pair,
         side=side,
@@ -9872,67 +10292,70 @@ def _intent_from_lane(
         chart_context=chart_context,
         lane=lane,
     )
-    tp, tp_execution_metadata = _take_profit_execution_plan(
-        pair=pair,
-        side=side,
-        method=method,
-        order_type=order_type,
-        quote=quote,
-        entry=entry,
-        tp=tp,
-        sl=sl,
-        reward_risk=target_reward_risk,
-        execution_regime=execution_regime,
-        chart_context=chart_context,
-        pair_chart=pair_chart,
-        atr_pips=atr_pips,
-        forecast_direction=lane.get("forecast_direction"),
-        forecast_confidence=_optional_float(lane.get("forecast_confidence")),
-        forecast_target_price=_optional_float(lane.get("forecast_target_price")),
-        hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
-    )
-    tp, sl, precision_geometry_metadata = _technical_harvest_precision_geometry_plan(
-        pair=pair,
-        side=side,
-        method=method,
-        order_type=order_type,
-        entry=entry,
-        tp=tp,
-        sl=sl,
-        chart_context=chart_context,
-        tp_execution_metadata=tp_execution_metadata,
-        forecast_direction=lane.get("forecast_direction"),
-    )
-    if precision_geometry_metadata:
-        tp_execution_metadata.update(precision_geometry_metadata)
-    tp, sl, bidask_geometry_metadata = _bidask_replay_precision_geometry_plan(
-        pair=pair,
-        side=side,
-        method=method,
-        order_type=order_type,
-        entry=entry,
-        tp=tp,
-        sl=sl,
-        chart_context=chart_context,
-        tp_execution_metadata=tp_execution_metadata,
-        forecast_direction=lane.get("forecast_direction"),
-        forecast_confidence=lane.get("forecast_confidence"),
-        forecast_horizon_min=lane.get("forecast_horizon_min"),
-    )
-    if bidask_geometry_metadata:
-        tp_execution_metadata.update(bidask_geometry_metadata)
-    vehicle_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
-        lane=lane,
-        pair=pair,
-        side=side,
-        method=method,
-        order_type=order_type,
-        quote=quote,
-        entry=entry,
-        tp=tp,
-        sl=sl,
-        data_root=data_root,
-    )
+    if recovery_geometry_plan is None:
+        tp, tp_execution_metadata = _take_profit_execution_plan(
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            quote=quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            reward_risk=target_reward_risk,
+            execution_regime=execution_regime,
+            chart_context=chart_context,
+            pair_chart=pair_chart,
+            atr_pips=atr_pips,
+            forecast_direction=lane.get("forecast_direction"),
+            forecast_confidence=_optional_float(lane.get("forecast_confidence")),
+            forecast_target_price=_optional_float(lane.get("forecast_target_price")),
+            hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
+        )
+        tp, sl, precision_geometry_metadata = _technical_harvest_precision_geometry_plan(
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            chart_context=chart_context,
+            tp_execution_metadata=tp_execution_metadata,
+            forecast_direction=lane.get("forecast_direction"),
+        )
+        if precision_geometry_metadata:
+            tp_execution_metadata.update(precision_geometry_metadata)
+        tp, sl, bidask_geometry_metadata = _bidask_replay_precision_geometry_plan(
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            chart_context=chart_context,
+            tp_execution_metadata=tp_execution_metadata,
+            forecast_direction=lane.get("forecast_direction"),
+            forecast_confidence=lane.get("forecast_confidence"),
+            forecast_horizon_min=lane.get("forecast_horizon_min"),
+        )
+        if bidask_geometry_metadata:
+            tp_execution_metadata.update(bidask_geometry_metadata)
+        vehicle_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+            lane=lane,
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            quote=quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            data_root=data_root,
+        )
+    else:
+        vehicle_reprice_metadata = {}
     if (
         vehicle_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
         == "ENTRY_REPRICE_POSSIBLE"
@@ -10221,35 +10644,40 @@ def _intent_from_lane(
             effective_max_loss_jpy,
             4,
         )
-    geometry_metadata = _geometry_metadata(
-        pair,
-        side,
-        order_type,
-        quote,
-        entry=entry,
-        tp=tp,
-        sl=sl,
-        range_indicators=(
-            range_indicators if range_forecast_limit_geometry else None
-        ),
-        chart_indicators=range_indicators,
-        chart_context=chart_context,
-        atr_pips=atr_pips,
+    geometry_metadata = (
+        dict(recovery_geometry_metadata)
+        if recovery_geometry_plan is not None
+        else _geometry_metadata(
+            pair,
+            side,
+            order_type,
+            quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            range_indicators=(
+                range_indicators if range_forecast_limit_geometry else None
+            ),
+            chart_indicators=range_indicators,
+            chart_context=chart_context,
+            atr_pips=atr_pips,
+        )
     )
     geometry_metadata.update(tp_execution_metadata)
     geometry_metadata.update(vehicle_reprice_metadata)
     # Disaster stop: broker-side catastrophe bound computed AFTER geometry so
     # the expected intent.sl (sizing / reward-risk anchor) is final, and the
     # strict-ordering buffer can guarantee the broker stop sits beyond it.
-    geometry_metadata.update(
-        _disaster_sl_metadata(
-            pair,
-            side,
-            entry=entry,
-            expected_sl=sl,
-            chart_context=chart_context,
+    if recovery_geometry_plan is None:
+        geometry_metadata.update(
+            _disaster_sl_metadata(
+                pair,
+                side,
+                entry=entry,
+                expected_sl=sl,
+                chart_context=chart_context,
+            )
         )
-    )
     position_intent = str(position_metadata.get("position_intent") or "")
     units = _risk_budgeted_units(
         pair,
@@ -10265,6 +10693,42 @@ def _intent_from_lane(
             or lane.get("predictive_scout") is True
         ),
     )
+    recovery_sizing_metadata: dict[str, Any] = {}
+    if (
+        isinstance(m15_recovery_receipt, dict)
+        and m15_recovery_receipt.get("contract") == M15_RECOVERY_MICRO_CONTRACT
+        and m15_recovery_receipt.get("mode") == M15_RECOVERY_MICRO_MODE
+        and m15_recovery_receipt.get("live_permission") is False
+        and m15_recovery_receipt.get("requires_risk_gateway_revalidation") is True
+        and (m15_recovery_receipt.get("sizing") or {}).get("max_units")
+        == M15_RECOVERY_MICRO_MAX_UNITS
+    ):
+        pre_cap_units = max(0, int(units))
+        units = min(pre_cap_units, M15_RECOVERY_MICRO_MAX_UNITS)
+        if recovery_geometry_plan is not None:
+            geometry_metadata["geometry_atr_source_timeframe"] = (
+                M15_RECOVERY_SOURCE_TIMEFRAME
+            )
+            geometry_metadata["geometry_atr_pips"] = _optional_float(
+                (m15_recovery_receipt.get("geometry_source") or {}).get(
+                    "atr_pips"
+                )
+            )
+        recovery_sizing_metadata = {
+            "m15_recovery_micro_contract": M15_RECOVERY_MICRO_CONTRACT,
+            "m15_recovery_micro_mode": M15_RECOVERY_MICRO_MODE,
+            "m15_recovery_micro_receipt": dict(m15_recovery_receipt),
+            "m15_recovery_micro_receipt_sha256": m15_recovery_receipt.get(
+                "receipt_sha256"
+            ),
+            "m15_recovery_micro_pre_cap_units": pre_cap_units,
+            "m15_recovery_micro_max_units": M15_RECOVERY_MICRO_MAX_UNITS,
+            "m15_recovery_micro_units": units,
+            "m15_recovery_micro_full_size_allowed": False,
+            "m15_recovery_micro_live_permission": False,
+            "m15_recovery_micro_requires_risk_gateway_revalidation": True,
+            "m15_recovery_micro_manual_position_mutation_allowed": False,
+        }
     if lane.get("predictive_scout") is True:
         planned_risk_per_min_lot = _min_lot_loss_budget_jpy(
             pair=pair,
@@ -10351,9 +10815,13 @@ def _intent_from_lane(
         event_risk="; ".join(str(item) for item in event_blockers[:2]),
         session=session_bucket or "generated dry-run",
     )
-    failed_acceptance_metadata = _side_matched_failed_acceptance_metadata(
-        side,
-        chart_context,
+    failed_acceptance_metadata = (
+        {}
+        if m15_recovery_receipt
+        else _side_matched_failed_acceptance_metadata(
+            side,
+            chart_context,
+        )
     )
     intent = OrderIntent(
         pair=pair,
@@ -10416,6 +10884,22 @@ def _intent_from_lane(
             "forecast_drivers_for": lane.get("forecast_drivers_for"),
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
             "forecast_component_scores": lane.get("forecast_component_scores"),
+            "forecast_m15_recovery_receipt": lane.get(
+                "forecast_m15_recovery_receipt"
+            ),
+            "forecast_m15_recovery_mode": lane.get("forecast_m15_recovery_mode"),
+            "forecast_m15_recovery_live_permission": lane.get(
+                "forecast_m15_recovery_live_permission"
+            ),
+            "forecast_m15_recovery_evidence": lane.get(
+                "forecast_m15_recovery_evidence"
+            ),
+            "forecast_m15_recovery_binding": lane.get(
+                "forecast_m15_recovery_binding"
+            ),
+            "forecast_m15_recovery_binding_sha256": lane.get(
+                "forecast_m15_recovery_binding_sha256"
+            ),
             "forecast_technical_context": lane.get("forecast_technical_context"),
             "forecast_regime_family_weighting_sha256": lane.get(
                 "forecast_regime_family_weighting_sha256"
@@ -10458,6 +10942,7 @@ def _intent_from_lane(
             "parent_lane_id": parent_lane_id or _lane_id(lane),
             "order_timing": "NOW_MARKET" if order_type == OrderType.MARKET else "PENDING_TRIGGER",
             **position_metadata,
+            **recovery_sizing_metadata,
             **geometry_metadata,
             **margin_metadata,
             **news_metadata,
@@ -10480,6 +10965,45 @@ def _intent_from_lane(
             )
             risk_plan["units"] = abs(int(intent.units))
             risk_plan["sizing_digest"] = sizing_digest
+    if m15_recovery_receipt:
+        # Finalize the exact TP-proof producer annotations before RiskEngine
+        # or either content-addressed binding sees the intent.  The later
+        # readiness pass must be idempotent; a post-risk proof mutation is a
+        # contract failure, never an implicit upgrade.
+        _capture_positive_rotation_live_issue(
+            intent,
+            data_root=data_root or (ROOT / "data"),
+        )
+    recovery_forecast_binding = intent.metadata.get(
+        "forecast_m15_recovery_binding"
+    )
+    if isinstance(recovery_forecast_binding, dict) and recovery_forecast_binding:
+        recovery_lane_binding = build_m15_recovery_lane_binding(
+            forecast_binding=recovery_forecast_binding,
+            pair=intent.pair,
+            side=intent.side.value,
+            method=(
+                intent.market_context.method.value
+                if intent.market_context is not None
+                else ""
+            ),
+            order_type=intent.order_type.value,
+            entry=intent.entry,
+            tp=intent.tp,
+            sl=intent.sl,
+            producer_units=intent.units,
+            metadata=intent.metadata,
+        )
+        if recovery_lane_binding is not None:
+            intent.metadata.update(
+                {
+                    "m15_recovery_lane_contract": M15_RECOVERY_LANE_CONTRACT,
+                    "m15_recovery_lane_binding": recovery_lane_binding,
+                    "m15_recovery_lane_binding_sha256": recovery_lane_binding.get(
+                        "binding_sha256"
+                    ),
+                }
+            )
     return intent
 
 
@@ -12588,6 +13112,97 @@ def _weak_forecast_trend_continuation_issue(
     }
 
 
+def _m15_recovery_exact_proof_forecast_override(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> bool:
+    """Use lane-specific TP proof in place of generic forecast precision.
+
+    The recovery producer intentionally excludes M1/M5 while their clean ATR
+    tails rebuild.  Its calibrated confidence can therefore sit below the
+    ordinary directional floor even when the raw M15+ direction and one exact
+    non-market TP vehicle are bound and independently revalidated.  This is a
+    narrow replacement evidence route, not a lower global confidence floor.
+    """
+
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    forecast_binding = metadata.get("forecast_m15_recovery_binding")
+    lane_binding = metadata.get("m15_recovery_lane_binding")
+    if not all(
+        isinstance(item, dict)
+        for item in (receipt, forecast_binding, lane_binding)
+    ):
+        return False
+    expected_direction = "UP" if intent.side == Side.LONG else "DOWN"
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    raw_confidence = _optional_float(metadata.get("forecast_raw_confidence"))
+    calibration_multiplier = _optional_float(
+        metadata.get("forecast_calibration_multiplier")
+    )
+    if (
+        method != TradeMethod.BREAKOUT_FAILURE
+        or intent.order_type == OrderType.MARKET
+        or intent.units.__class__ is not int
+        or not 1 <= intent.units <= M15_RECOVERY_MICRO_MAX_UNITS
+        or receipt.get("contract") != M15_RECOVERY_MICRO_CONTRACT
+        or receipt.get("mode") != M15_RECOVERY_MICRO_MODE
+        or receipt.get("status") != "ELIGIBLE_FOR_MICRO_REVALIDATION"
+        or metadata.get("m15_recovery_micro_receipt_sha256")
+        != receipt.get("receipt_sha256")
+        or metadata.get("m15_recovery_micro_risk_revalidated") is not True
+        or metadata.get("m15_recovery_micro_shape_eligible") is not True
+        or metadata.get("m15_recovery_micro_live_permission") is not False
+        or metadata.get("m15_recovery_micro_manual_position_mutation_allowed")
+        is not False
+        or metadata.get("m15_recovery_context_contract")
+        != M15_RECOVERY_FORECAST_CONTRACT
+        or metadata.get("m15_recovery_context_timeframes")
+        != ["M15", "M30", "H1", "H4", "D"]
+        or metadata.get("forecast_direction") != expected_direction
+        or metadata.get("forecast_m15_recovery_binding_sha256")
+        != forecast_binding.get("binding_sha256")
+        or metadata.get("m15_recovery_lane_contract")
+        != M15_RECOVERY_LANE_CONTRACT
+        or metadata.get("m15_recovery_lane_binding_sha256")
+        != lane_binding.get("binding_sha256")
+        or str(metadata.get("positive_rotation_mode") or "").upper()
+        not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}
+        or confidence is None
+        or not 0.0 < confidence <= 1.0
+        or raw_confidence is None
+        or not 0.0 < raw_confidence <= 1.0
+        or calibration_multiplier is None
+        or not 0.0 < calibration_multiplier <= 1.0
+    ):
+        return False
+    forecast_valid, _ = validate_m15_recovery_forecast_binding(
+        forecast_binding,
+        recovery_receipt=receipt,
+        metadata=metadata,
+    )
+    lane_valid, _ = validate_m15_recovery_lane_binding(
+        lane_binding,
+        forecast_binding=forecast_binding,
+        pair=intent.pair,
+        side=intent.side.value,
+        method=method.value,
+        order_type=intent.order_type.value,
+        entry=intent.entry,
+        tp=intent.tp,
+        sl=intent.sl,
+        current_units=intent.units,
+        metadata=metadata,
+    )
+    if not forecast_valid or not lane_valid:
+        return False
+    try:
+        proof_contract = positive_rotation_proof_acquisition_contract(intent)
+    except Exception:
+        return False
+    return proof_contract.get("reachable") is True
+
+
 def _forecast_live_readiness_issue(
     intent: OrderIntent,
     metadata: dict[str, Any],
@@ -12664,6 +13279,11 @@ def _forecast_live_readiness_issue(
             ),
             "severity": "BLOCK",
         }
+    if _m15_recovery_exact_proof_forecast_override(intent, metadata, method):
+        metadata["m15_recovery_forecast_precision_basis"] = (
+            "BOUND_M15_DIRECTION_PLUS_EXACT_TP_VEHICLE_PROOF"
+        )
+        return None
     if confidence is None or confidence < min_confidence:
         if recovery_reversal_override:
             return None
@@ -12906,18 +13526,25 @@ def _forecast_directional_invalidation_first_issue(
 def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
     if not metadata.get("forecast_watch_only"):
         return None
+    method = (
+        intent.market_context.method
+        if intent.market_context is not None
+        else None
+    )
+    if _m15_recovery_exact_proof_forecast_override(intent, metadata, method):
+        return None
     if _range_rail_limit_watch_only_can_trade(intent, metadata):
         return None
     if _bidask_replay_precision_support_for_intent(
         intent,
         metadata,
-        intent.market_context.method if intent.market_context is not None else None,
+        method,
     ):
         return None
     if _technical_harvest_precision_support_for_intent(
         intent,
         metadata,
-        intent.market_context.method if intent.market_context is not None else None,
+        method,
     ):
         return None
     if _forecast_market_support_override(
@@ -14598,6 +15225,171 @@ def _order_type_for(method: TradeMethod) -> OrderType:
     return OrderType.STOP_ENTRY
 
 
+def _m15_recovery_geometry_plan(
+    *,
+    lane: dict[str, Any],
+    recovery_receipt: dict[str, Any] | None,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    quote: Quote,
+    reward_risk: float,
+    execution_regime: str | None,
+    chart_context: dict[str, Any] | None,
+) -> tuple[float, float, float, dict[str, Any], dict[str, Any]] | None:
+    """Build the bounded recovery shape without entering generic geometry.
+
+    The forecast target is deliberately retained even below the ordinary
+    confidence floor: this branch exists only after the content-addressed M15
+    recovery receipt and forecast binding validate.  No M1/M5, H4/session
+    stop floor, technical-harvest, bid/ask replay, or OANDA campaign reprice
+    is permitted to mutate the resulting entry/TP/SL.
+    """
+
+    if (
+        not isinstance(recovery_receipt, dict)
+        or method != TradeMethod.BREAKOUT_FAILURE
+        or order_type != OrderType.STOP_ENTRY
+    ):
+        return None
+    forecast_binding = lane.get("forecast_m15_recovery_binding")
+    if not isinstance(forecast_binding, dict):
+        return None
+    binding_valid, _ = validate_m15_recovery_forecast_binding(
+        forecast_binding,
+        recovery_receipt=recovery_receipt,
+        metadata=lane,
+    )
+    if not binding_valid:
+        return None
+    geometry_source = recovery_receipt.get("geometry_source")
+    if not isinstance(geometry_source, dict):
+        return None
+    atr_pips = _optional_float(geometry_source.get("atr_pips"))
+    target = _optional_float(forecast_binding.get("target_price"))
+    invalidation = _optional_float(forecast_binding.get("invalidation_price"))
+    expected_direction = "UP" if side == Side.LONG else "DOWN"
+    if (
+        geometry_source.get("timeframe") != M15_RECOVERY_SOURCE_TIMEFRAME
+        or atr_pips is None
+        or atr_pips <= 0.0
+        or target is None
+        or target <= 0.0
+        or invalidation is None
+        or invalidation <= 0.0
+        or forecast_binding.get("final_direction") != expected_direction
+    ):
+        return None
+
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    spread_pips = abs(quote.ask - quote.bid) * pip_factor
+    # Recovery forecasts already bind both target and invalidation.  A generic
+    # 2x-spread trigger offset can consume the entire bounded payoff (the live
+    # 2026-07-14 SHORT case fell to 0.956R).  Keep the order non-market with
+    # exactly one broker tick outside the quote; Risk still revalidates the
+    # current quote immediately before send.
+    trigger_offset_pips = _broker_price_tick_pips(pair)
+    entry = (
+        quote.ask + trigger_offset_pips * pip
+        if side == Side.LONG
+        else quote.bid - trigger_offset_pips * pip
+    )
+    entry = _round_price(pair, entry)
+    stop_pips = max(
+        atr_pips * GEOMETRY_ATR_MULT,
+        spread_pips * GEOMETRY_SPREAD_FLOOR_MULT,
+    )
+    if side == Side.LONG:
+        if not invalidation < entry < target:
+            return None
+        tp = _round_price(pair, target)
+        sl = _round_price(pair, min(entry - stop_pips * pip, invalidation))
+        if tp > target:
+            tp = _round_price(pair, tp - pip)
+        if sl > invalidation:
+            sl = _round_price(pair, sl - pip)
+        contained = sl <= invalidation < entry < tp <= target
+    else:
+        if not target < entry < invalidation:
+            return None
+        tp = _round_price(pair, target)
+        sl = _round_price(pair, max(entry + stop_pips * pip, invalidation))
+        if tp < target:
+            tp = _round_price(pair, tp + pip)
+        if sl < invalidation:
+            sl = _round_price(pair, sl + pip)
+        contained = target <= tp < entry < invalidation <= sl
+    if not contained:
+        return None
+
+    attach_tp, attach_reason = _should_attach_take_profit_on_fill(
+        method=method,
+        order_type=order_type,
+        execution_regime=execution_regime,
+        chart_context=chart_context,
+    )
+    if not attach_tp:
+        return None
+    target_pips = abs(tp - entry) * pip_factor
+    actual_stop_pips = abs(entry - sl) * pip_factor
+    virtual_rr = target_pips / actual_stop_pips if actual_stop_pips > 0.0 else 0.0
+    opportunity_mode, opportunity_reason = _opportunity_mode_from_execution_plan(
+        method=method,
+        target_intent="HARVEST",
+        reward_risk=virtual_rr,
+    )
+    tp_metadata = {
+        "opportunity_mode": opportunity_mode,
+        "opportunity_mode_reason": opportunity_reason,
+        "opportunity_mode_reward_risk": round(virtual_rr, 3),
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "attach_take_profit_on_fill": True,
+        "tp_attach_reason": attach_reason,
+        "tp_target_source": "M15_RECOVERY_FORECAST_BOUND",
+        "tp_target_reason": (
+            "content-addressed M15 recovery forecast target retained; "
+            "ordinary confidence TP gate is not used by this bounded lane"
+        ),
+        "tp_target_intent": "HARVEST",
+        "virtual_take_profit": tp,
+        "virtual_take_profit_reward_risk": round(virtual_rr, 3),
+        "tp_target_distance_pips": round(target_pips, 3),
+        "tp_requested_reward_risk": reward_risk,
+        "tp_atr_pips": atr_pips,
+    }
+    geometry_metadata = {
+        "geometry_model": M15_RECOVERY_GEOMETRY_CONTRACT,
+        "geometry_atr_source_timeframe": M15_RECOVERY_SOURCE_TIMEFRAME,
+        "geometry_atr_pips": atr_pips,
+        "geometry_source_recovery_receipt_sha256": recovery_receipt.get(
+            "receipt_sha256"
+        ),
+        "geometry_forecast_binding_sha256": forecast_binding.get(
+            "binding_sha256"
+        ),
+        "geometry_forecast_target_price": forecast_binding.get("target_price"),
+        "geometry_forecast_invalidation_price": forecast_binding.get(
+            "invalidation_price"
+        ),
+        "geometry_tp_within_forecast_target": True,
+        "geometry_sl_at_or_beyond_forecast_invalidation": True,
+        "geometry_generic_overwrite_forbidden": True,
+        "geometry_forbidden_overwrite_sources": [
+            "M1",
+            "M5",
+            "H4_ATR_STOP_FLOOR",
+            "SESSION_STOP_FLOOR",
+            "TECHNICAL_HARVEST_PRECISION",
+            "BIDASK_REPLAY_PRECISION",
+            "OANDA_CAMPAIGN_REPRICE",
+        ],
+        "geometry_current_spread_pips": round(spread_pips, 6),
+    }
+    return entry, tp, sl, tp_metadata, geometry_metadata
+
+
 def _take_profit_execution_plan(
     *,
     pair: str,
@@ -16082,7 +16874,7 @@ def _risk_budgeted_units(
     #   4. The current equity-derived loss-budget size when NAV-pct sizing is
     #      unavailable. Never restore a stale fixed-unit target from the env.
     # Margin headroom (`_margin_budgeted_units`) still caps the result so the
-    # 92% portfolio margin utilization gate is never breached. Explicit same-pair
+    # 95% portfolio margin utilization gate is never breached. Explicit same-pair
     # HEDGE intents are the exception to NAV% sizing: they target the current
     # margin-free opposite leg so a protective hedge can flatten directional
     # exposure without becoming a new speculative position size.
@@ -16213,7 +17005,7 @@ def _nav_pct_position_units(pair: str, entry: float, snapshot: BrokerSnapshot) -
     "30" means each new position locks ~30% of NAV. With OANDA Japan's
     25:1 leverage that translates to ≈7.5x NAV notional per position.
     Three concurrent 30% positions reach ~90% margin utilization, which
-    sits just inside the 92% portfolio cap.
+    sits just inside the 95% portfolio cap.
     """
     pct_str = os.environ.get("QR_TRADER_POSITION_NAV_PCT", "").strip()
     if not pct_str:

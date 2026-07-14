@@ -577,6 +577,209 @@ class LiveOrderGatewayTest(unittest.TestCase):
             ledger_path,
         )
 
+    def _run_real_m15_recovery_gateway(
+        self,
+        *,
+        root: Path,
+        client: ReconciliationExecutionClient,
+        batch: bool,
+        tp_proven: bool = False,
+        guardian_margin_warning: bool = False,
+    ) -> tuple[Any, dict[str, Any], Path, OrderIntent]:
+        from tests.test_risk_engine import (
+            _m15_recovery_fixture,
+            _write_p1_margin_warning_artifacts,
+        )
+
+        now, chart_path, recovery_intent, broker = _m15_recovery_fixture(root)
+        if tp_proven:
+            recovery_intent = _mature_m15_recovery_intent(recovery_intent)
+        assert broker.account is not None
+        manual_positions = tuple(
+            BrokerPosition(
+                trade_id=trade_id,
+                pair="EUR_USD",
+                side=Side.SHORT,
+                units=units,
+                entry_price=entry_price,
+                take_profit=1.13610,
+                stop_loss=None,
+                owner=Owner.OPERATOR_MANUAL,
+                raw={
+                    "operator_manual_position": {
+                        "packet_type": "OPERATOR_MANUAL_POSITION",
+                        "classification": "OPERATOR_MANUAL",
+                        "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                        "management_intent": "NO_TOUCH_OBSERVE_ONLY",
+                        "no_live_side_effects": True,
+                        "system_pl_counted": False,
+                        "same_theme_auto_add_allowed": True,
+                        "loss_side_auto_close_allowed": False,
+                        "auto_sl_attach_allowed": False,
+                        "auto_tp_modify_allowed": False,
+                        "trade_id": trade_id,
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": units,
+                    }
+                },
+            )
+            for trade_id, units, entry_price in (
+                ("473055", 3_000, 1.13951),
+                ("473032", 8_000, 1.13832),
+                ("472987", 22_500, 1.14048),
+            )
+        )
+        client.snapshot_value = replace(
+            broker,
+            positions=manual_positions,
+            account=replace(
+                broker.account,
+                last_transaction_id="100",
+            ),
+        )
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+        target_state, target_report, ledger_path, ledger_report = (
+            _reconciliation_files(root)
+        )
+        _insert_m15_recovery_exact_tp_outcomes(
+            ledger_path,
+            trades=20 if tp_proven else 7,
+            entry=float(recovery_intent.entry),
+            tp=float(recovery_intent.tp),
+            sl=float(recovery_intent.sl),
+        )
+        intents = _intents(
+            root,
+            status="LIVE_READY",
+            metadata=deepcopy(recovery_intent.metadata),
+            order_type="STOP-ENTRY",
+            units=recovery_intent.units,
+            pair="EUR_USD",
+            side="SHORT",
+            lane_id=lane_id,
+            entry=recovery_intent.entry,
+            tp=recovery_intent.tp,
+            sl=recovery_intent.sl,
+        )
+        intents_payload = json.loads(intents.read_text())
+        intents_payload["results"][0]["intent"]["market_context"] = {
+            "regime": "RANGE",
+            "narrative": "M15 failed-break micro recovery",
+            "chart_story": "upper-rail rejection",
+            "method": "BREAKOUT_FAILURE",
+            "invalidation": "bound M15 invalidation trades",
+        }
+        intents.write_text(json.dumps(intents_payload) + "\n")
+        cost_floor = _synthetic_execution_cost_floor(
+            ("EUR_USD", "SHORT", "BREAKOUT_FAILURE", "STOP")
+        )
+        if guardian_margin_warning:
+            _write_p1_margin_guardian_action_receipt(
+                root,
+                nav_jpy=broker.account.nav_jpy,
+                margin_used_jpy=broker.account.margin_used_jpy,
+                margin_available_jpy=broker.account.margin_available_jpy,
+            )
+        gateway = LiveOrderGateway(
+            client=client,
+            strategy_profile=_profile(root, direction="SHORT"),
+            output_path=root / "request.json",
+            report_path=root / "report.md",
+            target_state_path=target_state,
+            target_report_path=target_report,
+            pair_charts_path=chart_path,
+            forecast_history_path=chart_path.with_name(
+                "forecast_history.jsonl"
+            ),
+            execution_ledger_db_path=ledger_path,
+            execution_ledger_report_path=ledger_report,
+            verified_decision_path=_write_ordinary_verified_decision(
+                root,
+                lane_id=lane_id,
+                direction="DOWN",
+                edge_basis=(
+                    "EXACT_VEHICLE_TAKE_PROFIT"
+                    if tp_proven
+                    else "M15_RECOVERY_EDGE_COLLECTION"
+                ),
+                execution_cost_floor=cost_floor,
+                base_units=recovery_intent.units,
+            ),
+            live_enabled=True,
+            max_loss_jpy=500.0,
+        )
+        guardian_env: dict[str, str] = {}
+        if guardian_margin_warning:
+            guardian_paths = _write_p1_margin_warning_artifacts(
+                root,
+                nav_jpy=broker.account.nav_jpy,
+                margin_used_jpy=broker.account.margin_used_jpy,
+                margin_available_jpy=broker.account.margin_available_jpy,
+                event_id="synthetic-portfolio-hold",
+            )
+            guardian_env = {
+                "QR_GUARDIAN_RECEIPT_WATCHDOG_PATH": str(
+                    guardian_paths["watchdog"]
+                ),
+                "QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH": str(
+                    guardian_paths["consumption"]
+                ),
+                "QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH": str(
+                    guardian_paths["operator_review"]
+                ),
+                "QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH": str(
+                    guardian_paths["broker_snapshot"]
+                ),
+            }
+        with (
+            patch.object(
+                LiveOrderGateway,
+                "_pre_post_reconcile",
+                self._original_pre_post_reconcile,
+            ),
+            patch.object(
+                LiveOrderGateway,
+                "_final_pre_post_boundary",
+                self._original_final_pre_post_boundary,
+            ),
+            patch.object(
+                execution_module,
+                "DailyTargetLedger",
+                FixedReconciliationTargetLedger,
+            ),
+            patch.object(
+                execution_module.RiskEngine,
+                "_now",
+                return_value=now,
+            ),
+            patch.dict(os.environ, guardian_env),
+        ):
+            summary = (
+                gateway.run_batch(
+                    intents_path=intents,
+                    lane_ids=(lane_id,),
+                    size_multiples={lane_id: 1.0},
+                    send=True,
+                    confirm_live=True,
+                )
+                if batch
+                else gateway.run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    size_multiple=1.0,
+                    send=True,
+                    confirm_live=True,
+                )
+            )
+        payload = json.loads((root / "request.json").read_text())
+        return (
+            summary,
+            payload["orders"][0] if batch else payload,
+            ledger_path,
+            recovery_intent,
+        )
+
     def test_codex_capital_allocation_binds_preclip_units_and_allows_only_later_reduction(self) -> None:
         lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
         board_sha = "a" * 64
@@ -637,6 +840,380 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertEqual(exact, [])
         self.assertEqual(reduced, [])
 
+    def test_operator_manual_micro_lot_recovers_with_margin_without_gateway_upsize(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+        manual_rows = (
+            ("473055", 3_000, 1.13951),
+            ("473032", 8_000, 1.13832),
+            ("472987", 22_500, 1.14048),
+        )
+        positions = []
+        for trade_id, units, entry_price in manual_rows:
+            packet = {
+                "packet_type": "OPERATOR_MANUAL_POSITION",
+                "classification": "OPERATOR_MANUAL",
+                "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                "management_intent": "NO_TOUCH_OBSERVE_ONLY",
+                "no_live_side_effects": True,
+                "system_pl_counted": False,
+                "same_theme_auto_add_allowed": True,
+                "loss_side_auto_close_allowed": False,
+                "auto_sl_attach_allowed": False,
+                "auto_tp_modify_allowed": False,
+                "trade_id": trade_id,
+                "pair": "EUR_USD",
+                "side": "SHORT",
+                "units": units,
+            }
+            positions.append(
+                BrokerPosition(
+                    trade_id=trade_id,
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=units,
+                    entry_price=entry_price,
+                    take_profit=1.13610,
+                    stop_loss=None,
+                    owner=Owner.OPERATOR_MANUAL,
+                    raw={"operator_manual_position": packet},
+                )
+            )
+        positions_tuple = tuple(positions)
+
+        def broker_snapshot(
+            *,
+            nav_jpy: float,
+            margin_used_jpy: float,
+            margin_available_jpy: float,
+        ) -> BrokerSnapshot:
+            now = datetime.now(timezone.utc)
+            return BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=positions_tuple,
+                orders=(),
+                quotes={
+                    "EUR_USD": Quote(
+                        "EUR_USD",
+                        bid=1.14540,
+                        ask=1.14548,
+                        timestamp_utc=now,
+                    ),
+                    "USD_JPY": Quote(
+                        "USD_JPY",
+                        bid=162.08,
+                        ask=162.10,
+                        timestamp_utc=now,
+                    ),
+                },
+                account=AccountSummary(
+                    balance_jpy=294_442.8959,
+                    nav_jpy=nav_jpy,
+                    margin_used_jpy=margin_used_jpy,
+                    margin_available_jpy=margin_available_jpy,
+                    hedging_enabled=True,
+                    fetched_at_utc=now,
+                ),
+                home_conversions={"USD": 162.090534},
+            )
+
+        def manual_packet_bytes(snapshot: BrokerSnapshot) -> bytes:
+            payload = [
+                {
+                    "trade_id": position.trade_id,
+                    "pair": position.pair,
+                    "side": position.side.value,
+                    "units": position.units,
+                    "entry_price": position.entry_price,
+                    "take_profit": position.take_profit,
+                    "stop_loss": position.stop_loss,
+                    "owner": position.owner.value,
+                    "raw": position.raw,
+                }
+                for position in snapshot.positions
+            ]
+            return json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+
+        under_cap = broker_snapshot(
+            nav_jpy=261_441.44537684214,
+            margin_used_jpy=248_326.12,
+            margin_available_jpy=21_921.0217,
+        )
+        over_cap = broker_snapshot(
+            nav_jpy=261_000.0,
+            margin_used_jpy=248_347.56,
+            margin_available_jpy=19_088.2282,
+        )
+        recovered = broker_snapshot(
+            nav_jpy=262_264.88421052636,
+            margin_used_jpy=248_326.12,
+            margin_available_jpy=22_490.88,
+        )
+        entry = 1.14524
+        stop_loss = 1.14586
+        max_loss_jpy = 430.6
+
+        self.assertEqual(
+            _risk_budgeted_units(
+                "EUR_USD",
+                entry,
+                stop_loss,
+                max_loss_jpy=max_loss_jpy,
+                snapshot=under_cap,
+                side=Side.SHORT,
+            ),
+            5,
+        )
+        self.assertEqual(
+            _risk_budgeted_units(
+                "EUR_USD",
+                entry,
+                stop_loss,
+                max_loss_jpy=max_loss_jpy,
+                snapshot=over_cap,
+                side=Side.SHORT,
+            ),
+            0,
+        )
+        recovered_units = _risk_budgeted_units(
+            "EUR_USD",
+            entry,
+            stop_loss,
+            max_loss_jpy=max_loss_jpy,
+            snapshot=recovered,
+            side=Side.SHORT,
+        )
+        self.assertEqual(recovered_units, 100)
+
+        metadata = _ordinary_claim_metadata(
+            parent_lane_id=lane_id,
+            vehicle="STOP",
+            numeric_forecast=True,
+        )
+        metadata.update(
+            {
+                "desk": "failure_trader",
+                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 430.6,
+                "capture_avg_loss_jpy": 1_042.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "CAP_AVG_WIN",
+                "loss_asymmetry_guard_loss_cap_jpy": 430.6,
+                "loss_asymmetry_guard_base_max_loss_jpy": 2_639.1,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 430.6,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+                "capture_take_profit_scope_key": (
+                    "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
+                ),
+                "capture_take_profit_exact_vehicle_required": True,
+                "capture_take_profit_vehicle": "STOP",
+                "capture_take_profit_metrics_source": (
+                    "data/execution_ledger.db:exact_vehicle_take_profit"
+                ),
+                "capture_take_profit_trades": 7,
+                "capture_take_profit_wins": 7,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_expectancy_jpy": 918.2276,
+                "capture_take_profit_avg_win_jpy": 918.2276,
+                "capture_take_profit_avg_loss_jpy": 0.0,
+                "positive_rotation_tp_trades": 7,
+                "positive_rotation_tp_wins": 7,
+                "positive_rotation_tp_win_rate_lower": 0.645661,
+                "positive_rotation_loss_proxy_jpy": 1_042.0,
+                "positive_rotation_pessimistic_expectancy_jpy": 223.6428,
+                "forecast_direction": "DOWN",
+                "forecast_current_price": 1.14544,
+                "forecast_target_price": 1.14341,
+                "forecast_invalidation_price": stop_loss,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = _intents(
+                root,
+                status="LIVE_READY",
+                metadata=metadata,
+                order_type="STOP-ENTRY",
+                units=5,
+                pair="EUR_USD",
+                side="SHORT",
+                lane_id=lane_id,
+                entry=entry,
+                tp=1.14341,
+                sl=stop_loss,
+            )
+            intents_payload = json.loads(intents.read_text())
+            intents_payload["results"][0]["intent"]["market_context"] = {
+                "regime": "RANGE",
+                "narrative": "M15 exhaustion and failed acceptance",
+                "chart_story": "upper-rail rejection with attached TP",
+                "method": "BREAKOUT_FAILURE",
+                "invalidation": "SL trades",
+            }
+            intents.write_text(json.dumps(intents_payload) + "\n")
+            profile = _profile(root, direction="SHORT")
+            before_manual = manual_packet_bytes(under_cap)
+
+            client = FakeExecutionClient()
+            client.snapshot_value = under_cap
+            staged = LiveOrderGateway(
+                client=client,
+                strategy_profile=profile,
+                output_path=root / "under_request.json",
+                report_path=root / "under_report.md",
+                live_enabled=True,
+                max_loss_jpy=max_loss_jpy,
+            ).run(intents_path=intents, lane_id=lane_id)
+            staged_payload = json.loads(
+                (root / "under_request.json").read_text()
+            )
+
+            self.assertEqual(staged.status, "STAGED")
+            self.assertEqual(staged_payload["requested_units"], 5)
+            self.assertEqual(staged_payload["scaled_units"], 5)
+            self.assertEqual(staged_payload["order_request"]["units"], "-5")
+            self.assertEqual(client.orders, [])
+            self.assertNotIn(
+                "BAD_UNITS",
+                {issue["code"] for issue in staged_payload["risk_issues"]},
+            )
+            self.assertFalse(
+                {
+                    "MARGIN_UTILIZATION_CAP_REACHED",
+                    "MARGIN_UTILIZATION_CAP_EXCEEDED",
+                    "MARGIN_AVAILABLE_EXCEEDED",
+                }
+                & {issue["code"] for issue in staged_payload["risk_issues"]}
+            )
+            self.assertEqual(
+                [position.trade_id for position in client.snapshot_value.positions],
+                ["473055", "473032", "472987"],
+            )
+            self.assertEqual(
+                manual_packet_bytes(client.snapshot_value),
+                before_manual,
+            )
+            for position in client.snapshot_value.positions:
+                packet = position.raw["operator_manual_position"]
+                self.assertTrue(packet["no_live_side_effects"])
+                self.assertTrue(packet["same_theme_auto_add_allowed"])
+                self.assertFalse(packet["loss_side_auto_close_allowed"])
+                self.assertFalse(packet["auto_sl_attach_allowed"])
+                self.assertFalse(packet["auto_tp_modify_allowed"])
+
+            over_client = FakeExecutionClient()
+            over_client.snapshot_value = over_cap
+            blocked = LiveOrderGateway(
+                client=over_client,
+                strategy_profile=profile,
+                output_path=root / "over_request.json",
+                report_path=root / "over_report.md",
+                live_enabled=True,
+                max_loss_jpy=max_loss_jpy,
+            ).run(intents_path=intents, lane_id=lane_id)
+            blocked_payload = json.loads(
+                (root / "over_request.json").read_text()
+            )
+            self.assertEqual(blocked.status, "BLOCKED")
+            self.assertIn(
+                "MARGIN_UTILIZATION_CAP_REACHED",
+                {issue["code"] for issue in blocked_payload["risk_issues"]},
+            )
+            self.assertEqual(over_client.orders, [])
+            self.assertEqual(
+                manual_packet_bytes(over_client.snapshot_value),
+                manual_packet_bytes(over_cap),
+            )
+
+            recovered_client = FakeExecutionClient()
+            recovered_client.snapshot_value = recovered
+            recovered_stage = LiveOrderGateway(
+                client=recovered_client,
+                strategy_profile=profile,
+                output_path=root / "recovered_request.json",
+                report_path=root / "recovered_report.md",
+                live_enabled=True,
+                max_loss_jpy=max_loss_jpy,
+            ).run(intents_path=intents, lane_id=lane_id)
+            recovered_payload = json.loads(
+                (root / "recovered_request.json").read_text()
+            )
+            self.assertEqual(recovered_stage.status, "STAGED")
+            self.assertGreater(recovered_units, 5)
+            self.assertEqual(recovered_payload["requested_units"], 5)
+            self.assertEqual(recovered_payload["scaled_units"], 5)
+            self.assertEqual(recovered_payload["order_request"]["units"], "-5")
+
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": lane_id,
+            "size_multiple": 1.0,
+            "selected_units": 5,
+            "allocation_board_sha256": "e" * 64,
+            "rationale": "Use the current margin-bounded five-unit baseline.",
+        }
+        allocation_sha = execution_module.hashlib.sha256(
+            json.dumps(
+                allocation,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        decision = {
+            "action": "TRADE",
+            "selected_lane_id": lane_id,
+            "selected_lane_ids": [lane_id],
+            "capital_allocation": allocation,
+            "decision_provenance": {
+                "schema_version": 2,
+                "author_kind": "CODEX_MARKET_READ",
+                "capital_allocation_edge_basis": "EXACT_VEHICLE_TAKE_PROFIT",
+                "capital_allocation_sha256": allocation_sha,
+                "capital_allocation_board_sha256": "e" * 64,
+                "authorized_size_multiple": 1.0,
+                "authorized_units": 5,
+            },
+        }
+        exact_allocation = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision,
+            selected_lane_id=lane_id,
+            base_units=5,
+            authorized_size_multiple=1.0,
+            authorized_units=5,
+            final_units=5,
+            order_request={"units": "-5"},
+            intent=SimpleNamespace(side=Side.SHORT),
+        )
+        attempted_upsize = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision,
+            selected_lane_id=lane_id,
+            base_units=5,
+            authorized_size_multiple=1.0,
+            authorized_units=5,
+            final_units=recovered_units,
+            order_request={"units": f"-{recovered_units}"},
+            intent=SimpleNamespace(side=Side.SHORT),
+        )
+
+        self.assertEqual(exact_allocation, [])
+        self.assertIn(
+            "GPT_CAPITAL_ALLOCATION_FINAL_UNITS_EXCEEDED",
+            {issue.code for issue in attempted_upsize},
+        )
+
     def test_verified_trade_size_multiple_reads_only_exact_accepted_allocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -664,6 +1241,755 @@ class LiveOrderGatewayTest(unittest.TestCase):
             payload["decision"]["capital_allocation"]["size_multiple"] = 0.6
             path.write_text(json.dumps(payload), encoding="utf-8")
             self.assertIsNone(execution_module.verified_trade_size_multiple(path))
+
+    def test_m15_recovery_five_units_revalidates_in_direct_and_batch_and_never_upsizes(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture_root = Path(tmp)
+            now, chart_path, intent, broker = _m15_recovery_fixture(fixture_root)
+            scaled, issues, _ = execution_module._scaled_units_for_intent(
+                intent,
+                1.0,
+            )
+            self.assertEqual(scaled, 5)
+            self.assertEqual(issues, [])
+            upscaled, upsize_issues, _ = execution_module._scaled_units_for_intent(
+                intent,
+                1.25,
+            )
+            self.assertIsNone(upscaled)
+            self.assertEqual(
+                {issue.code for issue in upsize_issues},
+                {"M15_RECOVERY_GATEWAY_UPSIZE_FORBIDDEN"},
+            )
+
+            for batch in (False, True):
+                with self.subTest(batch=batch):
+                    root = fixture_root / ("batch" if batch else "direct")
+                    root.mkdir()
+                    lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+                    intents = _intents(
+                        root,
+                        status="LIVE_READY",
+                        metadata=deepcopy(intent.metadata),
+                        order_type="STOP-ENTRY",
+                        units=5,
+                        pair="EUR_USD",
+                        side="SHORT",
+                        lane_id=lane_id,
+                        entry=intent.entry,
+                        tp=intent.tp,
+                        sl=intent.sl,
+                    )
+                    payload = json.loads(intents.read_text())
+                    payload["results"][0]["intent"]["market_context"] = {
+                        "regime": "RANGE",
+                        "narrative": "M15 failed-break micro recovery",
+                        "chart_story": "upper-rail rejection",
+                        "method": "BREAKOUT_FAILURE",
+                        "invalidation": "SL trades",
+                    }
+                    intents.write_text(json.dumps(payload) + "\n")
+                    client = FakeExecutionClient()
+                    client.snapshot_value = broker
+                    gateway = LiveOrderGateway(
+                        client=client,
+                        strategy_profile=_profile(root, direction="SHORT"),
+                        output_path=root / "request.json",
+                        report_path=root / "report.md",
+                        pair_charts_path=chart_path,
+                        forecast_history_path=chart_path.with_name(
+                            "forecast_history.jsonl"
+                        ),
+                        max_loss_jpy=500.0,
+                    )
+                    with patch.object(
+                        execution_module.RiskEngine,
+                        "_now",
+                        return_value=now,
+                    ):
+                        if batch:
+                            gateway.run_batch(
+                                intents_path=intents,
+                                lane_ids=(lane_id,),
+                                size_multiples={lane_id: 1.0},
+                            )
+                        else:
+                            gateway.run(
+                                intents_path=intents,
+                                lane_id=lane_id,
+                                size_multiple=1.0,
+                            )
+                    result = json.loads((root / "request.json").read_text())
+                    order_result = result["orders"][0] if batch else result
+                    m15_issues = {
+                        issue["code"]: issue["severity"]
+                        for issue in order_result["risk_issues"]
+                        if issue["code"].startswith("M15_RECOVERY_")
+                    }
+                    self.assertEqual(
+                        m15_issues,
+                        {"M15_RECOVERY_RISK_REVALIDATED": "WARN"},
+                    )
+                    self.assertEqual(order_result["requested_units"], 5)
+                    self.assertEqual(order_result["scaled_units"], 5)
+
+    def test_m15_recovery_limit_vehicle_fails_gateway_closed(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, intent, broker = _m15_recovery_fixture(root)
+            limit_intent = replace(
+                intent,
+                order_type=OrderType.LIMIT,
+                metadata=deepcopy(intent.metadata),
+            )
+            self.assertFalse(
+                execution_module._m15_recovery_prebounded_intent_claim(
+                    limit_intent
+                )
+            )
+            lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+            intents = _intents(
+                root,
+                status="LIVE_READY",
+                metadata=deepcopy(limit_intent.metadata),
+                order_type="LIMIT",
+                units=limit_intent.units,
+                pair=limit_intent.pair,
+                side=limit_intent.side.value,
+                lane_id=lane_id,
+                entry=limit_intent.entry,
+                tp=limit_intent.tp,
+                sl=limit_intent.sl,
+            )
+            payload = json.loads(intents.read_text())
+            payload["results"][0]["intent"]["market_context"] = {
+                "regime": "RANGE",
+                "narrative": "adversarial recovery LIMIT",
+                "chart_story": "copied recovery claim on forbidden vehicle",
+                "method": "BREAKOUT_FAILURE",
+                "invalidation": "SL trades",
+            }
+            intents.write_text(json.dumps(payload) + "\n")
+            client = FakeExecutionClient()
+            client.snapshot_value = broker
+            gateway = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                max_loss_jpy=500.0,
+            )
+            with patch.object(
+                execution_module.RiskEngine,
+                "_now",
+                return_value=now,
+            ):
+                gateway.run(
+                    intents_path=intents,
+                    lane_id=lane_id,
+                    size_multiple=1.0,
+                )
+
+            result = json.loads((root / "request.json").read_text())
+            self.assertFalse(result["sent"])
+            self.assertIn(
+                "M15_RECOVERY_LIVE_SHAPE_INVALID",
+                {issue["code"] for issue in result["risk_issues"]},
+            )
+
+    def test_m15_recovery_final_boundary_blocks_chart_change_after_early_reconcile(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, intent, broker = _m15_recovery_fixture(root)
+            early_validation = (
+                execution_module.validate_m15_recovery_micro_live_claim(
+                    intent,
+                    broker,
+                    pair_charts_path=chart_path,
+                    forecast_history_path=chart_path.with_name(
+                        "forecast_history.jsonl"
+                    ),
+                    validation_time_utc=now,
+                )
+            )
+            self.assertTrue(early_validation.allowed)
+            order_request, build_issues = execution_module._build_order_request(
+                intent
+            )
+            self.assertIsNotNone(order_request)
+            self.assertEqual(build_issues, [])
+            assert order_request is not None
+            numeric_material = {
+                "status": "NOT_APPLICABLE",
+                "required": False,
+                "base_units": 5,
+                "final_units": 5,
+                "final_effective_multiple": 1.0,
+            }
+            early_numeric = {
+                **numeric_material,
+                "proof_sha256": execution_module._canonical_json_sha256(
+                    numeric_material
+                ),
+            }
+            early = {
+                "status": "PASSED",
+                "ledger_last_transaction_id": "100",
+                "broker_last_transaction_id": "100",
+                "capital_allocation_edge_recheck": {
+                    "status": "BYPASSED",
+                    "basis": None,
+                    "proof_key": None,
+                },
+                "capital_allocation_numeric_recheck": early_numeric,
+                "final_max_loss_jpy": 430.6,
+                "final_portfolio_loss_cap_jpy": 5_000.0,
+                "portfolio_position_cap": 4,
+                "m15_recovery_micro_recheck": early_validation.evidence,
+            }
+            chart_payload = json.loads(chart_path.read_text())
+            # This field is outside the receipt's technical-body calculation,
+            # so the final validator can still parse the new chart. The exact
+            # early source digest must nevertheless prevent time-of-check /
+            # time-of-use replacement.
+            chart_payload["charts"][0]["chart_story"] = (
+                "changed after early reconciliation"
+            )
+            chart_path.write_text(json.dumps(chart_payload) + "\n")
+            client = FakeExecutionClient()
+            client.snapshot_value = broker
+            gateway = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                max_loss_jpy=500.0,
+                execution_ledger_db_path=None,
+                verified_decision_path=None,
+            )
+            with patch.object(
+                execution_module.RiskEngine,
+                "_now",
+                return_value=now,
+            ):
+                result = self._original_final_pre_post_boundary(
+                    gateway,
+                    verified_intent=intent,
+                    final_intent=intent,
+                    early_reconciliation=early,
+                    expected_receipt_sha256=None,
+                    expected_capital_allocation_edge_basis=None,
+                    expected_execution_cost_floor_sha256=None,
+                    expected_order_request_sha256=(
+                        execution_module._canonical_order_request_sha256(
+                            order_request
+                        )
+                    ),
+                    order_request=order_request,
+                    ordinary_entry_claim={},
+                )
+
+            codes = {issue.code for issue in result.issues}
+            self.assertIn(
+                "FINAL_PRE_POST_M15_RECOVERY_SOURCE_CHANGED",
+                codes,
+            )
+            self.assertEqual(
+                result.evidence["m15_recovery_micro_final_recheck"][
+                    "early_source_unchanged"
+                ],
+                False,
+            )
+            self.assertFalse(client.orders)
+
+    def test_m15_recovery_collection_basis_is_bijective_at_live_send(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, intent, _ = _m15_recovery_fixture(Path(tmp))
+        lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+        allocation = {
+            "decision": "ALLOCATE",
+            "lane_id": lane_id,
+            "size_multiple": 1.0,
+            "selected_units": 5,
+            "allocation_board_sha256": "e" * 64,
+            "rationale": "Bounded M15 recovery evidence collection.",
+        }
+        allocation_sha = execution_module._canonical_json_sha256(allocation)
+
+        def decision(edge_basis: str) -> dict[str, Any]:
+            return {
+                "action": "TRADE",
+                "selected_lane_id": lane_id,
+                "selected_lane_ids": [lane_id],
+                "capital_allocation": allocation,
+                "decision_provenance": {
+                    "schema_version": 2,
+                    "author_kind": "CODEX_MARKET_READ",
+                    "capital_allocation_edge_basis": edge_basis,
+                    "capital_allocation_sha256": allocation_sha,
+                    "capital_allocation_board_sha256": "e" * 64,
+                    "authorized_size_multiple": 1.0,
+                    "authorized_units": 5,
+                },
+            }
+
+        valid = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision("M15_RECOVERY_EDGE_COLLECTION"),
+            selected_lane_id=lane_id,
+            base_units=5,
+            authorized_size_multiple=1.0,
+            authorized_units=5,
+            final_units=5,
+            order_request={"units": "-5"},
+            intent=intent,
+        )
+        self.assertEqual(valid, [])
+
+        for forged_basis in (
+            "EXACT_VEHICLE_TAKE_PROFIT",
+            "EXACT_VEHICLE_ALL_EXIT_NET",
+        ):
+            with self.subTest(forged_basis=forged_basis):
+                forged = execution_module._codex_capital_allocation_live_send_issues(
+                    decision=decision(forged_basis),
+                    selected_lane_id=lane_id,
+                    base_units=5,
+                    authorized_size_multiple=1.0,
+                    authorized_units=5,
+                    final_units=5,
+                    order_request={"units": "-5"},
+                    intent=intent,
+                )
+                self.assertIn(
+                    "GPT_CAPITAL_ALLOCATION_EDGE_BASIS_MISSING",
+                    {issue.code for issue in forged},
+                )
+
+        ordinary = replace(intent, metadata={})
+        copied = execution_module._codex_capital_allocation_live_send_issues(
+            decision=decision("M15_RECOVERY_EDGE_COLLECTION"),
+            selected_lane_id=lane_id,
+            base_units=5,
+            authorized_size_multiple=1.0,
+            authorized_units=5,
+            final_units=5,
+            order_request={"units": "-5"},
+            intent=ordinary,
+        )
+        self.assertIn(
+            "GPT_CAPITAL_ALLOCATION_EDGE_BASIS_MISSING",
+            {issue.code for issue in copied},
+        )
+
+    def test_m15_recovery_numeric_bypass_is_nonmarket_and_upsize_proof_fails(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, intent, snapshot = _m15_recovery_fixture(Path(tmp))
+        risk = SimpleNamespace(
+            metrics=execution_module.RiskMetrics(
+                entry_price=float(intent.entry),
+                loss_pips=6.2,
+                reward_pips=18.3,
+                risk_jpy=0.5,
+                reward_jpy=1.5,
+                reward_risk=3.0,
+                spread_pips=0.8,
+                jpy_per_pip=0.08,
+            ),
+            issues=(),
+        )
+        path_proof = execution_module._forecast_s5_no_touch_proof(
+            object(),
+            intent=intent,
+            snapshot=snapshot,
+            m15_recovery_prebounded=True,
+        )
+        numeric, numeric_issue = (
+            execution_module._capital_allocation_numeric_pre_post_recheck(
+                verified_intent=intent,
+                final_intent=intent,
+                fresh_snapshot=snapshot,
+                fresh_base_risk=risk,
+                required=True,
+                forecast_s5_path_proof=path_proof,
+                m15_recovery_prebounded=True,
+            )
+        )
+        price_bound, price_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=500.0,
+                m15_recovery_prebounded=True,
+            )
+        )
+        self.assertIsNone(numeric_issue)
+        self.assertIsNone(price_issue)
+        self.assertEqual(numeric["status"], "BYPASSED")
+        self.assertEqual(price_bound["status"], "BYPASSED")
+        self.assertEqual(
+            numeric["numeric_ceiling"]["reason"],
+            "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT",
+        )
+        frozen = execution_module._numeric_proof_with_market_price_bound(
+            numeric,
+            price_bound,
+        )
+        order_request, build_issues = execution_module._build_order_request(intent)
+        self.assertEqual(build_issues, [])
+        assert order_request is not None
+        self.assertNotIn("priceBound", order_request)
+        self.assertTrue(
+            execution_module._capital_allocation_numeric_proof_is_frozen(
+                frozen,
+                order_request=order_request,
+                required=True,
+                expected_intent=intent,
+            )
+        )
+
+        forged = deepcopy(frozen)
+        forged["final_units"] = 6
+        forged["final_effective_multiple"] = 1.2
+        forged["final_ratio_passed"] = True
+        forged["fresh_unit_cap_floor"] = 6
+        forged.pop("proof_sha256")
+        forged["proof_sha256"] = execution_module._canonical_json_sha256(
+            forged
+        )
+        self.assertFalse(
+            execution_module._capital_allocation_numeric_proof_is_frozen(
+                forged,
+                order_request={**order_request, "units": "-6"},
+                required=True,
+                expected_intent=intent,
+            )
+        )
+        blocked_bound, blocked_issue = (
+            execution_module._capital_allocation_market_price_bound(
+                intent=intent,
+                snapshot=snapshot,
+                effective_max_loss_jpy=500.0,
+                reserved_price_bound="1.14500",
+                m15_recovery_prebounded=True,
+            )
+        )
+        self.assertIsNotNone(blocked_issue)
+        self.assertEqual(blocked_bound["status"], "BLOCKED")
+
+    def test_m15_recovery_edge_recheck_preserves_collection_basis(self) -> None:
+        from tests.test_risk_engine import _m15_recovery_fixture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, intent, _ = _m15_recovery_fixture(Path(tmp))
+        exact_key = ("EUR_USD", "SHORT", "BREAKOUT_FAILURE", "STOP")
+        tp_metrics = {
+            "trades": 7,
+            "wins": 7,
+            "losses": 0,
+            "net_jpy": 6427.5932,
+            "expectancy_jpy_per_trade": 918.2276,
+            "avg_win_jpy": 918.2276,
+            "avg_loss_jpy": 0.0,
+            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "exit_scope": "PURE_TAKE_PROFIT_LIFECYCLE",
+        }
+        net_metrics = {
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "net_jpy": 0.0,
+            "expectancy_jpy_per_trade": 0.0,
+            "avg_win_jpy": 0.0,
+            "avg_loss_jpy": 0.0,
+            "source_scope": "PAIR_SIDE_METHOD_VEHICLE",
+            "exit_scope": "ALL_AUDITED_EXITS",
+        }
+
+        def exact_metrics(_surface, *, field):
+            return {
+                exact_key: (
+                    net_metrics
+                    if field == "exact_vehicle_net"
+                    else tp_metrics
+                )
+            }
+
+        with (
+            patch.object(
+                execution_module,
+                "read_exact_vehicle_allocation_surface",
+                return_value={
+                    "parse_status": "PASSED",
+                    "allocation_surface_sha256": "a" * 64,
+                },
+            ),
+            patch.object(
+                execution_module,
+                "exact_vehicle_metrics_from_surface",
+                side_effect=exact_metrics,
+            ),
+            patch.object(
+                execution_module,
+                "execution_cost_floor_from_surface",
+                return_value={"status": "BLOCKED"},
+            ),
+        ):
+            evidence, issue = (
+                execution_module._capital_allocation_edge_pre_post_recheck(
+                    intent,
+                    ledger_path=Path("unused.db"),
+                    expected_edge_basis="M15_RECOVERY_EDGE_COLLECTION",
+                    expected_execution_cost_floor_sha256="b" * 64,
+                    execution_cost_floor_required=True,
+                )
+            )
+            self.assertIsNone(issue)
+            self.assertEqual(evidence["status"], "PASSED")
+            self.assertEqual(
+                evidence["basis"],
+                "M15_RECOVERY_EDGE_COLLECTION",
+            )
+            for forged_basis in (
+                "EXACT_VEHICLE_TAKE_PROFIT",
+                "EXACT_VEHICLE_ALL_EXIT_NET",
+            ):
+                with self.subTest(forged_basis=forged_basis):
+                    forged_evidence, forged_issue = (
+                        execution_module._capital_allocation_edge_pre_post_recheck(
+                            intent,
+                            ledger_path=Path("unused.db"),
+                            expected_edge_basis=forged_basis,
+                            expected_execution_cost_floor_sha256="b" * 64,
+                            execution_cost_floor_required=True,
+                        )
+                    )
+                    self.assertIsNotNone(forged_issue)
+                    self.assertEqual(
+                        forged_issue.code,
+                        "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_UNPROVEN",
+                    )
+                    self.assertEqual(forged_evidence["status"], "BLOCKED")
+
+    def test_m15_recovery_real_gateway_posts_one_stop_without_price_bound(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                summary, order, _, expected_intent = self._run_real_m15_recovery_gateway(
+                    root=Path(tmp),
+                    client=client,
+                    batch=batch,
+                )
+
+                self.assertTrue(summary.sent, json.dumps(order, sort_keys=True))
+                self.assertEqual(len(client.orders), 1)
+                request = client.orders[0]
+                self.assertEqual(request["type"], "STOP")
+                self.assertEqual(request["units"], f"-{expected_intent.units}")
+                self.assertEqual(
+                    request["price"],
+                    execution_module._price(
+                        expected_intent.pair,
+                        float(expected_intent.entry),
+                    ),
+                )
+                self.assertEqual(
+                    request["takeProfitOnFill"]["price"],
+                    execution_module._price(
+                        expected_intent.pair,
+                        float(expected_intent.tp),
+                    ),
+                )
+                self.assertNotIn("priceBound", request)
+                manual_by_id = {
+                    position.trade_id: position
+                    for position in client.snapshot_value.positions
+                }
+                self.assertEqual(
+                    {
+                        trade_id: (
+                            manual_by_id[trade_id].units,
+                            manual_by_id[trade_id].entry_price,
+                        )
+                        for trade_id in ("473055", "473032", "472987")
+                    },
+                    {
+                        "473055": (3_000, 1.13951),
+                        "473032": (8_000, 1.13832),
+                        "472987": (22_500, 1.14048),
+                    },
+                )
+                for trade_id in ("473055", "473032", "472987"):
+                    packet = manual_by_id[trade_id].raw[
+                        "operator_manual_position"
+                    ]
+                    self.assertEqual(
+                        packet["management_intent"],
+                        "NO_TOUCH_OBSERVE_ONLY",
+                    )
+                    self.assertTrue(packet["same_theme_auto_add_allowed"])
+                    self.assertFalse(packet["loss_side_auto_close_allowed"])
+                    self.assertFalse(packet["auto_sl_attach_allowed"])
+                    self.assertFalse(packet["auto_tp_modify_allowed"])
+                reconciliation = order["pre_post_reconciliation"]
+                self.assertEqual(reconciliation["status"], "PASSED")
+                self.assertEqual(
+                    reconciliation["capital_allocation_edge_recheck"][
+                        "basis"
+                    ],
+                    "M15_RECOVERY_EDGE_COLLECTION",
+                )
+                numeric = reconciliation[
+                    "capital_allocation_numeric_recheck"
+                ]
+                self.assertEqual(numeric["status"], "BYPASSED")
+                self.assertEqual(
+                    numeric["numeric_ceiling"]["reason"],
+                    "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT",
+                )
+                boundary = reconciliation[
+                    "final_post_reservation_boundary"
+                ]
+                self.assertEqual(boundary["status"], "PASSED")
+                self.assertTrue(
+                    boundary["final_numeric_proof_frozen"]
+                )
+                self.assertTrue(
+                    boundary["m15_recovery_micro_final_recheck"][
+                        "early_source_unchanged"
+                    ]
+                )
+
+    def test_p1_margin_warning_routes_one_micro_order_and_preserves_manual_positions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = ReconciliationExecutionClient()
+            summary, order, _, intent = self._run_real_m15_recovery_gateway(
+                root=Path(tmp),
+                client=client,
+                batch=False,
+                guardian_margin_warning=True,
+            )
+
+            self.assertTrue(summary.sent, json.dumps(order, sort_keys=True))
+            self.assertEqual(len(client.orders), 1)
+            self.assertEqual(client.orders[0]["units"], f"-{intent.units}")
+            warning_issues = [
+                issue
+                for issue in order["risk_issues"]
+                if issue["code"] == "GUARDIAN_P1_MARGIN_PRESSURE_OBSERVED"
+            ]
+            self.assertTrue(warning_issues)
+            self.assertEqual(
+                {issue["severity"] for issue in warning_issues},
+                {"WARN"},
+            )
+            metrics = order["risk_metrics"]
+            self.assertLessEqual(
+                metrics["margin_utilization_after_pct"],
+                metrics["max_margin_utilization_pct"],
+            )
+            manual_by_id = {
+                position.trade_id: position
+                for position in client.snapshot_value.positions
+            }
+            self.assertEqual(
+                set(manual_by_id),
+                {"473055", "473032", "472987"},
+            )
+            for trade_id in manual_by_id:
+                packet = manual_by_id[trade_id].raw[
+                    "operator_manual_position"
+                ]
+                self.assertEqual(
+                    packet["management_intent"],
+                    "NO_TOUCH_OBSERVE_ONLY",
+                )
+                self.assertFalse(packet["auto_tp_modify_allowed"])
+            final_guardian = order["pre_post_reconciliation"][
+                "final_post_reservation_boundary"
+            ]["guardian_action_receipt_scope_recheck"]
+            self.assertEqual(final_guardian["status"], "PASSED")
+            self.assertFalse(final_guardian["global_safety"])
+            self.assertEqual(
+                final_guardian["scope"],
+                "GLOBAL_MARGIN_OBSERVATION",
+            )
+            self.assertTrue(final_guardian["p1_margin_warning_observed"])
+            self.assertEqual(
+                final_guardian["margin_contract"],
+                "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+            )
+            self.assertTrue(final_guardian["digest_matches"])
+
+    def test_m15_recovery_tp_proven_full_gateway_keeps_exact_tp_basis(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                client = ReconciliationExecutionClient()
+                summary, order, _, intent = self._run_real_m15_recovery_gateway(
+                    root=Path(tmp),
+                    client=client,
+                    batch=batch,
+                    tp_proven=True,
+                )
+
+                self.assertTrue(summary.sent, json.dumps(order, sort_keys=True))
+                self.assertTrue(
+                    execution_module._m15_recovery_prebounded_intent_claim(
+                        intent
+                    )
+                )
+                self.assertFalse(
+                    execution_module._m15_recovery_edge_collection_prebounded_intent_claim(
+                        intent
+                    )
+                )
+                self.assertEqual(len(client.orders), 1)
+                request = client.orders[0]
+                self.assertEqual(request["type"], "STOP")
+                self.assertEqual(request["units"], f"-{intent.units}")
+                self.assertNotIn("priceBound", request)
+                reconciliation = order["pre_post_reconciliation"]
+                self.assertEqual(reconciliation["status"], "PASSED")
+                self.assertEqual(
+                    reconciliation["capital_allocation_edge_recheck"][
+                        "basis"
+                    ],
+                    "EXACT_VEHICLE_TAKE_PROFIT",
+                )
+                numeric = reconciliation[
+                    "capital_allocation_numeric_recheck"
+                ]
+                self.assertEqual(numeric["status"], "BYPASSED")
+                self.assertEqual(
+                    numeric["base_units"],
+                    intent.units,
+                )
+                self.assertEqual(
+                    numeric["final_units"],
+                    intent.units,
+                )
+                boundary = reconciliation[
+                    "final_post_reservation_boundary"
+                ]
+                self.assertEqual(boundary["status"], "PASSED")
+                self.assertTrue(boundary["final_numeric_proof_frozen"])
 
     def test_codex_capital_allocation_rejects_caller_and_final_unit_mismatch(self) -> None:
         lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP"
@@ -1328,6 +2654,13 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 early_bound = order["pre_post_reconciliation"][
                     "capital_allocation_numeric_recheck"
                 ]["market_price_bound"]
+                early_numeric = order["pre_post_reconciliation"][
+                    "capital_allocation_numeric_recheck"
+                ]
+                self.assertFalse(
+                    early_numeric["m15_recovery_prebounded_claimed"]
+                )
+                self.assertTrue(early_numeric["m15_recovery_geometry_frozen"])
                 self.assertEqual(
                     order["order_request"]["priceBound"],
                     early_bound["price_bound_text"],
@@ -1339,6 +2672,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 final_bound = boundary[
                     "capital_allocation_numeric_recheck"
                 ]["market_price_bound"]
+                final_numeric = boundary["capital_allocation_numeric_recheck"]
+                self.assertFalse(
+                    final_numeric["m15_recovery_prebounded_claimed"]
+                )
+                self.assertTrue(final_numeric["m15_recovery_geometry_frozen"])
                 self.assertEqual(
                     final_bound["reserved_price_bound_text"],
                     early_bound["price_bound_text"],
@@ -6140,8 +7478,79 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertIsNotNone(issue)
         self.assertEqual(issue.code, "BASKET_DOWNSIZED_FOR_CAPACITY")
         self.assertEqual(scale_issues, [])
-        self.assertLessEqual((metrics.estimated_margin_jpy / intent.units) * scaled, 8_490.0)
-        self.assertLess(scaled, 1153)
+        self.assertLessEqual((metrics.estimated_margin_jpy / intent.units) * scaled, 14_490.0)
+        self.assertLess(scaled, 1967)
+
+    def test_zero_increment_margin_cannot_bypass_basket_hard_state(self) -> None:
+        intent = execution_module._intent_from_json(
+            {
+                "pair": "EUR_USD",
+                "side": "SHORT",
+                "order_type": "STOP-ENTRY",
+                "units": 999,
+                "entry": 1.16561,
+                "tp": 1.16383,
+                "sl": 1.16641,
+                "thesis": "zero-increment margin boundary regression",
+                "owner": "trader",
+                "market_context": {
+                    "regime": "BREAKOUT_FAILURE",
+                    "narrative": "hard margin state remains authoritative",
+                    "chart_story": "fresh entry cannot bypass the cap",
+                    "method": "BREAKOUT_FAILURE",
+                    "invalidation": "SL trades",
+                },
+            }
+        )
+        base_snapshot = FakeExecutionClient().snapshot_value
+        assert base_snapshot.account is not None
+        metrics = SimpleNamespace(
+            risk_jpy=100.0,
+            estimated_margin_jpy=0.0,
+        )
+        scenarios = {
+            "at_cap": replace(
+                base_snapshot.account,
+                nav_jpy=200_000.0,
+                margin_used_jpy=190_000.0,
+                margin_available_jpy=1_000.0,
+            ),
+            "no_available": replace(
+                base_snapshot.account,
+                nav_jpy=200_000.0,
+                margin_used_jpy=100_000.0,
+                margin_available_jpy=0.0,
+            ),
+        }
+        for name, account in scenarios.items():
+            with self.subTest(name=name):
+                snapshot = replace(base_snapshot, account=account)
+                scale, issue = execution_module._basket_size_multiple(
+                    intent=intent,
+                    snapshot=snapshot,
+                    metrics=metrics,
+                    portfolio_loss_cap=None,
+                    cumulative_risk_jpy=0.0,
+                    cumulative_margin_jpy=0.0,
+                )
+                self.assertEqual(scale, 0.0)
+                self.assertIsNotNone(issue)
+                assert issue is not None
+                self.assertEqual(issue.code, "BASKET_MARGIN_CAP_REACHED")
+
+                issues = execution_module._basket_issues(
+                    intent=intent,
+                    snapshot=snapshot,
+                    metrics=metrics,
+                    portfolio_loss_cap=None,
+                    cumulative_risk_jpy=0.0,
+                    cumulative_margin_jpy=0.0,
+                    seen_geometry=set(),
+                )
+                self.assertIn(
+                    "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
+                    {item.code for item in issues},
+                )
 
     def test_default_risk_cap_reads_daily_target_state_before_policy_literal(self) -> None:
         original_reader = execution_module._per_trade_risk_from_state
@@ -10119,6 +11528,49 @@ def _write_synthetic_guardian_action_receipt(
     return path
 
 
+def _write_p1_margin_guardian_action_receipt(
+    root: Path,
+    *,
+    nav_jpy: float,
+    margin_used_jpy: float,
+    margin_available_jpy: float,
+) -> Path:
+    path = _write_synthetic_guardian_action_receipt(
+        root,
+        event_pair="PORTFOLIO",
+        action="HOLD",
+        event_type="MARGIN_PRESSURE",
+        severity="P1",
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    details = {
+        "nav_jpy": nav_jpy,
+        "margin_used_jpy": margin_used_jpy,
+        "margin_available_jpy": margin_available_jpy,
+        "max_margin_utilization_pct": 95.0,
+        "fresh_entry_risk_block_active": False,
+        "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+        "fresh_entry_risk_observation_only": True,
+        "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+    }
+    for key in ("selected_event", "event"):
+        payload[key]["thesis_state"] = "WOUNDED"
+        payload[key]["details"] = dict(details)
+    payload["receipt"].update(
+        {
+            "thesis_state": "WOUNDED",
+            "reason": "canonical P1 margin capacity observation",
+            "margin_state": (
+                f"margin_used/nav={margin_used_jpy / nav_jpy:.6f}; "
+                f"available/nav={margin_available_jpy / nav_jpy:.6f}; "
+                "cap=0.950000"
+            ),
+        }
+    )
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return path
+
+
 def _guardian_provenance(
     root: Path,
     *,
@@ -10160,6 +11612,7 @@ def _write_ordinary_verified_decision(
     execution_cost_floor: dict[str, Any] | None = None,
     suffix: str = "",
     extra_reviewed_pair: str | None = None,
+    base_units: int = 1000,
 ) -> Path:
     generated_at_dt = datetime.now(timezone.utc)
     generated_at = generated_at_dt.isoformat()
@@ -10186,7 +11639,7 @@ def _write_ordinary_verified_decision(
             "decision": "ALLOCATE",
             "lane_id": lane_id,
             "size_multiple": size_multiple,
-            "selected_units": int(1000 * size_multiple),
+            "selected_units": int(base_units * size_multiple),
             "allocation_board_sha256": "c" * 64,
             "rationale": "The verified lane supports the risk-capped baseline units.",
         }
@@ -10206,7 +11659,7 @@ def _write_ordinary_verified_decision(
             "capital_allocation_sha256": allocation_sha,
             "capital_allocation_board_sha256": "c" * 64,
             "authorized_size_multiple": size_multiple,
-            "authorized_units": int(1000 * size_multiple),
+            "authorized_units": int(base_units * size_multiple),
             "execution_cost_floor_sha256": (
                 (
                     execution_cost_floor
@@ -10752,6 +12205,186 @@ def _insert_exact_tp_outcomes(
                     inserted_at,
                 ),
             )
+
+
+def _mature_m15_recovery_intent(intent: OrderIntent) -> OrderIntent:
+    """Promote the thin recovery fixture to the canonical 20-TP boundary."""
+
+    from quant_rabbit.strategy.intent_generator import (
+        _positive_rotation_confidence_metrics,
+    )
+    from quant_rabbit.strategy.m15_recovery_contract import (
+        LANE_CONTRACT,
+        build_lane_binding,
+    )
+
+    metadata = deepcopy(intent.metadata or {})
+    trades = 20
+    avg_win = float(metadata["capture_take_profit_avg_win_jpy"])
+    base_cap = float(metadata["loss_asymmetry_guard_base_max_loss_jpy"])
+    metadata.update(
+        {
+            "positive_rotation_mode": "TP_PROVEN_HARVEST",
+            "positive_rotation_live_ready": True,
+            "capture_take_profit_trades": trades,
+            "capture_take_profit_wins": trades,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_net_jpy": round(trades * avg_win, 4),
+            "capture_take_profit_expectancy_jpy": avg_win,
+            "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+            "loss_asymmetry_guard_relaxed": True,
+            "loss_asymmetry_guard_effective_max_loss_jpy": base_cap,
+            "max_loss_jpy": base_cap,
+            "m15_recovery_micro_positive_rotation_mode": (
+                "TP_PROVEN_HARVEST"
+            ),
+        }
+    )
+    for key in (
+        "positive_rotation_proof_collection_ready",
+        "positive_rotation_proof_collection_mode",
+        "positive_rotation_proof_collection_min_trades",
+        "positive_rotation_proof_collection_target_trades",
+        "positive_rotation_proof_collection_gap_trades",
+    ):
+        metadata.pop(key, None)
+    confidence = _positive_rotation_confidence_metrics(metadata)
+    if confidence is None:
+        raise AssertionError("mature recovery confidence fixture is invalid")
+    metadata.update(confidence)
+    forecast_binding = metadata["forecast_m15_recovery_binding"]
+    lane_binding = build_lane_binding(
+        forecast_binding=forecast_binding,
+        pair=intent.pair,
+        side=intent.side.value,
+        method=intent.market_context.method.value,
+        order_type=intent.order_type.value,
+        entry=intent.entry,
+        tp=intent.tp,
+        sl=intent.sl,
+        producer_units=intent.units,
+        metadata=metadata,
+    )
+    if lane_binding is None:
+        raise AssertionError("mature recovery lane binding is invalid")
+    metadata.update(
+        {
+            "m15_recovery_lane_contract": LANE_CONTRACT,
+            "m15_recovery_lane_binding": lane_binding,
+            "m15_recovery_lane_binding_sha256": lane_binding[
+                "binding_sha256"
+            ],
+        }
+    )
+    return replace(intent, metadata=metadata)
+
+
+def _insert_m15_recovery_exact_tp_outcomes(
+    ledger_path: Path,
+    *,
+    trades: int = 7,
+    entry: float = 1.14524,
+    tp: float = 1.14341,
+    sl: float = 1.14586,
+) -> None:
+    lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+    now = datetime.now(timezone.utc)
+    rows: list[tuple[Any, ...]] = []
+    for index in range(trades):
+        trade_id = f"m15-recovery-tp-trade-{index}"
+        order_id = f"m15-recovery-tp-order-{index}"
+        ts_utc = (now - timedelta(minutes=trades - index)).isoformat()
+        realized = 918.2276
+        rows.extend(
+            (
+                (
+                    f"m15-recovery:gateway:{index}",
+                    ts_utc,
+                    "GATEWAY_ORDER_SENT",
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    None,
+                    "STOP_ORDER",
+                    json.dumps({"type": "STOP_ORDER"}),
+                ),
+                (
+                    f"m15-recovery:fill:{index}",
+                    ts_utc,
+                    "ORDER_FILLED",
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    None,
+                    "STOP_ORDER",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": ts_utc,
+                            "instrument": "EUR_USD",
+                            "orderID": order_id,
+                            "units": "-5",
+                            "reason": "STOP_ORDER",
+                            "tradeOpened": {
+                                "tradeID": trade_id,
+                                "units": "-5",
+                            },
+                        }
+                    ),
+                ),
+                (
+                    f"m15-recovery:close:{index}",
+                    ts_utc,
+                    "TRADE_CLOSED",
+                    lane_id,
+                    f"m15-recovery-tp-close-{index}",
+                    trade_id,
+                    realized,
+                    "TAKE_PROFIT_ORDER",
+                    json.dumps(
+                        {
+                            "type": "ORDER_FILL",
+                            "time": ts_utc,
+                            "reason": "TAKE_PROFIT_ORDER",
+                            "commission": "0.0",
+                            "guaranteedExecutionFee": "0.0",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": trade_id,
+                                    "realizedPL": str(realized),
+                                    "financing": "0.0",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+            )
+        )
+    inserted_at = now.isoformat()
+    with closing(sqlite3.connect(ledger_path)) as conn, conn:
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+                client_order_id, pair, side, units, price, tp, sl,
+                realized_pl_jpy, financing_jpy, exit_reason, oanda_transaction_id,
+                related_transaction_ids_json, raw_json, inserted_at_utc
+            )
+            VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, 'EUR_USD', 'SHORT', 5,
+                    ?, ?, ?, ?, 0.0, ?, NULL, '[]', ?, ?)
+            """,
+            [
+                (
+                    *row[:6],
+                    entry,
+                    tp,
+                    sl,
+                    *row[6:],
+                    inserted_at,
+                )
+                for row in rows
+            ],
+        )
 
 
 def _insert_exact_non_tp_loss(

@@ -59,7 +59,7 @@ export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
 # unit count auto-scales with equity (user 2026-05-08「BaseUnitを決めると、
 # 資産が増えたときに追従できないよ。％で決めないといけなくない？」). 30%
 # per position lands ≈10000u for EUR_USD at NAV 227k — three concurrent
-# positions reach ~90% margin utilization, just inside the 92% cap.
+# positions reach ~90% margin utilization, just inside the 95% cap.
 # Override per shell to dial conservative (15-20) or all-in (40-50).
 export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 # Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.

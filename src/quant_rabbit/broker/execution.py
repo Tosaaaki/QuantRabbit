@@ -36,12 +36,14 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
+    DEFAULT_FORECAST_HISTORY,
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PAIR_CHARTS,
     DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_STRATEGY_PROFILE,
 )
@@ -99,7 +101,9 @@ from quant_rabbit.risk import (
     _loss_asymmetry_tp_proof_collection_shape_allowed,
     _loss_asymmetry_tp_relaxation_shape_allowed,
     _min_lot_test_override_active,
+    m15_recovery_micro_claimed,
     resolve_max_loss_jpy,
+    validate_m15_recovery_micro_live_claim,
 )
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
 from quant_rabbit.self_improvement_guards import (
@@ -118,6 +122,9 @@ from quant_rabbit.strategy.intent_generator import (
     _expired_pending_projection_count,
     _per_trade_risk_from_state,
 )
+from quant_rabbit.strategy.directional_forecaster import (
+    M15_RECOVERY_MICRO_MAX_UNITS,
+)
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -129,6 +136,8 @@ FRESH_ENTRY_MAX_RISK_PCT_NAV = MACRO_EVENT_MAX_RISK_PCT_NAV
 # usable capital-allocation exception. This is an evidence-collection floor,
 # not a market tuning parameter; the all-exit contradiction check still wins.
 CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES = 5
+M15_RECOVERY_EDGE_COLLECTION_BASIS = "M15_RECOVERY_EDGE_COLLECTION"
+M15_RECOVERY_PREBOUNDED_REASON = "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
 FORECAST_S5_SECONDS = 5
 FORECAST_S5_MAX_WINDOW_SECONDS = 15 * 60
 PRE_ENTRY_FORECAST_CYCLE_RE = re.compile(
@@ -256,6 +265,8 @@ class LiveOrderGateway:
         guardian_receipt_consumption_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         broker_snapshot_path: Path | None = DEFAULT_BROKER_SNAPSHOT,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+        forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         execution_ledger_db_path: Path | None = None,
         execution_ledger_report_path: Path | None = None,
         predictive_scout_canonical_ledger_db_path: Path | None = None,
@@ -326,6 +337,13 @@ class LiveOrderGateway:
             if broker_snapshot_path != DEFAULT_BROKER_SNAPSHOT
             or output_path == DEFAULT_LIVE_ORDER_REQUEST
             else output_path.parent / DEFAULT_BROKER_SNAPSHOT.name
+        )
+        self.pair_charts_path = pair_charts_path
+        self.forecast_history_path = (
+            forecast_history_path
+            if forecast_history_path != DEFAULT_FORECAST_HISTORY
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_FORECAST_HISTORY.name
         )
 
     @guardian_tuning_validation_cycle()
@@ -520,7 +538,11 @@ class LiveOrderGateway:
             thesis=intent.thesis,
             action_receipt_path=self.guardian_action_receipt_path,
         )
-        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
+        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(
+            risk_issues,
+            risk=risk,
+            snapshot=snapshot,
+        )
         predictive_scout_issues = predictive_scout_intent_issues(
             intent,
             snapshot=snapshot,
@@ -1439,7 +1461,11 @@ class LiveOrderGateway:
             thesis=intent.thesis,
             action_receipt_path=self.guardian_action_receipt_path,
         )
-        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
+        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(
+            risk_issues,
+            risk=risk,
+            snapshot=snapshot,
+        )
         predictive_scout_issues = predictive_scout_intent_issues(
             intent,
             snapshot=snapshot,
@@ -1838,18 +1864,50 @@ class LiveOrderGateway:
             "geometry_key": list(_intent_geometry_key(intent)),
         }
 
-    def _guardian_receipt_consumption_gateway_issues(self, risk_issues: list[dict[str, Any]]) -> list[dict[str, str]]:
+    def _guardian_receipt_consumption_gateway_issues(
+        self,
+        risk_issues: list[dict[str, Any]],
+        *,
+        risk: Any,
+        snapshot: BrokerSnapshot,
+    ) -> list[dict[str, Any]]:
         if any(
             issue.get("code") in {GUARDIAN_RECEIPT_BLOCK_NEW_ENTRY_CODE, GUARDIAN_WATCHDOG_BLOCK_NEW_ENTRY_CODE}
             for issue in risk_issues
             if isinstance(issue, dict)
         ):
             return []
+        metrics = risk.metrics if isinstance(risk.metrics, RiskMetrics) else None
+        account = snapshot.account
+        current_margin_utilization_pct = None
+        account_payload: dict[str, Any] = {}
+        if account is not None:
+            account_payload = {
+                "nav_jpy": account.nav_jpy,
+                "margin_used_jpy": account.margin_used_jpy,
+                "margin_available_jpy": account.margin_available_jpy,
+            }
+            if account.nav_jpy > 0:
+                current_margin_utilization_pct = (
+                    account.margin_used_jpy / account.nav_jpy * 100.0
+                )
         return guardian_receipt_new_entry_blockers_from_paths(
             watchdog_path=self.qr_trader_run_watchdog_path,
             consumption_path=self.guardian_receipt_consumption_path,
             operator_review_path=self.guardian_receipt_operator_review_path,
             broker_snapshot_path=self.broker_snapshot_path,
+            broker_snapshot_payload={"account": account_payload},
+            allow_p1_margin_warning=True,
+            current_margin_utilization_pct=current_margin_utilization_pct,
+            projected_margin_utilization_pct=(
+                metrics.margin_utilization_after_pct if metrics is not None else None
+            ),
+            max_margin_utilization_pct=(
+                metrics.max_margin_utilization_pct if metrics is not None else None
+            ),
+            margin_available_jpy=(
+                account.margin_available_jpy if account is not None else None
+            ),
         )
 
     def _intent_with_verified_decision_lineage(
@@ -2442,6 +2500,28 @@ class LiveOrderGateway:
             portfolio_position_cap=portfolio_position_cap,
         )
         final_issues.extend(fresh_pending_issues)
+        m15_recovery_early = validate_m15_recovery_micro_live_claim(
+            final_intent,
+            fresh_snapshot,
+            pair_charts_path=self.pair_charts_path,
+            forecast_history_path=self.forecast_history_path,
+            validation_time_utc=fresh_snapshot.fetched_at_utc,
+        )
+        evidence["m15_recovery_micro_recheck"] = m15_recovery_early.evidence
+        final_issues.extend(m15_recovery_early.issues)
+        m15_recovery_prebounded_allowed = bool(
+            m15_recovery_early.applicable and m15_recovery_early.allowed
+        )
+        if (
+            m15_recovery_early.applicable
+            and abs(final_intent.units) > abs(intent.units)
+        ):
+            final_issues.append(
+                RiskIssue(
+                    "M15_RECOVERY_GATEWAY_UPSIZE_FORBIDDEN",
+                    "pre-POST reconciliation may reduce M15 recovery units for current capacity but must never increase producer units",
+                )
+            )
         target_path_final_recheck: dict[str, Any] = {"status": "NOT_APPLICABLE"}
         if _target_path_contract_present(dict(final_intent.metadata or {})):
             raw_remaining_minimum = target_payload.get("remaining_minimum_jpy")
@@ -2567,6 +2647,7 @@ class LiveOrderGateway:
                 self.client,
                 intent=final_intent,
                 snapshot=fresh_snapshot,
+                m15_recovery_prebounded=m15_recovery_prebounded_allowed,
             )
         (
             capital_allocation_numeric_recheck,
@@ -2586,6 +2667,7 @@ class LiveOrderGateway:
             capital_allocation_edge_recheck=(
                 capital_allocation_edge_recheck
             ),
+            m15_recovery_prebounded=m15_recovery_prebounded_allowed,
         )
         if (
             numeric_allocation_recheck_required
@@ -2612,6 +2694,7 @@ class LiveOrderGateway:
                             cumulative_risk_jpy=0.0,
                         )
                     ),
+                    m15_recovery_prebounded=m15_recovery_prebounded_allowed,
                 )
             )
             if price_bound_issue is not None:
@@ -3119,11 +3202,14 @@ class LiveOrderGateway:
         }
         final_bound_snapshot: BrokerSnapshot | None = None
         final_boundary_snapshot: BrokerSnapshot | None = None
+        final_m15_snapshot: BrokerSnapshot | None = None
         final_reserved_intent: OrderIntent | None = None
+        final_numeric_m15_recovery_allowed = False
         try:
             final_boundary_snapshot = self.client.snapshot(
                 (verified_intent.pair,)
             )
+            final_m15_snapshot = final_boundary_snapshot
         except Exception as exc:
             issues.append(
                 RiskIssue(
@@ -3202,6 +3288,18 @@ class LiveOrderGateway:
                     )
                 risk_validation_snapshot = final_boundary_snapshot
                 risk_validation_intent = final_reserved_intent
+                if m15_recovery_micro_claimed(final_reserved_intent):
+                    final_numeric_m15_recovery_allowed = (
+                        validate_m15_recovery_micro_live_claim(
+                            final_reserved_intent,
+                            final_boundary_snapshot,
+                            pair_charts_path=self.pair_charts_path,
+                            forecast_history_path=self.forecast_history_path,
+                            validation_time_utc=(
+                                final_boundary_snapshot.fetched_at_utc
+                            ),
+                        ).allowed
+                    )
                 if numeric_allocation_required:
                     (
                         final_price_bound_proof,
@@ -3241,6 +3339,9 @@ class LiveOrderGateway:
                                 ),
                                 cumulative_risk_jpy=0.0,
                             )
+                        ),
+                        m15_recovery_prebounded=(
+                            final_numeric_m15_recovery_allowed
                         ),
                     )
                     if final_price_bound_issue is not None:
@@ -3591,6 +3692,9 @@ class LiveOrderGateway:
                             self.client,
                             intent=final_reserved_intent,
                             snapshot=final_boundary_snapshot,
+                            m15_recovery_prebounded=(
+                                final_numeric_m15_recovery_allowed
+                            ),
                         )
                     )
                     final_numeric, final_numeric_issue = (
@@ -3611,6 +3715,9 @@ class LiveOrderGateway:
                             capital_allocation_edge_recheck=final_edge,
                             market_entry_slippage_embedded=(
                                 final_bound_snapshot is not None
+                            ),
+                            m15_recovery_prebounded=(
+                                final_numeric_m15_recovery_allowed
                             ),
                         )
                     )
@@ -3696,6 +3803,7 @@ class LiveOrderGateway:
                 observed_snapshot = self.client.snapshot(
                     (verified_intent.pair,)
                 )
+                final_m15_snapshot = observed_snapshot
                 observed_account = observed_snapshot.account
                 if observed_account is None:
                     raise ValueError("post-S5 broker snapshot account is missing")
@@ -3980,6 +4088,119 @@ class LiveOrderGateway:
                 )
             )
 
+        # Re-read the canonical chart artifact at the last gateway boundary.
+        # The producer receipt is never permission by itself: the same exact
+        # pair row, root clock, digest, proof shape, current broker spread, and
+        # bounded units must still agree after all reservations/reproofs.
+        m15_final_evidence: dict[str, Any] = {"status": "NOT_APPLICABLE"}
+        if m15_recovery_micro_claimed(verified_intent):
+            final_recovery_intent = final_reserved_intent or final_intent
+            if final_m15_snapshot is None:
+                issues.append(
+                    RiskIssue(
+                        "FINAL_PRE_POST_M15_RECOVERY_SNAPSHOT_MISSING",
+                        "the final M15 recovery fence has no fresh broker snapshot",
+                    )
+                )
+                m15_final_evidence = {
+                    "status": "BLOCKED",
+                    "blocking_codes": [
+                        "FINAL_PRE_POST_M15_RECOVERY_SNAPSHOT_MISSING"
+                    ],
+                }
+            else:
+                final_recovery = validate_m15_recovery_micro_live_claim(
+                    final_recovery_intent,
+                    final_m15_snapshot,
+                    pair_charts_path=self.pair_charts_path,
+                    forecast_history_path=self.forecast_history_path,
+                    validation_time_utc=final_m15_snapshot.fetched_at_utc,
+                )
+                m15_final_evidence = final_recovery.evidence
+                issues.extend(final_recovery.issues)
+                early_recovery = (
+                    early_reconciliation.get("m15_recovery_micro_recheck")
+                    if isinstance(
+                        early_reconciliation.get(
+                            "m15_recovery_micro_recheck"
+                        ),
+                        dict,
+                    )
+                    else {}
+                )
+                immutable_fields = (
+                    "source_sha256",
+                    "pair_chart_sha256",
+                    "root_generated_at_utc",
+                    "receipt_sha256",
+                    "pair",
+                    "side",
+                    "order_type",
+                    "producer_units",
+                    "forecast_binding_sha256",
+                    "lane_binding_sha256",
+                )
+                source_unchanged = bool(
+                    early_recovery.get("status") == "PASSED"
+                    and final_recovery.allowed
+                    and all(
+                        early_recovery.get(field)
+                        == m15_final_evidence.get(field)
+                        for field in immutable_fields
+                    )
+                )
+                expected_receipt = (
+                    (verified_intent.metadata or {}).get(
+                        "m15_recovery_micro_receipt"
+                    )
+                )
+                final_receipt = (
+                    (final_recovery_intent.metadata or {}).get(
+                        "m15_recovery_micro_receipt"
+                    )
+                )
+                receipt_unchanged = bool(
+                    isinstance(expected_receipt, dict)
+                    and final_receipt == expected_receipt
+                    and m15_final_evidence.get("receipt_sha256")
+                    == expected_receipt.get("receipt_sha256")
+                )
+                units_not_upsized = bool(
+                    final_recovery_intent.units > 0
+                    and final_recovery_intent.units <= verified_intent.units
+                    and final_recovery_intent.units
+                    <= M15_RECOVERY_MICRO_MAX_UNITS
+                )
+                m15_final_evidence = {
+                    **m15_final_evidence,
+                    "early_source_unchanged": source_unchanged,
+                    "receipt_unchanged": receipt_unchanged,
+                    "units_not_upsized": units_not_upsized,
+                    "final_gateway_live_permission_granted": False,
+                }
+                if not source_unchanged:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_M15_RECOVERY_SOURCE_CHANGED",
+                            "the canonical pair_charts artifact, root clock, selected pair row, or early recovery proof changed before POST",
+                        )
+                    )
+                if not receipt_unchanged:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_M15_RECOVERY_RECEIPT_CHANGED",
+                            "the M15 recovery receipt changed after GPT/early risk verification",
+                        )
+                    )
+                if not units_not_upsized:
+                    issues.append(
+                        RiskIssue(
+                            "FINAL_PRE_POST_M15_RECOVERY_UPSIZE_FORBIDDEN",
+                            "the final reserved M15 recovery order exceeds its verified producer units or the 999u ceiling",
+                        )
+                    )
+        evidence["m15_recovery_micro_final_recheck"] = m15_final_evidence
+
         # This is deliberately the final mutable-file read before the caller's
         # broker POST. Rebuild the exact full Guardian scope that GPT reviewed;
         # unrelated routine receipt rotation canonicalizes to the same state,
@@ -4054,6 +4275,11 @@ class LiveOrderGateway:
             "scope": guardian_material.get("scope"),
             "time_state": guardian_material.get("time_state"),
             "global_safety": guardian_global_safety,
+            "p1_margin_warning_observed": guardian_material.get(
+                "p1_margin_warning_observed"
+            )
+            is True,
+            "margin_contract": guardian_material.get("margin_contract"),
             "global_reasons": list(
                 guardian_material.get("global_reasons") or []
             ),
@@ -4132,6 +4358,8 @@ class LiveOrderGateway:
             guardian_receipt_consumption_path=self.guardian_receipt_consumption_path,
             guardian_receipt_operator_review_path=self.guardian_receipt_operator_review_path,
             guardian_receipt_broker_snapshot_path=self.broker_snapshot_path,
+            pair_charts_path=self.pair_charts_path,
+            forecast_history_path=self.forecast_history_path,
         ).validate(intent, snapshot, for_live_send=True)
 
     def _reprice_crossed_passive_limit(
@@ -5268,6 +5496,22 @@ def _scaled_units(
 
 
 def _scaled_units_for_intent(intent: OrderIntent, size_multiple: float) -> tuple[int | None, list[RiskIssue], float]:
+    if m15_recovery_micro_claimed(intent):
+        if not math.isfinite(size_multiple) or size_multiple <= 0:
+            return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")], size_multiple
+        if size_multiple > 1.0 + 1e-9:
+            return (
+                None,
+                [
+                    RiskIssue(
+                        "M15_RECOVERY_GATEWAY_UPSIZE_FORBIDDEN",
+                        "the bounded M15 recovery gateway may downsize for current risk/margin but must never upsize producer units",
+                    )
+                ],
+                size_multiple,
+            )
+        scaled_units, issues = _scaled_units(intent.units, size_multiple)
+        return scaled_units, issues, size_multiple
     if predictive_scout_intent_claimed(intent):
         if not math.isfinite(size_multiple) or size_multiple <= 0:
             return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")], size_multiple
@@ -5425,18 +5669,27 @@ def _basket_size_multiple(
     max_margin_pct = RiskPolicy().max_margin_utilization_pct
     if account is not None and max_margin_pct is not None:
         candidate_margin = max(0.0, float(metrics.estimated_margin_jpy or 0.0))
-        if candidate_margin > 0:
-            margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
-            remaining_margin = margin_room - pending_margin - cumulative_margin_jpy
-            if remaining_margin <= 0:
-                return 0.0, RiskIssue(
-                    "BASKET_MARGIN_CAP_REACHED",
-                    f"basket margin capacity is exhausted: pending {pending_margin:.0f} + batch {cumulative_margin_jpy:.0f} "
-                    f">= room {margin_room:.0f} JPY",
-                )
-            if candidate_margin > remaining_margin > 0:
-                scale = min(scale, _capacity_scale(requested_units, candidate_margin, remaining_margin))
-                reasons.append(f"margin room {remaining_margin:.0f} JPY")
+        margin_room = margin_budget_jpy(
+            account,
+            max_margin_utilization_pct=max_margin_pct,
+        )
+        remaining_margin = margin_room - pending_margin - cumulative_margin_jpy
+        if remaining_margin <= 0:
+            return 0.0, RiskIssue(
+                "BASKET_MARGIN_CAP_REACHED",
+                f"basket margin capacity is exhausted: pending {pending_margin:.0f} + batch {cumulative_margin_jpy:.0f} "
+                f">= room {margin_room:.0f} JPY",
+            )
+        if candidate_margin > remaining_margin:
+            scale = min(
+                scale,
+                _capacity_scale(
+                    requested_units,
+                    candidate_margin,
+                    remaining_margin,
+                ),
+            )
+            reasons.append(f"margin room {remaining_margin:.0f} JPY")
 
     if scale < 1.0:
         return scale, RiskIssue(
@@ -5510,17 +5763,19 @@ def _basket_issues(
     max_margin_pct = RiskPolicy().max_margin_utilization_pct
     if account is not None and max_margin_pct is not None:
         candidate_margin = max(0.0, float(metrics.estimated_margin_jpy or 0.0))
-        if candidate_margin > 0:
-            margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
-            total_margin = pending_margin + cumulative_margin_jpy + candidate_margin
-            if total_margin > margin_room:
-                issues.append(
-                    RiskIssue(
-                        "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
-                        f"basket candidate margin {total_margin:.0f} JPY exceeds remaining {max_margin_pct:.1f}% "
-                        f"margin room {margin_room:.0f} JPY",
-                    )
+        margin_room = margin_budget_jpy(
+            account,
+            max_margin_utilization_pct=max_margin_pct,
+        )
+        total_margin = pending_margin + cumulative_margin_jpy + candidate_margin
+        if margin_room <= 0 or total_margin > margin_room:
+            issues.append(
+                RiskIssue(
+                    "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
+                    f"basket candidate margin {total_margin:.0f} JPY cannot fit remaining {max_margin_pct:.1f}% "
+                    f"margin room {margin_room:.0f} JPY",
                 )
+            )
     return issues
 
 
@@ -6458,6 +6713,7 @@ def _freeze_verified_decision_receipt(
     if edge_basis not in {
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
+        M15_RECOVERY_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     }:
@@ -6651,6 +6907,7 @@ def _verified_capital_allocation_edge_basis(
     return value if value in {
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
+        M15_RECOVERY_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     } else None
@@ -6676,6 +6933,108 @@ def _numeric_predictive_scout_contract(intent: OrderIntent) -> bool:
         and metadata.get("attach_take_profit_on_fill") is True
         and str(metadata.get("tp_execution_mode") or "").strip().upper()
         == "ATTACHED_TECHNICAL_TP"
+    )
+
+
+def _m15_recovery_prebounded_intent_claim(
+    intent: OrderIntent | None,
+) -> bool:
+    """Rebuild the immutable part of the recovery collection contract.
+
+    This helper deliberately does not grant live permission.  The caller must
+    still run ``validate_m15_recovery_micro_live_claim`` against the current
+    chart/history/broker snapshot.  It only prevents a copied edge-basis label
+    from entering the non-MARKET numeric/transport bypass.
+    """
+
+    if not isinstance(intent, OrderIntent):
+        return False
+    metadata = dict(intent.metadata or {})
+    method = (
+        intent.market_context.method.value
+        if intent.market_context is not None
+        and isinstance(intent.market_context.method, TradeMethod)
+        else ""
+    )
+    if (
+        not m15_recovery_micro_claimed(intent)
+        or method != "BREAKOUT_FAILURE"
+        or intent.order_type != OrderType.STOP_ENTRY
+        or intent.units.__class__ is not int
+        or not 1 <= intent.units <= M15_RECOVERY_MICRO_MAX_UNITS
+        or str(metadata.get("positive_rotation_mode") or "").strip().upper()
+        not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}
+        or str(metadata.get("position_intent") or "NEW").strip().upper()
+        == "HEDGE"
+        or metadata.get("attach_take_profit_on_fill") is not True
+        or str(metadata.get("tp_execution_mode") or "").strip().upper()
+        != "ATTACHED_TECHNICAL_TP"
+        or str(metadata.get("tp_target_intent") or "").strip().upper()
+        != "HARVEST"
+        or str(metadata.get("opportunity_mode") or "").strip().upper()
+        != "HARVEST"
+    ):
+        return False
+    try:
+        from quant_rabbit.strategy.intent_generator import (
+            positive_rotation_proof_acquisition_contract,
+        )
+        from quant_rabbit.strategy.m15_recovery_contract import (
+            validate_forecast_binding,
+            validate_lane_binding,
+        )
+
+        receipt = metadata.get("m15_recovery_micro_receipt")
+        forecast_binding = metadata.get("forecast_m15_recovery_binding")
+        lane_binding = metadata.get("m15_recovery_lane_binding")
+        if not all(
+            isinstance(value, dict)
+            for value in (receipt, forecast_binding, lane_binding)
+        ):
+            return False
+        forecast_valid, _ = validate_forecast_binding(
+            forecast_binding,
+            recovery_receipt=receipt,
+            metadata=metadata,
+        )
+        lane_valid, _ = validate_lane_binding(
+            lane_binding,
+            forecast_binding=forecast_binding,
+            pair=intent.pair,
+            side=intent.side.value,
+            method=method,
+            order_type=intent.order_type.value,
+            entry=intent.entry,
+            tp=intent.tp,
+            sl=intent.sl,
+            current_units=intent.units,
+            metadata=metadata,
+        )
+        proof = positive_rotation_proof_acquisition_contract(intent)
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return False
+    mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
+    return bool(
+        forecast_valid
+        and lane_valid
+        and proof.get("positive_rotation_mode") == mode
+        and proof.get("reachable") is True
+        and not proof.get("failed_checks")
+    )
+
+
+def _m15_recovery_edge_collection_prebounded_intent_claim(
+    intent: OrderIntent | None,
+) -> bool:
+    """Bind the distinct collection basis without upgrading it to TP-proven."""
+
+    return bool(
+        _m15_recovery_prebounded_intent_claim(intent)
+        and isinstance(intent, OrderIntent)
+        and str(
+            (intent.metadata or {}).get("positive_rotation_mode") or ""
+        ).strip().upper()
+        == "TP_PROOF_COLLECTION_HARVEST"
     )
 
 
@@ -7043,6 +7402,7 @@ def _forecast_s5_no_touch_proof(
     *,
     intent: OrderIntent,
     snapshot: BrokerSnapshot,
+    m15_recovery_prebounded: bool = False,
 ) -> dict[str, Any]:
     """Prove no TP/target/invalidation touch from forecast emission to quote."""
 
@@ -7055,13 +7415,19 @@ def _forecast_s5_no_touch_proof(
     metadata = dict(intent.metadata or {})
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
     scout = _numeric_predictive_scout_contract(intent)
-    if hedge or scout:
+    m15_recovery = bool(
+        m15_recovery_prebounded
+        and _m15_recovery_prebounded_intent_claim(intent)
+    )
+    if hedge or scout or m15_recovery:
         return finished(
             {
                 "status": "BYPASSED",
                 "reason": (
                     "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
                     if hedge
+                    else M15_RECOVERY_PREBOUNDED_REASON
+                    if m15_recovery
                     else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
                 ),
                 "pair": intent.pair,
@@ -7700,6 +8066,7 @@ def _capital_allocation_market_price_bound(
     reserved_price_bound: Any = None,
     execution_cost_floor: dict[str, Any] | None = None,
     portfolio_loss_remaining_jpy: float | None = None,
+    m15_recovery_prebounded: bool = False,
 ) -> tuple[dict[str, Any], RiskIssue | None]:
     """Derive/reprove the worst MARKET fill allowed by EV and risk truth.
 
@@ -7731,19 +8098,29 @@ def _capital_allocation_market_price_bound(
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
     scout = _numeric_predictive_scout_contract(intent)
     range_tp_prebounded = _range_tp_proven_prebounded_intent_claim(intent)
-    if hedge or scout or range_tp_prebounded:
+    m15_recovery = bool(
+        m15_recovery_prebounded
+        and _m15_recovery_prebounded_intent_claim(intent)
+    )
+    if hedge or scout or range_tp_prebounded or m15_recovery:
         bypass_reason = (
             "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
             if hedge
+            else M15_RECOVERY_PREBOUNDED_REASON
+            if m15_recovery
             else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
             if scout
             else "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT"
         )
-        if range_tp_prebounded and reserved_price_bound is not None:
+        if (range_tp_prebounded or m15_recovery) and reserved_price_bound is not None:
             evidence = finished(
                 {
                     "status": "BLOCKED",
-                    "reason": "RANGE_LIMIT_PRICE_BOUND_FORBIDDEN",
+                    "reason": (
+                        "M15_RECOVERY_PRICE_BOUND_FORBIDDEN"
+                        if m15_recovery
+                        else "RANGE_LIMIT_PRICE_BOUND_FORBIDDEN"
+                    ),
                     "pair": intent.pair,
                     "side": intent.side.value,
                     "price_bound_text": None,
@@ -7751,7 +8128,11 @@ def _capital_allocation_market_price_bound(
             )
             return evidence, RiskIssue(
                 "PRE_POST_GPT_ALLOCATION_PRICE_BOUND_REPROOF_FAILED",
-                "passive RANGE LIMIT must not carry a MARKET priceBound",
+                (
+                    "M15 recovery STOP-ENTRY must not carry a MARKET priceBound"
+                    if m15_recovery
+                    else "passive RANGE LIMIT must not carry a MARKET priceBound"
+                ),
             )
         evidence = finished(
             {
@@ -8369,6 +8750,7 @@ def _capital_allocation_numeric_pre_post_recheck(
     execution_cost_floor: dict[str, Any] | None = None,
     capital_allocation_edge_recheck: dict[str, Any] | None = None,
     market_entry_slippage_embedded: bool = False,
+    m15_recovery_prebounded: bool = False,
 ) -> tuple[dict[str, Any], RiskIssue | None]:
     """Recompute GPT's numeric ceiling from fresh broker truth at base units."""
 
@@ -8406,6 +8788,12 @@ def _capital_allocation_numeric_pre_post_recheck(
     range_tp_claim = _range_tp_proven_prebounded_intent_claim(
         verified_intent
     )
+    m15_recovery_claim = bool(
+        m15_recovery_prebounded
+        and _m15_recovery_prebounded_intent_claim(
+            verified_intent
+        )
+    )
     range_economic_basis = _range_tp_proven_basis_from_fresh_edge(
         verified_intent,
         capital_allocation_edge_recheck,
@@ -8419,6 +8807,18 @@ def _capital_allocation_numeric_pre_post_recheck(
             and final_intent.entry == verified_intent.entry
             and final_intent.tp == verified_intent.tp
             and final_intent.sl == verified_intent.sl
+        )
+    )
+    m15_recovery_geometry_frozen = bool(
+        not m15_recovery_claim
+        or (
+            final_intent.pair == verified_intent.pair
+            and final_intent.side == verified_intent.side
+            and final_intent.order_type == verified_intent.order_type
+            and final_intent.entry == verified_intent.entry
+            and final_intent.tp == verified_intent.tp
+            and final_intent.sl == verified_intent.sl
+            and 0 < abs(final_intent.units) <= abs(verified_intent.units)
         )
     )
     quote = fresh_snapshot.quotes.get(verified_intent.pair)
@@ -8477,15 +8877,20 @@ def _capital_allocation_numeric_pre_post_recheck(
         market_entry_slippage_embedded=(
             market_entry_slippage_embedded
         ),
+        m15_recovery_prebounded=(
+            m15_recovery_claim and m15_recovery_geometry_frozen
+        ),
     )
     proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
         "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
         "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
+        M15_RECOVERY_PREBOUNDED_REASON,
     }
     path_proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
         "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
+        M15_RECOVERY_PREBOUNDED_REASON,
     }
     path_proof = (
         dict(forecast_s5_path_proof)
@@ -8515,6 +8920,7 @@ def _capital_allocation_numeric_pre_post_recheck(
         and float(raw_fresh_max_multiple) > 0.0
         and path_proof_passed
         and range_geometry_frozen
+        and m15_recovery_geometry_frozen
     )
     fresh_unit_cap = (
         math.floor(base_units * float(fresh_max_multiple) + 1e-12)
@@ -8566,6 +8972,8 @@ def _capital_allocation_numeric_pre_post_recheck(
         "range_tp_prebounded_claimed": range_tp_claim,
         "range_tp_geometry_frozen": range_geometry_frozen,
         "range_tp_fresh_edge_basis": range_economic_basis,
+        "m15_recovery_prebounded_claimed": m15_recovery_claim,
+        "m15_recovery_geometry_frozen": m15_recovery_geometry_frozen,
         "forecast_s5_path_proof": path_proof,
         "forecast_s5_path_proof_passed": path_proof_passed,
         "numeric_ceiling": numeric_ceiling,
@@ -8575,6 +8983,11 @@ def _capital_allocation_numeric_pre_post_recheck(
         "proof_sha256": _canonical_json_sha256(material),
     }
     if not numeric_inputs_passed:
+        if m15_recovery_claim and not m15_recovery_geometry_frozen:
+            return evidence, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_M15_RECOVERY_GEOMETRY_MUTATED",
+                "M15 recovery pair/side/vehicle/entry/TP/SL or producer unit ceiling changed after the signed allocation",
+            )
         if not range_geometry_frozen:
             return evidence, RiskIssue(
                 "PRE_POST_GPT_ALLOCATION_RANGE_GEOMETRY_MUTATED",
@@ -8794,20 +9207,35 @@ def _capital_allocation_edge_pre_post_recheck(
         and (claimed_tp_evaluation.get("avg_win_jpy") or 0.0) > 0.0
         and claimed_net_evaluation["blocks_tp_exception"] is not True
     )
+    m15_recovery_collection_intent = (
+        _m15_recovery_edge_collection_prebounded_intent_claim(intent)
+    )
+    m15_recovery_collection_claim = bool(
+        expected_edge_basis == M15_RECOVERY_EDGE_COLLECTION_BASIS
+        and claimed_tp_binding
+        and m15_recovery_collection_intent
+    )
     original_basis = (
         expected_edge_basis
         if expected_edge_basis == "EXACT_VEHICLE_ALL_EXIT_NET"
+        and not m15_recovery_collection_intent
         and claimed_net_binding
         and claimed_net_evaluation["proven"] is True
         else expected_edge_basis
         if expected_edge_basis == "EXACT_VEHICLE_TAKE_PROFIT"
         and claimed_tp_binding
+        and not m15_recovery_collection_intent
+        else expected_edge_basis
+        if m15_recovery_collection_claim
         else "EXACT_VEHICLE_ALL_EXIT_NET"
         if expected_edge_basis is None
+        and not m15_recovery_collection_intent
         and claimed_net_binding
         and claimed_net_evaluation["proven"] is True
         else "EXACT_VEHICLE_TAKE_PROFIT"
-        if expected_edge_basis is None and claimed_tp_binding
+        if expected_edge_basis is None
+        and not m15_recovery_collection_intent
+        and claimed_tp_binding
         else None
     )
     if original_basis is None:
@@ -8876,7 +9304,8 @@ def _capital_allocation_edge_pre_post_recheck(
         execution_cost_floor.get("proof_sha256") or ""
     )
     cost_floor_passed = bool(
-        not execution_cost_floor_required
+        original_basis == M15_RECOVERY_EDGE_COLLECTION_BASIS
+        or not execution_cost_floor_required
         or (
             execution_cost_floor.get("status") == "PASSED"
             and expected_execution_cost_floor_sha256 is not None
@@ -8905,14 +9334,47 @@ def _capital_allocation_edge_pre_post_recheck(
             current_net_contract
             and current_net_evaluation["blocks_tp_exception"] is not True
         )
+        recovery_collection_window = bool(
+            original_basis != M15_RECOVERY_EDGE_COLLECTION_BASIS
+            or (
+                m15_recovery_collection_claim
+                and CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES
+                <= (current_tp_evaluation.get("trades") or 0)
+                < 20
+            )
+        )
+        recovery_same_tp_row = bool(
+            original_basis != M15_RECOVERY_EDGE_COLLECTION_BASIS
+            or all(
+                current_tp_evaluation.get(key)
+                == claimed_tp_evaluation.get(key)
+                for key in (
+                    "trades",
+                    "wins",
+                    "losses",
+                    "net_jpy",
+                    "expectancy_jpy",
+                    "avg_win_jpy",
+                    "avg_loss_jpy",
+                )
+            )
+        )
         passed = bool(
-            current_tp_passed and all_exit_allows_tp and cost_floor_passed
+            current_tp_passed
+            and all_exit_allows_tp
+            and recovery_collection_window
+            and recovery_same_tp_row
+            and cost_floor_passed
         )
         failed_checks = []
         if not current_tp_passed:
             failed_checks.append("EXACT_TP_EDGE_NO_LONGER_PROVEN")
         if not all_exit_allows_tp:
             failed_checks.append("ALL_EXIT_EVIDENCE_SUPPRESSES_TP_EXCEPTION")
+        if not recovery_collection_window:
+            failed_checks.append("M15_RECOVERY_COLLECTION_WINDOW_INVALID")
+        if not recovery_same_tp_row:
+            failed_checks.append("M15_RECOVERY_EXACT_TP_ROW_CHANGED")
     if not cost_floor_passed:
         failed_checks.append("EXECUTION_COST_FLOOR_STALE_OR_MISMATCHED")
     fresh_capture = _fresh_capture_payoff_metrics(ledger_path)
@@ -8961,6 +9423,11 @@ def _tp_proven_pre_post_recheck(
     metadata = dict(intent.metadata or {})
     if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
         return intent, None, {"status": "NOT_APPLICABLE"}, None
+    # A verified recovery lane content-addresses its producer TP proof into the
+    # lane binding.  The fresh ledger read below is a second, pre-POST proof;
+    # it must not rewrite those signed source fields and thereby invalidate the
+    # very lane it just reproved.
+    m15_recovery_bound = _m15_recovery_prebounded_intent_claim(intent)
 
     read_at_utc = datetime.now(timezone.utc).isoformat()
     exact_metrics = _exact_vehicle_take_profit_metrics(ledger_path)
@@ -9030,21 +9497,27 @@ def _tp_proven_pre_post_recheck(
         f"{proof_key[0]}|{proof_key[1]}|{proof_key[2]}|{proof_key[3]}|"
         "TAKE_PROFIT_ORDER"
     )
+    fresh_metadata = {
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": scope_key,
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_vehicle": vehicle,
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:pre_post_exact_vehicle_take_profit"
+        ),
+        "capture_take_profit_trades": tp_trades,
+        "capture_take_profit_wins": _nonnegative_int(proof.get("wins")),
+        "capture_take_profit_losses": tp_losses,
+        "capture_take_profit_expectancy_jpy": tp_expectancy,
+        "capture_take_profit_avg_win_jpy": tp_avg_win,
+        "capture_take_profit_avg_loss_jpy": _finite_float(
+            proof.get("avg_loss_jpy")
+        ),
+    }
+    if not m15_recovery_bound:
+        metadata.update(fresh_metadata)
     metadata.update(
         {
-            "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
-            "capture_take_profit_scope_key": scope_key,
-            "capture_take_profit_exact_vehicle_required": True,
-            "capture_take_profit_vehicle": vehicle,
-            "capture_take_profit_metrics_source": (
-                "data/execution_ledger.db:pre_post_exact_vehicle_take_profit"
-            ),
-            "capture_take_profit_trades": tp_trades,
-            "capture_take_profit_wins": _nonnegative_int(proof.get("wins")),
-            "capture_take_profit_losses": tp_losses,
-            "capture_take_profit_expectancy_jpy": tp_expectancy,
-            "capture_take_profit_avg_win_jpy": tp_avg_win,
-            "capture_take_profit_avg_loss_jpy": _finite_float(proof.get("avg_loss_jpy")),
             "capture_economics_pre_post_read_at_utc": read_at_utc,
             "capture_economics_latest_realized_ts_utc": capture_metrics.get(
                 "latest_realized_ts_utc"
@@ -9064,6 +9537,8 @@ def _tp_proven_pre_post_recheck(
         "tp_expectancy_jpy": tp_expectancy,
         "failed_checks": failed_checks,
         "fresh_capture": capture_metrics,
+        "producer_bound_metadata_preserved": m15_recovery_bound,
+        "fresh_tp_metadata": fresh_metadata if m15_recovery_bound else None,
     }
     if not failed_checks:
         metadata.update(
@@ -9595,7 +10070,71 @@ def _capital_allocation_numeric_proof_is_frozen(
             or "priceBound" in order_request
         ):
             return False
-        if bypass_reason == "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT":
+        if bypass_reason == M15_RECOVERY_PREBOUNDED_REASON:
+            numeric_inputs = (
+                numeric_ceiling.get("inputs")
+                if isinstance(numeric_ceiling.get("inputs"), dict)
+                else {}
+            )
+            expected_metadata = (
+                dict(expected_intent.metadata or {})
+                if expected_intent is not None
+                else {}
+            )
+            expected_lane_binding = (
+                expected_metadata.get("m15_recovery_lane_binding")
+                if isinstance(
+                    expected_metadata.get("m15_recovery_lane_binding"),
+                    dict,
+                )
+                else {}
+            )
+            expected_order_type = (
+                "LIMIT"
+                if expected_intent is not None
+                and expected_intent.order_type == OrderType.LIMIT
+                else "STOP"
+                if expected_intent is not None
+                and expected_intent.order_type == OrderType.STOP_ENTRY
+                else None
+            )
+            expected_price = (
+                _price(expected_intent.pair, expected_intent.entry)
+                if expected_intent is not None
+                and expected_intent.entry is not None
+                else None
+            )
+            if not (
+                expected_intent is not None
+                and _m15_recovery_prebounded_intent_claim(
+                    expected_intent
+                )
+                and expected_order_type is not None
+                and order_request.get("type") == expected_order_type
+                and order_request.get("price") == expected_price
+                and 0 < final_units <= base_units <= M15_RECOVERY_MICRO_MAX_UNITS
+                and abs(expected_intent.units) == final_units
+                and expected_metadata.get("m15_recovery_micro_units")
+                == base_units
+                and expected_lane_binding.get("producer_units") == base_units
+                and evidence.get("m15_recovery_prebounded_claimed") is True
+                and evidence.get("m15_recovery_geometry_frozen") is True
+                and evidence.get("numeric_inputs_passed") is True
+                and evidence.get("final_ratio_passed") is True
+                and evidence.get("fresh_unit_cap_floor") == base_units
+                and evidence.get("fresh_max_multiple") == 1.0
+                and evidence.get("raw_numeric_max_multiple") == 1.0
+                and numeric_ceiling.get("reason")
+                == M15_RECOVERY_PREBOUNDED_REASON
+                and numeric_ceiling.get("max_multiple") == 1.0
+                and numeric_inputs.get("m15_recovery_prebounded") is True
+                and str(path_proof.get("status") or "").upper()
+                == "BYPASSED"
+                and path_proof.get("reason")
+                == M15_RECOVERY_PREBOUNDED_REASON
+            ):
+                return False
+        elif bypass_reason == "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT":
             inputs = (
                 numeric_ceiling.get("inputs")
                 if isinstance(numeric_ceiling.get("inputs"), dict)
@@ -10323,12 +10862,29 @@ def _codex_capital_allocation_live_send_issues(
                 "CODEX market-read provenance must use schema_version 2",
             )
         )
-    if str(provenance.get("capital_allocation_edge_basis") or "") not in {
-        "EXACT_VEHICLE_ALL_EXIT_NET",
-        "EXACT_VEHICLE_TAKE_PROFIT",
-        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
-        "HEDGE_RISK_REDUCTION",
-    }:
+    claimed_edge_basis = str(
+        provenance.get("capital_allocation_edge_basis") or ""
+    ).strip().upper()
+    m15_recovery_collection_intent = (
+        _m15_recovery_edge_collection_prebounded_intent_claim(intent)
+    )
+    edge_basis_allowed = bool(
+        (
+            claimed_edge_basis == M15_RECOVERY_EDGE_COLLECTION_BASIS
+            and m15_recovery_collection_intent
+        )
+        or (
+            not m15_recovery_collection_intent
+            and claimed_edge_basis
+            in {
+                "EXACT_VEHICLE_ALL_EXIT_NET",
+                "EXACT_VEHICLE_TAKE_PROFIT",
+                "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+                "HEDGE_RISK_REDUCTION",
+            }
+        )
+    )
+    if not edge_basis_allowed:
         issues.append(
             RiskIssue(
                 "GPT_CAPITAL_ALLOCATION_EDGE_BASIS_MISSING",

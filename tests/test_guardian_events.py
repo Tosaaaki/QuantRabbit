@@ -11,6 +11,7 @@ import quant_rabbit.guardian_events as guardian_events_module
 from quant_rabbit.analysis.candles import _technical_candles_from_payload
 from quant_rabbit.cli import main
 from quant_rabbit.guardian_events import (
+    CONTRACT_TRIGGER_BUCKETS,
     build_guardian_trigger_contract,
     detect_guardian_events,
     evaluate_guardian_escalation,
@@ -1976,8 +1977,8 @@ class GuardianEventRouterTest(unittest.TestCase):
         first_snapshot["account"].update(
             {
                 "nav_jpy": 295832.6972,
-                "margin_used_jpy": 247934.84,
-                "margin_available_jpy": 48139.8041,
+                "margin_used_jpy": 254416.119592,
+                "margin_available_jpy": 41416.577608,
             }
         )
         first_events = detect_guardian_events(
@@ -1999,6 +2000,21 @@ class GuardianEventRouterTest(unittest.TestCase):
             "MARGIN_RISK_THRESHOLD_CROSSED",
             first_margin[0]["wake_reason_codes"],
         )
+        self.assertEqual(
+            first_margin[0]["details"]["max_margin_utilization_pct"],
+            95.0,
+        )
+        self.assertEqual(first_margin[0]["severity"], "P1")
+        self.assertFalse(
+            first_margin[0]["details"]["fresh_entry_risk_block_active"]
+        )
+        self.assertTrue(
+            first_margin[0]["details"]["fresh_entry_risk_observation_only"]
+        )
+        self.assertEqual(
+            first_margin[0]["details"]["fresh_entry_margin_contract"],
+            "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+        )
 
         later = NOW + timedelta(minutes=5)
         second_snapshot = _snapshot()
@@ -2006,8 +2022,8 @@ class GuardianEventRouterTest(unittest.TestCase):
         second_snapshot["account"].update(
             {
                 "nav_jpy": 291704.3565,
-                "margin_used_jpy": 247870.52,
-                "margin_available_jpy": 44072.7198,
+                "margin_used_jpy": 254366.198868,
+                "margin_available_jpy": 37338.157632,
             }
         )
         second_events = detect_guardian_events(
@@ -2034,6 +2050,193 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertNotIn(
             "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
             suppressed_margin[0].get("wake_reason_codes", []),
+        )
+
+    def test_p0_margin_pressure_manual_only_reports_without_reduction_target(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "currentUnits": "-30000",
+                    "owner": "trader",
+                    "id": "manual-a",
+                    "entry_price": 1.14,
+                    "raw": {
+                        "operator_manual_position": {
+                            "packet_type": "OPERATOR_MANUAL_POSITION",
+                        }
+                    },
+                },
+                {
+                    "pair": "USD_JPY",
+                    "side": "LONG",
+                    "current_units": 10_000,
+                    "owner": "trader",
+                    "tradeID": "manual-b",
+                    "entry_price": 157.0,
+                    "operator_manual_position": {
+                        "packet_type": "OPERATOR_MANUAL_POSITION",
+                    },
+                },
+                {
+                    "pair": "GBP_USD",
+                    "side": "SHORT",
+                    "units": 5_000,
+                    "owner": "operator_manual",
+                    "trade_id": "manual-c",
+                    "entry_price": 1.33,
+                },
+            ]
+        )
+        snapshot["account"].update(
+            {
+                "margin_used_jpy": 190_000.0,
+                "margin_available_jpy": 10_000.0,
+            }
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
+        margin = next(event for event in events if event.event_type == "MARGIN_PRESSURE")
+
+        self.assertEqual(margin.severity, "P0")
+        self.assertEqual(margin.action_hint, "HOLD")
+        self.assertEqual(margin.thesis_state, "EMERGENCY")
+        self.assertTrue(margin.details["operator_manual_only_exposure"])
+        self.assertEqual(
+            margin.details["operator_manual_trade_ids"],
+            ["manual-a", "manual-b", "manual-c"],
+        )
+        self.assertEqual(
+            margin.details["system_reduction_candidate_trade_ids"],
+            [],
+        )
+        self.assertEqual(
+            margin.details["executable_reduction_target_trade_ids"],
+            [],
+        )
+        self.assertTrue(margin.details["fresh_entry_risk_block_active"])
+        self.assertFalse(margin.details["fresh_entry_risk_observation_only"])
+        self.assertEqual(
+            margin.details["fresh_entry_margin_contract"],
+            "QR_GUARDIAN_P0_MARGIN_HARD_CAP_V1",
+        )
+        self.assertEqual(
+            margin.details["fresh_entry_risk_block_reason"],
+            "MARGIN_PRESSURE",
+        )
+
+        contract = build_guardian_trigger_contract(
+            snapshot=snapshot,
+            order_intents={},
+            existing_contract={},
+            now=NOW,
+        )
+        for entry in contract["entries"]:
+            self.assertEqual(entry["owner"], "OPERATOR_MANUAL")
+            for bucket in CONTRACT_TRIGGER_BUCKETS:
+                for trigger in entry[bucket]:
+                    self.assertEqual(trigger["action_hint"], "HOLD")
+
+    def test_system_contract_actions_do_not_survive_operator_manual_transition(self) -> None:
+        system_position = {
+            "pair": "EUR_USD",
+            "side": "SHORT",
+            "units": 3_000,
+            "owner": "trader",
+            "trade_id": "manual-transition-a",
+            "entry_price": 1.14,
+            "thesis": "same durable thesis",
+        }
+        prior = build_guardian_trigger_contract(
+            snapshot=_snapshot(positions=[system_position]),
+            order_intents={},
+            existing_contract={},
+            now=NOW,
+        )
+        self.assertEqual(
+            prior["entries"][0]["invalidation_triggers"][0]["action_hint"],
+            "REDUCE",
+        )
+        manual_position = {
+            **system_position,
+            "owner": "trader",
+            "raw": {
+                "operator_manual_position": {
+                    "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                    "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                    "management_intent": "NO_TOUCH_OBSERVE_ONLY",
+                    "no_live_side_effects": True,
+                    "loss_side_auto_close_allowed": False,
+                    "auto_sl_attach_allowed": False,
+                    "auto_tp_modify_allowed": False,
+                }
+            },
+        }
+
+        current = build_guardian_trigger_contract(
+            snapshot=_snapshot(positions=[manual_position]),
+            order_intents={},
+            existing_contract=prior,
+            now=NOW,
+        )
+        entry = current["entries"][0]
+
+        self.assertEqual(entry["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(entry["ownership_audit"]["status"], "OPERATOR_MANUAL")
+        self.assertIn(
+            "operator_manual_position packet present",
+            entry["ownership_audit"]["evidence"],
+        )
+        for bucket in CONTRACT_TRIGGER_BUCKETS:
+            for trigger in entry[bucket]:
+                self.assertEqual(trigger["owner"], "OPERATOR_MANUAL")
+                self.assertEqual(trigger["action_hint"], "HOLD")
+
+    def test_p0_margin_pressure_mixed_exposure_targets_only_system_positions(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30_000,
+                    "owner": "operator_manual",
+                    "trade_id": "manual-a",
+                    "entry_price": 1.14,
+                },
+                {
+                    "pair": "USD_JPY",
+                    "side": "LONG",
+                    "units": 10_000,
+                    "owner": "trader",
+                    "trade_id": "system-a",
+                    "entry_price": 157.0,
+                },
+            ]
+        )
+        snapshot["account"].update(
+            {
+                "margin_used_jpy": 190_000.0,
+                "margin_available_jpy": 10_000.0,
+            }
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
+        margin = next(event for event in events if event.event_type == "MARGIN_PRESSURE")
+
+        self.assertEqual(margin.action_hint, "REDUCE")
+        self.assertFalse(margin.details["operator_manual_only_exposure"])
+        self.assertEqual(
+            margin.details["system_reduction_candidate_trade_ids"],
+            ["system-a"],
+        )
+        self.assertEqual(
+            margin.details["executable_reduction_target_trade_ids"],
+            ["system-a"],
+        )
+        self.assertNotIn(
+            "manual-a",
+            margin.details["executable_reduction_target_trade_ids"],
         )
 
     def test_current_p0_unknown_exposure_wakes_once_and_same_truth_is_suppressed(self) -> None:
@@ -2853,6 +3056,7 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertEqual(trigger["owner"], "OPERATOR_MANUAL")
             self.assertEqual(trigger["thesis"], "operator manual USD_JPY 162 fade")
             self.assertEqual(trigger["thesis_state"], "WOUNDED")
+            self.assertEqual(trigger["action_hint"], "HOLD")
 
     def test_preserved_trigger_metadata_is_rebound_to_current_parent(self) -> None:
         existing = _contract(

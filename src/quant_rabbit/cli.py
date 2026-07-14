@@ -309,7 +309,7 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # auto-scales with equity (user 2026-05-08「BaseUnitを決めると、資産が
     # 増えたときに追従できないよ。％で決めないといけなくない？」). 30% per
     # position lands ≈10000u for EUR_USD at NAV ~227k — three concurrent
-    # positions reach ~90% margin utilization, just inside the 92% cap.
+    # positions reach ~90% margin utilization, just inside the 95% cap.
     "QR_TRADER_POSITION_NAV_PCT": "30",
     # A losing REVIEW_EXIT must not become an automatic broker close in the
     # SL-free runtime. Loss-side CLOSE requires the explicit gpt_trader Gate A/B

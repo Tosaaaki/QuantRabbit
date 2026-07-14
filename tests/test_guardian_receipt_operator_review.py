@@ -8,6 +8,7 @@ from pathlib import Path
 
 from quant_rabbit.cli import main
 from quant_rabbit.guardian_receipt_consumption import (
+    P1_MARGIN_WARNING_OBSERVED_CODE,
     WATCHDOG_BLOCK_NEW_ENTRY_CODE,
     build_guardian_receipt_consumption,
     guardian_receipt_new_entry_blockers,
@@ -21,6 +22,149 @@ from quant_rabbit.guardian_receipt_operator_review import (
 
 
 class GuardianReceiptOperatorReviewTest(unittest.TestCase):
+    def test_exact_p1_margin_warning_is_observed_below_projected_hard_cap(self) -> None:
+        issue = _p1_margin_warning_issue()
+        watchdog = {
+            "status": "BLOCKED",
+            "runtime_status": "OK",
+            "issue_status": "P1",
+            "severity": "P1",
+            "issues": [issue],
+            "guardian_receipt_issues": [issue],
+        }
+        consumption = {
+            "status": "CURRENT_P1_BLOCKS_ROUTING",
+            "normal_routing_allowed": False,
+            "current_p0_p1_blocks_routing": True,
+            "classifications": [],
+        }
+
+        issues = guardian_receipt_new_entry_blockers(
+            watchdog,
+            consumption,
+            {},
+            {
+                "account": {
+                    "nav_jpy": 100_000.0,
+                    "margin_used_jpy": 92_000.0,
+                    "margin_available_jpy": 8_000.0,
+                }
+            },
+            allow_p1_margin_warning=True,
+            current_margin_utilization_pct=92.0,
+            projected_margin_utilization_pct=94.9,
+            max_margin_utilization_pct=95.0,
+            margin_available_jpy=8_000.0,
+        )
+
+        self.assertEqual(
+            [(item["code"], item["severity"]) for item in issues],
+            [(P1_MARGIN_WARNING_OBSERVED_CODE, "WARN")],
+        )
+        self.assertEqual(issues[0]["projected_margin_utilization_pct"], 94.9)
+
+    def test_p1_margin_warning_does_not_relax_projected_cap_or_p0(self) -> None:
+        for event_severity, current, projected in (
+            ("P1", 92.0, 95.0001),
+            ("P0", 95.0, 95.0),
+        ):
+            with self.subTest(event_severity=event_severity, projected=projected):
+                issue = _p1_margin_warning_issue()
+                issue["severity"] = event_severity
+                issue["event_severity"] = event_severity
+                if event_severity == "P0":
+                    issue["event_details"]["fresh_entry_risk_block_active"] = True
+                    issue["event_details"]["fresh_entry_risk_observation_only"] = False
+                watchdog = {
+                    "status": "BLOCKED",
+                    "runtime_status": "OK",
+                    "issue_status": event_severity,
+                    "severity": event_severity,
+                    "issues": [issue],
+                    "guardian_receipt_issues": [issue],
+                }
+                issues = guardian_receipt_new_entry_blockers(
+                    watchdog,
+                    {
+                        "normal_routing_allowed": False,
+                        "current_p0_p1_blocks_routing": True,
+                        "classifications": [],
+                    },
+                    {},
+                    {"positions": [], "orders": []},
+                    allow_p1_margin_warning=True,
+                    current_margin_utilization_pct=current,
+                    projected_margin_utilization_pct=projected,
+                    max_margin_utilization_pct=95.0,
+                    margin_available_jpy=1_000.0,
+                )
+
+                self.assertTrue(any(item["severity"] == "BLOCK" for item in issues))
+                self.assertNotIn(
+                    P1_MARGIN_WARNING_OBSERVED_CODE,
+                    {item["code"] for item in issues},
+                )
+
+    def test_other_p1_event_remains_blocked(self) -> None:
+        issue = _p1_margin_warning_issue()
+        issue["event_type"] = "THESIS_INVALIDATION"
+        issues = guardian_receipt_new_entry_blockers(
+            {
+                "status": "BLOCKED",
+                "runtime_status": "OK",
+                "issue_status": "P1",
+                "severity": "P1",
+                "issues": [issue],
+                "guardian_receipt_issues": [issue],
+            },
+            {
+                "normal_routing_allowed": False,
+                "current_p0_p1_blocks_routing": True,
+                "classifications": [],
+            },
+            {},
+            {"positions": [], "orders": []},
+            allow_p1_margin_warning=True,
+            current_margin_utilization_pct=92.0,
+            projected_margin_utilization_pct=94.0,
+            max_margin_utilization_pct=95.0,
+            margin_available_jpy=8_000.0,
+        )
+
+        self.assertTrue(any(item["severity"] == "BLOCK" for item in issues))
+
+    def test_p1_margin_warning_with_non_hold_source_action_remains_blocked(self) -> None:
+        issue = _p1_margin_warning_issue()
+        issue["event_action_hint"] = "REDUCE"
+        issues = guardian_receipt_new_entry_blockers(
+            {
+                "status": "BLOCKED",
+                "runtime_status": "OK",
+                "issue_status": "P1",
+                "severity": "P1",
+                "issues": [issue],
+                "guardian_receipt": {"issues": [issue]},
+            },
+            {
+                "normal_routing_allowed": False,
+                "current_p0_p1_blocks_routing": True,
+                "classifications": [],
+            },
+            {},
+            {"account": {"margin_available_jpy": 8_000.0}},
+            allow_p1_margin_warning=True,
+            current_margin_utilization_pct=92.0,
+            projected_margin_utilization_pct=94.0,
+            max_margin_utilization_pct=95.0,
+            margin_available_jpy=8_000.0,
+        )
+
+        self.assertTrue(any(item["severity"] == "BLOCK" for item in issues))
+        self.assertNotIn(
+            P1_MARGIN_WARNING_OBSERVED_CODE,
+            {item["code"] for item in issues},
+        )
+
     def test_missing_operator_review_blocks_reduce_new_entries(self) -> None:
         consumption = {
             "normal_routing_allowed": False,
@@ -798,6 +942,33 @@ def _emergency_hold_receipt_issue() -> dict[str, object]:
         "trade_id": "472987",
         "emergency_or_margin_risk": True,
         "consumed_by_trader": False,
+    }
+
+
+def _p1_margin_warning_issue() -> dict[str, object]:
+    return {
+        "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+        "severity": "P1",
+        "message": "current Guardian P1 margin warning",
+        "receipt_event_id": "margin-p1-event",
+        "receipt_action": "HOLD",
+        "receipt_lifecycle": "EXPIRED",
+        "emergency_or_margin_risk": True,
+        "consumed_by_trader": False,
+        "normal_routing_allowed": False,
+        "event_type": "MARGIN_PRESSURE",
+        "event_severity": "P1",
+        "event_action_hint": "HOLD",
+        "event_details": {
+            "nav_jpy": 100_000.0,
+            "margin_used_jpy": 92_000.0,
+            "margin_available_jpy": 8_000.0,
+            "max_margin_utilization_pct": 95.0,
+            "fresh_entry_risk_block_active": False,
+            "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+            "fresh_entry_risk_observation_only": True,
+            "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+        },
     }
 
 

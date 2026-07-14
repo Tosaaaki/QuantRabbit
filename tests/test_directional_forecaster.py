@@ -19,6 +19,7 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
     TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
     TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+    TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
     TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
 )
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
@@ -27,10 +28,14 @@ from quant_rabbit.strategy.directional_forecaster import (
     FORECAST_D_ANCHOR_HORIZON_MIN,
     FORECAST_EXECUTION_HORIZON_MIN,
     FORECAST_OPERATING_SWING_HORIZON_MIN,
+    M15_RECOVERY_MICRO_CONTRACT,
+    M15_RECOVERY_MICRO_MAX_UNITS,
     TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS,
     TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS,
     _valid_mba_integrity,
+    build_m15_recovery_micro_receipt,
     synthesize_forecast as _synthesize_forecast,
+    validate_m15_recovery_micro_receipt,
 )
 
 
@@ -47,6 +52,7 @@ class _Sig:
     bonus_magnitude: float
     confidence: float
     rationale: str = ""
+    timeframe: str | None = None
 
 
 @dataclass
@@ -1528,6 +1534,165 @@ class TechnicalCandleIntegrityForecastGateTest(unittest.TestCase):
             ],
         }
 
+    @classmethod
+    def _m15_recovery_chart(cls) -> dict[str, object]:
+        chart = cls._chart(recovered=True)
+        aggregate = chart["technical_candle_integrity"]
+        assert isinstance(aggregate, dict)
+        timeframes = aggregate["timeframes"]
+        assert isinstance(timeframes, dict)
+        views = chart["views"]
+        assert isinstance(views, list)
+        view_by_tf = {
+            str(view["granularity"]): view
+            for view in views
+            if isinstance(view, dict)
+        }
+
+        # Preserve a clean producer-owned M5 receipt as the M15 template before
+        # turning both fast timeframes into historical-quarantine warmup state.
+        m15_item = copy.deepcopy(timeframes["M5"])
+        for tf, latest, quarantine_at, cadence in (
+            ("M1", "2026-07-14T00:43:00+00:00", "2026-07-14T00:13:00+00:00", 1),
+            ("M5", "2026-07-14T00:40:00+00:00", "2026-07-14T00:25:00+00:00", 5),
+        ):
+            item = timeframes[tf]
+            assert isinstance(item, dict)
+            cap = item["spread_cap_pips"]
+            item.update(
+                {
+                    "evaluation_status": "BLOCKED",
+                    "forecast_blocking": True,
+                    "codes": [
+                        TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                        TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    ],
+                    "blocking_codes": [TECHNICAL_CANDLE_PROVENANCE_INVALID],
+                    "recent_clean_tail_count": 2,
+                    "recent_clean_coverage_complete": False,
+                    "recent_tail_state": "CLEAN",
+                    "recent_tail_contaminated": False,
+                    "recent_tail_invalid": False,
+                    "contaminated_count": 1,
+                    "malformed_count": 0,
+                    "quarantined_count": 1,
+                    "latest_complete_timestamp_utc": latest,
+                    "latest_clean_timestamp_utc": latest,
+                    "quarantine_details": [
+                        {
+                            "timestamp_utc": quarantine_at,
+                            "code": TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                            "max_spread_pips": float(cap) + 1.0,
+                            "spread_cap_pips": cap,
+                        }
+                    ],
+                }
+            )
+            if tf == "M5":
+                item.update(
+                    {
+                        "requested_count": 42,
+                        "raw_entry_count": 42,
+                        "complete_entry_count": 42,
+                        "clean_count": 41,
+                    }
+                )
+            window = item["quarantine_details_window"]
+            assert isinstance(window, dict)
+            window.update(
+                {
+                    "start_index": 0,
+                    "end_index_exclusive": 1,
+                    "total_count": 1,
+                    "total_code_counts": {
+                        TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 1,
+                        TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                    },
+                    "published_code_counts": {
+                        TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 1,
+                        TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                    },
+                    "omitted_code_counts": {
+                        TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                        TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                    },
+                    "total_timestamped_count": 1,
+                    "published_timestamped_count": 1,
+                    "omitted_timestamped_count": 0,
+                    "latest_timestamp_utc": quarantine_at,
+                }
+            )
+            latest_dt = datetime.fromisoformat(latest)
+            view = view_by_tf[tf]
+            assert isinstance(view, dict)
+            view["indicators"] = {
+                "valid": False,
+                "candles_count": 2,
+                "pip_size": 0.0001,
+                "atr_pips": None,
+            }
+            view["recent_candles"] = [
+                {"t": (latest_dt - timedelta(minutes=cadence)).isoformat()},
+                {"t": latest_dt.isoformat()},
+            ]
+
+        m15_latest = datetime(2026, 7, 14, 0, 30, tzinfo=timezone.utc)
+        m15_item.update(
+            {
+                "granularity": "M15",
+                "payload_granularity": "M15",
+                "spread_evaluation_mode": TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
+                "indicator_warmup_min_clean_count": 1,
+                "latest_complete_timestamp_utc": m15_latest.isoformat(),
+                "latest_clean_timestamp_utc": m15_latest.isoformat(),
+            }
+        )
+        m15_view = {
+            "granularity": "M15",
+            "regime": "TREND_UP",
+            "regime_reading": {"state": "TREND_UP", "confidence": 0.8},
+            "family_scores": {"trend_score": 0.7},
+            "indicators": {
+                "valid": True,
+                "candles_count": 41,
+                "pip_size": 0.0001,
+                "atr_pips": 5.0,
+                "adx_14": 30.0,
+            },
+            "structure": {
+                "swings": [
+                    {"side": "HIGH", "price": 1.1020},
+                    {"side": "LOW", "price": 1.0980},
+                ]
+            },
+            "recent_candles": [
+                {
+                    "t": (
+                        m15_latest
+                        - timedelta(minutes=15 * (29 - index))
+                    ).isoformat()
+                }
+                for index in range(30)
+            ],
+            "candle_integrity": m15_item,
+        }
+        timeframes["M15"] = m15_item
+        views.append(m15_view)
+        aggregate.update(
+            {
+                "evaluation_status": "BLOCKED",
+                "forecast_blocking": True,
+                "codes": [
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                ],
+                "blocking_codes": [TECHNICAL_CANDLE_PROVENANCE_INVALID],
+                "requested_timeframes": ["M1", "M5", "M15"],
+                "evaluated_timeframe_count": 3,
+            }
+        )
+        return chart
+
     @staticmethod
     def _production_forecast(
         chart: dict[str, object],
@@ -1578,6 +1743,328 @@ class TechnicalCandleIntegrityForecastGateTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertGreater(forecast.confidence, 0.0)
         self.assertNotIn(TECHNICAL_CANDLE_SPREAD_CONTAMINATED, forecast.drivers_against)
+
+    def test_m15_recovery_builds_content_addressed_non_live_micro_candidate(self) -> None:
+        chart = self._m15_recovery_chart()
+        now = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[
+                _Sig("UP", 100.0, 1.0, "M15 up detector", timeframe="M15")
+            ],
+            correlation_signals=[],
+            paths=[],
+            spread_pips=0.8,
+            now_utc=now,
+            require_technical_candle_integrity=True,
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        receipt = forecast.m15_recovery_receipt
+        self.assertEqual(receipt["contract"], M15_RECOVERY_MICRO_CONTRACT)
+        self.assertEqual(receipt["geometry_source"]["timeframe"], "M15")
+        self.assertEqual(receipt["sizing"]["max_units"], M15_RECOVERY_MICRO_MAX_UNITS)
+        self.assertEqual(len(receipt["m15_plus_scoring_input_sha256"]), 64)
+        self.assertIs(receipt["live_permission"], False)
+        self.assertIs(receipt["manual_position_mutation_allowed"], False)
+        self.assertTrue(
+            validate_m15_recovery_micro_receipt(
+                receipt,
+                pair_chart=chart,
+                expected_pair="EUR_USD",
+                now_utc=now,
+                current_spread_pips=0.8,
+            )
+        )
+        tampered = copy.deepcopy(receipt)
+        tampered["sizing"]["max_units"] = 1000
+        self.assertFalse(
+            validate_m15_recovery_micro_receipt(
+                tampered,
+                pair_chart=chart,
+                expected_pair="EUR_USD",
+                now_utc=now,
+                current_spread_pips=0.8,
+            )
+        )
+        changed_scoring_chart = copy.deepcopy(chart)
+        changed_views = changed_scoring_chart["views"]
+        assert isinstance(changed_views, list)
+        changed_m15 = next(
+            view
+            for view in changed_views
+            if isinstance(view, dict) and view.get("granularity") == "M15"
+        )
+        changed_m15["regime_reading"] = {
+            "state": "BREAKOUT_PENDING",
+            "confidence": 0.8,
+        }
+        changed_m15["family_scores"] = {
+            "trend_score": 0.7,
+            "breakout_score": 9.99,
+        }
+        self.assertFalse(
+            validate_m15_recovery_micro_receipt(
+                receipt,
+                pair_chart=changed_scoring_chart,
+                expected_pair="EUR_USD",
+                now_utc=now,
+                current_spread_pips=0.8,
+            )
+        )
+
+    def test_m15_recovery_accepts_one_recovered_and_one_rebuilding_fast_tail(self) -> None:
+        chart = self._m15_recovery_chart()
+        clean = self._chart(recovered=True)
+        aggregate = chart["technical_candle_integrity"]
+        clean_aggregate = clean["technical_candle_integrity"]
+        assert isinstance(aggregate, dict)
+        assert isinstance(clean_aggregate, dict)
+        timeframes = aggregate["timeframes"]
+        clean_timeframes = clean_aggregate["timeframes"]
+        assert isinstance(timeframes, dict)
+        assert isinstance(clean_timeframes, dict)
+        timeframes["M1"] = copy.deepcopy(clean_timeframes["M1"])
+        views = chart["views"]
+        clean_views = clean["views"]
+        assert isinstance(views, list)
+        assert isinstance(clean_views, list)
+        clean_m1 = next(
+            view
+            for view in clean_views
+            if isinstance(view, dict) and view.get("granularity") == "M1"
+        )
+        m1_index = next(
+            index
+            for index, view in enumerate(views)
+            if isinstance(view, dict) and view.get("granularity") == "M1"
+        )
+        views[m1_index] = copy.deepcopy(clean_m1)
+
+        receipt = build_m15_recovery_micro_receipt(
+            chart,
+            expected_pair="EUR_USD",
+            now_utc=datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc),
+            current_spread_pips=0.8,
+        )
+
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(
+            receipt["fast_timeframe_receipts"]["M1"]["recovery_state"],
+            "RECOVERED",
+        )
+        self.assertEqual(
+            receipt["fast_timeframe_receipts"]["M5"]["recovery_state"],
+            "RECOVERING",
+        )
+
+    def test_m15_recovery_keeps_raw_direction_when_calibration_is_below_live_floor(self) -> None:
+        chart = self._m15_recovery_chart()
+        now = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+
+        with patch(
+            "quant_rabbit.strategy.directional_forecaster._calibrated_confidence",
+            side_effect=lambda **kwargs: (
+                kwargs["raw_confidence"] * 0.64,
+                0.64,
+            ),
+        ):
+            forecast = synthesize_forecast(
+                pair="EUR_USD",
+                pair_chart=chart,
+                current_price=1.1000,
+                pattern_signals=[],
+                projection_signals=[
+                    _Sig(
+                        "DOWN",
+                        100.0,
+                        1.0,
+                        "M15 downside detector",
+                        timeframe="M15",
+                    )
+                ],
+                correlation_signals=[
+                    _Sig(
+                        "UP",
+                        30.0,
+                        1.0,
+                        "M15 opposing context",
+                        timeframe="M15",
+                    )
+                ],
+                paths=[],
+                spread_pips=0.8,
+                now_utc=now,
+                require_technical_candle_integrity=True,
+            )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertLess(forecast.confidence, 0.55)
+        self.assertEqual(forecast.calibration_multiplier, 0.64)
+        self.assertEqual(
+            forecast.m15_recovery_forecast_evidence["raw_winner"],
+            "DOWN",
+        )
+        self.assertEqual(
+            forecast.m15_recovery_forecast_evidence["final_direction"],
+            "DOWN",
+        )
+
+    def test_m15_recovery_calibration_excludes_mixed_fast_regime(self) -> None:
+        chart = self._m15_recovery_chart()
+        now = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+        observed_regimes: list[tuple[str, object]] = []
+
+        def known_weak(**kwargs):
+            observed_regimes.append(("known_weak", kwargs["regime"]))
+            return None
+
+        def projection_multiplier(**kwargs):
+            observed_regimes.append(("projection", kwargs["regime"]))
+            return 1.0
+
+        def forecast_calibration(**kwargs):
+            observed_regimes.append(("forecast", kwargs["regime"]))
+            return kwargs["raw_confidence"], 1.0
+
+        forecasts = []
+        with (
+            patch(
+                "quant_rabbit.strategy.directional_forecaster._projection_signal_known_weak_reason",
+                side_effect=known_weak,
+            ),
+            patch(
+                "quant_rabbit.strategy.directional_forecaster._projection_signal_calibration_multiplier",
+                side_effect=projection_multiplier,
+            ),
+            patch(
+                "quant_rabbit.strategy.directional_forecaster._calibrated_confidence",
+                side_effect=forecast_calibration,
+            ),
+        ):
+            for raw_regime in ("TREND", "RANGE"):
+                forecasts.append(
+                    synthesize_forecast(
+                        pair="EUR_USD",
+                        pair_chart=copy.deepcopy(chart),
+                        current_price=1.1000,
+                        pattern_signals=[],
+                        projection_signals=[
+                            _Sig(
+                                "DOWN",
+                                100.0,
+                                1.0,
+                                "M15 downside detector",
+                                timeframe="M15",
+                            )
+                        ],
+                        correlation_signals=[],
+                        paths=[],
+                        hit_rates={},
+                        regime=raw_regime,
+                        spread_pips=0.8,
+                        now_utc=now,
+                        require_technical_candle_integrity=True,
+                    )
+                )
+
+        self.assertTrue(observed_regimes)
+        self.assertEqual(
+            {regime for _stage, regime in observed_regimes},
+            {None},
+        )
+        self.assertEqual(
+            [
+                (
+                    forecast.direction,
+                    forecast.confidence,
+                    forecast.raw_confidence,
+                    forecast.calibration_multiplier,
+                    forecast.component_scores,
+                )
+                for forecast in forecasts
+            ],
+            [
+                (
+                    forecasts[0].direction,
+                    forecasts[0].confidence,
+                    forecasts[0].raw_confidence,
+                    forecasts[0].calibration_multiplier,
+                    forecasts[0].component_scores,
+                )
+            ]
+            * 2,
+        )
+
+    def test_m15_recovery_rejects_wide_current_spread_and_malformed_fast_receipt(self) -> None:
+        for mutation, spread in (
+            ("wide_spread", 99.0),
+            ("malformed", 0.8),
+            ("stale_m15", 0.8),
+        ):
+            with self.subTest(mutation=mutation):
+                chart = self._m15_recovery_chart()
+                if mutation == "malformed":
+                    aggregate = chart["technical_candle_integrity"]
+                    assert isinstance(aggregate, dict)
+                    timeframes = aggregate["timeframes"]
+                    assert isinstance(timeframes, dict)
+                    item = timeframes["M1"]
+                    assert isinstance(item, dict)
+                    item["malformed_count"] = 1
+                elif mutation == "stale_m15":
+                    aggregate = chart["technical_candle_integrity"]
+                    assert isinstance(aggregate, dict)
+                    timeframes = aggregate["timeframes"]
+                    assert isinstance(timeframes, dict)
+                    item = timeframes["M15"]
+                    assert isinstance(item, dict)
+                    stale_latest = datetime(
+                        2026, 7, 14, 0, 0, tzinfo=timezone.utc
+                    )
+                    item["latest_complete_timestamp_utc"] = stale_latest.isoformat()
+                    item["latest_clean_timestamp_utc"] = stale_latest.isoformat()
+                    views = chart["views"]
+                    assert isinstance(views, list)
+                    m15_view = next(
+                        view
+                        for view in views
+                        if isinstance(view, dict)
+                        and view.get("granularity") == "M15"
+                    )
+                    m15_view["recent_candles"] = [
+                        {
+                            "t": (
+                                stale_latest
+                                - timedelta(minutes=15 * (29 - index))
+                            ).isoformat()
+                        }
+                        for index in range(30)
+                    ]
+                forecast = synthesize_forecast(
+                    pair="EUR_USD",
+                    pair_chart=chart,
+                    current_price=1.1000,
+                    pattern_signals=[],
+                    projection_signals=[
+                        _Sig("UP", 100.0, 1.0, "M15 up detector", timeframe="M15")
+                    ],
+                    correlation_signals=[],
+                    paths=[],
+                    spread_pips=spread,
+                    now_utc=datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc),
+                    require_technical_candle_integrity=True,
+                )
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.m15_recovery_receipt, {})
+
+    def test_normal_clean_tail_does_not_emit_recovery_receipt(self) -> None:
+        forecast = self._production_forecast(self._chart(recovered=True))
+        self.assertEqual(forecast.m15_recovery_receipt, {})
 
     def test_reordered_0042_then_0013_quarantines_cannot_fake_a_clean_tail(self) -> None:
         chart = self._chart(recovered=True)

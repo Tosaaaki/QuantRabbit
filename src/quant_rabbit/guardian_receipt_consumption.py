@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.guardian_margin_contract import (
+    MARGIN_PRESSURE_WARNING_CAP_FRACTION,
+    P1_MARGIN_WARNING_CONTRACT,
+    exact_p1_margin_warning_source_event,
+    strict_number as _strict_number,
+)
+
 from quant_rabbit.guardian_receipt_operator_review import (
     OPERATOR_REVIEW_CLEARS_RECEIPT,
     OPERATOR_REVIEW_DURABLY_CONSUMED_RECEIPT,
@@ -22,6 +29,7 @@ ISSUE_CODE = "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER"
 OPERATOR_REVIEW_ISSUE_CODE = "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW"
 BLOCK_NEW_ENTRY_CODE = "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
 WATCHDOG_BLOCK_NEW_ENTRY_CODE = "QR_TRADER_RUN_WATCHDOG_BLOCKS_NEW_ENTRY"
+P1_MARGIN_WARNING_OBSERVED_CODE = "GUARDIAN_P1_MARGIN_PRESSURE_OBSERVED"
 
 CONSUMED = "CONSUMED"
 EXPIRED_ACKNOWLEDGED = "EXPIRED_ACKNOWLEDGED"
@@ -228,7 +236,13 @@ def guardian_receipt_new_entry_blockers_from_paths(
     consumption_path: Path | None = None,
     operator_review_path: Path | None = None,
     broker_snapshot_path: Path | None = None,
-) -> list[dict[str, str]]:
+    allow_p1_margin_warning: bool = False,
+    current_margin_utilization_pct: float | None = None,
+    projected_margin_utilization_pct: float | None = None,
+    max_margin_utilization_pct: float | None = None,
+    margin_available_jpy: float | None = None,
+    broker_snapshot_payload: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     watchdog = _read_json_path(_env_path("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH", watchdog_path))
     consumption = load_guardian_receipt_consumption(
         _env_path("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", consumption_path)
@@ -236,8 +250,27 @@ def guardian_receipt_new_entry_blockers_from_paths(
     operator_review = load_guardian_receipt_operator_review(
         _env_path("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", operator_review_path)
     )
-    broker_snapshot = _read_json_path(_env_path("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH", broker_snapshot_path))
-    return guardian_receipt_new_entry_blockers(watchdog, consumption, operator_review, broker_snapshot)
+    broker_snapshot = (
+        broker_snapshot_payload
+        if isinstance(broker_snapshot_payload, dict)
+        else _read_json_path(
+            _env_path(
+                "QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH",
+                broker_snapshot_path,
+            )
+        )
+    )
+    return guardian_receipt_new_entry_blockers(
+        watchdog,
+        consumption,
+        operator_review,
+        broker_snapshot,
+        allow_p1_margin_warning=allow_p1_margin_warning,
+        current_margin_utilization_pct=current_margin_utilization_pct,
+        projected_margin_utilization_pct=projected_margin_utilization_pct,
+        max_margin_utilization_pct=max_margin_utilization_pct,
+        margin_available_jpy=margin_available_jpy,
+    )
 
 
 def guardian_receipt_new_entry_blockers(
@@ -245,7 +278,13 @@ def guardian_receipt_new_entry_blockers(
     consumption_payload: dict[str, Any] | None,
     operator_review_payload: dict[str, Any] | None = None,
     broker_snapshot_payload: dict[str, Any] | None = None,
-) -> list[dict[str, str]]:
+    *,
+    allow_p1_margin_warning: bool = False,
+    current_margin_utilization_pct: float | None = None,
+    projected_margin_utilization_pct: float | None = None,
+    max_margin_utilization_pct: float | None = None,
+    margin_available_jpy: float | None = None,
+) -> list[dict[str, Any]]:
     watchdog = watchdog_payload if isinstance(watchdog_payload, dict) else {}
     consumption = consumption_payload if isinstance(consumption_payload, dict) else {}
     operator_review = operator_review_payload if isinstance(operator_review_payload, dict) else {}
@@ -339,21 +378,23 @@ def guardian_receipt_new_entry_blockers(
                     "classification": "WATCHDOG_P0_P1",
                 }
             )
-            return blockers
-        blockers.append(
-            {
-                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
-                "severity": "BLOCK",
-                "message": (
-                    f"guardian_receipt_consumption status={consumption.get('status')} "
-                    "has normal_routing_allowed=false"
-                ),
-                "receipt_event_id": "",
-                "receipt_action": "",
-                "receipt_lifecycle": "",
-                "classification": str(consumption.get("status") or "NORMAL_ROUTING_FALSE"),
-            }
-        )
+        else:
+            blockers.append(
+                {
+                    "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                    "severity": "BLOCK",
+                    "message": (
+                        f"guardian_receipt_consumption status={consumption.get('status')} "
+                        "has normal_routing_allowed=false"
+                    ),
+                    "receipt_event_id": "",
+                    "receipt_action": "",
+                    "receipt_lifecycle": "",
+                    "classification": str(
+                        consumption.get("status") or "NORMAL_ROUTING_FALSE"
+                    ),
+                }
+            )
     elif watchdog_p0_p1_blocks and not blockers:
         blockers.append(
             {
@@ -369,7 +410,219 @@ def guardian_receipt_new_entry_blockers(
                 "classification": "WATCHDOG_P0_P1",
             }
         )
-    return blockers
+    if not allow_p1_margin_warning:
+        return blockers
+    return _observe_p1_margin_warning_without_relaxing_cap(
+        blockers,
+        watchdog=watchdog,
+        broker_snapshot=broker_snapshot,
+        current_margin_utilization_pct=current_margin_utilization_pct,
+        projected_margin_utilization_pct=projected_margin_utilization_pct,
+        max_margin_utilization_pct=max_margin_utilization_pct,
+        margin_available_jpy=margin_available_jpy,
+    )
+
+
+def _observe_p1_margin_warning_without_relaxing_cap(
+    blockers: list[dict[str, Any]],
+    *,
+    watchdog: dict[str, Any],
+    broker_snapshot: dict[str, Any],
+    current_margin_utilization_pct: float | None,
+    projected_margin_utilization_pct: float | None,
+    max_margin_utilization_pct: float | None,
+    margin_available_jpy: float | None,
+) -> list[dict[str, Any]]:
+    """Turn only an exact Guardian P1 margin warning into visible WARN evidence.
+
+    This is deliberately narrower than "ignore P1".  The watchdog must carry
+    the selected Guardian event type, original event severity, and event
+    details; every current P0/P1 issue must be the same P1 MARGIN_PRESSURE
+    class.  Current broker truth and the candidate's final projected
+    utilization must also remain strictly below the normal hard cap.  Missing
+    semantic or numeric evidence leaves the original BLOCK untouched.
+    """
+
+    eligibility = _p1_margin_warning_eligibility(
+        watchdog,
+        broker_snapshot=broker_snapshot,
+        current_margin_utilization_pct=current_margin_utilization_pct,
+        projected_margin_utilization_pct=projected_margin_utilization_pct,
+        max_margin_utilization_pct=max_margin_utilization_pct,
+        margin_available_jpy=margin_available_jpy,
+    )
+    if eligibility.get("status") != "ELIGIBLE_WARNING_ONLY":
+        return blockers
+
+    event_ids = set(eligibility.get("event_ids") or [])
+    kept: list[dict[str, Any]] = []
+    observed_blocker_codes: list[str] = []
+    for blocker in blockers:
+        code = str(blocker.get("code") or "")
+        event_id = str(blocker.get("receipt_event_id") or "")
+        action = str(blocker.get("receipt_action") or "").upper()
+        generic_watchdog_block = code == WATCHDOG_BLOCK_NEW_ENTRY_CODE and not event_id
+        same_margin_receipt = (
+            code
+            in {
+                BLOCK_NEW_ENTRY_CODE,
+                OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+            }
+            and event_id in event_ids
+            and action in {"HOLD", "NO_ACTION"}
+        )
+        if generic_watchdog_block or same_margin_receipt:
+            observed_blocker_codes.append(code)
+            continue
+        kept.append(blocker)
+
+    if not observed_blocker_codes:
+        return blockers
+    kept.append(
+        {
+            "code": P1_MARGIN_WARNING_OBSERVED_CODE,
+            "severity": "WARN",
+            "message": (
+                "Guardian P1 MARGIN_PRESSURE is observation-only for this candidate: "
+                f"current={eligibility['current_margin_utilization_pct']:.6f}% "
+                f"projected={eligibility['projected_margin_utilization_pct']:.6f}% "
+                f"hard_cap={eligibility['max_margin_utilization_pct']:.6f}%; "
+                "RiskEngine and the final gateway must still enforce the hard cap"
+            ),
+            "contract": P1_MARGIN_WARNING_CONTRACT,
+            "classification": "P1_MARGIN_PRESSURE_WARNING_ONLY",
+            "receipt_event_id": ",".join(sorted(event_ids)),
+            "receipt_action": "HOLD",
+            "receipt_lifecycle": "CURRENT_P1_MARGIN_WARNING",
+            "current_margin_utilization_pct": eligibility[
+                "current_margin_utilization_pct"
+            ],
+            "projected_margin_utilization_pct": eligibility[
+                "projected_margin_utilization_pct"
+            ],
+            "max_margin_utilization_pct": eligibility[
+                "max_margin_utilization_pct"
+            ],
+            "margin_available_jpy": eligibility["margin_available_jpy"],
+            "observed_blocker_codes": sorted(set(observed_blocker_codes)),
+        }
+    )
+    return kept
+
+
+def _p1_margin_warning_eligibility(
+    watchdog: dict[str, Any],
+    *,
+    broker_snapshot: dict[str, Any],
+    current_margin_utilization_pct: float | None,
+    projected_margin_utilization_pct: float | None,
+    max_margin_utilization_pct: float | None,
+    margin_available_jpy: float | None,
+) -> dict[str, Any]:
+    current, available = _current_margin_values(
+        broker_snapshot,
+        current_margin_utilization_pct=current_margin_utilization_pct,
+        margin_available_jpy=margin_available_jpy,
+    )
+    projected = _strict_number(projected_margin_utilization_pct)
+    cap = _strict_number(max_margin_utilization_pct)
+    evidence = {
+        "contract": P1_MARGIN_WARNING_CONTRACT,
+        "status": "NOT_ELIGIBLE",
+        "current_margin_utilization_pct": current,
+        "projected_margin_utilization_pct": projected,
+        "max_margin_utilization_pct": cap,
+        "margin_available_jpy": available,
+        "event_ids": [],
+    }
+    if (
+        current is None
+        or projected is None
+        or cap is None
+        or available is None
+        or cap <= 0.0
+        or cap > 100.0
+        or available <= 0.0
+        or current < cap * MARGIN_PRESSURE_WARNING_CAP_FRACTION
+        or current >= cap
+        or projected > cap
+    ):
+        return evidence
+
+    top_issue_status = str(watchdog.get("issue_status") or "").upper()
+    top_severity = str(watchdog.get("severity") or "").upper()
+    runtime_status = str(watchdog.get("runtime_status") or "").upper()
+    if (
+        runtime_status != "OK"
+        or top_issue_status != "P1"
+        or top_severity != "P1"
+    ):
+        return evidence
+
+    severe_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for issue in [*_watchdog_issues(watchdog), *_watchdog_guardian_issues(watchdog)]:
+        severity = str(issue.get("severity") or "").upper()
+        if severity not in {"P0", "P1"}:
+            continue
+        key = (
+            _issue_code(issue),
+            _issue_event_id(issue),
+            str(issue.get("event_type") or "").upper(),
+            f"{severity}:{str(issue.get('event_action_hint') or '').upper()}",
+        )
+        severe_by_key[key] = issue
+    severe = list(severe_by_key.values())
+    if not severe:
+        return evidence
+
+    event_ids: set[str] = set()
+    for issue in severe:
+        details = issue.get("event_details")
+        if not isinstance(details, dict):
+            return evidence
+        issue_severity = str(issue.get("severity") or "").upper()
+        event_id = _issue_event_id(issue)
+        receipt_action = str(issue.get("receipt_action") or "").upper()
+        if (
+            issue_severity != "P1"
+            or not event_id
+            or receipt_action not in {"HOLD", "NO_ACTION"}
+            or not exact_p1_margin_warning_source_event(
+                event_type=issue.get("event_type"),
+                event_severity=issue.get("event_severity"),
+                action=issue.get("event_action_hint"),
+                details=details,
+                expected_max_margin_utilization_pct=cap,
+            )
+        ):
+            return evidence
+        event_ids.add(event_id)
+    evidence["status"] = "ELIGIBLE_WARNING_ONLY"
+    evidence["event_ids"] = sorted(event_ids)
+    return evidence
+
+
+def _current_margin_values(
+    broker_snapshot: dict[str, Any],
+    *,
+    current_margin_utilization_pct: float | None,
+    margin_available_jpy: float | None,
+) -> tuple[float | None, float | None]:
+    account = (
+        broker_snapshot.get("account")
+        if isinstance(broker_snapshot.get("account"), dict)
+        else broker_snapshot
+    )
+    current = _strict_number(current_margin_utilization_pct)
+    available = _strict_number(margin_available_jpy)
+    if available is None:
+        available = _strict_number(account.get("margin_available_jpy"))
+    if current is None:
+        nav = _strict_number(account.get("nav_jpy"))
+        used = _strict_number(account.get("margin_used_jpy"))
+        if nav is not None and nav > 0.0 and used is not None and used >= 0.0:
+            current = used / nav * 100.0
+    return current, available
 
 
 def _classification_from_issue(
@@ -403,6 +656,15 @@ def _classification_from_issue(
             row.setdefault("receipt_event_id", _issue_event_id(issue))
             row.setdefault("receipt_action", _issue_action(issue))
             row.setdefault("receipt_lifecycle", _issue_lifecycle(issue))
+            row.setdefault("event_type", issue.get("event_type"))
+            row.setdefault("event_severity", issue.get("event_severity"))
+            row.setdefault("event_action_hint", issue.get("event_action_hint"))
+            row.setdefault(
+                "event_details",
+                issue.get("event_details")
+                if isinstance(issue.get("event_details"), dict)
+                else {},
+            )
             row.setdefault("consumed_by_trader", bool(issue.get("consumed_by_trader")))
             row.setdefault("generated_by", generated_by)
             row.setdefault("generated_at_utc", generated_at_utc)
@@ -435,6 +697,14 @@ def _classification_from_issue(
         "receipt_lifecycle": _issue_lifecycle(issue),
         "receipt_identity": issue.get("receipt_identity"),
         "receipt_source_paths": issue.get("receipt_source_paths") if isinstance(issue.get("receipt_source_paths"), list) else [],
+        "event_type": issue.get("event_type"),
+        "event_severity": issue.get("event_severity"),
+        "event_action_hint": issue.get("event_action_hint"),
+        "event_details": (
+            issue.get("event_details")
+            if isinstance(issue.get("event_details"), dict)
+            else {}
+        ),
         "consumed_by_trader": bool(issue.get("consumed_by_trader")),
         "classification": classification,
         "reason": _classification_reason(issue, classification, review_status=review_status),
@@ -625,6 +895,14 @@ def _classification_row_as_issue(row: dict[str, Any]) -> dict[str, Any]:
         "receipt_lifecycle": row.get("receipt_lifecycle"),
         "receipt_identity": row.get("receipt_identity"),
         "receipt_source_paths": row.get("receipt_source_paths") if isinstance(row.get("receipt_source_paths"), list) else [],
+        "event_type": row.get("event_type"),
+        "event_severity": row.get("event_severity"),
+        "event_action_hint": row.get("event_action_hint"),
+        "event_details": (
+            row.get("event_details")
+            if isinstance(row.get("event_details"), dict)
+            else {}
+        ),
         "consumed_by_trader": row.get("consumed_by_trader"),
         "classification": row.get("classification"),
         "normal_routing_allowed": row.get("normal_routing_allowed"),

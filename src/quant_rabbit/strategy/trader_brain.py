@@ -17,6 +17,13 @@ from quant_rabbit.strategy.failed_break_evidence import failed_break_direction
 from quant_rabbit.strategy.regime_family_weighting import (
     verify_regime_family_weighting_receipt,
 )
+from quant_rabbit.strategy.m15_recovery_contract import (
+    FORECAST_CONTRACT as M15_RECOVERY_FORECAST_CONTRACT,
+    LANE_CONTRACT as M15_RECOVERY_LANE_CONTRACT,
+    recovery_claimed as m15_recovery_claimed,
+    validate_forecast_binding as validate_m15_recovery_forecast_binding,
+    validate_lane_binding as validate_m15_recovery_lane_binding,
+)
 
 
 # Short-term momentum thresholds (M1/M5 ADX). Above HIGH the move is live and
@@ -372,6 +379,117 @@ def _verified_regime_family_scoring_context(
         error=None,
     )
 
+
+def _verified_m15_recovery_scoring_context(
+    intent: Mapping[str, Any],
+) -> _RegimeFamilyScoringContext:
+    """Verify the separate M15-only candidate chain used during tail rebuild."""
+
+    metadata = intent.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return _invalid_regime_family_scoring_context(
+            "M15_RECOVERY_METADATA_MISSING"
+        )
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    forecast_binding = metadata.get("forecast_m15_recovery_binding")
+    lane_binding = metadata.get("m15_recovery_lane_binding")
+    if not all(isinstance(item, Mapping) for item in (receipt, forecast_binding, lane_binding)):
+        return _invalid_regime_family_scoring_context(
+            "M15_RECOVERY_BINDING_MISSING"
+        )
+    forecast_valid, forecast_error = validate_m15_recovery_forecast_binding(
+        forecast_binding,
+        recovery_receipt=receipt,
+        metadata=metadata,
+    )
+    market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), Mapping)
+        else {}
+    )
+    method = str(market_context.get("method") or "").strip().upper()
+    current_units = _optional_int(intent.get("units"))
+    if current_units is None:
+        return _invalid_regime_family_scoring_context(
+            "M15_RECOVERY_UNITS_INVALID"
+        )
+    lane_valid, lane_error = validate_m15_recovery_lane_binding(
+        lane_binding,
+        forecast_binding=forecast_binding,
+        pair=str(intent.get("pair") or "").strip().upper(),
+        side=str(intent.get("side") or "").strip().upper(),
+        method=method,
+        order_type=str(intent.get("order_type") or "").strip().upper(),
+        entry=_optional_float(intent.get("entry")),
+        tp=_optional_float(intent.get("tp")),
+        sl=_optional_float(intent.get("sl")),
+        current_units=current_units,
+        metadata=metadata,
+    )
+    expected_direction = (
+        "UP"
+        if str(intent.get("side") or "").strip().upper() == "LONG"
+        else "DOWN"
+        if str(intent.get("side") or "").strip().upper() == "SHORT"
+        else None
+    )
+    if (
+        not forecast_valid
+        or not lane_valid
+        or forecast_binding.get("contract") != M15_RECOVERY_FORECAST_CONTRACT
+        or lane_binding.get("contract") != M15_RECOVERY_LANE_CONTRACT
+        or metadata.get("m15_recovery_micro_risk_revalidated") is not True
+        or metadata.get("m15_recovery_micro_live_permission") is not False
+        or metadata.get("m15_recovery_micro_manual_position_mutation_allowed")
+        is not False
+        or metadata.get("m15_recovery_context_contract")
+        != M15_RECOVERY_FORECAST_CONTRACT
+        or metadata.get("m15_recovery_context_timeframes")
+        != ["M15", "M30", "H1", "H4", "D"]
+        or forecast_binding.get("final_direction") != expected_direction
+        or method != "BREAKOUT_FAILURE"
+        or str(intent.get("order_type") or "").strip().upper()
+        in {"", "MARKET", "MARKET_ORDER"}
+        or str(metadata.get("positive_rotation_mode") or "").strip().upper()
+        not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}
+        or not 1 <= current_units <= 999
+    ):
+        return _invalid_regime_family_scoring_context(
+            forecast_error
+            or lane_error
+            or "M15_RECOVERY_SCORING_CONTRACT_INVALID"
+        )
+    allowed = {"M15", "M30", "H1", "H4", "D"}
+    denominator = sum(weight for tf, weight in MTF_TF_WEIGHTS.items() if tf in allowed)
+    weights = {
+        tf: (weight / denominator if tf in allowed else 0.0)
+        for tf, weight in MTF_TF_WEIGHTS.items()
+    }
+    return _RegimeFamilyScoringContext(
+        valid=True,
+        weights=weights,
+        label="m15_recovery",
+        selected_method=method,
+        receipt_sha256=str(lane_binding.get("binding_sha256") or ""),
+        error=None,
+    )
+
+
+def _fast_timeframe_override_applies(
+    *,
+    recovery_claimed: bool,
+    scoring_context: _RegimeFamilyScoringContext,
+) -> bool:
+    """Keep M1/M5 vetoes outside the verified M15-recovery scope."""
+
+    return not (
+        recovery_claimed
+        and scoring_context.valid
+        and scoring_context.label == "m15_recovery"
+        and scoring_context.weights.get("M1") == 0.0
+        and scoring_context.weights.get("M5") == 0.0
+    )
+
 # TraderBrain spread bands are ranking hints only. The executable spread gate is
 # already enforced earlier by RiskEngine / IntentGenerator and again by
 # LiveOrderGateway against current broker truth; using these bands as another
@@ -646,6 +764,13 @@ def _mtf_confluence_score(
     aligned_lens_count = 0
 
     for tf, weight in weights.items():
+        # A verified forecast receipt can explicitly remove a timeframe from
+        # the scoring authority (M1/M5 are zero-weighted for M15 recovery).
+        # Exclude it before *all* lens work: otherwise its raw aligned-lens
+        # count can still earn the unweighted confluence bonus even though its
+        # weighted score is zero.
+        if weight <= 0.0:
+            continue
         data = tf_data.get(tf)
         if not data:
             continue
@@ -733,9 +858,21 @@ def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
-def _selection_reward_risk_floor(method: str, metadata: dict[str, Any]) -> float:
+def _selection_reward_risk_floor(
+    method: str,
+    metadata: dict[str, Any],
+    *,
+    verified_m15_recovery: bool = False,
+) -> float:
     """Mirror RiskEngine's regime-aware RR floor for lane selection."""
     policy = RiskPolicy()
+    # RiskEngine validates the signed M15 recovery receipt before marking the
+    # lane LIVE_READY and applies the failed-break HARVEST floor.  Do not turn
+    # that same verified 1R geometry back into a generic 1.2R rejection during
+    # ranking.  The caller may set this flag only after the content-addressed
+    # forecast/lane bindings and Risk revalidation marker have all verified.
+    if verified_m15_recovery:
+        return policy.technical_harvest_min_reward_risk
     regime_state = str(metadata.get("regime_state") or "").upper()
     geometry_model = str(metadata.get("geometry_model") or "").upper()
     position_intent = str(metadata.get("position_intent") or "NEW").upper()
@@ -809,6 +946,7 @@ from quant_rabbit.strategy.path_projection import (
 from quant_rabbit.strategy.directional_forecaster import (
     DirectionalForecast,
     ENTRY_CONFIDENCE_MIN,
+    m15_recovery_calibration_regime,
     synthesize_forecast,
 )
 from quant_rabbit.forecast_precision import (
@@ -1160,6 +1298,10 @@ def _pair_forecast(
         return None
     if forecast_cache is not None:
         forecast_cache[pair] = forecast
+    emission_regime_label = m15_recovery_calibration_regime(
+        regime_label,
+        forecast.m15_recovery_receipt,
+    )
     try:
         from quant_rabbit.strategy.projection_ledger import (
             record_directional_forecast as _record_directional_forecast,
@@ -1175,7 +1317,7 @@ def _pair_forecast(
             pair=pair,
             current_price=current_price,
             data_root=effective_data_root,
-            regime_at_emission=regime_label,
+            regime_at_emission=emission_regime_label,
             cycle_id=forecast_cycle_id,
         )
     except Exception:
@@ -1363,6 +1505,11 @@ class LaneScore:
     # whack-a-mole rejecting all 12 lanes.
     estimated_margin_jpy: float | None = None
     hedge_recovery: bool = False
+    # Carries the content-addressed M15 recovery authority through the
+    # post-score basket gates.  Without this marker, C-1/C-2 can reintroduce
+    # unsigned aggregate/M1-M5 advice after `_score_lane` has already verified
+    # the dedicated M15+ receipt.
+    m15_recovery_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -1679,7 +1826,16 @@ class TraderBrain:
         # it cannot enter the SEND_ENTRY candidate set.  Method mismatch is a
         # per-candidate block, so a lower-ranked compatible lane can still be
         # selected instead of failing only after the top lane reaches GPT.
-        regime_family_context = _verified_regime_family_scoring_context(intent)
+        recovery_claimed = m15_recovery_claimed(metadata)
+        regime_family_context = (
+            _verified_m15_recovery_scoring_context(intent)
+            if recovery_claimed
+            else _verified_regime_family_scoring_context(intent)
+        )
+        verified_m15_recovery = not _fast_timeframe_override_applies(
+            recovery_claimed=recovery_claimed,
+            scoring_context=regime_family_context,
+        )
         if status == "LIVE_READY":
             selected_method = regime_family_context.selected_method
             if not regime_family_context.valid:
@@ -1772,15 +1928,39 @@ class TraderBrain:
             if status != "LIVE_READY":
                 score -= 8.0
 
-        method_pressure = int((story.get("methods") or {}).get(method, 0))
-        score += _clamp(method_pressure * 0.25, 0.0, 30.0)
-        if method_pressure:
-            rationale.append(f"market-story method pressure {method_pressure}")
-        themes = dict(story.get("themes") or {})
-        examples = tuple(str(item) for item in story.get("examples", [])[:4])
-        score += _method_theme_score(method, themes, rationale)
-        score += _campaign_score(lane, rationale)
-        score += _narrative_risk_score(pair, direction, method, themes, examples, blockers, rationale, status=status)
+        # A verified recovery already carries one content-addressed M15+
+        # directional forecast.  Market-story, campaign, news, advice and
+        # generic technical overlays are unsigned second forecasts; they may
+        # not re-rank that lane after the receipt has fixed its direction.
+        # Realized economics, risk geometry and explicit hard blocks remain
+        # active below and may only tighten the candidate.
+        method_pressure = (
+            0
+            if verified_m15_recovery
+            else int((story.get("methods") or {}).get(method, 0))
+        )
+        themes = {} if verified_m15_recovery else dict(story.get("themes") or {})
+        examples = (
+            ()
+            if verified_m15_recovery
+            else tuple(str(item) for item in story.get("examples", [])[:4])
+        )
+        if not verified_m15_recovery:
+            score += _clamp(method_pressure * 0.25, 0.0, 30.0)
+            if method_pressure:
+                rationale.append(f"market-story method pressure {method_pressure}")
+            score += _method_theme_score(method, themes, rationale)
+            score += _campaign_score(lane, rationale)
+            score += _narrative_risk_score(
+                pair,
+                direction,
+                method,
+                themes,
+                examples,
+                blockers,
+                rationale,
+                status=status,
+            )
         score += _technical_consensus_score(
             intent=intent,
             method=method,
@@ -1793,62 +1973,64 @@ class TraderBrain:
             loss_cap_jpy=loss_cap_jpy,
             rationale=rationale,
             blockers=blockers,
+            verified_m15_recovery=verified_m15_recovery,
         )
-        score += _direction_conflict_penalty(result, rationale)
-        score += _mtf_confluence_score(
-            intent,
-            rationale,
-            blockers,
-            receipt_weights=(
-                regime_family_context.weights
-                if regime_family_context.valid
-                else None
-            ),
-            receipt_label=(
-                regime_family_context.label
-                if regime_family_context.valid
-                else None
-            ),
-        )
-        score += _technical_harvest_precision_score(
-            intent=intent,
-            pair=pair,
-            direction=direction,
-            order_type=order_type,
-            method=method,
-            entry=entry,
-            tp=tp,
-            sl=sl,
-            status=status,
-            rationale=rationale,
-            blockers=blockers,
-        )
-        score += _bidask_replay_precision_score(
-            intent=intent,
-            pair=pair,
-            direction=direction,
-            order_type=order_type,
-            method=method,
-            entry=entry,
-            tp=tp,
-            sl=sl,
-            status=status,
-            rationale=rationale,
-            blockers=blockers,
-        )
-        score += _oanda_universal_rotation_precision_score(
-            intent=intent,
-            pair=pair,
-            direction=direction,
-            order_type=order_type,
-            method=method,
-            entry=entry,
-            tp=tp,
-            sl=sl,
-            spread_pips=spread_pips,
-            lane_history=lane_history,
-            rationale=rationale,
-        )
+        if not verified_m15_recovery:
+            score += _direction_conflict_penalty(result, rationale)
+            score += _mtf_confluence_score(
+                intent,
+                rationale,
+                blockers,
+                receipt_weights=(
+                    regime_family_context.weights
+                    if regime_family_context.valid
+                    else None
+                ),
+                receipt_label=(
+                    regime_family_context.label
+                    if regime_family_context.valid
+                    else None
+                ),
+            )
+            score += _technical_harvest_precision_score(
+                intent=intent,
+                pair=pair,
+                direction=direction,
+                order_type=order_type,
+                method=method,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                status=status,
+                rationale=rationale,
+                blockers=blockers,
+            )
+            score += _bidask_replay_precision_score(
+                intent=intent,
+                pair=pair,
+                direction=direction,
+                order_type=order_type,
+                method=method,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                status=status,
+                rationale=rationale,
+                blockers=blockers,
+            )
+            score += _oanda_universal_rotation_precision_score(
+                intent=intent,
+                pair=pair,
+                direction=direction,
+                order_type=order_type,
+                method=method,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                spread_pips=spread_pips,
+                lane_history=lane_history,
+                rationale=rationale,
+            )
 
         # Micro override: M1+M5 struct opposite to lane direction trumps the
         # historical-bias score. User 2026-05-08「ミクロのグラデーションでしょ？
@@ -1864,7 +2046,8 @@ class TraderBrain:
         target_up = intent_side == "LONG"
         m1_opp = bool(m1_struct and ((m1_struct.group(2) == "DOWN") == target_up))
         m5_opp = bool(m5_struct and ((m5_struct.group(2) == "DOWN") == target_up))
-        if m1_opp and m5_opp:
+        fast_tf_override_applies = not verified_m15_recovery
+        if fast_tf_override_applies and m1_opp and m5_opp:
             if _range_rail_limit_can_wait_through_micro(intent, method, order_type):
                 score -= 8.0
                 rationale.insert(
@@ -1878,7 +2061,7 @@ class TraderBrain:
                     0,
                     f"micro override: M1+M5 both struct opposite to {intent_side} — entry blocked"
                 )
-        elif m1_opp or m5_opp:
+        elif fast_tf_override_applies and (m1_opp or m5_opp):
             score -= 10.0
             which = "M1" if m1_opp else "M5"
             rationale.append(f"micro caution: {which} struct opposite to {intent_side}")
@@ -1892,7 +2075,12 @@ class TraderBrain:
         pa_side = str(intent.get("side") or "").upper()
         pa_chart = (full_pair_charts or {}).get(pa_pair) if full_pair_charts else None
         pa_price = _current_price_for(pa_pair, snapshot, pa_side) if snapshot else None
-        if pa_chart and pa_price and pa_side in {"LONG", "SHORT"}:
+        if (
+            not verified_m15_recovery
+            and pa_chart
+            and pa_price
+            and pa_side in {"LONG", "SHORT"}
+        ):
             pa_pip_factor = 100.0 if pa_pair.endswith("_JPY") else 10000.0
             pa_delta, pa_reasons = aggregate_price_action_score(
                 pa_chart,
@@ -1981,6 +2169,7 @@ class TraderBrain:
             lane=lane,
             method=method,
             method_pressure=method_pressure,
+            verified_m15_recovery=verified_m15_recovery,
         )
         blockers.extend(gate_blockers)
 
@@ -2007,7 +2196,12 @@ class TraderBrain:
         # new pair can never generate the evidence it lacks. The bonus only
         # applies when status == "LIVE_READY"; lanes that intent_generator
         # already demoted stay demoted.
-        if attack_ranks and status == "LIVE_READY" and lane_id in attack_ranks:
+        if (
+            not verified_m15_recovery
+            and attack_ranks
+            and status == "LIVE_READY"
+            and lane_id in attack_ranks
+        ):
             rank = attack_ranks[lane_id]
             score += ATTACK_ADVICE_PROMOTION_BONUS
             # Insert at the front so the overlay annotation survives the
@@ -2025,7 +2219,11 @@ class TraderBrain:
         # structure confirms the reversal, the historical bias is
         # exactly the WRONG signal — that's the bottom we should buy.
         pair_chart_for_reversal = (full_pair_charts or {}).get(pair) if full_pair_charts else None
-        _reversal_detected = detect_reversal(pair_chart_for_reversal, direction)
+        _reversal_detected = (
+            None
+            if verified_m15_recovery
+            else detect_reversal(pair_chart_for_reversal, direction)
+        )
 
         # Module B: lane history bias — recent (pair, direction, method) P&L
         # adjusts score so a losing-streak setup gets downweighted and a
@@ -2050,7 +2248,7 @@ class TraderBrain:
         # entry direction gets penalty proportional to risk score.
         # STABLE_TREND pair + trend-aligned entry gets a modest reward.
         # Prevents the "buying the top / selling the bottom" pattern.
-        if regime_snapshots:
+        if not verified_m15_recovery and regime_snapshots:
             rg_snap = regime_snapshots.get(pair)
             rg_delta, rg_rationale = regime_score_modifier(rg_snap, direction)
             if rg_delta != 0.0:
@@ -2065,57 +2263,66 @@ class TraderBrain:
         # existing micro-override misses when M1 structure is not enough
         # to veto but the 3-candle slope is still hostile.
         pa_chart_for_timing = (full_pair_charts or {}).get(pair) if full_pair_charts else None
-        timing = check_entry_timing(pa_chart_for_timing, direction)
-        if timing.score_delta != 0.0:
-            score += timing.score_delta
-            if timing.rationale:
-                rationale.insert(0, timing.rationale)
-        if timing.state == "AGAINST" and order_type.upper() == "MARKET":
-            blockers.append(
-                "entry_timing_against_market: last 3 M5 candles oppose MARKET entry; wait for rejection or use pending rail geometry"
+        if fast_tf_override_applies:
+            timing = check_entry_timing(pa_chart_for_timing, direction)
+            if timing.score_delta != 0.0:
+                score += timing.score_delta
+                if timing.rationale:
+                    rationale.insert(0, timing.rationale)
+            if timing.state == "AGAINST" and order_type.upper() == "MARKET":
+                blockers.append(
+                    "entry_timing_against_market: last 3 M5 candles oppose MARKET entry; wait for rejection or use pending rail geometry"
+                )
+                score -= 80.0
+                rationale.insert(
+                    0,
+                    "entry timing hard block: MARKET would execute into the active M5 pullback before rejection confirmation",
+                )
+
+            operating_tf_momentum = check_operating_tf_momentum(pa_chart_for_timing, direction)
+            if operating_tf_momentum.score_delta != 0.0:
+                score += operating_tf_momentum.score_delta
+                if operating_tf_momentum.rationale:
+                    rationale.insert(0, operating_tf_momentum.rationale)
+            if operating_tf_momentum.state == "AGAINST" and status == "LIVE_READY":
+                blockers.append(
+                    "operating_tf_momentum_opposed: M5/M15/M30 trend stack opposes entry; wait for close-confirmed rejection before arming"
+                )
+                score -= 80.0
+                if _range_rail_limit_can_wait_through_micro(intent, method, order_type):
+                    rationale.insert(
+                        0,
+                        "operating TF hard block: range-rail LIMIT would be armed into a live operating-TF impulse before rejection confirmation",
+                    )
+                else:
+                    rationale.insert(
+                        0,
+                        "operating TF hard block: current M5/M15/M30 momentum contradicts entry direction",
+                    )
+
+            technical_opposition = technical_invalidation_confirmation_reason(
+                pa_chart_for_timing,
+                side=direction,
             )
-            score -= 80.0
+            if technical_opposition and status == "LIVE_READY":
+                if order_type.upper() == "MARKET":
+                    blockers.append(
+                        "technical_entry_opposed: operating-timeframe chart/technicals oppose entry; wait for confirmed rejection before sending"
+                    )
+                    score -= 90.0
+                    rationale.insert(0, f"technical hard block: {technical_opposition}")
+                else:
+                    score -= 12.0
+                    rationale.insert(
+                        0,
+                        "technical caution: "
+                        f"{technical_opposition}; pending trigger/retest must confirm before fill",
+                    )
+        else:
             rationale.insert(
                 0,
-                "entry timing hard block: MARKET would execute into the active M5 pullback before rejection confirmation",
+                "verified M15 recovery uses its bound M15+ forecast; ordinary M1/M5 timing rechecks are excluded, unbound generic reversal/pattern/projection/correlation/path and story/news/advice/aggregate technical rescoring are excluded, and producer-bounded units are preserved; current economics/Risk/Gateway may only tighten or reduce for capacity",
             )
-
-        operating_tf_momentum = check_operating_tf_momentum(pa_chart_for_timing, direction)
-        if operating_tf_momentum.score_delta != 0.0:
-            score += operating_tf_momentum.score_delta
-            if operating_tf_momentum.rationale:
-                rationale.insert(0, operating_tf_momentum.rationale)
-        if operating_tf_momentum.state == "AGAINST" and status == "LIVE_READY":
-            blockers.append(
-                "operating_tf_momentum_opposed: M5/M15/M30 trend stack opposes entry; wait for close-confirmed rejection before arming"
-            )
-            score -= 80.0
-            if _range_rail_limit_can_wait_through_micro(intent, method, order_type):
-                rationale.insert(
-                    0,
-                    "operating TF hard block: range-rail LIMIT would be armed into a live operating-TF impulse before rejection confirmation",
-                )
-            else:
-                rationale.insert(
-                    0,
-                    "operating TF hard block: current M5/M15/M30 momentum contradicts entry direction",
-                )
-
-        technical_opposition = technical_invalidation_confirmation_reason(pa_chart_for_timing, side=direction)
-        if technical_opposition and status == "LIVE_READY":
-            if order_type.upper() == "MARKET":
-                blockers.append(
-                    "technical_entry_opposed: operating-timeframe chart/technicals oppose entry; wait for confirmed rejection before sending"
-                )
-                score -= 90.0
-                rationale.insert(0, f"technical hard block: {technical_opposition}")
-            else:
-                score -= 12.0
-                rationale.insert(
-                    0,
-                    "technical caution: "
-                    f"{technical_opposition}; pending trigger/retest must confirm before fill",
-                )
 
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already
@@ -2130,15 +2337,23 @@ class TraderBrain:
             if blocked:
                 blockers.append(block_msg or f"trader_overrides blocked {lane_id}")
                 score -= 100.0
-            ov_delta, ov_rationale = overrides_score_delta(trader_overrides, pair, direction)
-            override_delta = ov_delta
-            if ov_delta != 0.0:
-                if _reversal_detected is None:
-                    score += ov_delta
-                    if ov_rationale:
-                        rationale.insert(0, ov_rationale)
-                elif ov_delta < 0:
-                    rationale.insert(0, f"trader_overrides {ov_delta:+.1f} SUPPRESSED by reversal signal")
+            if not verified_m15_recovery:
+                ov_delta, ov_rationale = overrides_score_delta(
+                    trader_overrides,
+                    pair,
+                    direction,
+                )
+                override_delta = ov_delta
+                if ov_delta != 0.0:
+                    if _reversal_detected is None:
+                        score += ov_delta
+                        if ov_rationale:
+                            rationale.insert(0, ov_rationale)
+                    elif ov_delta < 0:
+                        rationale.insert(
+                            0,
+                            f"trader_overrides {ov_delta:+.1f} SUPPRESSED by reversal signal",
+                        )
 
         if (
             status == "LIVE_READY"
@@ -2161,7 +2376,7 @@ class TraderBrain:
         # bias by news_themes.parse_news_themes. Currency-strength themes,
         # risk-on/off, and explicit pair-specific notes all roll into a
         # single bounded delta. Empty when news_digest.md is missing.
-        if news_themes is not None:
+        if not verified_m15_recovery and news_themes is not None:
             nt_delta, nt_rationale = news_themes.for_pair(pair, direction)
             if nt_delta != 0.0:
                 score += nt_delta
@@ -2188,7 +2403,10 @@ class TraderBrain:
         # half-magnitude penalty. The whole layer is clamped to
         # ±PATTERN_TOTAL_CAP (default 30) so it can't dominate the model.
         # Discretionary "そろそろ感" via existing indicator data.
-        if pair_chart_for_reversal is not None:  # already loaded above
+        if (
+            not verified_m15_recovery
+            and pair_chart_for_reversal is not None
+        ):  # already loaded above
             # COT payload loaded lazily per cycle (per-pair detector
             # filters internally). File-not-present → cot_payload=None
             # → COT shift detector silently skipped.
@@ -2232,7 +2450,11 @@ class TraderBrain:
         # boosted. User directive:「予測の精度を最大限高める」.
         from quant_rabbit.strategy.projection_ledger import record_projections as _record_projections
         effective_data_root = data_root or DEFAULT_TRADER_SETTINGS.parent
-        if pair_chart_for_reversal is not None and snapshot is not None:
+        if (
+            not verified_m15_recovery
+            and pair_chart_for_reversal is not None
+            and snapshot is not None
+        ):
             cur_price_for_proj = _current_price_for(pair, snapshot, direction) if snapshot else None
             _projection_signals = detect_forward_projections(
                 pair_chart_for_reversal,
@@ -2301,7 +2523,11 @@ class TraderBrain:
         # project catch-up direction. Pair-level signal, runs once per
         # pair using the full pair_charts dict (other charts as
         # leaders). Skipped silently when full_pair_charts is sparse.
-        if full_pair_charts and pair in full_pair_charts:
+        if (
+            not verified_m15_recovery
+            and full_pair_charts
+            and pair in full_pair_charts
+        ):
             try:
                 _corr_signals = detect_correlation_lag(
                     pair,
@@ -2320,7 +2546,11 @@ class TraderBrain:
         # continuation. Requires M15 view with liquidity + FVG data.
         # Silent no-op when chart is missing structural artifacts.
         _paths_for_forecast: list = []
-        if pair_chart_for_reversal is not None and snapshot is not None:
+        if (
+            not verified_m15_recovery
+            and pair_chart_for_reversal is not None
+            and snapshot is not None
+        ):
             try:
                 _cur_for_path = _current_price_for(pair, snapshot, direction) if snapshot else None
                 if _cur_for_path is not None:
@@ -2356,7 +2586,26 @@ class TraderBrain:
             # intents include these metadata keys, so live cycles still get the
             # pair-level forecast gate.
             _forecast = None
-            if forecast_context_present:
+            if verified_m15_recovery:
+                recovery_binding = metadata.get("forecast_m15_recovery_binding")
+                if isinstance(recovery_binding, Mapping):
+                    bound_direction = str(
+                        recovery_binding.get("final_direction") or "UNKNOWN"
+                    ).upper()
+                    bound_confidence = _optional_float(
+                        recovery_binding.get("confidence")
+                    )
+                    confidence_text = (
+                        f"{bound_confidence:.2f}"
+                        if bound_confidence is not None
+                        else "unknown"
+                    )
+                    rationale.insert(
+                        0,
+                        "bound M15 recovery forecast "
+                        f"{bound_direction} conf={confidence_text}; generic pair reforecast is not a second authority",
+                    )
+            elif forecast_context_present:
                 _forecast = _pair_forecast(
                     pair=pair,
                     pair_chart=pair_chart_for_reversal,
@@ -2434,7 +2683,11 @@ class TraderBrain:
         # SCOUT units are finalized from current-NAV/SL risk before the GPT
         # packet is built. The score still ranks the candidate, but it must not
         # resize a verifier-bound experiment after that evidence boundary.
-        size_multiple = 1.0 if is_predictive_scout else _size_multiple(adjusted_score, settings)
+        size_multiple = (
+            1.0
+            if is_predictive_scout or verified_m15_recovery
+            else _size_multiple(adjusted_score, settings)
+        )
         if is_predictive_scout:
             rationale.insert(0, "predictive SCOUT preserves its pre-verifier NAV-risk units")
         action = ACTION_SEND_ENTRY if status == "LIVE_READY" and not blockers else ACTION_NO_TRADE
@@ -2464,6 +2717,7 @@ class TraderBrain:
             spread_pips=spread_pips,
             estimated_margin_jpy=estimated_margin_jpy,
             hedge_recovery=metadata.get("hedge_recovery") is True,
+            m15_recovery_verified=verified_m15_recovery,
         )
 
     def _write(self, decision: TraderDecision) -> None:
@@ -2792,92 +3046,99 @@ def _apply_directional_gating(
         new_rationale: list[str] = list(item.rationale)
         new_blockers: list[str] = list(item.blockers)
 
-        # C-2: attack_advice veto for opposite-direction lanes.
-        if majority is not None and majority != direction:
-            new_score = round(new_score - ATTACK_ADVICE_VETO_PENALTY, 2)
+        if item.m15_recovery_verified:
             new_rationale.insert(
                 0,
-                f"attack_advice_veto: top-{ATTACK_ADVICE_PROMOTION_RANK_CEILING} "
-                f"majority={majority}, lane is {direction}, penalty="
-                f"-{ATTACK_ADVICE_VETO_PENALTY:.0f}",
+                "verified M15 recovery preserves its bound direction through unsigned aggregate/advice gating",
             )
+        else:
+            # C-2: attack_advice veto for opposite-direction lanes.
+            if majority is not None and majority != direction:
+                new_score = round(new_score - ATTACK_ADVICE_VETO_PENALTY, 2)
+                new_rationale.insert(
+                    0,
+                    f"attack_advice_veto: top-{ATTACK_ADVICE_PROMOTION_RANK_CEILING} "
+                    f"majority={majority}, lane is {direction}, penalty="
+                    f"-{ATTACK_ADVICE_VETO_PENALTY:.0f}",
+                )
 
-        # C-1: directional gating demotion. Requires BOTH a decisive
-        # pair_charts bias AND attack_advice majority agreement.
-        if bias is not None and majority is not None:
-            bias_balance, bias_gap = bias
-            bias_direction = "LONG" if bias_balance == "LONG_LEAN" else "SHORT"
-            if bias_direction == majority and direction != bias_direction:
-                if item.action == ACTION_SEND_ENTRY:
-                    new_action = ACTION_NO_TRADE
-                    new_blockers.insert(
-                        0,
-                        f"directional_gating_demoted: bias={bias_balance}, "
-                        f"|gap|={bias_gap:.3f} >= {DIRECTIONAL_GATING_STRONG_GAP:.3f}, "
-                        f"advice_majority={majority}",
-                    )
-                else:
-                    new_rationale.insert(
-                        0,
-                        f"directional_gating: bias={bias_balance}, |gap|={bias_gap:.3f}, "
-                        f"advice_majority={majority} (already NO_TRADE)",
-                    )
+            # C-1: directional gating demotion. Requires BOTH a decisive
+            # pair_charts bias AND attack_advice majority agreement.
+            if bias is not None and majority is not None:
+                bias_balance, bias_gap = bias
+                bias_direction = "LONG" if bias_balance == "LONG_LEAN" else "SHORT"
+                if bias_direction == majority and direction != bias_direction:
+                    if item.action == ACTION_SEND_ENTRY:
+                        new_action = ACTION_NO_TRADE
+                        new_blockers.insert(
+                            0,
+                            f"directional_gating_demoted: bias={bias_balance}, "
+                            f"|gap|={bias_gap:.3f} >= {DIRECTIONAL_GATING_STRONG_GAP:.3f}, "
+                            f"advice_majority={majority}",
+                        )
+                    else:
+                        new_rationale.insert(
+                            0,
+                            f"directional_gating: bias={bias_balance}, |gap|={bias_gap:.3f}, "
+                            f"advice_majority={majority} (already NO_TRADE)",
+                        )
 
-        # B — price percentile extremes (2026-05-13). Same-side entry at
-        # the top of 24h distribution (LONG @ >= 0.95) or bottom
-        # (SHORT @ <= 0.05) is statistically late; opposite-side entry
-        # at the same extreme is the mean-reversion side and gets a
-        # smaller bonus.
-        ppct = ctx.get("price_percentile_24h")
-        if ppct is not None:
-            if direction == "LONG":
-                if ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
-                    new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
-                    new_rationale.insert(
-                        0,
-                        f"price_percentile_extreme: LONG @ p24h={ppct:.2f} "
-                        f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
-                        f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
-                    )
-                elif ppct <= PRICE_PERCENTILE_EXTREME_LOW:
-                    new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
-                    new_rationale.insert(
-                        0,
-                        f"price_percentile_mean_rev: LONG @ p24h={ppct:.2f} "
-                        f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
-                        f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
-                    )
-            elif direction == "SHORT":
-                if ppct <= PRICE_PERCENTILE_EXTREME_LOW:
-                    new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
-                    new_rationale.insert(
-                        0,
-                        f"price_percentile_extreme: SHORT @ p24h={ppct:.2f} "
-                        f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
-                        f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
-                    )
-                elif ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
-                    new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
-                    new_rationale.insert(
-                        0,
-                        f"price_percentile_mean_rev: SHORT @ p24h={ppct:.2f} "
-                        f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
-                        f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
-                    )
+        if not item.m15_recovery_verified:
+            # B — price percentile extremes (2026-05-13). Same-side entry at
+            # the top of 24h distribution (LONG @ >= 0.95) or bottom
+            # (SHORT @ <= 0.05) is statistically late; opposite-side entry
+            # at the same extreme is the mean-reversion side and gets a
+            # smaller bonus.
+            ppct = ctx.get("price_percentile_24h")
+            if ppct is not None:
+                if direction == "LONG":
+                    if ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
+                        new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
+                        new_rationale.insert(
+                            0,
+                            f"price_percentile_extreme: LONG @ p24h={ppct:.2f} "
+                            f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
+                            f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
+                        )
+                    elif ppct <= PRICE_PERCENTILE_EXTREME_LOW:
+                        new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
+                        new_rationale.insert(
+                            0,
+                            f"price_percentile_mean_rev: LONG @ p24h={ppct:.2f} "
+                            f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
+                            f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
+                        )
+                elif direction == "SHORT":
+                    if ppct <= PRICE_PERCENTILE_EXTREME_LOW:
+                        new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
+                        new_rationale.insert(
+                            0,
+                            f"price_percentile_extreme: SHORT @ p24h={ppct:.2f} "
+                            f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
+                            f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
+                        )
+                    elif ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
+                        new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
+                        new_rationale.insert(
+                            0,
+                            f"price_percentile_mean_rev: SHORT @ p24h={ppct:.2f} "
+                            f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
+                            f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
+                        )
 
-        # D — multi-TF disagreement (2026-05-13). When M15/M30/H1
-        # regimes do not have a 2/3 majority, the directional picture is
-        # too fractured to chase. Penalise any direction; the operator's
-        # response is to wait for alignment, not to fade.
-        tf_agree = ctx.get("tf_agreement_score")
-        if tf_agree is not None and tf_agree < TF_AGREEMENT_MAJORITY_THRESHOLD:
-            new_score = round(new_score - TF_AGREEMENT_DISAGREEMENT_PENALTY, 2)
-            new_rationale.insert(
-                0,
-                f"tf_disagreement: M15/M30/H1 agreement={tf_agree:.2f} "
-                f"< {TF_AGREEMENT_MAJORITY_THRESHOLD:.2f} "
-                f"(-{TF_AGREEMENT_DISAGREEMENT_PENALTY:.0f})",
-            )
+            # D — multi-TF disagreement (2026-05-13). When M15/M30/H1
+            # regimes do not have a 2/3 majority, the directional picture is
+            # too fractured to chase. Penalise any direction; the operator's
+            # response is to wait for alignment, not to fade.
+            tf_agree = ctx.get("tf_agreement_score")
+            if tf_agree is not None and tf_agree < TF_AGREEMENT_MAJORITY_THRESHOLD:
+                new_score = round(new_score - TF_AGREEMENT_DISAGREEMENT_PENALTY, 2)
+                new_rationale.insert(
+                    0,
+                    f"tf_disagreement: M15/M30/H1 agreement={tf_agree:.2f} "
+                    f"< {TF_AGREEMENT_MAJORITY_THRESHOLD:.2f} "
+                    f"(-{TF_AGREEMENT_DISAGREEMENT_PENALTY:.0f})",
+                )
 
         if (
             new_score == item.score
@@ -3785,6 +4046,7 @@ def _technical_consensus_score(
     loss_cap_jpy: float | None,
     rationale: list[str],
     blockers: list[str],
+    verified_m15_recovery: bool = False,
 ) -> float:
     score = 0.0
     support_ticks = 0
@@ -3859,7 +4121,11 @@ def _technical_consensus_score(
     spread_pips = _optional_float(risk_metrics.get("spread_pips"))
     risk_jpy = _optional_float(risk_metrics.get("risk_jpy"))
     reward_jpy = _optional_float(risk_metrics.get("reward_jpy"))
-    plan_rr = _optional_float(lane.get("target_reward_risk"))
+    plan_rr = (
+        None
+        if verified_m15_recovery
+        else _optional_float(lane.get("target_reward_risk"))
+    )
 
     if reward_risk is None or spread_pips is None or risk_jpy is None:
         score -= 2.5
@@ -3873,7 +4139,11 @@ def _technical_consensus_score(
                 f"range LIMIT is anchored to {metadata.get('range_entry_side')} rail "
                 f"{metadata.get('range_support')}–{metadata.get('range_resistance')}"
             )
-        active_rr_floor = _selection_reward_risk_floor(method, metadata)
+        active_rr_floor = _selection_reward_risk_floor(
+            method,
+            metadata,
+            verified_m15_recovery=verified_m15_recovery,
+        )
         if reward_risk >= active_rr_floor:
             score += 2.0 if reward_risk >= RiskPolicy().min_reward_risk else 0.8
             support_ticks += 1
@@ -3915,8 +4185,15 @@ def _technical_consensus_score(
         if reward_jpy is not None and reward_jpy > risk_jpy:
             score += 1.0
 
-    # Strategy context and campaign contract consistency is third pillar.
-    if method_pressure <= 0 and not story.get("methods"):
+    # Strategy context and campaign story are ordinary-lane inputs only. A
+    # recovery receipt already fixed the direction and selected method from
+    # its authenticated M15+ source; re-reading unsigned story examples here
+    # would create a second forecast authority.
+    if (
+        not verified_m15_recovery
+        and method_pressure <= 0
+        and not story.get("methods")
+    ):
         if status == "LIVE_READY" and support_ticks >= 2 and evidence_ticks >= 1:
             rationale.append("entry can still pass with strong statistical edge despite weak live story pressure")
         elif status == "LIVE_READY":
@@ -3947,16 +4224,17 @@ def _technical_consensus_score(
         elif support_ratio <= 0.2:
             score -= 3.0
 
-    score += _story_fusion_score(
-        method=method,
-        direction=str(intent.get("side") or ""),
-        examples=tuple(str(item) for item in story.get("examples", ())),
-        score=score,
-        rationale=rationale,
-        blockers=blockers,
-        support_ticks=support_ticks,
-        status=status,
-    )
+    if not verified_m15_recovery:
+        score += _story_fusion_score(
+            method=method,
+            direction=str(intent.get("side") or ""),
+            examples=tuple(str(item) for item in story.get("examples", ())),
+            score=score,
+            rationale=rationale,
+            blockers=blockers,
+            support_ticks=support_ticks,
+            status=status,
+        )
 
     return score
 
@@ -4066,6 +4344,7 @@ def _discretionary_gate_check(
     lane: dict[str, Any],
     method: str,
     method_pressure: int,
+    verified_m15_recovery: bool = False,
 ) -> tuple[list[str], list[str]]:
     blockers: list[str] = []
     judgment: list[str] = []
@@ -4157,7 +4436,11 @@ def _discretionary_gate_check(
     else:
         blockers.append("no positive mined or repaired edge evidence")
 
-    if method and method_pressure > 0:
+    if verified_m15_recovery:
+        judgment.append(
+            "verified M15 recovery receipt supplies the selected method; unsigned market-story pressure is excluded"
+        )
+    elif method and method_pressure > 0:
         judgment.append(f"current story contains method pressure for {method}")
     elif method and (
         int(strategy.get("positive_evidence_n") or 0) >= 40

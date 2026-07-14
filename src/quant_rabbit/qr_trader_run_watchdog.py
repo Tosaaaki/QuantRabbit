@@ -1126,6 +1126,10 @@ def _guardian_receipt_status(
         "will_expire_before_next_run": current_summary["will_expire_before_next_run"],
         "dependency_before_next_run": current_summary["dependency_before_next_run"],
         "emergency_or_margin_risk": current_summary["emergency_or_margin_risk"],
+        "event_type": current_summary["event_type"],
+        "event_severity": current_summary["event_severity"],
+        "event_action_hint": current_summary["event_action_hint"],
+        "event_details": current_summary["event_details"],
         "issues": issues,
         "receipts_checked": len(candidates),
         "archive_path": str(archive_dir),
@@ -1247,6 +1251,34 @@ def _guardian_receipt_group_summary(
         and not expired_before_trader_run
     )
     emergency_or_margin = any(_receipt_is_emergency_or_margin_risk(payload) for payload in payloads)
+    event_types = {_guardian_receipt_event_type(payload) for payload in payloads}
+    event_severities = {
+        _guardian_receipt_event_severity(payload) for payload in payloads
+    }
+    event_action_hints = {
+        _guardian_receipt_event_action_hint(payload) for payload in payloads
+    }
+    event_type = (
+        next(iter(event_types))
+        if len(event_types) == 1 and "" not in event_types
+        else None
+    )
+    event_severity = (
+        next(iter(event_severities))
+        if len(event_severities) == 1 and "" not in event_severities
+        else None
+    )
+    event_action_hint = (
+        next(iter(event_action_hints))
+        if len(event_action_hints) == 1 and "" not in event_action_hints
+        else None
+    )
+    event_details = _guardian_receipt_event_details(representative)
+    if any(
+        _guardian_receipt_event_details(payload) != event_details
+        for payload in payloads
+    ):
+        event_details = {}
     return {
         "identity": _guardian_receipt_identity(representative),
         "event_id": event_id,
@@ -1270,6 +1302,10 @@ def _guardian_receipt_group_summary(
         "will_expire_before_next_run": will_expire_before_next_run,
         "dependency_before_next_run": dependency_before_next_run,
         "emergency_or_margin_risk": emergency_or_margin,
+        "event_type": event_type,
+        "event_severity": event_severity,
+        "event_action_hint": event_action_hint,
+        "event_details": event_details,
     }
 
 
@@ -1299,6 +1335,10 @@ def _guardian_receipt_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
                 expired_before_trader_run=summary.get("expired_before_trader_run"),
                 next_run_window_missed=summary.get("next_run_window_missed"),
                 emergency_or_margin_risk=summary.get("emergency_or_margin_risk"),
+                event_type=summary.get("event_type"),
+                event_severity=summary.get("event_severity"),
+                event_action_hint=summary.get("event_action_hint"),
+                event_details=summary.get("event_details"),
                 acknowledgement_classification=classification,
                 normal_routing_allowed=False,
             )
@@ -1328,11 +1368,23 @@ def _guardian_receipt_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
         expired_before_trader_run=summary.get("expired_before_trader_run"),
         next_run_window_missed=summary.get("next_run_window_missed"),
         emergency_or_margin_risk=summary.get("emergency_or_margin_risk"),
+        event_type=summary.get("event_type"),
+        event_severity=summary.get("event_severity"),
+        event_action_hint=summary.get("event_action_hint"),
+        event_details=summary.get("event_details"),
         normal_routing_allowed=False,
     )
 
 
 def _guardian_receipt_issue_severity(summary: dict[str, Any]) -> str:
+    event_type = str(summary.get("event_type") or "").upper()
+    event_severity = str(summary.get("event_severity") or "").upper()
+    if event_type == "MARGIN_PRESSURE":
+        # Preserve the Guardian's source severity.  A P1 margin warning is not
+        # a P0 emergency; missing/unknown source severity remains fail-closed.
+        if event_severity == "P1":
+            return "P1"
+        return "P0"
     if summary.get("emergency_or_margin_risk"):
         return "P0"
     action = str(summary.get("action") or "").upper()
@@ -1399,6 +1451,31 @@ def _guardian_receipt_dedupe_key(receipt: dict[str, Any]) -> str:
     nested = _nested_receipt(receipt)
     selected = _selected_event(receipt)
     return str(nested.get("dedupe_key") or receipt.get("dedupe_key") or selected.get("dedupe_key") or "")
+
+
+def _guardian_receipt_event_type(receipt: dict[str, Any]) -> str:
+    selected = _selected_event(receipt)
+    return str(selected.get("event_type") or receipt.get("event_type") or "").upper()
+
+
+def _guardian_receipt_event_severity(receipt: dict[str, Any]) -> str:
+    selected = _selected_event(receipt)
+    return str(selected.get("severity") or receipt.get("event_severity") or "").upper()
+
+
+def _guardian_receipt_event_action_hint(receipt: dict[str, Any]) -> str:
+    selected = _selected_event(receipt)
+    return str(
+        selected.get("action_hint") or receipt.get("event_action_hint") or ""
+    ).upper()
+
+
+def _guardian_receipt_event_details(receipt: dict[str, Any]) -> dict[str, Any]:
+    selected = _selected_event(receipt)
+    details = selected.get("details")
+    if not isinstance(details, dict):
+        details = receipt.get("event_details")
+    return dict(details) if isinstance(details, dict) else {}
 
 
 def _receipt_is_emergency_or_margin_risk(receipt: dict[str, Any]) -> bool:

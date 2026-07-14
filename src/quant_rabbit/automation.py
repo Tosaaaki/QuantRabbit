@@ -420,6 +420,12 @@ def _passes_gpt_prefilter(score: LaneScore) -> bool:
     """
     if score.status != "LIVE_READY":
         return False
+    # A verified M15-recovery LaneScore is already the result of the bounded
+    # recovery contract.  Its NO_TRADE action can only come from a downstream
+    # risk/control tightening; the ordinary advisory-blocker compatibility
+    # path must never reinterpret that action and resurrect the lane.
+    if score.m15_recovery_verified:
+        return score.action == ACTION_SEND_ENTRY
     if score.action == ACTION_SEND_ENTRY:
         return True
     if score.action != ACTION_NO_TRADE:
@@ -820,11 +826,13 @@ def _lane_ids_excluding_preserved_pending_parents(
     )
 
 
-def _predictive_scout_lane_ids(
+def _prebounded_size_lane_ids(
     intents_path: Path,
     lane_ids: tuple[str, ...],
+    *,
+    verified_m15_recovery_lane_ids: set[str] | None = None,
 ) -> set[str]:
-    """Identify claimed SCOUT lanes from the executable intent artifact."""
+    """Identify lanes whose producer-bound units require a 1.0 multiplier."""
 
     selected = {str(lane_id) for lane_id in lane_ids if str(lane_id)}
     if not selected:
@@ -855,24 +863,32 @@ def _predictive_scout_lane_ids(
             method=str(market_context.get("method") or ""),
         ):
             claimed.add(lane_id)
+    claimed.update(
+        selected.intersection(verified_m15_recovery_lane_ids or set())
+    )
     return claimed
 
 
-def _fixed_predictive_scout_size_plan(
+def _fixed_prebounded_size_plan(
     *,
     intents_path: Path,
     lane_ids: tuple[str, ...],
     size_multiples: dict[str, float],
     selected_lane_id: str | None,
     selected_lane_size_multiple: float | None,
+    verified_m15_recovery_lane_ids: set[str] | None = None,
 ) -> tuple[dict[str, float], float | None]:
     """Lock post-intent multipliers without forcing a fixed unit count.
 
-    Predictive SCOUT units are already derived from current NAV and canonical
-    SL risk in intent generation.  A 1.0 multiplier preserves those exact
-    verifier-bound units at the final AI-to-gateway boundary.
+    Predictive SCOUT and verified M15-recovery units are already derived from
+    current NAV/risk/capacity in intent generation. A 1.0 multiplier preserves
+    those exact verifier-bound units at the final AI-to-gateway boundary.
     """
-    claimed = _predictive_scout_lane_ids(intents_path, lane_ids)
+    claimed = _prebounded_size_lane_ids(
+        intents_path,
+        lane_ids,
+        verified_m15_recovery_lane_ids=verified_m15_recovery_lane_ids,
+    )
     if not claimed:
         return dict(size_multiples), selected_lane_size_multiple
     normalized = {
@@ -999,6 +1015,8 @@ def _attack_sidecar_path(
 def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool = False) -> bool:
     if _passes_gpt_prefilter(score):
         return True
+    if score.m15_recovery_verified:
+        return False
     if not allow_existing_pending:
         return False
     if score.status != "LIVE_READY" or score.action != ACTION_NO_TRADE:
@@ -2205,7 +2223,7 @@ class AutoTradeCycle:
                                     gpt_summary.capital_allocation_size_multiple
                                 )
                             basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
-                        basket_size_multiples, _ = _fixed_predictive_scout_size_plan(
+                        basket_size_multiples, _ = _fixed_prebounded_size_plan(
                             intents_path=self.intents_path,
                             lane_ids=basket_lane_ids,
                             size_multiples=basket_size_multiples,
@@ -2213,6 +2231,11 @@ class AutoTradeCycle:
                             selected_lane_size_multiple=(
                                 gpt_summary.capital_allocation_size_multiple
                             ),
+                            verified_m15_recovery_lane_ids={
+                                score.lane_id
+                                for score in decision.scores
+                                if score.m15_recovery_verified
+                            },
                         )
                         order_gateway = LiveOrderGateway(
                             client=self.client,
@@ -2456,7 +2479,7 @@ class AutoTradeCycle:
                             allow_existing_pending=True,
                             margin_room_jpy=_basket_margin_room_jpy(snapshot),
                         )
-                        basket_size_multiples, _ = _fixed_predictive_scout_size_plan(
+                        basket_size_multiples, _ = _fixed_prebounded_size_plan(
                             intents_path=self.intents_path,
                             lane_ids=basket_lane_ids,
                             size_multiples=basket_size_multiples,
@@ -2464,6 +2487,11 @@ class AutoTradeCycle:
                             selected_lane_size_multiple=(
                                 gpt_summary.capital_allocation_size_multiple
                             ),
+                            verified_m15_recovery_lane_ids={
+                                score.lane_id
+                                for score in decision.scores
+                                if score.m15_recovery_verified
+                            },
                         )
                         if not basket_lane_ids:
                             summary = AutoTradeCycleSummary(
@@ -3293,12 +3321,17 @@ class AutoTradeCycle:
         # external TraderDecision created before TraderBrain learned the
         # post-intent multiplier invariant.
         basket_size_multiples, selected_lane_size_multiple = (
-            _fixed_predictive_scout_size_plan(
+            _fixed_prebounded_size_plan(
                 intents_path=self.intents_path,
                 lane_ids=basket_lane_ids,
                 size_multiples=basket_size_multiples,
                 selected_lane_id=selected_lane_id,
                 selected_lane_size_multiple=selected_lane_size_multiple,
+                verified_m15_recovery_lane_ids={
+                    score.lane_id
+                    for score in decision.scores
+                    if score.m15_recovery_verified
+                },
             )
         )
 

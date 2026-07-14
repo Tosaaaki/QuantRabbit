@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import math
+import hashlib
+import json
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -74,6 +77,18 @@ from .operator_manual import (
     operator_manual_jpy_add_block_issue,
     operator_manual_same_theme_add_block_issue,
 )
+from .paths import DEFAULT_FORECAST_HISTORY, DEFAULT_PAIR_CHARTS
+from .strategy.m15_recovery_contract import (
+    RECOVERY_ORDER_TYPE as M15_RECOVERY_ORDER_TYPE,
+    recovery_claimed as m15_recovery_claimed,
+)
+
+
+_M15_RECOVERY_HISTORY_CACHE_MAX_ENTRIES = 32
+_M15_RECOVERY_HISTORY_CACHE: dict[
+    tuple[str, str, str, tuple[int, ...]], dict
+] = {}
+_M15_RECOVERY_HISTORY_CACHE_LOCK = threading.Lock()
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
 # 4% initial margin. Recent broker truth confirms the same scale: USD_JPY
@@ -1991,6 +2006,524 @@ def _range_forecast_tp_proven_breakout_failure_allowed(
 
 
 @dataclass(frozen=True)
+class M15RecoveryMicroValidation:
+    """Independent risk/gateway result for the bounded M15 recovery claim."""
+
+    applicable: bool
+    allowed: bool
+    evidence: dict
+    issues: tuple[RiskIssue, ...] = ()
+
+
+def m15_recovery_micro_claimed(intent: OrderIntent) -> bool:
+    """Detect the recovery contract without changing ordinary intent behavior."""
+
+    metadata = intent.metadata if isinstance(intent.metadata, dict) else {}
+    return m15_recovery_claimed(metadata)
+
+
+def _strict_aware_utc_iso(value: object) -> datetime | None:
+    if value.__class__ is not str or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _m15_recovery_pair_chart_from_path(
+    pair_charts_path: Path,
+    *,
+    expected_pair: str,
+) -> tuple[dict | None, dict, RiskIssue | None]:
+    """Read one canonical artifact and bind its root clock into one exact row."""
+
+    try:
+        raw = pair_charts_path.read_bytes()
+        payload = json.loads(
+            raw,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant {value}")
+            ),
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return None, {"status": "BLOCKED", "path": str(pair_charts_path)}, RiskIssue(
+            "M15_RECOVERY_PAIR_CHARTS_UNREADABLE",
+            "M15 recovery requires the current canonical pair_charts.json; "
+            f"the artifact could not be read exactly: {type(exc).__name__}: {exc}",
+        )
+    source_sha256 = hashlib.sha256(raw).hexdigest()
+    generated_at_raw = payload.get("generated_at_utc") if isinstance(payload, dict) else None
+    generated_at = _strict_aware_utc_iso(generated_at_raw)
+    charts = payload.get("charts") if isinstance(payload, dict) else None
+    if generated_at is None or not isinstance(charts, list):
+        return None, {
+            "status": "BLOCKED",
+            "path": str(pair_charts_path),
+            "source_sha256": source_sha256,
+        }, RiskIssue(
+            "M15_RECOVERY_PAIR_CHARTS_SHAPE_INVALID",
+            "M15 recovery requires an aware root generated_at_utc and a charts array",
+        )
+    exact_rows = [
+        chart
+        for chart in charts
+        if isinstance(chart, dict) and chart.get("pair") == expected_pair
+    ]
+    all_pairs = [
+        chart.get("pair") for chart in charts if isinstance(chart, dict)
+    ]
+    if (
+        len(exact_rows) != 1
+        or len(all_pairs) != len(charts)
+        or any(pair.__class__ is not str for pair in all_pairs)
+        or len(set(all_pairs)) != len(all_pairs)
+    ):
+        return None, {
+            "status": "BLOCKED",
+            "path": str(pair_charts_path),
+            "source_sha256": source_sha256,
+        }, RiskIssue(
+            "M15_RECOVERY_PAIR_CHART_IDENTITY_INVALID",
+            f"pair_charts.json must contain exactly one {expected_pair} row and no duplicate/malformed pair identities",
+        )
+    row = dict(exact_rows[0])
+    row_clock = row.get("generated_at_utc")
+    if row_clock is not None and row_clock != generated_at_raw:
+        return None, {
+            "status": "BLOCKED",
+            "path": str(pair_charts_path),
+            "source_sha256": source_sha256,
+        }, RiskIssue(
+            "M15_RECOVERY_PAIR_CHART_CLOCK_CONFLICT",
+            "the selected pair row conflicts with the canonical artifact root generated_at_utc",
+        )
+    # The producer envelope owns the artifact clock. This mirrors the normal
+    # chart loaders and prevents a row-local timestamp from refreshing itself.
+    row["generated_at_utc"] = generated_at_raw
+    row_sha256 = hashlib.sha256(
+        json.dumps(
+            row,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return row, {
+        "status": "LOADED",
+        "path": str(pair_charts_path),
+        "source_sha256": source_sha256,
+        "source_size_bytes": len(raw),
+        "root_generated_at_utc": generated_at.isoformat(),
+        "pair": expected_pair,
+        "pair_chart_sha256": row_sha256,
+        "root_clock_bound_into_pair_chart": True,
+    }, None
+
+
+def _m15_recovery_forecast_history_row(
+    path: Path,
+    *,
+    pair: str,
+    cycle_id: str,
+) -> tuple[dict | None, RiskIssue | None]:
+    # Production history is append-only and currently exceeds 64 MiB.  A
+    # whole-file size veto made every otherwise valid recovery lane impossible
+    # in live trading.  Stream every JSONL row with a per-row memory bound so
+    # uniqueness remains proven across the entire ledger without loading the
+    # ledger into memory.
+    max_line_bytes = 1024 * 1024
+    try:
+        initial_signature = _m15_recovery_file_signature(path.stat())
+        cache_key = (
+            str(path.resolve()),
+            pair,
+            cycle_id,
+            initial_signature,
+        )
+        with _M15_RECOVERY_HISTORY_CACHE_LOCK:
+            cached = _M15_RECOVERY_HISTORY_CACHE.get(cache_key)
+        if cached is not None:
+            if _m15_recovery_file_signature(path.stat()) == initial_signature:
+                return dict(cached), None
+        matches: list[dict] = []
+        with path.open("rb") as handle:
+            opened_signature = _m15_recovery_file_signature(
+                os.fstat(handle.fileno())
+            )
+            line_number = 0
+            while True:
+                raw = handle.readline(max_line_bytes + 1)
+                if not raw:
+                    break
+                line_number += 1
+                if len(raw) > max_line_bytes and not raw.endswith(b"\n"):
+                    raise ValueError(
+                        f"forecast history line {line_number} exceeds the 1 MiB row bound"
+                    )
+                if not raw.strip():
+                    continue
+                item = json.loads(
+                    raw,
+                    parse_constant=lambda value: (_ for _ in ()).throw(
+                        ValueError(f"non-finite JSON constant {value}")
+                    ),
+                )
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"forecast history line {line_number} is not an object"
+                    )
+                if item.get("pair") == pair and item.get("cycle_id") == cycle_id:
+                    matches.append(item)
+            closed_signature = _m15_recovery_file_signature(
+                os.fstat(handle.fileno())
+            )
+        current_signature = _m15_recovery_file_signature(path.stat())
+        if (
+            opened_signature != closed_signature
+            or opened_signature != current_signature
+        ):
+            raise ValueError(
+                "forecast history changed while the exact cycle row was being validated"
+            )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return None, RiskIssue(
+            "M15_RECOVERY_FORECAST_HISTORY_UNREADABLE",
+            "M15 recovery requires the exact same-cycle forecast history row; "
+            f"the ledger could not be read safely: {type(exc).__name__}: {exc}",
+        )
+    if len(matches) != 1:
+        return None, RiskIssue(
+            "M15_RECOVERY_FORECAST_HISTORY_IDENTITY_INVALID",
+            f"M15 recovery requires exactly one {pair}/{cycle_id} forecast history row; found {len(matches)}",
+        )
+    with _M15_RECOVERY_HISTORY_CACHE_LOCK:
+        _M15_RECOVERY_HISTORY_CACHE[cache_key] = dict(matches[0])
+        while (
+            len(_M15_RECOVERY_HISTORY_CACHE)
+            > _M15_RECOVERY_HISTORY_CACHE_MAX_ENTRIES
+        ):
+            _M15_RECOVERY_HISTORY_CACHE.pop(
+                next(iter(_M15_RECOVERY_HISTORY_CACHE))
+            )
+    return matches[0], None
+
+
+def _m15_recovery_file_signature(stat_result: os.stat_result) -> tuple[int, ...]:
+    """Return the stable identity needed around a streaming ledger scan."""
+
+    return (
+        int(stat_result.st_dev),
+        int(stat_result.st_ino),
+        int(stat_result.st_size),
+        int(stat_result.st_mtime_ns),
+        int(stat_result.st_ctime_ns),
+    )
+
+
+def validate_m15_recovery_micro_live_claim(
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    *,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+    forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
+    validation_time_utc: datetime | None = None,
+) -> M15RecoveryMicroValidation:
+    """Revalidate the non-live receipt against source bytes and broker quote.
+
+    Passing this function is one necessary risk/gateway proof only. It never
+    mutates ``live_permission`` and does not bypass any ordinary RiskEngine,
+    GPT, Guardian, margin, loss, or order-building gate.
+    """
+
+    if not m15_recovery_micro_claimed(intent):
+        return M15RecoveryMicroValidation(
+            applicable=False,
+            allowed=True,
+            evidence={"status": "NOT_APPLICABLE"},
+        )
+
+    from quant_rabbit.strategy.directional_forecaster import (
+        M15_RECOVERY_MICRO_CONTRACT,
+        M15_RECOVERY_MICRO_MAX_UNITS,
+        M15_RECOVERY_MICRO_MODE,
+        validate_m15_recovery_micro_receipt,
+    )
+    from quant_rabbit.strategy.m15_recovery_contract import (
+        FORECAST_CONTRACT,
+        LANE_CONTRACT,
+        validate_forecast_binding,
+        validate_lane_binding,
+    )
+
+    metadata = intent.metadata if isinstance(intent.metadata, dict) else {}
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    issues: list[RiskIssue] = []
+    if not isinstance(receipt, dict):
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_RECEIPT_INVALID",
+                "M15 recovery metadata must carry one exact receipt object",
+            )
+        )
+        receipt = {}
+    receipt_sha = receipt.get("receipt_sha256")
+    outer_receipt_sha = metadata.get("m15_recovery_micro_receipt_sha256")
+    forecast_receipt = metadata.get("forecast_m15_recovery_receipt")
+    producer_units = metadata.get("m15_recovery_micro_units")
+    if (
+        receipt.get("contract") != M15_RECOVERY_MICRO_CONTRACT
+        or receipt.get("mode") != M15_RECOVERY_MICRO_MODE
+        or receipt.get("status") != "ELIGIBLE_FOR_MICRO_REVALIDATION"
+        or receipt.get("pair") != intent.pair
+        or receipt.get("live_permission") is not False
+        or receipt.get("requires_risk_gateway_revalidation") is not True
+        or receipt.get("manual_position_mutation_allowed") is not False
+        or not isinstance(receipt_sha, str)
+        or outer_receipt_sha != receipt_sha
+        or metadata.get("m15_recovery_micro_contract") != M15_RECOVERY_MICRO_CONTRACT
+        or metadata.get("m15_recovery_micro_mode") != M15_RECOVERY_MICRO_MODE
+        or metadata.get("m15_recovery_micro_live_permission") is not False
+        or metadata.get("m15_recovery_micro_requires_risk_gateway_revalidation") is not True
+        or metadata.get("m15_recovery_micro_manual_position_mutation_allowed") is not False
+        or metadata.get("m15_recovery_micro_full_size_allowed") is not False
+        or metadata.get("m15_recovery_micro_max_units") != M15_RECOVERY_MICRO_MAX_UNITS
+        or producer_units.__class__ is not int
+        or not 1 <= producer_units <= M15_RECOVERY_MICRO_MAX_UNITS
+        or intent.units > producer_units
+        or forecast_receipt != receipt
+        or metadata.get("forecast_m15_recovery_mode") != M15_RECOVERY_MICRO_MODE
+        or metadata.get("forecast_m15_recovery_live_permission") is not False
+    ):
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_RECEIPT_CONTRACT_MISMATCH",
+                "M15 recovery receipt/metadata must preserve its exact non-live, no-manual-mutation, 999u contract and digest",
+            )
+        )
+
+    forecast_direction = metadata.get("forecast_direction")
+    direction_matches = (
+        (forecast_direction == "UP" and intent.side == Side.LONG)
+        or (forecast_direction == "DOWN" and intent.side == Side.SHORT)
+    )
+    method = intent.market_context.method if intent.market_context is not None else None
+    vehicle = _tp_harvest_vehicle_for_order_type(intent.order_type)
+    expected_scope_key = (
+        f"{intent.pair}|{intent.side.value}|{method.value}|{vehicle}|TAKE_PROFIT_ORDER"
+        if method is not None and vehicle is not None
+        else None
+    )
+    proof_mode = metadata.get("positive_rotation_mode")
+    if (
+        not direction_matches
+        or intent.order_type != OrderType.STOP_ENTRY
+        or intent.tp is None
+        or str(metadata.get("position_intent") or "NEW").upper() == "HEDGE"
+        or metadata.get("attach_take_profit_on_fill") is not True
+        or metadata.get("tp_execution_mode") != "ATTACHED_TECHNICAL_TP"
+        or metadata.get("tp_target_intent") != "HARVEST"
+        or metadata.get("opportunity_mode") != "HARVEST"
+        or proof_mode not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}
+        or metadata.get("capture_take_profit_exact_vehicle_required") is not True
+        or metadata.get("capture_take_profit_scope") != "PAIR_SIDE_METHOD_VEHICLE"
+        or metadata.get("capture_take_profit_vehicle") != vehicle
+        or metadata.get("capture_take_profit_scope_key") != expected_scope_key
+        or intent.units.__class__ is not int
+        or not 1 <= intent.units <= M15_RECOVERY_MICRO_MAX_UNITS
+    ):
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_LIVE_SHAPE_INVALID",
+                f"M15 recovery is limited to a direction-aligned 1..999u {M15_RECOVERY_ORDER_TYPE}, attached-TP, exact-vehicle HARVEST intent",
+            )
+        )
+    try:
+        from quant_rabbit.strategy.intent_generator import (
+            _positive_rotation_source_integrity_failures,
+            positive_rotation_proof_acquisition_contract,
+        )
+
+        source_failures = _positive_rotation_source_integrity_failures(
+            pair=intent.pair,
+            side=intent.side,
+            method=method,
+            order_type=intent.order_type,
+            metadata=metadata,
+            mode=str(proof_mode or ""),
+        )
+        proof_contract = positive_rotation_proof_acquisition_contract(intent)
+    except Exception as exc:
+        source_failures = [f"producer proof validator raised {type(exc).__name__}: {exc}"]
+        proof_contract = {"reachable": False, "failed_checks": source_failures}
+    if source_failures or proof_contract.get("reachable") is not True:
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_POSITIVE_EXACT_VEHICLE_PROOF_INVALID",
+                "M15 recovery requires the current producer-owned positive exact-vehicle HARVEST proof contract",
+            )
+        )
+
+    forecast_binding = metadata.get("forecast_m15_recovery_binding")
+    lane_binding = metadata.get("m15_recovery_lane_binding")
+    cycle_id = metadata.get("forecast_cycle_id")
+    history_row: dict | None = None
+    history_issue: RiskIssue | None = None
+    if cycle_id.__class__ is str and cycle_id:
+        history_row, history_issue = _m15_recovery_forecast_history_row(
+            forecast_history_path,
+            pair=intent.pair,
+            cycle_id=cycle_id,
+        )
+    else:
+        history_issue = RiskIssue(
+            "M15_RECOVERY_FORECAST_HISTORY_IDENTITY_INVALID",
+            "M15 recovery forecast_cycle_id is missing or malformed",
+        )
+    if history_issue is not None:
+        issues.append(history_issue)
+    forecast_binding_valid, forecast_binding_error = validate_forecast_binding(
+        forecast_binding,
+        recovery_receipt=receipt,
+        metadata=metadata,
+        history_row=history_row,
+    )
+    if (
+        not forecast_binding_valid
+        or not isinstance(forecast_binding, dict)
+        or forecast_binding.get("contract") != FORECAST_CONTRACT
+        or metadata.get("forecast_m15_recovery_binding_sha256")
+        != forecast_binding.get("binding_sha256")
+    ):
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_FORECAST_BINDING_INVALID",
+                "M15 recovery forecast direction/calibration/geometry/cycle is not bound to the source receipt and same-cycle history"
+                + (f": {forecast_binding_error}" if forecast_binding_error else ""),
+            )
+        )
+    method_value = method.value if method is not None else ""
+    lane_binding_valid, lane_binding_error = validate_lane_binding(
+        lane_binding,
+        forecast_binding=(forecast_binding if isinstance(forecast_binding, dict) else {}),
+        pair=intent.pair,
+        side=intent.side.value,
+        method=method_value,
+        order_type=intent.order_type.value,
+        entry=intent.entry,
+        tp=intent.tp,
+        sl=intent.sl,
+        current_units=intent.units,
+        metadata=metadata,
+    )
+    if (
+        not lane_binding_valid
+        or not isinstance(lane_binding, dict)
+        or lane_binding.get("contract") != LANE_CONTRACT
+        or metadata.get("m15_recovery_lane_contract") != LANE_CONTRACT
+        or metadata.get("m15_recovery_lane_binding_sha256")
+        != lane_binding.get("binding_sha256")
+    ):
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_LANE_BINDING_INVALID",
+                "M15 recovery exact side/method/vehicle/geometry/producer-units/TP-proof source binding is invalid"
+                + (f": {lane_binding_error}" if lane_binding_error else ""),
+            )
+        )
+
+    quote = snapshot.quotes.get(intent.pair)
+    pair_chart, source_evidence, source_issue = _m15_recovery_pair_chart_from_path(
+        pair_charts_path,
+        expected_pair=intent.pair,
+    )
+    if source_issue is not None:
+        issues.append(source_issue)
+    spread_pips: float | None = None
+    quote_time: datetime | None = None
+    boundary_time = validation_time_utc or snapshot.fetched_at_utc
+    if boundary_time.tzinfo is None or boundary_time.utcoffset() is None:
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_VALIDATION_TIME_INVALID",
+                "M15 recovery validation boundary must use an aware broker/risk clock",
+            )
+        )
+        boundary_time = None
+    if quote is None:
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_CURRENT_QUOTE_MISSING",
+                f"M15 recovery requires a current broker quote for {intent.pair}",
+            )
+        )
+    else:
+        quote_time = quote.timestamp_utc
+        spread_pips = abs(quote.ask - quote.bid) * instrument_pip_factor(intent.pair)
+    receipt_valid = bool(
+        pair_chart is not None
+        and quote_time is not None
+        and boundary_time is not None
+        and validate_m15_recovery_micro_receipt(
+            receipt,
+            pair_chart=pair_chart,
+            expected_pair=intent.pair,
+            now_utc=boundary_time,
+            current_spread_pips=spread_pips,
+        )
+    )
+    if not receipt_valid:
+        issues.append(
+            RiskIssue(
+                "M15_RECOVERY_CURRENT_SOURCE_REVALIDATION_FAILED",
+                "M15 recovery receipt no longer matches the canonical current pair chart and broker spread/time",
+            )
+        )
+    blocking = [issue.code for issue in issues if issue.severity == "BLOCK"]
+    evidence = {
+        **source_evidence,
+        "status": "BLOCKED" if blocking else "PASSED",
+        "contract": M15_RECOVERY_MICRO_CONTRACT,
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "order_type": intent.order_type.value,
+        "units": intent.units,
+        "producer_units": producer_units,
+        "receipt_sha256": receipt_sha,
+        "quote_timestamp_utc": quote_time.isoformat() if quote_time is not None else None,
+        "validation_time_utc": boundary_time.isoformat() if boundary_time is not None else None,
+        "current_spread_pips": spread_pips,
+        "positive_rotation_mode": proof_mode,
+        "forecast_binding_sha256": (
+            forecast_binding.get("binding_sha256")
+            if isinstance(forecast_binding, dict)
+            else None
+        ),
+        "lane_binding_sha256": (
+            lane_binding.get("binding_sha256")
+            if isinstance(lane_binding, dict)
+            else None
+        ),
+        "forecast_history_path": str(forecast_history_path),
+        "positive_exact_vehicle_proof_reachable": proof_contract.get("reachable") is True,
+        "manual_position_mutation_allowed": False,
+        "live_permission_granted": False,
+        "blocking_codes": blocking,
+    }
+    return M15RecoveryMicroValidation(
+        applicable=True,
+        allowed=not blocking,
+        evidence=evidence,
+        issues=tuple(issues),
+    )
+
+
+@dataclass(frozen=True)
 class RiskPolicy:
     # No JPY literal fallback: production and tests must inject a cap from
     # intent.metadata, an explicit policy, or an equity-derived daily target
@@ -2102,11 +2635,11 @@ class RiskPolicy:
     #     cover initial margin; capping marginUsed keeps the rejection in our
     #     risk gate instead of in broker-side order cancellation.
     # (b) constant rather than derived: this is the current operator policy.
-    #     92% means the system may use most NAV while leaving 8% headroom for
+    #     95% means the system may use most NAV while leaving 5% headroom for
     #     spread, slippage, and mark-to-market movement.
     # (c) replace via: pass RiskPolicy(max_margin_utilization_pct=...) from
     #     CLI/config when an operator-facing knob is introduced.
-    max_margin_utilization_pct: float | None = 92.0
+    max_margin_utilization_pct: float | None = 95.0
     require_margin_account: bool = True
     allow_protected_trader_position_adds: bool = False
     # OANDA trades without the vNext trader tag are operator-managed manual
@@ -2160,7 +2693,7 @@ class RiskPolicy:
     #     pairs cannot reach the 1000u production lot even if their forecast is
     #     stronger.
     # (b) constant rather than derived: 45% is a portfolio-shape reserve under
-    #     the 92% total margin ceiling, forcing headroom for at least one other
+    #     the 95% total margin ceiling, forcing headroom for at least one other
     #     independent pair before a same-pair add can continue stacking.
     # (c) replace via: QR_MAX_SAME_PAIR_MARGIN_UTILIZATION_PCT, or a broker
     #     instrument-margin allocator once pair-level margin budgets are wired
@@ -2197,6 +2730,8 @@ class RiskEngine:
         guardian_receipt_consumption_path: Path | None = None,
         guardian_receipt_operator_review_path: Path | None = None,
         guardian_receipt_broker_snapshot_path: Path | None = None,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+        forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
     ) -> None:
         self.policy = policy or RiskPolicy()
         self.specs = (
@@ -2209,6 +2744,8 @@ class RiskEngine:
         self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
         self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
         self.guardian_receipt_broker_snapshot_path = guardian_receipt_broker_snapshot_path
+        self.pair_charts_path = pair_charts_path
+        self.forecast_history_path = forecast_history_path
         self.validation_time_utc = (
             validation_time_utc.astimezone(timezone.utc)
             if validation_time_utc is not None
@@ -2225,20 +2762,6 @@ class RiskEngine:
 
         if for_live_send and self.policy.require_live_enabled_for_send and not self.live_enabled:
             issues.append(RiskIssue("LIVE_DISABLED", "live execution is disabled; dry-run only"))
-        if for_live_send:
-            issues.extend(
-                RiskIssue(
-                    str(item.get("code") or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"),
-                    str(item.get("message") or "unresolved guardian receipt issue blocks normal new entries"),
-                )
-                for item in guardian_receipt_new_entry_blockers_from_paths(
-                    watchdog_path=self.guardian_receipt_watchdog_path,
-                    consumption_path=self.guardian_receipt_consumption_path,
-                    operator_review_path=self.guardian_receipt_operator_review_path,
-                    broker_snapshot_path=self.guardian_receipt_broker_snapshot_path,
-                )
-            )
-
         if intent.owner != Owner.TRADER:
             issues.append(RiskIssue("OWNER_NOT_TRADER", f"order owner must be trader, got {intent.owner.value}"))
         if intent.units <= 0:
@@ -2426,6 +2949,27 @@ class RiskEngine:
                 )
             )
 
+        # The producer receipt is deliberately non-live. RiskEngine must
+        # independently bind it back to the current canonical chart bytes and
+        # the broker quote used for this exact validation call. Ordinary
+        # intents do not enter this branch.
+        m15_recovery_validation = validate_m15_recovery_micro_live_claim(
+            intent,
+            snapshot,
+            pair_charts_path=self.pair_charts_path,
+            forecast_history_path=self.forecast_history_path,
+            validation_time_utc=self._now(),
+        )
+        issues.extend(m15_recovery_validation.issues)
+        if m15_recovery_validation.applicable and m15_recovery_validation.allowed:
+            issues.append(
+                RiskIssue(
+                    "M15_RECOVERY_RISK_REVALIDATED",
+                    "RiskEngine independently revalidated the bounded recovery receipt against current canonical chart bytes and broker spread/time; gateway/GPT/Guardian gates remain required",
+                    "WARN",
+                )
+            )
+
         issues.extend(self._entry_contract_issues(intent, quote, spec, spread_pips, for_live_send=for_live_send))
         entry_price = self._entry_price(intent, quote)
         issues.extend(self._same_pair_position_concentration_issues(intent, entry_relevant_positions, entry_price, spec))
@@ -2438,6 +2982,54 @@ class RiskEngine:
         issues.extend(self._same_pair_margin_concentration_issues(intent, snapshot, entry_price, quote_to_jpy, spec))
         metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy, snapshot)
         issues.extend(self._margin_issues(snapshot, metrics))
+        if for_live_send:
+            account_payload: dict[str, object] = {}
+            current_margin_utilization_pct = None
+            margin_available_jpy = None
+            if snapshot.account is not None:
+                account_payload = {
+                    "nav_jpy": snapshot.account.nav_jpy,
+                    "margin_used_jpy": snapshot.account.margin_used_jpy,
+                    "margin_available_jpy": snapshot.account.margin_available_jpy,
+                }
+                margin_available_jpy = snapshot.account.margin_available_jpy
+                if snapshot.account.nav_jpy > 0:
+                    current_margin_utilization_pct = (
+                        snapshot.account.margin_used_jpy
+                        / snapshot.account.nav_jpy
+                        * 100.0
+                    )
+            issues.extend(
+                RiskIssue(
+                    str(
+                        item.get("code")
+                        or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+                    ),
+                    str(
+                        item.get("message")
+                        or "unresolved guardian receipt issue blocks normal new entries"
+                    ),
+                    str(item.get("severity") or "BLOCK"),
+                )
+                for item in guardian_receipt_new_entry_blockers_from_paths(
+                    watchdog_path=self.guardian_receipt_watchdog_path,
+                    consumption_path=self.guardian_receipt_consumption_path,
+                    operator_review_path=self.guardian_receipt_operator_review_path,
+                    broker_snapshot_path=self.guardian_receipt_broker_snapshot_path,
+                    broker_snapshot_payload={"account": account_payload},
+                    allow_p1_margin_warning=True,
+                    current_margin_utilization_pct=(
+                        current_margin_utilization_pct
+                    ),
+                    projected_margin_utilization_pct=(
+                        metrics.margin_utilization_after_pct
+                    ),
+                    max_margin_utilization_pct=(
+                        metrics.max_margin_utilization_pct
+                    ),
+                    margin_available_jpy=margin_available_jpy,
+                )
+            )
         issues.extend(_target_path_guard_issues(intent, for_live_send=for_live_send))
         if metrics.loss_pips <= 0:
             issues.append(RiskIssue("SL_NOT_LOSS_SIDE", f"SL is not on the loss side for {intent.side.value}"))
@@ -2477,6 +3069,20 @@ class RiskEngine:
         if _intent_declares_recovery_hedge(intent) or _uses_range_reward_floor(intent, regime_state):
             active_min_rr = self.policy.range_min_reward_risk
             floor_label = "range/recovery"
+        elif (
+            m15_recovery_validation.applicable
+            and m15_recovery_validation.allowed
+        ):
+            # The bounded M15 recovery contract is a STOP-ENTRY, attached-TP
+            # BREAKOUT_FAILURE HARVEST shape whose forecast target and
+            # invalidation have already been content-addressed and revalidated
+            # against current chart/spread evidence above.  Its live
+            # 2026-07-14 bounds have a theoretical maximum below 1.2R, so using
+            # the generic runner floor makes the only valid shape impossible.
+            # Keep the established 1.0R technical-harvest floor; an unbound or
+            # stale recovery claim never reaches this branch.
+            active_min_rr = self.policy.technical_harvest_min_reward_risk
+            floor_label = "technical_harvest"
         elif _uses_technical_harvest_reward_floor(intent):
             active_min_rr = self.policy.technical_harvest_min_reward_risk
             floor_label = "technical_harvest"
@@ -2530,6 +3136,7 @@ class RiskEngine:
             self._forecast_directional_live_readiness_issues(
                 intent,
                 for_live_send=for_live_send,
+                m15_recovery_validation=m15_recovery_validation,
             )
         )
         issues.extend(
@@ -2947,6 +3554,7 @@ class RiskEngine:
         intent: OrderIntent,
         *,
         for_live_send: bool,
+        m15_recovery_validation: M15RecoveryMicroValidation | None = None,
     ) -> list[RiskIssue]:
         if not for_live_send:
             return []
@@ -2967,6 +3575,18 @@ class RiskEngine:
         if _technical_harvest_precision_support_for_intent(intent) is not None:
             return []
         if _bidask_replay_precision_support_for_intent(intent) is not None:
+            return []
+        if (
+            m15_recovery_validation is not None
+            and m15_recovery_validation.applicable
+            and m15_recovery_validation.allowed
+        ):
+            # The current chart bytes, broker spread/time, same-cycle history,
+            # forecast/lane bindings, exact TP vehicle proof, and <=999u shape
+            # were all checked above in this same RiskEngine invocation.  That
+            # lane-specific evidence replaces only the generic confidence /
+            # bucket-precision floor; direction, geometry, spread, margin,
+            # loss, GPT, Guardian, and final gateway checks remain active.
             return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
@@ -3253,8 +3873,31 @@ class RiskEngine:
         if issues:
             return issues
 
-        budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
         cap_jpy = account.nav_jpy * (max_margin_pct / 100.0)
+        utilization_room = cap_jpy - account.margin_used_jpy
+        # The portfolio hard cap is a state boundary, not merely a budget for
+        # positive incremental margin.  A hedging-account offset can make a
+        # fresh order's estimated increment zero; that must not let any fresh
+        # entry route through when the account is already at/over the cap or
+        # the broker reports no available margin.
+        if utilization_room <= 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_UTILIZATION_CAP_REACHED",
+                    f"current marginUsed {account.margin_used_jpy:.0f} JPY already reaches/exceeds "
+                    f"{max_margin_pct:.1f}% NAV cap {cap_jpy:.0f} JPY",
+                )
+            )
+        if account.margin_available_jpy <= 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_AVAILABLE_EXHAUSTED",
+                    "broker marginAvailable must remain positive for a fresh entry; "
+                    f"got {account.margin_available_jpy:.0f} JPY",
+                )
+            )
+        if issues:
+            return issues
         if metrics.estimated_margin_jpy <= 0:
             return issues
         if metrics.estimated_margin_jpy > account.margin_available_jpy:
@@ -3265,22 +3908,14 @@ class RiskEngine:
                     f"broker marginAvailable {account.margin_available_jpy:.0f} JPY",
                 )
             )
-        if budget <= 0 and metrics.estimated_margin_jpy > 0:
-            issues.append(
-                RiskIssue(
-                    "MARGIN_UTILIZATION_CAP_REACHED",
-                    f"current marginUsed {account.margin_used_jpy:.0f} JPY already reaches/exceeds "
-                    f"{max_margin_pct:.1f}% NAV cap {cap_jpy:.0f} JPY",
-                )
-            )
-        elif metrics.estimated_margin_jpy > budget:
+        if metrics.estimated_margin_jpy > utilization_room:
             after = account.margin_used_jpy + metrics.estimated_margin_jpy
             issues.append(
                 RiskIssue(
                     "MARGIN_UTILIZATION_CAP_EXCEEDED",
                     f"candidate margin {metrics.estimated_margin_jpy:.0f} JPY would raise marginUsed to "
                     f"{after:.0f} JPY, above {max_margin_pct:.1f}% NAV cap {cap_jpy:.0f} JPY "
-                    f"(remaining budget {budget:.0f} JPY)",
+                    f"(remaining budget {utilization_room:.0f} JPY)",
                 )
             )
         return issues

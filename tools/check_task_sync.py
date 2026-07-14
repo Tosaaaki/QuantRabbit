@@ -184,6 +184,17 @@ def _load_toml_payload(text: str) -> dict[str, Any]:
         value = raw_value.strip()
         if value.startswith("[") and value.endswith("]"):
             payload[key] = [item.strip().strip('"') for item in value[1:-1].split(",") if item.strip()]
+        elif value.startswith("{") and value.endswith("}"):
+            # Python 3.10 has no stdlib tomllib.  Preserve the inline-table
+            # shape used by Codex automation targets instead of degrading it
+            # to an opaque string and falsely reporting a project mismatch.
+            table: dict[str, str] = {}
+            for item in value[1:-1].split(","):
+                if "=" not in item:
+                    continue
+                table_key, table_value = item.split("=", 1)
+                table[table_key.strip()] = table_value.strip().strip('"')
+            payload[key] = table
         elif value.startswith('"') and value.endswith('"'):
             payload[key] = value[1:-1]
         else:

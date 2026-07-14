@@ -11,9 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.analysis.market_status import compute_market_status
+from quant_rabbit.guardian_margin_contract import (
+    MARGIN_PRESSURE_WARNING_CAP_FRACTION,
+    P0_MARGIN_HARD_CAP_CONTRACT,
+    P1_MARGIN_WARNING_CONTRACT,
+)
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import Owner
-from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
+from quant_rabbit.operator_manual import (
+    OPERATOR_MANUAL_POSITION_PACKET,
+    is_operator_manual_position,
+)
 from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.directional_forecaster import (
     validate_mba_integrity_receipt,
@@ -52,6 +60,15 @@ EVENT_TYPES = (
 SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
 GUARDIAN_ACTIONS = ("TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION")
+EVENT_ACTION_RECEIPT_EQUIVALENCE = {
+    "TRADE": frozenset({"TRADE", "HOLD", "NO_ACTION"}),
+    "ADD": frozenset({"ADD", "HOLD", "NO_ACTION"}),
+    "HOLD": frozenset({"HOLD", "NO_ACTION"}),
+    "HARVEST": frozenset({"HARVEST", "HOLD", "NO_ACTION"}),
+    "REDUCE": frozenset({"REDUCE", "HOLD", "NO_ACTION"}),
+    "CANCEL_PENDING": frozenset({"CANCEL_PENDING", "HOLD", "NO_ACTION"}),
+    "NO_ACTION": frozenset({"NO_ACTION"}),
+}
 TUNING_ONLY_EVENT_TYPES = {"TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"}
 ENTRY_ACTION_HINTS = {"TRADE", "ADD"}
 MAX_RETAINED_TECHNICAL_BASELINES = 64
@@ -68,11 +85,6 @@ DEFAULT_FRESH_ACTION_THROTTLE_SECONDS = 60 * 60
 # watchdog is independent of the hourly full-trader cadence; the deterministic
 # router still checks frequently.
 DEFAULT_STALE_PENDING_SECONDS = 3 * 20 * 60
-
-# Early margin pressure uses the existing gateway cap as its anchor. At 90% of
-# the cap, the next dynamically sized order can easily fail after quote drift;
-# the gateway still makes the final broker-truth decision.
-MARGIN_PRESSURE_WARNING_CAP_FRACTION = 0.90
 
 # Statistical rail touch bands; they describe where price is at the tail of the
 # observed 24h distribution, not a fixed pip level or USD/JPY literal.
@@ -760,6 +772,13 @@ def review_guardian_action_receipt(
 
     binding_issues = _selected_event_binding_issues(receipt, selected_event)
     issues.extend(binding_issues)
+    if event is not None:
+        issues.extend(
+            guardian_event_action_binding_issues(
+                receipt_action=action,
+                event_action_hint=event.action_hint,
+            )
+        )
 
     if action in {"TRADE", "ADD"}:
         issues.extend(_guardian_trade_add_action_issues(receipt, event=event))
@@ -800,6 +819,27 @@ def review_guardian_action_receipt(
         },
     }
     return reviewed
+
+
+def guardian_event_action_binding_issues(
+    *,
+    receipt_action: Any,
+    event_action_hint: Any,
+) -> list[dict[str, str]]:
+    """Allow a receipt to keep or safely downgrade, never upgrade, an event action."""
+
+    action = str(receipt_action or "").strip().upper()
+    hint = str(event_action_hint or "").strip().upper()
+    allowed = EVENT_ACTION_RECEIPT_EQUIVALENCE.get(hint)
+    if allowed is None or action not in allowed:
+        return [
+            _issue(
+                "GUARDIAN_ACTION_EVENT_ACTION_MISMATCH",
+                f"selected event action_hint={hint or 'missing'} allows only "
+                f"{sorted(allowed or ())}; receipt action={action or 'missing'}",
+            )
+        ]
+    return []
 
 
 def _selected_event_binding_issues(
@@ -1682,7 +1722,16 @@ def _snapshot_events(snapshot: dict[str, Any], *, now: datetime) -> list[Guardia
                 )
             )
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
-    margin_event = _margin_pressure_event(account, now=now)
+    margin_positions = [
+        position
+        for position in snapshot.get("positions", []) or []
+        if isinstance(position, dict)
+    ]
+    margin_event = _margin_pressure_event(
+        account,
+        positions=margin_positions,
+        now=now,
+    )
     if margin_event is not None:
         events.append(margin_event)
     events.extend(_spread_anomaly_events(quotes, now=now))
@@ -2722,7 +2771,12 @@ def _market_context_matrix_events(payload: dict[str, Any], *, now: datetime) -> 
     return events
 
 
-def _margin_pressure_event(account: dict[str, Any], *, now: datetime) -> GuardianEvent | None:
+def _margin_pressure_event(
+    account: dict[str, Any],
+    *,
+    positions: list[dict[str, Any]],
+    now: datetime,
+) -> GuardianEvent | None:
     nav = _float(account.get("nav_jpy"))
     used = _float(account.get("margin_used_jpy"))
     available = _float(account.get("margin_available_jpy"))
@@ -2740,6 +2794,16 @@ def _margin_pressure_event(account: dict[str, Any], *, now: datetime) -> Guardia
         severity = "P1"
     else:
         return None
+    reduction_scope = _margin_reduction_scope(positions)
+    reduction_actionable = bool(
+        severity == "P0"
+        and reduction_scope["system_reduction_candidate_trade_ids"]
+    )
+    executable_reduction_trade_ids = (
+        reduction_scope["system_reduction_candidate_trade_ids"]
+        if reduction_actionable
+        else []
+    )
     return _event(
         event_type="MARGIN_PRESSURE",
         pair="PORTFOLIO",
@@ -2748,7 +2812,7 @@ def _margin_pressure_event(account: dict[str, Any], *, now: datetime) -> Guardia
         price_zone=f"margin_used/nav={utilization:.3f}; available/nav={available_ratio:.3f}; cap={cap_fraction:.3f}",
         severity=severity,
         recommended_review_type="RISK_REVIEW",
-        action_hint="REDUCE" if severity == "P0" else "HOLD",
+        action_hint="REDUCE" if reduction_actionable else "HOLD",
         thesis_state="EMERGENCY" if severity == "P0" else "WOUNDED",
         now=now,
         details={
@@ -2756,10 +2820,77 @@ def _margin_pressure_event(account: dict[str, Any], *, now: datetime) -> Guardia
             "margin_used_jpy": used,
             "margin_available_jpy": available,
             "max_margin_utilization_pct": cap_pct,
+            **reduction_scope,
+            "executable_reduction_target_trade_ids": (
+                executable_reduction_trade_ids
+            ),
+            "executable_reduction_target_count": len(
+                executable_reduction_trade_ids
+            ),
+            # P1 is a capacity warning below the same 95% hard cap enforced
+            # from current broker truth by RiskEngine and LiveOrderGateway.
+            # P0 (at/over cap or no available margin) remains a universal
+            # fresh-entry block.  Keep both states explicit in the event so a
+            # downstream receipt cannot collapse P1 back into P0 by guessing
+            # from the word "MARGIN" alone.
+            "fresh_entry_risk_block_active": severity == "P0",
+            "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+            "fresh_entry_risk_observation_only": severity == "P1",
+            "fresh_entry_margin_contract": (
+                P1_MARGIN_WARNING_CONTRACT
+                if severity == "P1"
+                else P0_MARGIN_HARD_CAP_CONTRACT
+            ),
         },
     )
 
 
+def _margin_reduction_scope(
+    positions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose only explicitly system-owned positions as reduction candidates."""
+
+    open_positions = [
+        position
+        for position in positions
+        if _position_units(position) not in {None, 0.0}
+    ]
+    operator_manual_positions = [
+        position
+        for position in open_positions
+        if is_operator_manual_position(position)
+        or _owner(position.get("owner")) == Owner.MANUAL.value
+    ]
+    system_positions = [
+        position
+        for position in open_positions
+        if _owner(position.get("owner")) == Owner.TRADER.value
+        and not is_operator_manual_position(position)
+    ]
+    other_positions = [
+        position
+        for position in open_positions
+        if position not in operator_manual_positions
+        and position not in system_positions
+    ]
+
+    def trade_ids(rows: list[dict[str, Any]]) -> list[str]:
+        return sorted(
+            {
+                str(_position_trade_id(row) or "").strip()
+                for row in rows
+                if str(_position_trade_id(row) or "").strip()
+            }
+        )
+
+    return {
+        "open_position_count": len(open_positions),
+        "operator_manual_only_exposure": bool(open_positions)
+        and len(operator_manual_positions) == len(open_positions),
+        "operator_manual_trade_ids": trade_ids(operator_manual_positions),
+        "system_reduction_candidate_trade_ids": trade_ids(system_positions),
+        "non_system_unattributed_trade_ids": trade_ids(other_positions),
+    }
 def _quote_major_figure_events(quotes: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
     for pair_key, quote in quotes.items():
@@ -3283,12 +3414,13 @@ def _contract_entry_from_seed(
     if not isinstance(prior, dict):
         return {key: value for key, value in base.items() if value is not None}
     merged = dict(base)
-    for field_name in CONTRACT_TRIGGER_BUCKETS:
-        if isinstance(prior.get(field_name), list) and prior[field_name]:
-            merged[field_name] = [
-                _rebind_trigger_to_parent(trigger, parent=base) if isinstance(trigger, dict) else trigger
-                for trigger in prior[field_name]
-            ]
+    if _contract_owner(base.get("owner")) != "OPERATOR_MANUAL":
+        for field_name in CONTRACT_TRIGGER_BUCKETS:
+            if isinstance(prior.get(field_name), list) and prior[field_name]:
+                merged[field_name] = [
+                    _rebind_trigger_to_parent(trigger, parent=base) if isinstance(trigger, dict) else trigger
+                    for trigger in prior[field_name]
+                ]
     for field_name in ("thesis_state", "next_review_reason", "next_review_deadline_utc"):
         if prior.get(field_name) and (field_name != "next_review_deadline_utc" or _deadline_is_future(prior.get(field_name), now)):
             merged[field_name] = prior[field_name]
@@ -3380,33 +3512,17 @@ def _position_ownership_audit(position: dict[str, Any]) -> dict[str, Any]:
     evidence: list[str] = []
     raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
     trade_id = _position_trade_id(position)
-    if _position_has_system_lane_or_gateway_receipt(position):
-        return {
-            "status": "SYSTEM",
-            "owner_input": owner,
-            "trade_id": trade_id,
-            "evidence": ["gateway receipt/lane/client extension evidence is present"],
-            "unresolved": False,
-        }
-    if owner == Owner.TRADER.value:
-        return {
-            "status": "SYSTEM",
-            "owner_input": owner,
-            "trade_id": trade_id,
-            "evidence": ["snapshot owner=trader"],
-            "unresolved": False,
-        }
     operator_packet = _operator_manual_packet(position)
-    if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value}:
-        evidence.append(f"snapshot owner={owner}")
-    if operator_packet:
-        evidence.append("operator_manual_position packet present")
-    if evidence:
+    if is_operator_manual_position(position) or owner == Owner.MANUAL.value:
+        if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value}:
+            evidence.append(f"snapshot owner={owner}")
+        if operator_packet:
+            evidence.append("operator_manual_position packet present")
         audit = {
             "status": "OPERATOR_MANUAL",
             "owner_input": owner,
             "trade_id": trade_id,
-            "evidence": evidence,
+            "evidence": evidence or ["canonical operator-manual classification"],
             "unresolved": False,
         }
         if operator_packet:
@@ -3424,6 +3540,22 @@ def _position_ownership_audit(position: dict[str, Any]) -> dict[str, Any]:
                 if key in operator_packet:
                     audit[key] = operator_packet[key]
         return audit
+    if _position_has_system_lane_or_gateway_receipt(position):
+        return {
+            "status": "SYSTEM",
+            "owner_input": owner,
+            "trade_id": trade_id,
+            "evidence": ["gateway receipt/lane/client extension evidence is present"],
+            "unresolved": False,
+        }
+    if owner == Owner.TRADER.value:
+        return {
+            "status": "SYSTEM",
+            "owner_input": owner,
+            "trade_id": trade_id,
+            "evidence": ["snapshot owner=trader"],
+            "unresolved": False,
+        }
     return {
         "status": "UNKNOWN_NEEDS_OPERATOR_CONFIRM",
         "owner_input": owner,
@@ -3582,7 +3714,7 @@ def _default_open_position_triggers(
         )
         invalidation_action = "HOLD"
         emergency_action = "HOLD"
-        harvest_action = "HOLD" if operator_packet.get("auto_tp_modify_allowed") is False else "HARVEST"
+        harvest_action = "HOLD"
     else:
         harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
         invalidation_detail = "accepted market evidence that the position thesis is broken; red P/L alone is not invalidation"
@@ -3683,7 +3815,7 @@ def _usd_jpy_manual_fade_triggers(
                 "status": "PENDING",
                 "kind": "manual_tp_profit_zone",
                 "evidence_required": "USD_JPY trades below the manual fade average entry enough to show positive UPL outside current spread/noise; TP-only profit assistance is allowed",
-                "action_hint": "HARVEST",
+                "action_hint": "HOLD",
             }
         ],
         "no_add_triggers": [
@@ -3715,7 +3847,7 @@ def _usd_jpy_manual_fade_triggers(
                 "kind": "major_figure_invalidation",
                 "zone": "accepted break above 162.00 figure",
                 "confirmation_required": "accepted break above the 162.00 figure with cross-JPY confirmation; red P/L or a wick/touch is not enough",
-                "action_hint": "REDUCE",
+                "action_hint": "HOLD",
             }
         ],
         "emergency_triggers": [
@@ -3725,7 +3857,7 @@ def _usd_jpy_manual_fade_triggers(
                 "status": "PENDING",
                 "kind": "margin_nav_emergency",
                 "evidence_required": "margin/NAV pressure crosses the gateway risk cap or broker truth becomes unavailable; trader review only, no direct close",
-                "action_hint": "REDUCE",
+                "action_hint": "HOLD",
             }
         ],
     }

@@ -265,6 +265,64 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertEqual(payload["guardian_receipt"]["issues"][0]["severity"], "P0")
             self.assertTrue(payload["guardian_receipt"]["emergency_or_margin_risk"])
 
+    def test_expired_p1_margin_warning_preserves_source_semantics(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        for source_severity, expected_issue_severity in (("P1", "P1"), (None, "P0")):
+            with self.subTest(source_severity=source_severity), tempfile.TemporaryDirectory() as tmp:
+                root, automation_dir, paths = _fixture(tmp, now=now)
+                _write_automation(automation_dir)
+                _write_decision(root, _dt("2026-07-01T02:55:00+00:00"))
+                receipt_path = root / "data" / "guardian_action_receipt.json"
+                _write_guardian_receipt(
+                    root,
+                    action="HOLD",
+                    generated_at=_dt("2026-07-01T01:10:00+00:00"),
+                    expires_at=_dt("2026-07-01T02:25:00+00:00"),
+                    consumed=False,
+                    lifecycle="EXPIRED",
+                )
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt["selected_event"].update(
+                    {
+                        "event_type": "MARGIN_PRESSURE",
+                        "action_hint": "HOLD",
+                        "details": {
+                            "nav_jpy": 100_000.0,
+                            "margin_used_jpy": 92_000.0,
+                            "margin_available_jpy": 8_000.0,
+                            "max_margin_utilization_pct": 95.0,
+                            "fresh_entry_risk_block_active": False,
+                            "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+                            "fresh_entry_risk_observation_only": True,
+                            "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+                        },
+                    }
+                )
+                if source_severity is None:
+                    receipt["selected_event"].pop("severity", None)
+                else:
+                    receipt["selected_event"]["severity"] = source_severity
+                receipt_path.write_text(
+                    json.dumps(receipt) + "\n",
+                    encoding="utf-8",
+                )
+
+                payload = run_watchdog(paths=paths, now_utc=now)
+
+                issue = payload["guardian_receipt"]["issues"][0]
+                self.assertEqual(issue["severity"], expected_issue_severity)
+                self.assertEqual(
+                    payload["issue_status"],
+                    expected_issue_severity,
+                )
+                self.assertEqual(issue["event_type"], "MARGIN_PRESSURE")
+                self.assertEqual(issue["event_severity"], source_severity)
+                self.assertEqual(issue["event_action_hint"], "HOLD")
+                self.assertEqual(
+                    issue["event_details"]["fresh_entry_margin_contract"],
+                    "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+                )
+
     def test_missing_canonical_receipt_scans_archive_for_expired_unconsumed(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
         with tempfile.TemporaryDirectory() as tmp:

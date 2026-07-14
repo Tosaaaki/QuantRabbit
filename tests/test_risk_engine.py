@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +26,9 @@ from quant_rabbit.risk import (
     RiskEngine,
     RiskPolicy,
     _guardian_tuning_override_issues,
+    _m15_recovery_forecast_history_row,
+    m15_recovery_micro_claimed,
+    validate_m15_recovery_micro_live_claim,
 )
 from quant_rabbit.self_improvement_guards import (
     oanda_firepower_repair_current_risk_reaches_minimum,
@@ -67,6 +71,259 @@ def snapshot(
 
 
 TEST_MAX_LOSS_JPY = 500.0
+
+
+def _m15_recovery_fixture(root: Path, *, units: int = 5):
+    from quant_rabbit.strategy.directional_forecaster import (
+        build_m15_recovery_micro_receipt,
+    )
+    from quant_rabbit.strategy.intent_generator import (
+        _positive_rotation_confidence_metrics,
+    )
+    from quant_rabbit.strategy.m15_recovery_contract import (
+        GEOMETRY_CONTRACT,
+        LANE_CONTRACT,
+        build_forecast_binding,
+        build_lane_binding,
+        canonical_sha256,
+    )
+    from tests.test_directional_forecaster import (
+        TechnicalCandleIntegrityForecastGateTest,
+    )
+
+    now = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+    pair_chart = deepcopy(
+        TechnicalCandleIntegrityForecastGateTest._m15_recovery_chart()
+    )
+    root_generated_at = pair_chart.pop("generated_at_utc")
+    pair_charts_path = root / "pair_charts.json"
+    pair_charts_path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": root_generated_at,
+                "charts": [pair_chart],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt_chart = {**pair_chart, "generated_at_utc": root_generated_at}
+    receipt = build_m15_recovery_micro_receipt(
+        receipt_chart,
+        expected_pair="EUR_USD",
+        now_utc=now,
+        current_spread_pips=0.8,
+    )
+    assert isinstance(receipt, dict)
+    cycle_id = "m15-recovery-20260714T004500Z"
+    forecast_confidence = 0.48512
+    forecast_scores = {
+        "UP": 8.4,
+        "DOWN": 26.4,
+        "RANGE": 5.2,
+    }
+    forecast_evidence_body = {
+        "contract": "QR_M15_RECOVERY_FORECAST_V1",
+        "source_recovery_receipt_sha256": receipt["receipt_sha256"],
+        "pair": "EUR_USD",
+        "chart_generated_at_utc": receipt["chart_generated_at_utc"],
+        "forecast_current_price": 1.14544,
+        "forecast_spread_pips": 0.8,
+        "filtered_input_sha256": "f" * 64,
+        "raw_winner": "DOWN",
+        "component_scores": forecast_scores,
+        "final_direction": "DOWN",
+        "raw_confidence": 0.758,
+        "calibration_multiplier": 0.64,
+        "calibration_scope": "M15_RECOVERY_CONSERVATIVE_DIRECTIONAL_PRIOR",
+        "confidence": forecast_confidence,
+        "target_price": 1.14341,
+        "invalidation_price": 1.14586,
+        "horizon_min": 60,
+        "geometry_source_timeframe": "M15",
+        "live_permission": False,
+    }
+    forecast_evidence = {
+        **forecast_evidence_body,
+        "evidence_sha256": canonical_sha256(forecast_evidence_body),
+    }
+    forecast_binding = build_forecast_binding(
+        forecast_evidence,
+        cycle_id=cycle_id,
+    )
+    assert isinstance(forecast_binding, dict)
+    history_identity = dict(forecast_binding["forecast_history_identity"])
+    history_identity.pop("identity_sha256")
+    forecast_history_path = root / "forecast_history.jsonl"
+    forecast_history_path.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+                **history_identity,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    metadata = {
+        "forecast_cycle_id": cycle_id,
+        "forecast_direction": "DOWN",
+        "forecast_confidence": round(forecast_confidence, 4),
+        "forecast_raw_confidence": 0.758,
+        "forecast_calibration_multiplier": 0.64,
+        "forecast_current_price": 1.14544,
+        "forecast_target_price": 1.14341,
+        "forecast_invalidation_price": 1.14586,
+        "forecast_horizon_min": 60,
+        "forecast_component_scores": {
+            key: round(value, 4) for key, value in forecast_scores.items()
+        },
+        "forecast_m15_recovery_receipt": deepcopy(receipt),
+        "forecast_m15_recovery_mode": "M15_RECOVERY_MICRO",
+        "forecast_m15_recovery_live_permission": False,
+        "forecast_m15_recovery_evidence": deepcopy(forecast_evidence),
+        "forecast_m15_recovery_binding": deepcopy(forecast_binding),
+        "forecast_m15_recovery_binding_sha256": forecast_binding[
+            "binding_sha256"
+        ],
+        "m15_recovery_micro_contract": "QR_M15_RECOVERY_MICRO_V1",
+        "m15_recovery_micro_mode": "M15_RECOVERY_MICRO",
+        "m15_recovery_micro_receipt": deepcopy(receipt),
+        "m15_recovery_micro_receipt_sha256": receipt["receipt_sha256"],
+        "m15_recovery_micro_pre_cap_units": units,
+        "m15_recovery_micro_max_units": 999,
+        "m15_recovery_micro_units": units,
+        "m15_recovery_micro_full_size_allowed": False,
+        "m15_recovery_micro_live_permission": False,
+        "m15_recovery_micro_requires_risk_gateway_revalidation": True,
+        "m15_recovery_micro_manual_position_mutation_allowed": False,
+        "m15_recovery_micro_shape_eligible": True,
+        "m15_recovery_micro_risk_revalidated": True,
+        "m15_recovery_context_contract": "QR_M15_RECOVERY_FORECAST_V1",
+        "m15_recovery_context_timeframes": ["M15", "M30", "H1", "H4", "D"],
+        "m15_recovery_context_current_price": 1.14544,
+        "geometry_model": GEOMETRY_CONTRACT,
+        "geometry_atr_source_timeframe": "M15",
+        "geometry_atr_pips": receipt["geometry_source"]["atr_pips"],
+        "geometry_source_recovery_receipt_sha256": receipt["receipt_sha256"],
+        "geometry_forecast_binding_sha256": forecast_binding["binding_sha256"],
+        "geometry_forecast_target_price": 1.14341,
+        "geometry_forecast_invalidation_price": 1.14586,
+        "geometry_tp_within_forecast_target": True,
+        "geometry_sl_at_or_beyond_forecast_invalidation": True,
+        "geometry_generic_overwrite_forbidden": True,
+        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+        "loss_asymmetry_guard_active": True,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "loss_asymmetry_guard_mode": "CAP_AVG_WIN",
+        "loss_asymmetry_guard_relaxed": False,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": (
+            "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
+        ),
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_vehicle": "STOP",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_take_profit_trades": 7,
+        "capture_take_profit_wins": 7,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_expectancy_jpy": 918.2276,
+        "capture_take_profit_net_jpy": 6427.5932,
+        "capture_take_profit_avg_win_jpy": 918.2276,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "capture_avg_win_jpy": 430.6,
+        "capture_avg_loss_jpy": 1042.0,
+        "capture_market_close_expectancy_jpy": -756.6,
+        "loss_asymmetry_guard_loss_cap_jpy": 430.6,
+        "loss_asymmetry_guard_base_max_loss_jpy": 2639.1,
+        "loss_asymmetry_guard_effective_max_loss_jpy": 430.6,
+        "max_loss_jpy": 430.6,
+    }
+    metadata.update(_positive_rotation_confidence_metrics(metadata) or {})
+    metadata.update(
+        {
+            "positive_rotation_proof_collection_ready": True,
+            "positive_rotation_proof_collection_mode": (
+                "TP_PROOF_COLLECTION_HARVEST"
+            ),
+            "positive_rotation_proof_collection_min_trades": 5,
+            "positive_rotation_proof_collection_target_trades": 20,
+            "positive_rotation_proof_collection_gap_trades": 13,
+        }
+    )
+    lane_binding = build_lane_binding(
+        forecast_binding=forecast_binding,
+        pair="EUR_USD",
+        side="SHORT",
+        method="BREAKOUT_FAILURE",
+        order_type="STOP-ENTRY",
+        entry=1.14524,
+        tp=1.14341,
+        sl=1.14586,
+        producer_units=units,
+        metadata=metadata,
+    )
+    assert isinstance(lane_binding, dict)
+    metadata.update(
+        {
+            "m15_recovery_lane_contract": LANE_CONTRACT,
+            "m15_recovery_lane_binding": lane_binding,
+            "m15_recovery_lane_binding_sha256": lane_binding["binding_sha256"],
+        }
+    )
+    intent = OrderIntent(
+        pair="EUR_USD",
+        side=Side.SHORT,
+        order_type=OrderType.STOP_ENTRY,
+        units=units,
+        entry=1.14524,
+        tp=1.14341,
+        sl=1.14586,
+        thesis="M15 failed-break micro recovery with attached TP",
+        market_context=MarketContext(
+            regime="RANGE",
+            narrative="M15 rejection",
+            chart_story="upper-rail failure",
+            method=TradeMethod.BREAKOUT_FAILURE,
+            invalidation="SL trades",
+        ),
+        metadata=metadata,
+    )
+    test_snapshot = BrokerSnapshot(
+        fetched_at_utc=now,
+        positions=(),
+        orders=(),
+        quotes={
+            "EUR_USD": Quote(
+                "EUR_USD",
+                bid=1.14540,
+                ask=1.14548,
+                timestamp_utc=now,
+            ),
+            "USD_JPY": Quote(
+                "USD_JPY",
+                bid=162.08,
+                ask=162.10,
+                timestamp_utc=now,
+            ),
+        },
+        account=AccountSummary(
+            nav_jpy=269_966.71,
+            balance_jpy=294_442.90,
+            margin_used_jpy=248_326.12,
+            margin_available_jpy=21_921.02,
+            hedging_enabled=True,
+            fetched_at_utc=now,
+        ),
+        home_conversions={"USD": 162.09},
+    )
+    return now, pair_charts_path, intent, test_snapshot
 
 
 def operator_manual_usdjpy_short() -> BrokerPosition:
@@ -156,6 +413,75 @@ def _write_guardian_watchdog_issue(path: Path) -> None:
     )
 
 
+def _write_p1_margin_warning_artifacts(
+    root: Path,
+    *,
+    nav_jpy: float = 100_000.0,
+    margin_used_jpy: float = 92_000.0,
+    margin_available_jpy: float = 8_000.0,
+    event_id: str = "margin-p1-event",
+) -> dict[str, Path]:
+    paths = {
+        "watchdog": root / "qr_trader_run_watchdog.json",
+        "consumption": root / "guardian_receipt_consumption.json",
+        "operator_review": root / "guardian_receipt_operator_review.json",
+        "broker_snapshot": root / "broker_snapshot.json",
+    }
+    issue = {
+        "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+        "severity": "P1",
+        "message": "current P1 margin warning",
+        "receipt_event_id": event_id,
+        "receipt_action": "HOLD",
+        "receipt_lifecycle": "EXPIRED",
+        "consumed_by_trader": False,
+        "emergency_or_margin_risk": True,
+        "normal_routing_allowed": False,
+        "event_type": "MARGIN_PRESSURE",
+        "event_severity": "P1",
+        "event_action_hint": "HOLD",
+        "event_details": {
+            "nav_jpy": nav_jpy,
+            "margin_used_jpy": margin_used_jpy,
+            "margin_available_jpy": margin_available_jpy,
+            "max_margin_utilization_pct": 95.0,
+            "fresh_entry_risk_block_active": False,
+            "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+            "fresh_entry_risk_observation_only": True,
+            "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+        },
+    }
+    paths["watchdog"].write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED",
+                "runtime_status": "OK",
+                "issue_status": "P1",
+                "severity": "P1",
+                "issues": [issue],
+                "guardian_receipt_issues": [issue],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["consumption"].write_text(
+        json.dumps(
+            {
+                "status": "CURRENT_P1_BLOCKS_ROUTING",
+                "normal_routing_allowed": False,
+                "current_p0_p1_blocks_routing": True,
+                "classifications": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["operator_review"].write_text("{}\n", encoding="utf-8")
+    paths["broker_snapshot"].write_text("{}\n", encoding="utf-8")
+    return paths
+
+
 def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
     paths = {
         "watchdog": root / "watchdog.json",
@@ -226,6 +552,752 @@ class RiskEngineTest(unittest.TestCase):
 
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
         self.assertIsNone(RiskPolicy().max_loss_jpy)
+
+    def test_default_policy_uses_95_percent_margin_utilization_cap(self) -> None:
+        self.assertEqual(RiskPolicy().max_margin_utilization_pct, 95.0)
+
+    def test_m15_recovery_five_units_revalidates_current_chart_and_spread(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            now, chart_path, intent, broker = _m15_recovery_fixture(Path(tmp))
+
+            result = validate_m15_recovery_micro_live_claim(
+                intent,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+                validation_time_utc=now,
+            )
+
+            self.assertTrue(result.applicable)
+            self.assertTrue(result.allowed)
+            self.assertEqual(result.evidence["status"], "PASSED")
+            self.assertEqual(result.evidence["units"], 5)
+            self.assertTrue(result.evidence["root_clock_bound_into_pair_chart"])
+            self.assertFalse(result.evidence["live_permission_granted"])
+
+            risk = RiskEngine(
+                policy=RiskPolicy(max_loss_jpy=500.0),
+                live_enabled=True,
+                validation_time_utc=now,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+            ).validate(intent, broker, for_live_send=True)
+            self.assertTrue(
+                risk.allowed,
+                msg=[(issue.code, issue.severity) for issue in risk.issues],
+            )
+            self.assertNotIn(
+                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                {issue.code for issue in risk.issues},
+            )
+            self.assertEqual(
+                {
+                    issue.code
+                    for issue in risk.issues
+                    if issue.code.startswith("M15_RECOVERY_")
+                },
+                {"M15_RECOVERY_RISK_REVALIDATED"},
+            )
+
+    def test_m15_recovery_limit_vehicle_fails_common_binding_and_risk(self) -> None:
+        from quant_rabbit.strategy.m15_recovery_contract import (
+            build_lane_binding,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            now, chart_path, intent, broker = _m15_recovery_fixture(Path(tmp))
+            metadata = deepcopy(intent.metadata)
+            self.assertIsNone(
+                build_lane_binding(
+                    forecast_binding=metadata["forecast_m15_recovery_binding"],
+                    pair=intent.pair,
+                    side=intent.side.value,
+                    method=intent.market_context.method.value,
+                    order_type="LIMIT",
+                    entry=intent.entry,
+                    tp=intent.tp,
+                    sl=intent.sl,
+                    producer_units=intent.units,
+                    metadata=metadata,
+                )
+            )
+
+            limit_intent = replace(
+                intent,
+                order_type=OrderType.LIMIT,
+                metadata=metadata,
+            )
+            result = validate_m15_recovery_micro_live_claim(
+                limit_intent,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                validation_time_utc=now,
+            )
+
+            self.assertTrue(result.applicable)
+            self.assertFalse(result.allowed)
+            self.assertTrue(
+                {
+                    "M15_RECOVERY_LIVE_SHAPE_INVALID",
+                    "M15_RECOVERY_LANE_BINDING_INVALID",
+                }.issubset({issue.code for issue in result.issues})
+            )
+
+    def test_p1_margin_warning_is_audited_but_projected_95_cap_still_decides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, intent, broker = _m15_recovery_fixture(root)
+            paths = _write_p1_margin_warning_artifacts(root)
+            engine = RiskEngine(
+                policy=RiskPolicy(max_loss_jpy=500.0),
+                live_enabled=True,
+                validation_time_utc=now,
+                guardian_receipt_watchdog_path=paths["watchdog"],
+                guardian_receipt_consumption_path=paths["consumption"],
+                guardian_receipt_operator_review_path=paths["operator_review"],
+                guardian_receipt_broker_snapshot_path=paths["broker_snapshot"],
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+            )
+
+            guardian_env = {
+                "QR_GUARDIAN_RECEIPT_WATCHDOG_PATH": str(paths["watchdog"]),
+                "QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH": str(paths["consumption"]),
+                "QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH": str(
+                    paths["operator_review"]
+                ),
+                "QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH": str(
+                    paths["broker_snapshot"]
+                ),
+            }
+            with patch.dict(os.environ, guardian_env):
+                warning_result = engine.validate(
+                    intent,
+                    broker,
+                    for_live_send=True,
+                )
+
+            self.assertTrue(
+                warning_result.allowed,
+                [(issue.code, issue.severity) for issue in warning_result.issues],
+            )
+            warning = next(
+                issue
+                for issue in warning_result.issues
+                if issue.code == "GUARDIAN_P1_MARGIN_PRESSURE_OBSERVED"
+            )
+            self.assertEqual(warning.severity, "WARN")
+            assert warning_result.metrics is not None
+            self.assertLessEqual(
+                warning_result.metrics.margin_utilization_after_pct,
+                95.0,
+            )
+
+            assert broker.account is not None
+            p0_broker = replace(
+                broker,
+                account=replace(
+                    broker.account,
+                    margin_used_jpy=broker.account.nav_jpy * 0.95,
+                    margin_available_jpy=1.0,
+                ),
+            )
+            with patch.dict(os.environ, guardian_env):
+                p0_result = engine.validate(
+                    intent,
+                    p0_broker,
+                    for_live_send=True,
+                )
+
+            self.assertFalse(p0_result.allowed)
+            self.assertIn(
+                "MARGIN_UTILIZATION_CAP_REACHED",
+                {issue.code for issue in p0_result.issues},
+            )
+            self.assertNotIn(
+                "GUARDIAN_P1_MARGIN_PRESSURE_OBSERVED",
+                {issue.code for issue in p0_result.issues},
+            )
+
+    def test_m15_recovery_actual_producer_live_bounds_clear_one_risk_floor(
+        self,
+    ) -> None:
+        """Regression for the 2026-07-14 live STOP geometry, not a toy RR."""
+
+        from quant_rabbit.strategy.directional_forecaster import (
+            build_m15_recovery_micro_receipt,
+        )
+        from quant_rabbit.strategy.intent_generator import (
+            IntentGenerator,
+            _intent_from_lane,
+        )
+        from quant_rabbit.strategy.m15_recovery_contract import (
+            build_forecast_binding,
+            canonical_sha256,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, proof_intent, broker = _m15_recovery_fixture(root)
+            chart_file = json.loads(chart_path.read_text(encoding="utf-8"))
+            pair_chart = chart_file["charts"][0]
+            m15_view = next(
+                view
+                for view in pair_chart["views"]
+                if view.get("granularity") == "M15"
+            )
+            m15_view["indicators"]["atr_pips"] = 9.5464
+            chart_path.write_text(
+                json.dumps(chart_file) + "\n",
+                encoding="utf-8",
+            )
+            receipt_chart = {
+                **pair_chart,
+                "generated_at_utc": chart_file["generated_at_utc"],
+            }
+            receipt = build_m15_recovery_micro_receipt(
+                receipt_chart,
+                expected_pair="EUR_USD",
+                now_utc=now,
+                current_spread_pips=0.6,
+            )
+            self.assertIsInstance(receipt, dict)
+            assert isinstance(receipt, dict)
+
+            cycle_id = "m15-recovery-live-20260714T004500Z"
+            scores = {"UP": 8.4, "DOWN": 26.4, "RANGE": 5.2}
+            evidence_body = {
+                "contract": "QR_M15_RECOVERY_FORECAST_V1",
+                "source_recovery_receipt_sha256": receipt["receipt_sha256"],
+                "pair": "EUR_USD",
+                "chart_generated_at_utc": receipt["chart_generated_at_utc"],
+                "forecast_current_price": 1.14465,
+                "forecast_spread_pips": 0.6,
+                "filtered_input_sha256": "a" * 64,
+                "raw_winner": "DOWN",
+                "component_scores": scores,
+                "final_direction": "DOWN",
+                "raw_confidence": 0.758,
+                "calibration_multiplier": 0.64,
+                "calibration_scope": "M15_RECOVERY_CONSERVATIVE_DIRECTIONAL_PRIOR",
+                "confidence": 0.48512,
+                "target_price": 1.14341,
+                "invalidation_price": 1.14564,
+                "horizon_min": 60,
+                "geometry_source_timeframe": "M15",
+                "live_permission": False,
+            }
+            evidence = {
+                **evidence_body,
+                "evidence_sha256": canonical_sha256(evidence_body),
+            }
+            forecast_binding = build_forecast_binding(
+                evidence,
+                cycle_id=cycle_id,
+            )
+            self.assertIsInstance(forecast_binding, dict)
+            assert isinstance(forecast_binding, dict)
+            history = dict(forecast_binding["forecast_history_identity"])
+            history.pop("identity_sha256")
+            forecast_history_path = root / "forecast_history.jsonl"
+            forecast_history_path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+                        **history,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            lane = {
+                "desk": "failure_trader",
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "method": "BREAKOUT_FAILURE",
+                "adoption": "ORDER_INTENT_REQUIRED",
+                "campaign_role": "NOW",
+                "reason": "live M15 recovery regression",
+                "required_receipt": "M15 recovery forecast binding",
+                "target_reward_risk": 2.0,
+                "blockers": [],
+                "story_examples": [],
+                "forecast_cycle_id": cycle_id,
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.4851,
+                "forecast_raw_confidence": 0.758,
+                "forecast_calibration_multiplier": 0.64,
+                "forecast_current_price": 1.14465,
+                "forecast_target_price": 1.14341,
+                "forecast_invalidation_price": 1.14564,
+                "forecast_horizon_min": 60,
+                "forecast_component_scores": scores,
+                "forecast_m15_recovery_receipt": receipt,
+                "forecast_m15_recovery_mode": "M15_RECOVERY_MICRO",
+                "forecast_m15_recovery_live_permission": False,
+                "forecast_m15_recovery_evidence": evidence,
+                "forecast_m15_recovery_binding": forecast_binding,
+                "forecast_m15_recovery_binding_sha256": forecast_binding[
+                    "binding_sha256"
+                ],
+            }
+            broker = replace(
+                broker,
+                quotes={
+                    **broker.quotes,
+                    "EUR_USD": Quote(
+                        "EUR_USD",
+                        bid=1.14462,
+                        ask=1.14468,
+                        timestamp_utc=now,
+                    ),
+                },
+            )
+            proof_keys = {
+                key: deepcopy(value)
+                for key, value in proof_intent.metadata.items()
+                if key.startswith(("positive_rotation_", "loss_asymmetry_", "capture_"))
+                or key
+                in {
+                    "attach_take_profit_on_fill",
+                    "tp_execution_mode",
+                    "tp_target_intent",
+                    "opportunity_mode",
+                    "max_loss_jpy",
+                }
+            }
+
+            def publish_exact_proof(intent, **_kwargs):
+                intent.metadata.update(deepcopy(proof_keys))
+                intent.metadata["m15_recovery_micro_shape_eligible"] = True
+                return None
+
+            guardian_payloads = {
+                "qr_trader_run_watchdog.json": {
+                    "status": "OK",
+                    "issue_status": "OK",
+                    "guardian_receipt": {"issues": []},
+                },
+                "guardian_receipt_consumption.json": {
+                    "status": "OK",
+                    "normal_routing_allowed": True,
+                    "classifications": [],
+                },
+                "guardian_receipt_operator_review.json": {
+                    "status": "OK",
+                    "normal_routing_allowed": True,
+                    "reviews": [],
+                },
+                "broker_snapshot.json": {
+                    "generated_at_utc": now.isoformat(),
+                    "positions": [],
+                    "orders": [],
+                },
+            }
+            for filename, payload in guardian_payloads.items():
+                (root / filename).write_text(
+                    json.dumps(payload) + "\n",
+                    encoding="utf-8",
+                )
+            indexed_charts = {
+                "EUR_USD": {
+                    "__raw_chart": receipt_chart,
+                    "generated_at_utc": receipt_chart["generated_at_utc"],
+                    "M15": m15_view["indicators"],
+                    "M15__regime": m15_view["regime"],
+                    "M15__regime_reading": m15_view["regime_reading"],
+                    "session": {},
+                    "confluence": {},
+                }
+            }
+            generator = IntentGenerator(
+                campaign_plan=root / "campaign.json",
+                strategy_profile=root / "strategy.json",
+                output_path=root / "intents.json",
+                report_path=root / "intents.md",
+                data_root=root,
+                max_loss_jpy=500.0,
+            )
+
+            with (
+                patch(
+                    "quant_rabbit.strategy.intent_generator._capture_positive_rotation_live_issue",
+                    side_effect=publish_exact_proof,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._geometry",
+                    side_effect=AssertionError("generic geometry must not run"),
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._technical_harvest_precision_geometry_plan",
+                    side_effect=AssertionError("technical precision must not run"),
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._bidask_replay_precision_geometry_plan",
+                    side_effect=AssertionError("bid/ask precision must not run"),
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._oanda_campaign_vehicle_shape_reprice_metadata",
+                    side_effect=AssertionError("OANDA reprice must not run"),
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._daily_entry_budget_block_issue",
+                    return_value=None,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._positive_rotation_daily_firepower_issue",
+                    return_value=None,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._telemetry_live_readiness_issues",
+                    return_value=[],
+                ),
+            ):
+                intent = _intent_from_lane(
+                    lane,
+                    broker.quotes["EUR_USD"],
+                    broker,
+                    max_loss_jpy=500.0,
+                    atr_pips=999.0,
+                    range_indicators=m15_view["indicators"],
+                    regime_state="TREND_UP",
+                    chart_context={
+                        "m15_recovery_context_contract": (
+                            "QR_M15_RECOVERY_FORECAST_V1"
+                        ),
+                        "m15_recovery_context_timeframes": [
+                            "M15",
+                            "M30",
+                            "H1",
+                            "H4",
+                            "D",
+                        ],
+                        "m15_recovery_context_current_price": 1.14465,
+                    },
+                    pair_chart=receipt_chart,
+                    data_root=root,
+                    validation_time_utc=now,
+                    m15_recovery_receipt=receipt,
+                )
+                generated = generator._build_for_lane(
+                    lane,
+                    broker,
+                    None,
+                    max_loss_jpy=500.0,
+                    pair_charts=indexed_charts,
+                    validation_time_utc=now,
+                    data_root=root,
+                )
+
+            self.assertEqual(
+                (intent.entry, intent.tp, intent.sl),
+                (1.14461, 1.14341, 1.14564),
+            )
+            self.assertEqual(intent.metadata["geometry_atr_pips"], 9.5464)
+            self.assertEqual(
+                intent.metadata["tp_target_source"],
+                "M15_RECOVERY_FORECAST_BOUND",
+            )
+            self.assertIn("m15_recovery_lane_binding", intent.metadata)
+            self.assertEqual(
+                intent.metadata["m15_recovery_lane_binding"]["geometry_binding"][
+                    "atr_pips"
+                ],
+                9.5464,
+            )
+
+            risk = RiskEngine(
+                policy=RiskPolicy(max_loss_jpy=500.0),
+                live_enabled=True,
+                validation_time_utc=now,
+                pair_charts_path=chart_path,
+                forecast_history_path=forecast_history_path,
+            ).validate(intent, broker, for_live_send=True)
+            self.assertIsNotNone(risk.metrics)
+            assert risk.metrics is not None
+            self.assertGreaterEqual(
+                risk.metrics.reward_risk,
+                RiskPolicy().technical_harvest_min_reward_risk,
+            )
+            self.assertLess(risk.metrics.reward_risk, RiskPolicy().min_reward_risk)
+            self.assertTrue(
+                risk.allowed,
+                msg=[(issue.code, issue.severity) for issue in risk.issues],
+            )
+            self.assertNotIn(
+                "REWARD_RISK_TOO_LOW",
+                {issue.code for issue in risk.issues},
+            )
+            self.assertEqual(
+                generated.status,
+                "LIVE_READY",
+                msg={
+                    "risk_allowed": generated.risk_allowed,
+                    "blocker_codes": generated.live_blocker_codes,
+                    "risk_issues": generated.risk_issues,
+                },
+            )
+            self.assertTrue(generated.risk_allowed)
+            assert generated.intent is not None
+            self.assertEqual(
+                (
+                    generated.intent["entry"],
+                    generated.intent["tp"],
+                    generated.intent["sl"],
+                ),
+                (1.14461, 1.14341, 1.14564),
+            )
+
+    def test_m15_recovery_history_streams_files_larger_than_64_mib(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            row = {
+                "timestamp_utc": "2026-07-14T00:45:00Z",
+                "cycle_id": "large-history-cycle",
+                "pair": "EUR_USD",
+                "direction": "DOWN",
+                "confidence": 0.48512,
+            }
+            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+            padding_line = (" " * (64 * 1024)) + "\n"
+            with path.open("a", encoding="utf-8") as handle:
+                for _ in range(1025):
+                    handle.write(padding_line)
+            self.assertGreater(path.stat().st_size, 64 * 1024 * 1024)
+
+            loaded, issue = _m15_recovery_forecast_history_row(
+                path,
+                pair="EUR_USD",
+                cycle_id="large-history-cycle",
+            )
+
+            self.assertIsNone(issue)
+            self.assertEqual(loaded, row)
+
+    def test_m15_recovery_fails_closed_on_source_spread_units_and_deleted_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, intent, broker = _m15_recovery_fixture(root)
+            original_chart = chart_path.read_text()
+
+            payload = json.loads(original_chart)
+            payload["charts"][0]["views"][2]["indicators"]["atr_pips"] = 6.0
+            chart_path.write_text(json.dumps(payload) + "\n")
+            changed = validate_m15_recovery_micro_live_claim(
+                intent,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+                validation_time_utc=now,
+            )
+            self.assertFalse(changed.allowed)
+            self.assertIn(
+                "M15_RECOVERY_CURRENT_SOURCE_REVALIDATION_FAILED",
+                {issue.code for issue in changed.issues},
+            )
+            chart_path.write_text(original_chart)
+
+            widened = replace(
+                broker,
+                quotes={
+                    **broker.quotes,
+                    "EUR_USD": replace(
+                        broker.quotes["EUR_USD"],
+                        ask=broker.quotes["EUR_USD"].bid + 0.00050,
+                    ),
+                },
+            )
+            spread_result = validate_m15_recovery_micro_live_claim(
+                intent,
+                widened,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+                validation_time_utc=now,
+            )
+            self.assertFalse(spread_result.allowed)
+
+            receipt_tamper_metadata = deepcopy(intent.metadata)
+            receipt_tamper = receipt_tamper_metadata[
+                "m15_recovery_micro_receipt"
+            ]
+            receipt_tamper["geometry_source"]["atr_pips"] = 6.0
+            receipt_tamper_metadata["forecast_m15_recovery_receipt"] = deepcopy(
+                receipt_tamper
+            )
+            receipt_tampered = replace(
+                intent,
+                metadata=receipt_tamper_metadata,
+            )
+            receipt_tamper_result = validate_m15_recovery_micro_live_claim(
+                receipt_tampered,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                validation_time_utc=now,
+            )
+            self.assertFalse(receipt_tamper_result.allowed)
+            self.assertIn(
+                "M15_RECOVERY_FORECAST_BINDING_INVALID",
+                {issue.code for issue in receipt_tamper_result.issues},
+            )
+            self.assertTrue(
+                any(
+                    "M15_RECOVERY_RECEIPT_BODY_DIGEST_INVALID" in issue.message
+                    for issue in receipt_tamper_result.issues
+                )
+            )
+
+            geometry_tamper_metadata = deepcopy(intent.metadata)
+            geometry_tamper_metadata["geometry_atr_pips"] = 6.0
+            geometry_tampered = replace(
+                intent,
+                metadata=geometry_tamper_metadata,
+            )
+            geometry_tamper_result = validate_m15_recovery_micro_live_claim(
+                geometry_tampered,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                validation_time_utc=now,
+            )
+            self.assertFalse(geometry_tamper_result.allowed)
+            self.assertIn(
+                "M15_RECOVERY_LANE_BINDING_INVALID",
+                {issue.code for issue in geometry_tamper_result.issues},
+            )
+
+            oversized_metadata = deepcopy(intent.metadata)
+            oversized_metadata["m15_recovery_micro_units"] = 1000
+            oversized = replace(
+                intent,
+                units=1000,
+                metadata=oversized_metadata,
+            )
+            oversized_result = validate_m15_recovery_micro_live_claim(
+                oversized,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+                validation_time_utc=now,
+            )
+            self.assertFalse(oversized_result.allowed)
+            self.assertIn(
+                "M15_RECOVERY_LIVE_SHAPE_INVALID",
+                {issue.code for issue in oversized_result.issues},
+            )
+
+            deleted_metadata = deepcopy(intent.metadata)
+            for key in tuple(deleted_metadata):
+                if key.startswith("m15_recovery_micro_"):
+                    deleted_metadata.pop(key)
+            deleted = replace(intent, metadata=deleted_metadata)
+            self.assertTrue(m15_recovery_micro_claimed(deleted))
+            deleted_result = validate_m15_recovery_micro_live_claim(
+                deleted,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name("forecast_history.jsonl"),
+                validation_time_utc=now,
+            )
+            self.assertFalse(deleted_result.allowed)
+            self.assertIn(
+                "M15_RECOVERY_RECEIPT_INVALID",
+                {issue.code for issue in deleted_result.issues},
+            )
+
+            # Removing every canonical micro key and restoring the ordinary
+            # forecast placeholders must not downgrade the remaining outer
+            # binding/context/geometry material to NOT_APPLICABLE.
+            partial_metadata = deepcopy(intent.metadata)
+            for key in tuple(partial_metadata):
+                if key.startswith("m15_recovery_micro_"):
+                    partial_metadata.pop(key)
+            partial_metadata.update(
+                {
+                    "forecast_m15_recovery_receipt": {},
+                    "forecast_m15_recovery_mode": None,
+                    "forecast_m15_recovery_live_permission": None,
+                    "forecast_m15_recovery_binding": {},
+                }
+            )
+            partial = replace(intent, metadata=partial_metadata)
+            self.assertTrue(m15_recovery_micro_claimed(partial))
+            partial_result = validate_m15_recovery_micro_live_claim(
+                partial,
+                broker,
+                pair_charts_path=chart_path,
+                forecast_history_path=chart_path.with_name(
+                    "forecast_history.jsonl"
+                ),
+                validation_time_utc=now,
+            )
+            self.assertTrue(partial_result.applicable)
+            self.assertFalse(partial_result.allowed)
+            self.assertIn(
+                "M15_RECOVERY_RECEIPT_INVALID",
+                {issue.code for issue in partial_result.issues},
+            )
+
+    def test_ordinary_forecast_placeholders_do_not_claim_m15_recovery(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=5,
+            entry=1.1720,
+            tp=1.1740,
+            sl=1.1700,
+            thesis="ordinary forecast with canonical empty placeholders",
+            metadata={
+                "forecast_m15_recovery_receipt": {},
+                "forecast_m15_recovery_mode": None,
+                "forecast_m15_recovery_live_permission": None,
+            },
+        )
+
+        self.assertFalse(m15_recovery_micro_claimed(intent))
+        result = validate_m15_recovery_micro_live_claim(
+            intent,
+            snapshot(),
+            pair_charts_path=Path("/definitely/missing/pair_charts.json"),
+        )
+        self.assertFalse(result.applicable)
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.issues, ())
+
+        for residue in (
+            {"geometry_atr_source_timeframe": "M15"},
+            {"geometry_atr_pips": 5.0},
+            {"tp_target_source": "M15_RECOVERY_FORECAST_BOUND"},
+        ):
+            with self.subTest(residue=residue):
+                partial = replace(
+                    intent,
+                    metadata={**intent.metadata, **residue},
+                )
+                self.assertTrue(m15_recovery_micro_claimed(partial))
+                partial_result = validate_m15_recovery_micro_live_claim(
+                    partial,
+                    snapshot(),
+                    pair_charts_path=Path(
+                        "/definitely/missing/pair_charts.json"
+                    ),
+                )
+                self.assertTrue(partial_result.applicable)
+                self.assertFalse(partial_result.allowed)
+                self.assertIn(
+                    "M15_RECOVERY_RECEIPT_INVALID",
+                    {issue.code for issue in partial_result.issues},
+                )
 
     def test_evidence_activated_forecast_floor_is_enforced_only_on_live_send(self) -> None:
         intent = OrderIntent(
@@ -2849,23 +3921,26 @@ class RiskEngineTest(unittest.TestCase):
             pair="EUR_USD",
             side=Side.LONG,
             order_type=OrderType.MARKET,
-            units=13_000,
-            tp=1.17430,
+            units=7_200,
+            tp=1.17440,
             sl=1.17274,
             thesis="eurusd_must_fit_margin_before_send",
         )
 
-        decision = _capped_engine().validate(intent, snap)
+        decision = _capped_engine(
+            policy=RiskPolicy(max_loss_jpy=1_000.0)
+        ).validate(intent, snap)
 
         codes = {issue.code for issue in decision.issues}
         self.assertFalse(decision.allowed)
         self.assertIn("MARGIN_UTILIZATION_CAP_EXCEEDED", codes)
-        self.assertIn("MARGIN_AVAILABLE_EXCEEDED", codes)
+        self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", codes)
         self.assertIsNotNone(decision.metrics)
         assert decision.metrics is not None
-        self.assertGreater(decision.metrics.margin_utilization_after_pct or 0.0, 92.0)
+        self.assertGreater(decision.metrics.margin_utilization_after_pct or 0.0, 95.0)
+        self.assertLess(decision.metrics.margin_utilization_after_pct or 100.0, 95.1)
 
-    def test_margin_cap_allows_trade_inside_92_percent_budget(self) -> None:
+    def test_margin_cap_allows_trade_inside_95_percent_budget(self) -> None:
         now = datetime.now(timezone.utc)
         snap = BrokerSnapshot(
             fetched_at_utc=now,
@@ -2885,21 +3960,25 @@ class RiskEngineTest(unittest.TestCase):
             pair="EUR_USD",
             side=Side.LONG,
             order_type=OrderType.MARKET,
-            units=6_000,
-            tp=1.17430,
+            units=7_000,
+            tp=1.17440,
             sl=1.17274,
-            thesis="eurusd_can_use_margin_up_to_92_percent",
+            thesis="eurusd_can_use_margin_up_to_95_percent",
             metadata={"max_loss_jpy": 1_000.0},
         )
 
-        decision = _capped_engine().validate(intent, snap)
+        decision = _capped_engine(
+            policy=RiskPolicy(max_loss_jpy=1_000.0)
+        ).validate(intent, snap)
 
         codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", codes)
         self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", codes)
         self.assertIsNotNone(decision.metrics)
         assert decision.metrics is not None
-        self.assertLessEqual(decision.metrics.margin_utilization_after_pct or 100.0, 92.0)
+        self.assertGreater(decision.metrics.margin_utilization_after_pct or 0.0, 92.0)
+        self.assertLess(decision.metrics.margin_utilization_after_pct or 100.0, 95.0)
 
     def test_external_position_blocks_fresh_entries(self) -> None:
         external = BrokerPosition(
@@ -3822,7 +4901,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertIn("HEDGE_UNWIND_PLAN_MISSING", issue_codes)
         self.assertIn("HEDGE_REVIEW_TRIGGER_MISSING", issue_codes)
 
-    def test_same_pair_hedge_uses_longest_leg_margin_when_account_is_over_policy_cap(self) -> None:
+    def test_zero_increment_hedge_cannot_bypass_margin_state_boundaries(self) -> None:
         protected_long = BrokerPosition(
             trade_id="2",
             pair="EUR_USD",
@@ -3860,14 +4939,15 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = _capped_engine(
+        engine = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
                 max_portfolio_loss_jpy=50_000.0,
                 max_margin_utilization_pct=92.0,
             )
-        ).validate(
+        )
+        decision = engine.validate(
             intent,
             snapshot(
                 positions=(protected_long,),
@@ -3880,12 +4960,31 @@ class RiskEngineTest(unittest.TestCase):
         )
 
         issue_codes = {issue.code for issue in decision.issues}
-        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertFalse(decision.allowed)
         self.assertIsNotNone(decision.metrics)
         assert decision.metrics is not None
         self.assertEqual(decision.metrics.estimated_margin_jpy, 0.0)
-        self.assertNotIn("MARGIN_UTILIZATION_CAP_REACHED", issue_codes)
-        self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
+        self.assertIn("MARGIN_UTILIZATION_CAP_REACHED", issue_codes)
+
+        no_available = engine.validate(
+            intent,
+            snapshot(
+                positions=(protected_long,),
+                hedging_enabled=True,
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=100_000.0,
+                margin_available_jpy=0.0,
+            ),
+        )
+        self.assertFalse(no_available.allowed)
+        self.assertIsNotNone(no_available.metrics)
+        assert no_available.metrics is not None
+        self.assertEqual(no_available.metrics.estimated_margin_jpy, 0.0)
+        self.assertIn(
+            "MARGIN_AVAILABLE_EXHAUSTED",
+            {issue.code for issue in no_available.issues},
+        )
 
     def test_recovery_hedge_uses_range_reward_floor_instead_of_fresh_entry_floor(self) -> None:
         protected_long = BrokerPosition(

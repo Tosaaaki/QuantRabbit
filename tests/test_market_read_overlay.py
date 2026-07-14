@@ -37,11 +37,19 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context_evidence,
     technical_context_sha256,
 )
+from quant_rabbit.strategy.m15_recovery_contract import (
+    FORECAST_CONTRACT as M15_RECOVERY_FORECAST_CONTRACT,
+    GEOMETRY_CONTRACT as M15_RECOVERY_GEOMETRY_CONTRACT,
+    LANE_CONTRACT as M15_RECOVERY_LANE_CONTRACT,
+    build_forecast_binding as build_m15_recovery_forecast_binding,
+    build_lane_binding as build_m15_recovery_lane_binding,
+)
 from quant_rabbit.strategy.projection_ledger import LedgerEntry, write_ledger
 
 
 NOW = datetime(2026, 7, 11, 3, 0, tzinfo=timezone.utc)
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+M15_RECOVERY_LANE_ID = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
 
 
 def _projection_trial(
@@ -3919,6 +3927,89 @@ class MarketReadOverlayTest(unittest.TestCase):
                 self.assertTrue(material["global_safety"])
                 self.assertIn(expected_reason, material["global_reasons"])
 
+    def test_exact_p1_margin_receipt_is_global_observation_but_every_contradiction_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_action_receipt.json"
+            canonical_receipt = _p1_margin_action_receipt()
+            path.write_text(json.dumps(canonical_receipt))
+
+            canonical = (
+                market_read_overlay_module.guardian_action_receipt_scope_material(
+                    path,
+                    baseline_pairs=["EUR_USD"],
+                    as_of=NOW,
+                )
+            )
+
+            self.assertEqual(canonical["parse_status"], "VALID")
+            self.assertFalse(canonical["global_safety"])
+            self.assertEqual(canonical["scope"], "GLOBAL_MARGIN_OBSERVATION")
+            self.assertTrue(canonical["p1_margin_warning_observed"])
+            self.assertEqual(
+                canonical["margin_contract"],
+                "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+            )
+
+            variants: dict[str, dict] = {}
+            missing_severity = json.loads(json.dumps(canonical_receipt))
+            missing_severity["selected_event"].pop("severity")
+            missing_severity["event"].pop("severity")
+            variants["missing_severity"] = missing_severity
+            contradictory = json.loads(json.dumps(canonical_receipt))
+            for key in ("selected_event", "event"):
+                contradictory[key]["details"][
+                    "fresh_entry_risk_block_active"
+                ] = True
+            variants["contradictory_flags"] = contradictory
+            hard_cap = json.loads(json.dumps(canonical_receipt))
+            for key in ("selected_event", "event"):
+                hard_cap[key]["details"]["margin_used_jpy"] = 95_000.0
+            variants["hard_cap_reached"] = hard_cap
+            legacy_cap = json.loads(json.dumps(canonical_receipt))
+            for key in ("selected_event", "event"):
+                legacy_cap[key]["details"].update(
+                    {
+                        "margin_used_jpy": 86_000.0,
+                        "margin_available_jpy": 14_000.0,
+                        "max_margin_utilization_pct": 92.0,
+                    }
+                )
+            variants["legacy_cap_mismatch"] = legacy_cap
+            compound = json.loads(json.dumps(canonical_receipt))
+            compound["issues"] = [
+                {"code": "UNRELATED_P1", "severity": "P1"}
+            ]
+            variants["compound_issue"] = compound
+            p0 = json.loads(json.dumps(canonical_receipt))
+            for key in ("selected_event", "event"):
+                p0[key]["severity"] = "P0"
+                p0[key]["thesis_state"] = "EMERGENCY"
+                p0[key]["details"].update(
+                    {
+                        "margin_used_jpy": 95_000.0,
+                        "fresh_entry_risk_block_active": True,
+                        "fresh_entry_risk_observation_only": False,
+                        "fresh_entry_margin_contract": (
+                            "QR_GUARDIAN_P0_MARGIN_HARD_CAP_V1"
+                        ),
+                    }
+                )
+            p0["receipt"]["thesis_state"] = "EMERGENCY"
+            variants["p0"] = p0
+
+            for name, receipt in variants.items():
+                with self.subTest(name=name):
+                    path.write_text(json.dumps(receipt))
+                    material = market_read_overlay_module.guardian_action_receipt_scope_material(
+                        path,
+                        baseline_pairs=["EUR_USD"],
+                        as_of=NOW,
+                    )
+                    self.assertTrue(material["global_safety"])
+                    self.assertFalse(
+                        material.get("p1_margin_warning_observed", False)
+                    )
+
     def test_guardian_scope_enforces_runtime_clock_states_without_hashing_clocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "guardian_action_receipt.json"
@@ -4494,6 +4585,248 @@ class MarketReadOverlayTest(unittest.TestCase):
             with self.assertRaisesRegex(MarketReadOverlayError, "AI_MARKET_READ_RANGE_GEOMETRY_CONFLICT"):
                 _apply(paths)
 
+    def test_m15_recovery_allocation_uses_dedicated_context_for_both_proof_modes(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "TP_PROOF_COLLECTION_HARVEST",
+                7,
+                "M15_RECOVERY_EDGE_COLLECTION",
+                False,
+                True,
+            ),
+            (
+                "TP_PROVEN_HARVEST",
+                20,
+                "EXACT_VEHICLE_TAKE_PROFIT",
+                True,
+                False,
+            ),
+        )
+        for mode, trades, edge_basis, positive_proven, collection_proven in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                _configure_m15_recovery_lane(
+                    paths,
+                    mode=mode,
+                    trades=trades,
+                )
+                packet = json.loads(paths["packet"].read_text())
+                board = packet["capital_allocation_board"]
+                lane = board["selected_lane"]
+
+                self.assertTrue(lane["allocation_eligible"])
+                self.assertEqual(lane["edge_basis"], edge_basis)
+                self.assertIs(lane["positive_edge_proven"], positive_proven)
+                self.assertIs(
+                    lane["edge_collection_proven"],
+                    collection_proven,
+                )
+                self.assertEqual(
+                    lane["m15_recovery"]["status"],
+                    "M15_RECOVERY_VERIFIED",
+                )
+                self.assertEqual(lane["allowed_size_multiples"], [1.0])
+                self.assertNotEqual(
+                    lane["forecast"]["technical_context"]["status"],
+                    "VALID",
+                )
+                self.assertEqual(
+                    board["forecast_context_scope"],
+                    "SELECTED_LANE_M15_RECOVERY",
+                )
+                self.assertEqual(
+                    board["forecast_context"]["status"],
+                    "M15_RECOVERY_VERIFIED",
+                )
+                self.assertNotIn(
+                    "technical_context",
+                    board["forecast_context"],
+                )
+                self.assertEqual(
+                    board["forecast_context"]["edge_basis"],
+                    edge_basis,
+                )
+                self.assertIn(
+                    "M15_RECOVERY_EDGE_COLLECTION is evidence collection, not positive edge proof",
+                    board["allocation_rule"],
+                )
+
+                _write_overlay(paths, size_multiple=0.75)
+                with self.assertRaisesRegex(
+                    MarketReadOverlayError,
+                    "MARKET_READ_CAPITAL_ALLOCATION_MULTIPLE_INVALID",
+                ):
+                    _apply(paths)
+
+                _write_overlay(paths, size_multiple=1.0)
+                summary = _apply(paths)
+                self.assertEqual(summary.action, "TRADE")
+
+    def test_m15_recovery_missing_or_tampered_chain_fails_closed(self) -> None:
+        cases = (
+            ("TP_PROOF_COLLECTION_HARVEST", 7, "source_receipt"),
+            ("TP_PROOF_COLLECTION_HARVEST", 7, "risk_marker"),
+            ("TP_PROOF_COLLECTION_HARVEST", 7, "promote_collection"),
+            ("TP_PROOF_COLLECTION_HARVEST", 7, "context_timeframes"),
+            ("TP_PROVEN_HARVEST", 20, "missing_lane_binding"),
+            ("TP_PROVEN_HARVEST", 20, "method"),
+            ("TP_PROVEN_HARVEST", 20, "market_order"),
+            ("TP_PROVEN_HARVEST", 20, "limit_order"),
+            ("TP_PROVEN_HARVEST", 20, "direction"),
+            ("TP_PROVEN_HARVEST", 20, "units"),
+            ("TP_PROVEN_HARVEST", 20, "manual_mutation"),
+            ("TP_PROVEN_HARVEST", 20, "geometry_only_residue"),
+            ("TP_PROVEN_HARVEST", 20, "forecast_mode_only_residue"),
+            ("TP_PROVEN_HARVEST", 20, "lane_contract_only_residue"),
+            ("TP_PROVEN_HARVEST", 20, "atr_only_residue"),
+            ("TP_PROVEN_HARVEST", 20, "tp_source_only_residue"),
+        )
+        for mode, trades, mutation in cases:
+            with self.subTest(mode=mode, mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                _configure_m15_recovery_lane(
+                    paths,
+                    mode=mode,
+                    trades=trades,
+                )
+                intents = json.loads(paths["intents"].read_text())
+                result = intents["results"][0]
+                intent = result["intent"]
+                metadata = intent["metadata"]
+                if mutation == "source_receipt":
+                    metadata["m15_recovery_micro_receipt"][
+                        "spread_cap_pips"
+                    ] = 9.0
+                elif mutation == "risk_marker":
+                    result["risk_issues"] = []
+                elif mutation == "promote_collection":
+                    metadata["positive_rotation_live_ready"] = True
+                elif mutation == "context_timeframes":
+                    metadata["m15_recovery_context_timeframes"] = [
+                        "M5",
+                        "M15",
+                        "M30",
+                        "H1",
+                        "H4",
+                        "D",
+                    ]
+                elif mutation == "missing_lane_binding":
+                    metadata.pop("m15_recovery_lane_binding")
+                elif mutation == "method":
+                    intent["market_context"]["method"] = "TREND_CONTINUATION"
+                elif mutation == "market_order":
+                    intent["order_type"] = "MARKET"
+                elif mutation == "limit_order":
+                    intent["order_type"] = "LIMIT"
+                elif mutation == "direction":
+                    metadata["forecast_direction"] = "DOWN"
+                elif mutation == "units":
+                    intent["units"] = 1000
+                elif mutation == "manual_mutation":
+                    metadata[
+                        "m15_recovery_micro_manual_position_mutation_allowed"
+                    ] = True
+                elif mutation in {
+                    "geometry_only_residue",
+                    "forecast_mode_only_residue",
+                    "lane_contract_only_residue",
+                    "atr_only_residue",
+                    "tp_source_only_residue",
+                }:
+                    for key in tuple(metadata):
+                        if key.startswith("m15_recovery_") or key.startswith(
+                            "forecast_m15_recovery_"
+                        ):
+                            metadata.pop(key)
+                    geometry_keys = {
+                        "geometry_source_recovery_receipt_sha256",
+                        "geometry_forecast_binding_sha256",
+                        "geometry_forecast_target_price",
+                        "geometry_forecast_invalidation_price",
+                        "geometry_tp_within_forecast_target",
+                        "geometry_sl_at_or_beyond_forecast_invalidation",
+                        "geometry_generic_overwrite_forbidden",
+                    }
+                    if mutation == "geometry_only_residue":
+                        for key in tuple(metadata):
+                            if key.startswith("geometry_") and key not in {
+                                "geometry_model",
+                            } | geometry_keys:
+                                metadata.pop(key)
+                    else:
+                        for key in tuple(metadata):
+                            if key.startswith("geometry_"):
+                                metadata.pop(key)
+                        metadata["geometry_model"] = "ORDINARY_GEOMETRY"
+                        if mutation == "forecast_mode_only_residue":
+                            metadata["forecast_m15_recovery_mode"] = (
+                                "M15_RECOVERY_MICRO"
+                            )
+                        elif mutation == "lane_contract_only_residue":
+                            metadata["m15_recovery_lane_contract"] = (
+                                "QR_M15_RECOVERY_LANE_V1"
+                            )
+                        elif mutation == "atr_only_residue":
+                            metadata["geometry_atr_source_timeframe"] = "M15"
+                        else:
+                            metadata["tp_target_source"] = (
+                                "M15_RECOVERY_FORECAST_BOUND"
+                            )
+                else:
+                    raise AssertionError(f"unknown mutation {mutation}")
+                paths["intents"].write_text(json.dumps(intents))
+                _reprepare(paths)
+
+                packet = json.loads(paths["packet"].read_text())
+                lane = packet["capital_allocation_board"]["selected_lane"]
+                self.assertFalse(lane["allocation_eligible"])
+                self.assertTrue(lane["m15_recovery"]["claimed"])
+                self.assertFalse(lane["m15_recovery"]["valid"])
+                self.assertTrue(lane["m15_recovery"]["error_codes"])
+
+                _write_overlay(paths)
+                with self.assertRaises(MarketReadOverlayError):
+                    _apply(paths)
+
+    def test_m15_recovery_acceptance_revalidates_self_hashed_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _configure_m15_recovery_lane(
+                paths,
+                mode="TP_PROOF_COLLECTION_HARVEST",
+                trades=7,
+            )
+            packet = json.loads(paths["packet"].read_text())
+            original_board = packet["capital_allocation_board"]
+
+            mutations = {
+                "side": "SHORT",
+                "method": "TREND_CONTINUATION",
+                "forecast_cycle_id": "attacker-cycle",
+                "source_receipt_sha256": "0" * 64,
+                "forecast_binding_sha256": "1" * 64,
+                "lane_binding_sha256": "2" * 64,
+                "edge_basis": "EXACT_VEHICLE_TAKE_PROFIT",
+            }
+            for field, value in mutations.items():
+                with self.subTest(field=field):
+                    board = json.loads(json.dumps(original_board))
+                    scoped = board["forecast_context"]
+                    scoped[field] = value
+                    body = dict(scoped)
+                    body.pop("recovery_context_sha256")
+                    scoped["recovery_context_sha256"] = canonical_json_sha256(
+                        body
+                    )
+                    error = market_read_overlay_module._selected_lane_forecast_context_binding_error(
+                        board=board,
+                        selected_lane=board["selected_lane"],
+                        lane_id=M15_RECOVERY_LANE_ID,
+                    )
+                    self.assertIsNotNone(error)
+
 
 def _synthetic_execution_cost_surface() -> dict:
     """Stable, valid global cost material for tests outside cost calibration.
@@ -4943,6 +5276,323 @@ def _append_vehicle_trade(
                 "INSERT INTO execution_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+
+
+def _configure_m15_recovery_lane(
+    paths: dict[str, Path],
+    *,
+    mode: str,
+    trades: int,
+) -> None:
+    for index in range(trades):
+        _append_vehicle_trade(
+            paths["execution_ledger"],
+            pair="EUR_USD",
+            side="LONG",
+            method="BREAKOUT_FAILURE",
+            vehicle="STOP",
+            realized=320.0,
+            index=10_000 + index,
+        )
+
+    baseline = json.loads(paths["baseline"].read_text())
+    baseline["selected_lane_id"] = M15_RECOVERY_LANE_ID
+    baseline["selected_lane_ids"] = [M15_RECOVERY_LANE_ID]
+    baseline["method"] = "BREAKOUT_FAILURE"
+    baseline["evidence_refs"] = [
+        f"intent:{M15_RECOVERY_LANE_ID}",
+        "broker:snapshot",
+    ]
+    paths["baseline"].write_text(json.dumps(baseline))
+
+    receipt_body = {
+        "contract": "QR_M15_RECOVERY_MICRO_V1",
+        "mode": "M15_RECOVERY_MICRO",
+        "status": "ELIGIBLE_FOR_MICRO_REVALIDATION",
+        "pair": "EUR_USD",
+        "chart_generated_at_utc": NOW.isoformat(),
+        "m15_plus_scoring_input_sha256": hashlib.sha256(
+            b"m15-plus-input"
+        ).hexdigest(),
+        "validated_at_utc": NOW.isoformat(),
+        "fast_timeframe_receipts": {
+            "M1": {"recovery_state": "RECOVERING"},
+            "M5": {"recovery_state": "RECOVERED"},
+        },
+        "geometry_source": {
+            "timeframe": "M15",
+            "latest_clean_timestamp_utc": NOW.isoformat(),
+            "atr_pips": 8.0,
+            "candles_count": 120,
+        },
+        "current_spread_pips": 2.0,
+        "spread_cap_pips": 2.5,
+        "sizing": {
+            "max_units": 999,
+            "full_size_allowed": False,
+            "minimum_units_override": False,
+        },
+        "live_permission": False,
+        "requires_risk_gateway_revalidation": True,
+        "manual_position_mutation_allowed": False,
+    }
+    receipt = {
+        **receipt_body,
+        "receipt_sha256": canonical_json_sha256(receipt_body),
+    }
+    scores = {"UP": 1.2, "DOWN": -0.2, "RANGE": 0.1}
+    evidence_body = {
+        "contract": M15_RECOVERY_FORECAST_CONTRACT,
+        "source_recovery_receipt_sha256": receipt["receipt_sha256"],
+        "pair": "EUR_USD",
+        "chart_generated_at_utc": receipt["chart_generated_at_utc"],
+        "forecast_current_price": 1.1001,
+        "forecast_spread_pips": 2.0,
+        "filtered_input_sha256": hashlib.sha256(
+            b"m15-filtered-input"
+        ).hexdigest(),
+        "raw_winner": "UP",
+        "component_scores": scores,
+        "final_direction": "UP",
+        "raw_confidence": 0.8,
+        "calibration_multiplier": 0.9,
+        "calibration_scope": "M15_RECOVERY_CONSERVATIVE_DIRECTIONAL_PRIOR",
+        "confidence": 0.72,
+        "target_price": 1.1025,
+        "invalidation_price": 1.0980,
+        "horizon_min": 60,
+        "geometry_source_timeframe": "M15",
+        "live_permission": False,
+    }
+    forecast_evidence = {
+        **evidence_body,
+        "evidence_sha256": canonical_json_sha256(evidence_body),
+    }
+    cycle_id = f"m15-recovery-{mode.lower()}-{trades}"
+    forecast_binding = build_m15_recovery_forecast_binding(
+        forecast_evidence,
+        cycle_id=cycle_id,
+    )
+    if forecast_binding is None:
+        raise AssertionError("M15 recovery forecast fixture did not bind")
+
+    lower = hit_rate_wilson_lower(1.0, trades)
+    if lower is None:
+        raise AssertionError("M15 recovery Wilson fixture did not calculate")
+    pessimistic = lower * 320.0 - (1.0 - lower) * 100.0
+    proof_collection = mode == "TP_PROOF_COLLECTION_HARVEST"
+    effective_max_loss = 320.0 if proof_collection else 400.0
+    net_jpy = float(trades * 320)
+    scope_key = (
+        "EUR_USD|LONG|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
+    )
+    exact_net_scope_key = (
+        "EUR_USD|LONG|BREAKOUT_FAILURE|STOP|ALL_AUDITED_EXITS"
+    )
+    metadata = {
+        "method": "BREAKOUT_FAILURE",
+        "position_intent": "NEW",
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "capture_expectancy_jpy": -120.0,
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": scope_key,
+        "capture_take_profit_vehicle": "STOP",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "capture_take_profit_expectancy_jpy": 320.0,
+        "capture_take_profit_net_jpy": net_jpy,
+        "capture_take_profit_trades": trades,
+        "capture_take_profit_wins": trades,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_avg_win_jpy": 320.0,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "capture_market_close_expectancy_jpy": -120.0,
+        "capture_avg_win_jpy": 320.0,
+        "capture_avg_loss_jpy": 100.0,
+        "capture_exact_vehicle_net_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_exact_vehicle_net_scope_key": exact_net_scope_key,
+        "capture_exact_vehicle_net_vehicle": "STOP",
+        "capture_exact_vehicle_net_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_net"
+        ),
+        "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
+        "capture_exact_vehicle_net_trades": trades,
+        "capture_exact_vehicle_net_wins": trades,
+        "capture_exact_vehicle_net_losses": 0,
+        "capture_exact_vehicle_net_jpy": net_jpy,
+        "capture_exact_vehicle_net_expectancy_jpy": 320.0,
+        "capture_exact_vehicle_net_avg_win_jpy": 320.0,
+        "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+        "capture_exact_vehicle_net_unresolved_realized_trades": 0,
+        "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
+        "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (
+            hashlib.sha256(b"[]").hexdigest()
+        ),
+        "positive_rotation_mode": mode,
+        "positive_rotation_confidence_method": (
+            "WILSON_LOWER_BOUND_STRESS_EXPECTANCY"
+        ),
+        "positive_rotation_confidence_z": 1.96,
+        "positive_rotation_tp_wins": trades,
+        "positive_rotation_tp_trades": trades,
+        "positive_rotation_tp_win_rate_lower": round(lower, 6),
+        "positive_rotation_loss_proxy_jpy": 100.0,
+        "positive_rotation_pessimistic_expectancy_jpy": round(
+            pessimistic,
+            4,
+        ),
+        "positive_rotation_proof_collection_ready": proof_collection,
+        "positive_rotation_proof_collection_mode": (
+            "TP_PROOF_COLLECTION_HARVEST" if proof_collection else None
+        ),
+        "positive_rotation_proof_collection_min_trades": (
+            5 if proof_collection else None
+        ),
+        "positive_rotation_proof_collection_target_trades": (
+            20 if proof_collection else None
+        ),
+        "positive_rotation_proof_collection_gap_trades": (
+            20 - trades if proof_collection else None
+        ),
+        "positive_rotation_live_ready": not proof_collection,
+        "loss_asymmetry_guard_active": True,
+        "loss_asymmetry_guard_mode": (
+            "CAP_AVG_WIN" if proof_collection else "TP_PROVEN_RELAXED"
+        ),
+        "loss_asymmetry_guard_relaxed": not proof_collection,
+        "loss_asymmetry_guard_loss_cap_jpy": 320.0,
+        "loss_asymmetry_guard_base_max_loss_jpy": 400.0,
+        "loss_asymmetry_guard_effective_max_loss_jpy": effective_max_loss,
+        "max_loss_jpy": effective_max_loss,
+        "m15_recovery_micro_contract": "QR_M15_RECOVERY_MICRO_V1",
+        "m15_recovery_micro_mode": "M15_RECOVERY_MICRO",
+        "m15_recovery_micro_receipt": receipt,
+        "m15_recovery_micro_receipt_sha256": receipt["receipt_sha256"],
+        "m15_recovery_micro_units": 999,
+        "m15_recovery_micro_max_units": 999,
+        "m15_recovery_micro_full_size_allowed": False,
+        "m15_recovery_micro_live_permission": False,
+        "m15_recovery_micro_requires_risk_gateway_revalidation": True,
+        "m15_recovery_micro_manual_position_mutation_allowed": False,
+        "m15_recovery_micro_shape_eligible": True,
+        "m15_recovery_micro_positive_rotation_mode": mode,
+        "m15_recovery_micro_proof_contract": {
+            "positive_rotation_mode": mode,
+            "reachable": True,
+            "failed_checks": [],
+        },
+        "m15_recovery_micro_risk_revalidated": True,
+        "m15_recovery_micro_gateway_revalidated": False,
+        "forecast_m15_recovery_receipt": receipt,
+        "forecast_m15_recovery_mode": "M15_RECOVERY_MICRO",
+        "forecast_m15_recovery_live_permission": False,
+        "forecast_m15_recovery_evidence": forecast_evidence,
+        "forecast_m15_recovery_binding": forecast_binding,
+        "forecast_m15_recovery_binding_sha256": forecast_binding[
+            "binding_sha256"
+        ],
+        "forecast_cycle_id": cycle_id,
+        "forecast_direction": "UP",
+        "forecast_confidence": 0.72,
+        "forecast_raw_confidence": 0.8,
+        "forecast_calibration_multiplier": 0.9,
+        "forecast_current_price": 1.1001,
+        "forecast_target_price": 1.1025,
+        "forecast_invalidation_price": 1.0980,
+        "forecast_horizon_min": 60,
+        "forecast_component_scores": scores,
+        "forecast_technical_context": {},
+        "m15_recovery_context_contract": M15_RECOVERY_FORECAST_CONTRACT,
+        "m15_recovery_context_timeframes": ["M15", "M30", "H1", "H4", "D"],
+        "geometry_model": M15_RECOVERY_GEOMETRY_CONTRACT,
+        "geometry_atr_source_timeframe": "M15",
+        "geometry_atr_pips": receipt["geometry_source"]["atr_pips"],
+        "geometry_source_recovery_receipt_sha256": receipt[
+            "receipt_sha256"
+        ],
+        "geometry_forecast_binding_sha256": forecast_binding[
+            "binding_sha256"
+        ],
+        "geometry_forecast_target_price": forecast_binding["target_price"],
+        "geometry_forecast_invalidation_price": forecast_binding[
+            "invalidation_price"
+        ],
+        "geometry_tp_within_forecast_target": True,
+        "geometry_sl_at_or_beyond_forecast_invalidation": True,
+        "geometry_generic_overwrite_forbidden": True,
+    }
+    lane_binding = build_m15_recovery_lane_binding(
+        forecast_binding=forecast_binding,
+        pair="EUR_USD",
+        side="LONG",
+        method="BREAKOUT_FAILURE",
+        order_type="STOP-ENTRY",
+        entry=1.1003,
+        tp=1.1025,
+        sl=1.0980,
+        producer_units=999,
+        metadata=metadata,
+    )
+    if lane_binding is None:
+        raise AssertionError("M15 recovery lane fixture did not bind")
+    metadata.update(
+        {
+            "m15_recovery_lane_contract": M15_RECOVERY_LANE_CONTRACT,
+            "m15_recovery_lane_binding": lane_binding,
+            "m15_recovery_lane_binding_sha256": lane_binding[
+                "binding_sha256"
+            ],
+        }
+    )
+
+    intents = json.loads(paths["intents"].read_text())
+    intents["results"] = [
+        {
+            "lane_id": M15_RECOVERY_LANE_ID,
+            "status": "LIVE_READY",
+            "risk_allowed": True,
+            "risk_issues": [
+                {
+                    "code": "M15_RECOVERY_RISK_REVALIDATED",
+                    "message": "independent current-source validation passed",
+                    "severity": "WARN",
+                }
+            ],
+            "live_blocker_codes": [],
+            "intent": {
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "order_type": "STOP-ENTRY",
+                "units": 999,
+                "entry": 1.1003,
+                "tp": 1.1025,
+                "sl": 1.0980,
+                "market_context": {"method": "BREAKOUT_FAILURE"},
+                "metadata": metadata,
+            },
+            "risk_metrics": {
+                "entry_price": 1.1003,
+                "loss_pips": 23.0,
+                "reward_pips": 22.0,
+                "risk_jpy": 229.77,
+                "reward_jpy": 219.78,
+                "reward_risk": 22.0 / 23.0,
+                "spread_pips": 2.0,
+                "jpy_per_pip": 9.99,
+                "estimated_margin_jpy": 999.0,
+            },
+        }
+    ]
+    paths["intents"].write_text(json.dumps(intents))
+    _reprepare(paths)
+
+
 def _reprepare(paths: dict[str, Path]) -> None:
     baseline = json.loads(paths["baseline"].read_text())
     baseline.pop("decision_provenance", None)
@@ -5021,6 +5671,33 @@ def _guardian_action_receipt(
         },
         "issues": [],
     }
+
+
+def _p1_margin_action_receipt() -> dict:
+    receipt = _guardian_action_receipt(
+        pair="PORTFOLIO",
+        action="HOLD",
+        event_type="MARGIN_PRESSURE",
+        severity="P1",
+        event_id="guardian-margin-p1",
+        thesis_state="WOUNDED",
+    )
+    details = {
+        "nav_jpy": 100_000.0,
+        "margin_used_jpy": 92_000.0,
+        "margin_available_jpy": 8_000.0,
+        "max_margin_utilization_pct": 95.0,
+        "fresh_entry_risk_block_active": False,
+        "fresh_entry_risk_block_reason": "MARGIN_PRESSURE",
+        "fresh_entry_risk_observation_only": True,
+        "fresh_entry_margin_contract": "QR_GUARDIAN_P1_MARGIN_WARNING_V1",
+    }
+    receipt["selected_event"]["details"] = dict(details)
+    receipt["event"] = json.loads(json.dumps(receipt["selected_event"]))
+    receipt["receipt"]["margin_state"] = (
+        "margin_used/nav=0.920; available/nav=0.080; cap=0.950"
+    )
+    return receipt
 
 
 def _watchdog() -> dict:

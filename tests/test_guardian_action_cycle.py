@@ -460,7 +460,364 @@ class GuardianActionCycleTest(unittest.TestCase):
 
             codes = {issue["code"] for issue in result["strict_receipt_issues"]}
             self.assertIn("MANUAL_LOSS_CLOSE_FORBIDDEN", codes)
+            self.assertIn("OPERATOR_MANUAL_POSITION_ACTION_FORBIDDEN", codes)
+            self.assertEqual(
+                result["manual_exposure_safety"][
+                    "executable_system_reduction_target_trade_ids"
+                ],
+                [],
+            )
             self.assertFalse(result["manual_exposure_safety"]["manual_pl_counts_as_system_pl"])
+
+    def test_manual_only_margin_reduce_or_harvest_has_no_executable_target(self) -> None:
+        for action in ("REDUCE", "HARVEST"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(
+                    Path(tmp),
+                    event_overrides={
+                        "event_type": "MARGIN_PRESSURE",
+                        "pair": "PORTFOLIO",
+                        "direction": None,
+                        "action_hint": action,
+                        "thesis_state": "EMERGENCY",
+                        "recommended_review_type": "RISK_REVIEW",
+                    },
+                    receipt_overrides={
+                        "action": action,
+                        "new_information": False,
+                        "pair": "PORTFOLIO",
+                        "side": "NONE",
+                        "thesis_state": "EMERGENCY",
+                        "trade_ids": [],
+                    },
+                    manual_position={
+                        "trade_id": "manual-a",
+                        "owner": "operator_manual",
+                        "unrealized_pl_jpy": 120.0,
+                    },
+                )
+
+                result = run_guardian_action_cycle(paths=paths, now=NOW, env={})
+
+                codes = {
+                    issue["code"] for issue in result["strict_receipt_issues"]
+                }
+                self.assertIn(
+                    "OPERATOR_MANUAL_POSITION_ACTION_FORBIDDEN",
+                    codes,
+                )
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertTrue(
+                    result["manual_exposure_safety"]["manual_only_exposure"]
+                )
+                self.assertEqual(
+                    result["manual_exposure_safety"][
+                        "executable_system_reduction_target_trade_ids"
+                    ],
+                    [],
+                )
+                self.assertFalse(result["executed"])
+
+    def test_manual_only_margin_hold_is_verified_no_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "HOLD",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                },
+                receipt_overrides={
+                    "action": "HOLD",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": [],
+                    "lane_id": "",
+                },
+                manual_position={
+                    "trade_id": "manual-a",
+                    "owner": "operator_manual",
+                    "unrealized_pl_jpy": 120.0,
+                },
+            )
+
+            result = run_guardian_action_cycle(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_LIVE_ENABLED": "1",
+                    "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                    "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                },
+            )
+
+            self.assertEqual(result["status"], "VERIFIED_NO_ACTION")
+            self.assertEqual(result["strict_receipt_issues"], [])
+            self.assertTrue(result["manual_exposure_safety"]["manual_only_exposure"])
+            self.assertIn("NO_EXECUTABLE_ACTION", result["no_send_reason"])
+            self.assertFalse(result["executed"])
+
+    def test_hold_event_cannot_be_upgraded_to_position_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "HOLD",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                    "details": {
+                        "executable_reduction_target_trade_ids": ["system-a"],
+                    },
+                },
+                receipt_overrides={
+                    "action": "REDUCE",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": ["system-a"],
+                },
+                manual_position={
+                    "trade_id": "system-a",
+                    "owner": "trader",
+                    "unrealized_pl_jpy": 120.0,
+                },
+            )
+
+            result = run_guardian_action_cycle(paths=paths, now=NOW, env={})
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("GUARDIAN_ACTION_EVENT_ACTION_MISMATCH", codes)
+            self.assertFalse(result["executed"])
+
+    def test_mixed_margin_reduce_binds_only_event_authorized_system_trade_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "REDUCE",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                    "details": {
+                        "executable_reduction_target_trade_ids": ["system-a"],
+                    },
+                },
+                receipt_overrides={
+                    "action": "REDUCE",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": ["system-a"],
+                },
+                manual_position={
+                    "trade_id": "manual-a",
+                    "owner": "operator_manual",
+                    "unrealized_pl_jpy": -120.0,
+                },
+            )
+            snapshot = json.loads(paths.broker_snapshot.read_text())
+            snapshot["positions"].append(
+                {
+                    "trade_id": "system-a",
+                    "pair": "USD_JPY",
+                    "side": "LONG",
+                    "currentUnits": "1000",
+                    "entry_price": 157.0,
+                    "unrealized_pl_jpy": 20.0,
+                    "take_profit": None,
+                    "stop_loss": None,
+                    "owner": "trader",
+                    "raw": {},
+                }
+            )
+            paths.broker_snapshot.write_text(json.dumps(snapshot))
+
+            result = run_guardian_action_cycle(paths=paths, now=NOW, env={})
+
+            self.assertEqual(result["strict_receipt_issues"], [])
+            self.assertEqual(result["status"], "NEEDS_TRADER_CONFIRMATION")
+            self.assertEqual(
+                result["manual_exposure_safety"][
+                    "executable_system_reduction_target_trade_ids"
+                ],
+                ["system-a"],
+            )
+            self.assertEqual(
+                result["manual_exposure_safety"]["manual_target_trade_ids"],
+                [],
+            )
+            self.assertFalse(result["executed"])
+
+    def test_position_action_rejects_system_id_not_carried_by_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "REDUCE",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                    "details": {
+                        "executable_reduction_target_trade_ids": ["system-a"],
+                    },
+                },
+                receipt_overrides={
+                    "action": "REDUCE",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": ["system-b"],
+                },
+                manual_position={
+                    "trade_id": "system-b",
+                    "owner": "trader",
+                    "unrealized_pl_jpy": 20.0,
+                },
+            )
+
+            result = run_guardian_action_cycle(paths=paths, now=NOW, env={})
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("POSITION_TARGET_NOT_AUTHORIZED_BY_EVENT", codes)
+            self.assertEqual(
+                result["manual_exposure_safety"][
+                    "event_unauthorized_target_trade_ids"
+                ],
+                ["system-b"],
+            )
+            self.assertFalse(result["executed"])
+
+    def test_portfolio_reduce_without_exact_trade_id_never_becomes_close_all(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "REDUCE",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                    "details": {
+                        "executable_reduction_target_trade_ids": ["system-a"],
+                    },
+                },
+                receipt_overrides={
+                    "action": "REDUCE",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": [],
+                },
+                manual_position={
+                    "trade_id": "system-a",
+                    "owner": "trader",
+                    "unrealized_pl_jpy": 20.0,
+                },
+            )
+
+            result = run_guardian_action_cycle(paths=paths, now=NOW, env={})
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("EXPLICIT_SYSTEM_POSITION_TARGET_REQUIRED", codes)
+            self.assertEqual(
+                result["manual_exposure_safety"][
+                    "executable_system_reduction_target_trade_ids"
+                ],
+                [],
+            )
+            self.assertFalse(result["executed"])
+
+    def test_portfolio_refresh_rechecks_manual_owner_and_forces_next_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                snapshot_time=NOW - timedelta(minutes=10),
+                event_overrides={
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "direction": None,
+                    "action_hint": "REDUCE",
+                    "thesis_state": "EMERGENCY",
+                    "recommended_review_type": "RISK_REVIEW",
+                    "details": {
+                        "executable_reduction_target_trade_ids": ["transition-a"],
+                    },
+                },
+                receipt_overrides={
+                    "action": "REDUCE",
+                    "new_information": False,
+                    "pair": "PORTFOLIO",
+                    "side": "NONE",
+                    "thesis_state": "EMERGENCY",
+                    "trade_ids": ["transition-a"],
+                },
+                manual_position={
+                    "trade_id": "transition-a",
+                    "owner": "trader",
+                    "unrealized_pl_jpy": -20.0,
+                },
+            )
+
+            def refresh_to_manual(**_: object) -> dict[str, object]:
+                snapshot = json.loads(paths.broker_snapshot.read_text())
+                snapshot["fetched_at_utc"] = NOW.isoformat()
+                snapshot["positions"][0]["owner"] = "trader"
+                snapshot["positions"][0]["raw"] = {
+                    "operator_manual_position": {
+                        "packet_type": "OPERATOR_MANUAL_POSITION",
+                        "loss_side_auto_close_allowed": False,
+                        "auto_sl_attach_allowed": False,
+                        "auto_tp_modify_allowed": False,
+                    }
+                }
+                paths.broker_snapshot.write_text(json.dumps(snapshot))
+                return {"status": "OK"}
+
+            with patch(
+                "quant_rabbit.guardian_action_cycle._refresh_broker_snapshot",
+                side_effect=refresh_to_manual,
+            ):
+                result = run_guardian_action_cycle(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                    },
+                )
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("BROKER_TRUTH_CHANGED", codes)
+            self.assertIn("OPERATOR_MANUAL_POSITION_ACTION_FORBIDDEN", codes)
+            self.assertTrue(result["broker_truth_material_change"]["changed"])
+            self.assertTrue(result["manual_exposure_safety"]["manual_only_exposure"])
+            self.assertEqual(
+                result["manual_exposure_safety"]["manual_target_trade_ids"],
+                ["transition-a"],
+            )
+            self.assertFalse(result["executed"])
 
     def test_duplicate_receipt_cannot_execute_twice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -579,7 +936,7 @@ def _fixture(
                 "unrealized_pl_jpy": manual_position.get("unrealized_pl_jpy", -100.0),
                 "take_profit": None,
                 "stop_loss": None,
-                "owner": "unknown",
+                "owner": manual_position.get("owner", "unknown"),
                 "raw": {},
             }
         )

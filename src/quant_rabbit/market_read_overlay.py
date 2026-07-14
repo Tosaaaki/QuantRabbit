@@ -22,6 +22,10 @@ from quant_rabbit.capture_economics import (
     read_exact_vehicle_allocation_surface,
 )
 from quant_rabbit.forecast_precision import hit_rate_wilson_lower
+from quant_rabbit.guardian_margin_contract import (
+    P1_MARGIN_WARNING_CONTRACT as GUARDIAN_P1_MARGIN_WARNING_CONTRACT,
+    exact_p1_margin_warning_source_event,
+)
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.market_read_contract import (
     market_read_contract_payload,
@@ -34,6 +38,7 @@ from quant_rabbit.predictive_scout import (
 from quant_rabbit.risk import (
     FORECAST_LIVE_PRECISION_MIN_SAMPLES,
     FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+    RiskPolicy,
 )
 from quant_rabbit.strategy.forecast_technical_context import (
     CONFIDENCE_SEMANTICS,
@@ -44,6 +49,14 @@ from quant_rabbit.strategy.forecast_technical_context import (
     unknown_forecast_technical_context_evidence,
 )
 from quant_rabbit.strategy.failed_break_evidence import failed_break_direction
+from quant_rabbit.strategy.m15_recovery_contract import (
+    FORECAST_CONTRACT as M15_RECOVERY_FORECAST_CONTRACT,
+    LANE_CONTRACT as M15_RECOVERY_LANE_CONTRACT,
+    RECOVERY_ORDER_TYPE as M15_RECOVERY_ORDER_TYPE,
+    recovery_claimed as _m15_recovery_claimed,
+    validate_forecast_binding as validate_m15_recovery_forecast_binding,
+    validate_lane_binding as validate_m15_recovery_lane_binding,
+)
 from quant_rabbit.strategy.regime_family_weighting import (
     forecast_direction_consistency,
     verify_regime_family_weighting_receipt,
@@ -70,6 +83,24 @@ CAPITAL_ALLOCATION_KELLY_FRACTION = 0.25
 CAPITAL_ALLOCATION_NUMERIC_CEILING_CONTRACT = (
     "LANE_ECONOMIC_WILSON_QUARTER_KELLY_V2"
 )
+M15_RECOVERY_MICRO_CONTRACT = "QR_M15_RECOVERY_MICRO_V1"
+M15_RECOVERY_MICRO_MODE = "M15_RECOVERY_MICRO"
+M15_RECOVERY_MICRO_MAX_UNITS = 999
+M15_RECOVERY_CONTEXT_TIMEFRAMES = ("M15", "M30", "H1", "H4", "D")
+M15_RECOVERY_ALLOCATION_MATERIAL_CONTRACT = (
+    "QR_M15_RECOVERY_ALLOCATION_MATERIAL_V1"
+)
+M15_RECOVERY_ALLOCATION_CONTEXT_CONTRACT = (
+    "QR_M15_RECOVERY_ALLOCATION_CONTEXT_V1"
+)
+M15_RECOVERY_ALLOCATION_CONTEXT_SCOPE = "SELECTED_LANE_M15_RECOVERY"
+M15_RECOVERY_ALLOCATION_STATUS = "M15_RECOVERY_VERIFIED"
+M15_RECOVERY_RISK_MARKER = "M15_RECOVERY_RISK_REVALIDATED"
+M15_RECOVERY_EDGE_COLLECTION_BASIS = "M15_RECOVERY_EDGE_COLLECTION"
+M15_RECOVERY_PROOF_COLLECTION_MODE = "TP_PROOF_COLLECTION_HARVEST"
+M15_RECOVERY_TP_PROVEN_MODE = "TP_PROVEN_HARVEST"
+M15_RECOVERY_PROOF_COLLECTION_MIN_TRADES = 5
+M15_RECOVERY_TP_PROVEN_MIN_TRADES = 20
 
 OVERLAY_ALLOWED_FIELDS = frozenset(
     {
@@ -1413,7 +1444,9 @@ def _validated_capital_allocation(
     if selected_lane.get("allocation_eligible") is not True:
         raise MarketReadOverlayError(
             "MARKET_READ_CAPITAL_ALLOCATION_EDGE_NOT_PROVEN",
-            "selected lane is not LIVE_READY with positive edge evidence and current risk permission; use a non-trade disposition",
+            "selected lane is not LIVE_READY with current risk permission and either "
+            "positive edge proof or a separately labeled M15 recovery evidence-collection proof; "
+            "use a non-trade disposition",
         )
     allowed_multiples = selected_lane.get("allowed_size_multiples")
     allowed = [
@@ -1540,6 +1573,15 @@ def _selected_lane_forecast_context_binding_error(
         or str(board.get("selected_lane_id") or "") != lane_id
     ):
         return "capital-allocation board does not bind exactly one selected lane"
+    if (
+        board.get("forecast_context_scope")
+        == M15_RECOVERY_ALLOCATION_CONTEXT_SCOPE
+    ):
+        return _selected_lane_m15_recovery_context_binding_error(
+            board=board,
+            selected_lane=selected_lane,
+            lane_id=lane_id,
+        )
     if board.get("forecast_context_scope") != "SELECTED_LANE":
         return "selected trade allocation requires SELECTED_LANE forecast context"
     scoped = board.get("forecast_context")
@@ -1677,6 +1719,161 @@ def _selected_lane_forecast_context_binding_error(
         "receipt_sha256"
     ]:
         return "selected regime-family receipt does not match scoped context"
+    return None
+
+
+def _selected_lane_m15_recovery_context_binding_error(
+    *,
+    board: Mapping[str, Any],
+    selected_lane: Mapping[str, Any],
+    lane_id: str,
+) -> str | None:
+    """Rebuild the recovery chain instead of trusting its scoped label."""
+
+    scoped = board.get("forecast_context")
+    expected_scoped_keys = {
+        "contract",
+        "status",
+        "pair",
+        "direction",
+        "side",
+        "method",
+        "order_type",
+        "source_lane_id",
+        "source_generated_at_utc",
+        "forecast_cycle_id",
+        "source_receipt_sha256",
+        "forecast_binding_sha256",
+        "lane_binding_sha256",
+        "context_timeframes",
+        "positive_rotation_mode",
+        "edge_basis",
+        "recovery_material_sha256",
+        "recovery_context_sha256",
+    }
+    if not isinstance(scoped, Mapping) or set(scoped) != expected_scoped_keys:
+        return "selected M15 recovery context has an unexpected schema"
+    if not _content_addressed_mapping_valid(
+        scoped,
+        digest_key="recovery_context_sha256",
+    ):
+        return "selected M15 recovery context digest is invalid"
+    if (
+        scoped.get("contract") != M15_RECOVERY_ALLOCATION_CONTEXT_CONTRACT
+        or scoped.get("status") != M15_RECOVERY_ALLOCATION_STATUS
+        or scoped.get("source_lane_id") != lane_id
+        or scoped.get("source_generated_at_utc")
+        != board.get("order_intents_generated_at_utc")
+    ):
+        return "selected M15 recovery context source binding is invalid"
+
+    recovery = selected_lane.get("m15_recovery")
+    if not isinstance(recovery, Mapping):
+        return "selected lane lacks its M15 recovery validation material"
+    material = recovery.get("material")
+    if (
+        recovery.get("claimed") is not True
+        or recovery.get("valid") is not True
+        or recovery.get("status") != M15_RECOVERY_ALLOCATION_STATUS
+        or not isinstance(material, Mapping)
+        or not _content_addressed_mapping_valid(
+            material,
+            digest_key="material_sha256",
+        )
+        or recovery.get("material_sha256") != material.get("material_sha256")
+    ):
+        return "selected lane M15 recovery material is missing or invalid"
+
+    metadata = material.get("metadata")
+    risk_issues = material.get("risk_issues")
+    capture = selected_lane.get("capture")
+    forecast = selected_lane.get("forecast")
+    base_units = selected_lane.get("base_units")
+    if (
+        not isinstance(metadata, Mapping)
+        or not isinstance(risk_issues, list)
+        or not isinstance(capture, Mapping)
+        or not isinstance(forecast, Mapping)
+        or isinstance(base_units, bool)
+        or not isinstance(base_units, int)
+        or not 1 <= base_units <= M15_RECOVERY_MICRO_MAX_UNITS
+        or capture.get("exact_vehicle_edge_proven") is not True
+        or not SHA256_RE.fullmatch(
+            str(capture.get("execution_ledger_surface_sha256") or "")
+        )
+        or capture.get("take_profit_trades")
+        != metadata.get("capture_take_profit_trades")
+        or capture.get("take_profit_wins")
+        != metadata.get("capture_take_profit_wins")
+        or capture.get("take_profit_losses")
+        != metadata.get("capture_take_profit_losses")
+        or capture.get("take_profit_expectancy_jpy")
+        != metadata.get("capture_take_profit_expectancy_jpy")
+    ):
+        return "selected lane M15 recovery exact-TP receipt is invalid"
+
+    rebuilt = _m15_recovery_allocation_contract(
+        result={"risk_issues": risk_issues},
+        intent={
+            "pair": selected_lane.get("pair"),
+            "side": selected_lane.get("side"),
+            "order_type": selected_lane.get("order_type"),
+            "units": base_units,
+            "entry": selected_lane.get("entry"),
+            "tp": selected_lane.get("tp"),
+            "sl": selected_lane.get("sl"),
+            "metadata": metadata,
+        },
+        metadata=metadata,
+        method=str(selected_lane.get("method") or "").strip().upper(),
+        base_units=base_units,
+        positive_tp_edge=True,
+    )
+    if rebuilt.get("valid") is not True or rebuilt.get("material") != dict(material):
+        return "selected lane M15 recovery chain cannot be rebuilt exactly"
+
+    mode = rebuilt.get("mode")
+    edge_basis = rebuilt.get("edge_basis")
+    if mode == M15_RECOVERY_PROOF_COLLECTION_MODE:
+        if (
+            edge_basis != M15_RECOVERY_EDGE_COLLECTION_BASIS
+            or selected_lane.get("edge_basis")
+            != M15_RECOVERY_EDGE_COLLECTION_BASIS
+            or selected_lane.get("edge_collection_proven") is not True
+            or selected_lane.get("positive_edge_proven") is not False
+        ):
+            return "M15 recovery proof collection was mislabeled as proven edge"
+    elif mode == M15_RECOVERY_TP_PROVEN_MODE:
+        if (
+            edge_basis != "EXACT_VEHICLE_TAKE_PROFIT"
+            or selected_lane.get("edge_basis")
+            != "EXACT_VEHICLE_TAKE_PROFIT"
+            or selected_lane.get("positive_edge_proven") is not True
+            or selected_lane.get("edge_collection_proven") is not False
+        ):
+            return "M15 recovery TP-proven edge basis is invalid"
+    else:
+        return "selected M15 recovery proof mode is not executable"
+
+    expected = {
+        "pair": str(selected_lane.get("pair") or "").strip().upper(),
+        "direction": forecast.get("direction"),
+        "side": str(selected_lane.get("side") or "").strip().upper(),
+        "method": str(selected_lane.get("method") or "").strip().upper(),
+        "order_type": _m15_recovery_contract_order_type(
+            selected_lane.get("order_type")
+        ),
+        "forecast_cycle_id": rebuilt.get("forecast_cycle_id"),
+        "source_receipt_sha256": rebuilt.get("source_receipt_sha256"),
+        "forecast_binding_sha256": rebuilt.get("forecast_binding_sha256"),
+        "lane_binding_sha256": rebuilt.get("lane_binding_sha256"),
+        "context_timeframes": list(M15_RECOVERY_CONTEXT_TIMEFRAMES),
+        "positive_rotation_mode": mode,
+        "edge_basis": edge_basis,
+        "recovery_material_sha256": rebuilt.get("material_sha256"),
+    }
+    if any(scoped.get(key) != value for key, value in expected.items()):
+        return "selected M15 recovery context contradicts its source lane"
     return None
 
 
@@ -1862,6 +2059,7 @@ def validate_codex_market_read_provenance(
     if action.upper() == "TRADE" and claimed_edge_basis not in {
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
+        M15_RECOVERY_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     }:
@@ -3333,7 +3531,10 @@ def _build_capital_allocation_board(
         "global_profitability": global_profitability,
         "allocation_rule": (
             "ALLOCATE only the deterministic selected lane, never exceed base_units, "
-            "and use NO_TRADE when positive edge is not proved or the numeric thesis is contradicted."
+            "and only when allocation_eligible is true with either positive_edge_proven "
+            "or the separately labeled M15 recovery edge_collection_proven route. "
+            "M15_RECOVERY_EDGE_COLLECTION is evidence collection, not positive edge proof; "
+            "use NO_TRADE when neither proof route passes or the numeric thesis is contradicted."
         ),
     }
 
@@ -3389,6 +3590,63 @@ def _allocation_board_forecast_context(
             if isinstance(intent.get("metadata"), Mapping)
             else {}
         )
+        recovery = (
+            selected_lane.get("m15_recovery")
+            if isinstance(selected_lane, Mapping)
+            and isinstance(selected_lane.get("m15_recovery"), Mapping)
+            else {}
+        )
+        recovery_material = (
+            recovery.get("material")
+            if isinstance(recovery.get("material"), Mapping)
+            else None
+        )
+        if (
+            recovery.get("claimed") is True
+            and recovery.get("valid") is True
+            and recovery.get("status") == M15_RECOVERY_ALLOCATION_STATUS
+            and isinstance(recovery_material, Mapping)
+            and _content_addressed_mapping_valid(
+                recovery_material,
+                digest_key="material_sha256",
+            )
+            and recovery.get("material_sha256")
+            == recovery_material.get("material_sha256")
+        ):
+            scoped_body = {
+                "contract": M15_RECOVERY_ALLOCATION_CONTEXT_CONTRACT,
+                "status": M15_RECOVERY_ALLOCATION_STATUS,
+                "pair": selected_lane.get("pair"),
+                "direction": (
+                    (selected_lane.get("forecast") or {}).get("direction")
+                    if isinstance(selected_lane.get("forecast"), Mapping)
+                    else None
+                ),
+                "side": selected_lane.get("side"),
+                "method": selected_lane.get("method"),
+                "order_type": _m15_recovery_contract_order_type(
+                    selected_lane.get("order_type")
+                ),
+                "source_lane_id": str(selected_result.get("lane_id") or "")
+                or None,
+                "source_generated_at_utc": generated_at,
+                "forecast_cycle_id": recovery.get("forecast_cycle_id"),
+                "source_receipt_sha256": recovery.get(
+                    "source_receipt_sha256"
+                ),
+                "forecast_binding_sha256": recovery.get(
+                    "forecast_binding_sha256"
+                ),
+                "lane_binding_sha256": recovery.get("lane_binding_sha256"),
+                "context_timeframes": list(M15_RECOVERY_CONTEXT_TIMEFRAMES),
+                "positive_rotation_mode": recovery.get("mode"),
+                "edge_basis": selected_lane.get("edge_basis"),
+                "recovery_material_sha256": recovery.get("material_sha256"),
+            }
+            return M15_RECOVERY_ALLOCATION_CONTEXT_SCOPE, {
+                **scoped_body,
+                "recovery_context_sha256": canonical_json_sha256(scoped_body),
+            }
         pair = str(intent.get("pair") or "").strip().upper() or None
         forecast_binding = _directional_forecast_trade_binding(
             side=intent.get("side"),
@@ -4294,6 +4552,544 @@ def _exact_vehicle_take_profit_edge_proven(
     )
 
 
+_M15_RECOVERY_OUTER_METADATA_KEYS = (
+    "m15_recovery_micro_contract",
+    "m15_recovery_micro_mode",
+    "m15_recovery_micro_receipt",
+    "m15_recovery_micro_receipt_sha256",
+    "m15_recovery_micro_units",
+    "m15_recovery_micro_max_units",
+    "m15_recovery_micro_full_size_allowed",
+    "m15_recovery_micro_live_permission",
+    "m15_recovery_micro_requires_risk_gateway_revalidation",
+    "m15_recovery_micro_manual_position_mutation_allowed",
+    "m15_recovery_micro_shape_eligible",
+    "m15_recovery_micro_positive_rotation_mode",
+    "m15_recovery_micro_proof_contract",
+    "m15_recovery_micro_risk_revalidated",
+    "m15_recovery_micro_gateway_revalidated",
+    "forecast_m15_recovery_receipt",
+    "forecast_m15_recovery_mode",
+    "forecast_m15_recovery_live_permission",
+    "forecast_m15_recovery_evidence",
+    "forecast_m15_recovery_binding",
+    "forecast_m15_recovery_binding_sha256",
+    "forecast_cycle_id",
+    "forecast_direction",
+    "forecast_confidence",
+    "forecast_raw_confidence",
+    "forecast_calibration_multiplier",
+    "forecast_current_price",
+    "forecast_target_price",
+    "forecast_invalidation_price",
+    "forecast_horizon_min",
+    "forecast_component_scores",
+    "m15_recovery_context_contract",
+    "m15_recovery_context_timeframes",
+    "geometry_model",
+    "geometry_atr_source_timeframe",
+    "geometry_atr_pips",
+    "geometry_source_recovery_receipt_sha256",
+    "geometry_forecast_binding_sha256",
+    "geometry_forecast_target_price",
+    "geometry_forecast_invalidation_price",
+    "geometry_tp_within_forecast_target",
+    "geometry_sl_at_or_beyond_forecast_invalidation",
+    "geometry_generic_overwrite_forbidden",
+    "m15_recovery_lane_contract",
+    "m15_recovery_lane_binding",
+    "m15_recovery_lane_binding_sha256",
+)
+
+
+def _content_addressed_mapping_valid(
+    value: Any,
+    *,
+    digest_key: str,
+) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    body = dict(value)
+    digest = body.pop(digest_key, None)
+    if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+        return False
+    try:
+        return canonical_json_sha256(body) == digest
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError):
+        return False
+
+
+def _m15_recovery_contract_order_type(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized in {"STOP", "STOP_ENTRY", "STOP-ENTRY", "STOP_ORDER"}:
+        return "STOP-ENTRY"
+    if normalized in {"LIMIT", "LIMIT_ORDER"}:
+        return "LIMIT"
+    return normalized
+
+
+def _m15_recovery_rotation_proof_error(
+    metadata: Mapping[str, Any],
+    *,
+    positive_tp_edge: bool,
+) -> str | None:
+    """Re-derive the exact TP proof mode without upgrading thin evidence."""
+
+    mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
+    proof_contract = metadata.get("m15_recovery_micro_proof_contract")
+    trades = _strict_nonnegative_int(metadata.get("capture_take_profit_trades"))
+    wins = _strict_nonnegative_int(metadata.get("capture_take_profit_wins"))
+    losses = _strict_nonnegative_int(metadata.get("capture_take_profit_losses"))
+    mirrored_trades = _strict_nonnegative_int(
+        metadata.get("positive_rotation_tp_trades")
+    )
+    mirrored_wins = _strict_nonnegative_int(
+        metadata.get("positive_rotation_tp_wins")
+    )
+    average_win = _strict_positive_number(
+        metadata.get("capture_take_profit_avg_win_jpy")
+    )
+    loss_candidates = (
+        _strict_positive_number(
+            metadata.get("capture_take_profit_avg_loss_jpy")
+        ),
+        _strict_positive_number(metadata.get("capture_avg_loss_jpy")),
+    )
+    loss_proxy = max(
+        (value for value in loss_candidates if value is not None),
+        default=None,
+    )
+    stored_loss_proxy = _strict_positive_number(
+        metadata.get("positive_rotation_loss_proxy_jpy")
+    )
+    stored_lower = _strict_probability(
+        metadata.get("positive_rotation_tp_win_rate_lower")
+    )
+    stored_pessimistic = _strict_positive_number(
+        metadata.get("positive_rotation_pessimistic_expectancy_jpy")
+    )
+    confidence_z = _strict_positive_number(
+        metadata.get("positive_rotation_confidence_z")
+    )
+    market_close_expectancy = _optional_float(
+        metadata.get("capture_market_close_expectancy_jpy")
+    )
+    if (
+        not positive_tp_edge
+        or mode
+        not in {
+            M15_RECOVERY_PROOF_COLLECTION_MODE,
+            M15_RECOVERY_TP_PROVEN_MODE,
+        }
+        or not isinstance(proof_contract, Mapping)
+        or proof_contract.get("positive_rotation_mode") != mode
+        or proof_contract.get("reachable") is not True
+        or bool(proof_contract.get("failed_checks") or [])
+        or metadata.get("loss_asymmetry_guard_active") is not True
+        or str(metadata.get("capture_economics_status") or "").strip().upper()
+        != "NEGATIVE_EXPECTANCY"
+        or str(metadata.get("position_intent") or "NEW").strip().upper()
+        == "HEDGE"
+        or metadata.get("attach_take_profit_on_fill") is not True
+        or str(metadata.get("tp_execution_mode") or "").strip().upper()
+        != "ATTACHED_TECHNICAL_TP"
+        or str(metadata.get("tp_target_intent") or "").strip().upper()
+        != "HARVEST"
+        or str(metadata.get("opportunity_mode") or "").strip().upper()
+        != "HARVEST"
+        or metadata.get("capture_take_profit_exact_vehicle_required") is not True
+        or str(metadata.get("capture_take_profit_scope") or "").strip().upper()
+        != "PAIR_SIDE_METHOD_VEHICLE"
+        or trades is None
+        or wins is None
+        or losses != 0
+        or wins != trades
+        or mirrored_trades != trades
+        or mirrored_wins != wins
+        or average_win is None
+        or loss_proxy is None
+        or stored_loss_proxy is None
+        or stored_lower is None
+        or stored_pessimistic is None
+        or confidence_z is None
+        or not math.isclose(confidence_z, 1.96, rel_tol=0.0, abs_tol=1e-12)
+        or str(metadata.get("positive_rotation_confidence_method") or "")
+        != "WILSON_LOWER_BOUND_STRESS_EXPECTANCY"
+        or market_close_expectancy is None
+        or market_close_expectancy >= 0.0
+    ):
+        return "M15_RECOVERY_EXACT_TP_PROOF_INVALID"
+
+    expected_lower = hit_rate_wilson_lower(wins / trades, trades)
+    if expected_lower is None:
+        return "M15_RECOVERY_EXACT_TP_PROOF_INVALID"
+    expected_pessimistic = (
+        expected_lower * average_win - (1.0 - expected_lower) * loss_proxy
+    )
+    if (
+        expected_pessimistic <= 0.0
+        or not math.isclose(
+            stored_loss_proxy,
+            round(loss_proxy, 4),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or not math.isclose(
+            stored_lower,
+            round(expected_lower, 6),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+        or not math.isclose(
+            stored_pessimistic,
+            round(expected_pessimistic, 4),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        return "M15_RECOVERY_EXACT_TP_PROOF_ARITHMETIC_INVALID"
+
+    guard_mode = str(
+        metadata.get("loss_asymmetry_guard_mode") or ""
+    ).strip().upper()
+    if mode == M15_RECOVERY_PROOF_COLLECTION_MODE:
+        if (
+            not M15_RECOVERY_PROOF_COLLECTION_MIN_TRADES
+            <= trades
+            < M15_RECOVERY_TP_PROVEN_MIN_TRADES
+            or metadata.get("positive_rotation_proof_collection_ready")
+            is not True
+            or str(
+                metadata.get("positive_rotation_proof_collection_mode") or ""
+            ).strip().upper()
+            != M15_RECOVERY_PROOF_COLLECTION_MODE
+            or metadata.get("positive_rotation_proof_collection_min_trades")
+            != M15_RECOVERY_PROOF_COLLECTION_MIN_TRADES
+            or metadata.get("positive_rotation_proof_collection_target_trades")
+            != M15_RECOVERY_TP_PROVEN_MIN_TRADES
+            or metadata.get("positive_rotation_proof_collection_gap_trades")
+            != M15_RECOVERY_TP_PROVEN_MIN_TRADES - trades
+            or metadata.get("positive_rotation_live_ready") not in {None, False}
+            or guard_mode not in {"CAP_AVG_WIN", "TP_PROOF_COLLECTION_MIN_LOT"}
+            or metadata.get("loss_asymmetry_guard_relaxed") is not False
+        ):
+            return "M15_RECOVERY_PROOF_COLLECTION_CONTRACT_INVALID"
+        return None
+
+    if (
+        trades < M15_RECOVERY_TP_PROVEN_MIN_TRADES
+        or metadata.get("positive_rotation_live_ready") is not True
+        or guard_mode != "TP_PROVEN_RELAXED"
+        or metadata.get("loss_asymmetry_guard_relaxed") is not True
+    ):
+        return "M15_RECOVERY_TP_PROVEN_CONTRACT_INVALID"
+    return None
+
+
+def _m15_recovery_allocation_contract(
+    *,
+    result: Mapping[str, Any],
+    intent: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    method: str,
+    base_units: int,
+    positive_tp_edge: bool,
+) -> dict[str, Any]:
+    """Validate and freeze the recovery-only allocation evidence chain."""
+
+    claimed = _m15_recovery_claimed(metadata)
+    if not claimed:
+        return {
+            "claimed": False,
+            "valid": False,
+            "status": "NOT_CLAIMED",
+            "error_codes": [],
+            "mode": None,
+            "edge_basis": None,
+            "context_timeframes": None,
+            "material": None,
+            "material_sha256": None,
+        }
+
+    errors: list[str] = []
+
+    def fail(code: str) -> None:
+        if code not in errors:
+            errors.append(code)
+
+    pair = str(intent.get("pair") or "").strip().upper()
+    side = str(intent.get("side") or "").strip().upper()
+    raw_order_type = str(intent.get("order_type") or "").strip().upper()
+    order_type = _m15_recovery_contract_order_type(raw_order_type)
+    entry = _optional_float(intent.get("entry"))
+    tp = _optional_float(intent.get("tp"))
+    sl = _optional_float(intent.get("sl"))
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    forecast_binding = metadata.get("forecast_m15_recovery_binding")
+    lane_binding = metadata.get("m15_recovery_lane_binding")
+    mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
+
+    if not _content_addressed_mapping_valid(receipt, digest_key="receipt_sha256"):
+        fail("M15_RECOVERY_SOURCE_RECEIPT_DIGEST_INVALID")
+    if isinstance(receipt, Mapping):
+        sizing = receipt.get("sizing")
+        geometry_source = receipt.get("geometry_source")
+        fast_receipts = receipt.get("fast_timeframe_receipts")
+        spread = _strict_positive_number(receipt.get("current_spread_pips"))
+        spread_cap = _strict_positive_number(receipt.get("spread_cap_pips"))
+        if (
+            receipt.get("contract") != M15_RECOVERY_MICRO_CONTRACT
+            or receipt.get("mode") != M15_RECOVERY_MICRO_MODE
+            or receipt.get("status") != "ELIGIBLE_FOR_MICRO_REVALIDATION"
+            or receipt.get("pair") != pair
+            or receipt.get("live_permission") is not False
+            or receipt.get("requires_risk_gateway_revalidation") is not True
+            or receipt.get("manual_position_mutation_allowed") is not False
+            or not isinstance(sizing, Mapping)
+            or sizing.get("max_units") != M15_RECOVERY_MICRO_MAX_UNITS
+            or sizing.get("full_size_allowed") is not False
+            or sizing.get("minimum_units_override") is not False
+            or not isinstance(geometry_source, Mapping)
+            or geometry_source.get("timeframe") != "M15"
+            or not isinstance(fast_receipts, Mapping)
+            or set(fast_receipts) != {"M1", "M5"}
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("recovery_state") not in {"RECOVERING", "RECOVERED"}
+                for item in fast_receipts.values()
+            )
+            or not any(
+                isinstance(item, Mapping)
+                and item.get("recovery_state") == "RECOVERING"
+                for item in fast_receipts.values()
+            )
+            or spread is None
+            or spread_cap is None
+            or spread > spread_cap
+        ):
+            fail("M15_RECOVERY_SOURCE_RECEIPT_CONTRACT_INVALID")
+    else:
+        fail("M15_RECOVERY_SOURCE_RECEIPT_MISSING")
+
+    receipt_sha = receipt.get("receipt_sha256") if isinstance(receipt, Mapping) else None
+    if (
+        metadata.get("m15_recovery_micro_contract")
+        != M15_RECOVERY_MICRO_CONTRACT
+        or metadata.get("m15_recovery_micro_mode") != M15_RECOVERY_MICRO_MODE
+        or metadata.get("m15_recovery_micro_receipt_sha256") != receipt_sha
+        or metadata.get("forecast_m15_recovery_receipt") != receipt
+        or metadata.get("m15_recovery_micro_live_permission") is not False
+        or metadata.get(
+            "m15_recovery_micro_requires_risk_gateway_revalidation"
+        )
+        is not True
+        or metadata.get(
+            "m15_recovery_micro_manual_position_mutation_allowed"
+        )
+        is not False
+        or metadata.get("m15_recovery_micro_full_size_allowed") is not False
+        or metadata.get("m15_recovery_micro_max_units")
+        != M15_RECOVERY_MICRO_MAX_UNITS
+        or metadata.get("m15_recovery_micro_units") != base_units
+        or metadata.get("m15_recovery_micro_shape_eligible") is not True
+        or metadata.get("m15_recovery_micro_positive_rotation_mode") != mode
+        or metadata.get("forecast_m15_recovery_mode")
+        != M15_RECOVERY_MICRO_MODE
+        or metadata.get("forecast_m15_recovery_live_permission") is not False
+        or metadata.get("m15_recovery_micro_gateway_revalidated") is not False
+    ):
+        fail("M15_RECOVERY_OUTER_RECEIPT_BINDING_INVALID")
+
+    expected_direction = "UP" if side == "LONG" else "DOWN" if side == "SHORT" else None
+    if (
+        pair not in DEFAULT_TRADER_PAIRS
+        or expected_direction is None
+        or metadata.get("forecast_direction") != expected_direction
+        or method != "BREAKOUT_FAILURE"
+        or order_type != M15_RECOVERY_ORDER_TYPE
+        or raw_order_type == "MARKET"
+        or base_units <= 0
+        or base_units > M15_RECOVERY_MICRO_MAX_UNITS
+        or str(metadata.get("position_intent") or "NEW").strip().upper()
+        == "HEDGE"
+        or metadata.get("m15_recovery_context_contract")
+        != M15_RECOVERY_FORECAST_CONTRACT
+        or metadata.get("m15_recovery_context_timeframes")
+        != list(M15_RECOVERY_CONTEXT_TIMEFRAMES)
+    ):
+        fail("M15_RECOVERY_EXECUTABLE_SHAPE_INVALID")
+
+    risk_issues = [
+        dict(issue)
+        for issue in result.get("risk_issues", []) or []
+        if isinstance(issue, Mapping)
+        and str(issue.get("code") or "").startswith("M15_RECOVERY_")
+    ]
+    risk_marker_present = any(
+        issue.get("code") == M15_RECOVERY_RISK_MARKER
+        and str(issue.get("severity") or "").strip().upper() == "WARN"
+        for issue in risk_issues
+    )
+    risk_recovery_block = any(
+        str(issue.get("severity") or "").strip().upper() == "BLOCK"
+        for issue in risk_issues
+    )
+    if (
+        metadata.get("m15_recovery_micro_risk_revalidated") is not True
+        or not risk_marker_present
+        or risk_recovery_block
+    ):
+        fail("M15_RECOVERY_RISK_MARKER_INVALID")
+
+    if not isinstance(forecast_binding, Mapping):
+        fail("M15_RECOVERY_FORECAST_BINDING_MISSING")
+    else:
+        try:
+            forecast_valid, forecast_error = (
+                validate_m15_recovery_forecast_binding(
+                    forecast_binding,
+                    recovery_receipt=(receipt if isinstance(receipt, Mapping) else {}),
+                    metadata=metadata,
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            forecast_valid, forecast_error = False, (
+                "M15_RECOVERY_FORECAST_BINDING_VALIDATOR_FAILED"
+            )
+        history = forecast_binding.get("forecast_history_identity")
+        if (
+            not forecast_valid
+            or forecast_binding.get("contract")
+            != M15_RECOVERY_FORECAST_CONTRACT
+            or metadata.get("forecast_m15_recovery_binding_sha256")
+            != forecast_binding.get("binding_sha256")
+            or forecast_binding.get("pair") != pair
+            or forecast_binding.get("final_direction") != expected_direction
+            or not isinstance(history, Mapping)
+            or history.get("cycle_id") != metadata.get("forecast_cycle_id")
+            or history.get("pair") != pair
+            or history.get("direction") != expected_direction
+        ):
+            fail(
+                str(forecast_error or "M15_RECOVERY_FORECAST_BINDING_INVALID")
+            )
+
+    if not isinstance(lane_binding, Mapping):
+        fail("M15_RECOVERY_LANE_BINDING_MISSING")
+    else:
+        try:
+            lane_valid, lane_error = validate_m15_recovery_lane_binding(
+                lane_binding,
+                forecast_binding=(
+                    forecast_binding if isinstance(forecast_binding, Mapping) else {}
+                ),
+                pair=pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                current_units=base_units,
+                metadata=metadata,
+            )
+        except (TypeError, ValueError, OverflowError):
+            lane_valid, lane_error = False, (
+                "M15_RECOVERY_LANE_BINDING_VALIDATOR_FAILED"
+            )
+        if (
+            not lane_valid
+            or lane_binding.get("contract") != M15_RECOVERY_LANE_CONTRACT
+            or metadata.get("m15_recovery_lane_contract")
+            != M15_RECOVERY_LANE_CONTRACT
+            or metadata.get("m15_recovery_lane_binding_sha256")
+            != lane_binding.get("binding_sha256")
+            or lane_binding.get("manual_position_mutation_allowed") is not False
+            or lane_binding.get("live_permission") is not False
+        ):
+            fail(str(lane_error or "M15_RECOVERY_LANE_BINDING_INVALID"))
+
+    proof_error = _m15_recovery_rotation_proof_error(
+        metadata,
+        positive_tp_edge=positive_tp_edge,
+    )
+    if proof_error is not None:
+        fail(proof_error)
+
+    valid = not errors
+    edge_basis = (
+        M15_RECOVERY_EDGE_COLLECTION_BASIS
+        if valid and mode == M15_RECOVERY_PROOF_COLLECTION_MODE
+        else "EXACT_VEHICLE_TAKE_PROFIT"
+        if valid and mode == M15_RECOVERY_TP_PROVEN_MODE
+        else None
+    )
+    material: dict[str, Any] | None = None
+    material_sha256: str | None = None
+    if valid:
+        lane_proof = lane_binding.get("proof_source_receipt")
+        proof_metadata_keys = (
+            set(lane_proof) - {"proof_source_sha256"}
+            if isinstance(lane_proof, Mapping)
+            else set()
+        )
+        material_metadata = {
+            key: deepcopy(metadata.get(key))
+            for key in sorted(
+                set(_M15_RECOVERY_OUTER_METADATA_KEYS) | proof_metadata_keys
+            )
+        }
+        material_body = {
+            "contract": M15_RECOVERY_ALLOCATION_MATERIAL_CONTRACT,
+            "pair": pair,
+            "side": side,
+            "method": method,
+            "order_type": order_type,
+            "entry": entry,
+            "tp": tp,
+            "sl": sl,
+            "base_units": base_units,
+            "positive_rotation_mode": mode,
+            "edge_basis": edge_basis,
+            "context_timeframes": list(M15_RECOVERY_CONTEXT_TIMEFRAMES),
+            "source_receipt": deepcopy(dict(receipt)),
+            "forecast_binding": deepcopy(dict(forecast_binding)),
+            "lane_binding": deepcopy(dict(lane_binding)),
+            "metadata": material_metadata,
+            "risk_issues": risk_issues,
+        }
+        material_sha256 = canonical_json_sha256(material_body)
+        material = {**material_body, "material_sha256": material_sha256}
+
+    return {
+        "claimed": True,
+        "valid": valid,
+        "status": (
+            M15_RECOVERY_ALLOCATION_STATUS
+            if valid
+            else "M15_RECOVERY_REJECTED"
+        ),
+        "error_codes": errors,
+        "mode": mode or None,
+        "edge_basis": edge_basis,
+        "context_timeframes": list(M15_RECOVERY_CONTEXT_TIMEFRAMES),
+        "source_receipt_sha256": receipt_sha,
+        "forecast_cycle_id": metadata.get("forecast_cycle_id"),
+        "forecast_binding_sha256": (
+            forecast_binding.get("binding_sha256")
+            if isinstance(forecast_binding, Mapping)
+            else None
+        ),
+        "lane_binding_sha256": (
+            lane_binding.get("binding_sha256")
+            if isinstance(lane_binding, Mapping)
+            else None
+        ),
+        "material": material,
+        "material_sha256": material_sha256,
+    }
+
+
 def _tp_proven_harvest_range_economic_basis(
     *,
     intent: Mapping[str, Any],
@@ -4498,6 +5294,7 @@ def _capital_allocation_numeric_ceiling(
     forecast_current_binding_mode: str = "EXACT_SNAPSHOT_MID",
     execution_cost_floor: Mapping[str, Any] | None = None,
     market_entry_slippage_embedded: bool = False,
+    m15_recovery_prebounded: bool = False,
 ) -> tuple[dict[str, Any], float]:
     """Return content-addressed numeric sizing evidence and its maximum multiple."""
 
@@ -5317,7 +6114,9 @@ def _capital_allocation_numeric_ceiling(
     )
 
     bypass_reason = (
-        "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
+        "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
+        if m15_recovery_prebounded
+        else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
         if predictive_scout
         else "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
         if hedge
@@ -5326,6 +6125,12 @@ def _capital_allocation_numeric_ceiling(
     if not method_scope_consistent:
         reason = "METHOD_SCOPE_MISMATCH"
         max_multiple = 0.0
+    elif m15_recovery_prebounded:
+        # Recovery direction, vehicle, TP proof and 999-unit cap are proved by
+        # the separate M15 content-addressed chain. Do not coerce it into the
+        # ordinary calibration/market-probability contract here.
+        reason = "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
+        max_multiple = 1.0
     elif not direction_side_aligned:
         reason = "FORECAST_DIRECTION_SIDE_MISMATCH"
         max_multiple = 0.0
@@ -5431,6 +6236,7 @@ def _capital_allocation_numeric_ceiling(
             "side": side or None,
             "order_type": order_type or None,
             "units": units,
+            "m15_recovery_prebounded": bool(m15_recovery_prebounded),
             "authoritative_market_context_method": (
                 None if cost_method == "UNKNOWN" else cost_method
             ),
@@ -5657,7 +6463,9 @@ def _capital_allocation_numeric_ceiling(
                 quarter_kelly_risk_nav_pct
             ),
             "decision_basis": (
-                "PREBOUNDED_EXACT_TP_HARVEST_BASE_UNITS"
+                "PREBOUNDED_M15_RECOVERY_BASE_UNITS"
+                if m15_recovery_prebounded
+                else "PREBOUNDED_EXACT_TP_HARVEST_BASE_UNITS"
                 if range_tp_contract_authorized
                 else "NAV_PERCENT_RATIO"
             ),
@@ -5868,6 +6676,21 @@ def _capital_allocation_lane(
         and forecast_binding["calibration_identity_valid"]
         and regime_family_binding["passed"]
     )
+    m15_recovery = _m15_recovery_allocation_contract(
+        result=result,
+        intent=intent,
+        metadata=metadata,
+        method=method,
+        base_units=base_units,
+        positive_tp_edge=positive_tp_edge,
+    )
+    m15_recovery_claimed = m15_recovery["claimed"] is True
+    m15_recovery_valid = m15_recovery["valid"] is True
+    allocation_context_valid = (
+        m15_recovery_valid
+        if m15_recovery_claimed
+        else technical_context_valid
+    )
     broker_bid, broker_ask = _broker_snapshot_bid_ask(
         broker_snapshot or {},
         pair=str(intent.get("pair") or "").strip().upper(),
@@ -5887,12 +6710,13 @@ def _capital_allocation_lane(
         hedge=hedge,
         range_economic_basis=range_economic_basis,
         execution_cost_floor=execution_cost_floor,
+        m15_recovery_prebounded=m15_recovery_valid,
     )
     candidate_size_multiples = [
         multiple
         for multiple in (
             [1.0]
-            if predictive_scout or hedge
+            if predictive_scout or hedge or m15_recovery_valid
             else list(CAPITAL_ALLOCATION_SIZE_MULTIPLES)
         )
         if multiple <= numeric_max_multiple + 1e-12
@@ -5903,7 +6727,7 @@ def _capital_allocation_lane(
         if base_units * CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][0]
         // CAPITAL_ALLOCATION_SIZE_RATIOS[multiple][1]
         > 0
-        and technical_context_valid
+        and allocation_context_valid
     ]
     explicit_negative_edge = (
         capture_status == "NEGATIVE_EXPECTANCY"
@@ -5915,71 +6739,155 @@ def _capital_allocation_lane(
         and _normalized_order_vehicle(intent.get("order_type"))
         in {"LIMIT", "STOP"}
     )
-    positive_edge_proven = bool(
-        technical_context_valid
-        and method_scope_consistent
-        and (
-            predictive_scout
-            or (
-                positive_tp_edge
-                and (
-                    not range_nonmarket
-                    or isinstance(range_economic_basis, Mapping)
-                )
-            )
-            or (
-                exact_vehicle_net_edge["proven"]
-                and not range_nonmarket
-            )
-            or hedge
+    if m15_recovery_claimed:
+        positive_edge_proven = bool(
+            m15_recovery_valid
+            and method_scope_consistent
+            and positive_tp_edge
+            and m15_recovery["mode"] == M15_RECOVERY_TP_PROVEN_MODE
         )
-    )
+        edge_collection_proven = bool(
+            m15_recovery_valid
+            and method_scope_consistent
+            and positive_tp_edge
+            and m15_recovery["mode"]
+            == M15_RECOVERY_PROOF_COLLECTION_MODE
+        )
+    else:
+        positive_edge_proven = bool(
+            technical_context_valid
+            and method_scope_consistent
+            and (
+                predictive_scout
+                or (
+                    positive_tp_edge
+                    and (
+                        not range_nonmarket
+                        or isinstance(range_economic_basis, Mapping)
+                    )
+                )
+                or (
+                    exact_vehicle_net_edge["proven"]
+                    and not range_nonmarket
+                )
+                or hedge
+            )
+        )
+        edge_collection_proven = False
     live_blocker_codes = [
         str(code)
         for code in result.get("live_blocker_codes", []) or []
         if str(code)
     ]
-    if not technical_context_envelope_valid:
-        live_blocker_codes.append("FORECAST_TECHNICAL_CONTEXT_UNKNOWN_FOR_ALLOCATION")
-    if not regime_family_binding["current_context_bound"]:
-        live_blocker_codes.append(
-            "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT_FOR_ALLOCATION"
-        )
-    if not regime_family_binding["canonical_policy_sources_bound"]:
-        live_blocker_codes.append(
-            "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
-        )
-    if not regime_family_binding["canonical_forecast_context_bound"]:
-        live_blocker_codes.append(
-            "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
-        )
-    if not forecast_binding["direction_side_aligned"]:
-        live_blocker_codes.append("FORECAST_DIRECTION_SIDE_MISMATCH")
-    if not forecast_binding["calibration_identity_valid"]:
-        live_blocker_codes.append("FORECAST_CALIBRATION_IDENTITY_MISMATCH")
-    if not regime_family_binding["receipt_valid"]:
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_MISSING_OR_INVALID")
-    if not regime_family_binding["sha_bound"]:
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_SHA_UNBOUND")
-    if (
-        not regime_family_binding["selected_method_bound"]
-        or not regime_family_binding["executable_method_bound"]
-    ):
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH")
-    if not regime_family_binding["family_direction_bound"]:
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND")
-    if not regime_family_binding["direction_consistent"]:
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION")
-    if not regime_family_binding["actionable_direction_bound"]:
-        live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE")
+    if m15_recovery_claimed:
+        live_blocker_codes.extend(m15_recovery["error_codes"])
+    else:
+        if not technical_context_envelope_valid:
+            live_blocker_codes.append(
+                "FORECAST_TECHNICAL_CONTEXT_UNKNOWN_FOR_ALLOCATION"
+            )
+        if not regime_family_binding["current_context_bound"]:
+            live_blocker_codes.append(
+                "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT_FOR_ALLOCATION"
+            )
+        if not regime_family_binding["canonical_policy_sources_bound"]:
+            live_blocker_codes.append(
+                "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
+            )
+        if not regime_family_binding["canonical_forecast_context_bound"]:
+            live_blocker_codes.append(
+                "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
+            )
+        if not forecast_binding["direction_side_aligned"]:
+            live_blocker_codes.append("FORECAST_DIRECTION_SIDE_MISMATCH")
+        if not forecast_binding["calibration_identity_valid"]:
+            live_blocker_codes.append("FORECAST_CALIBRATION_IDENTITY_MISMATCH")
+        if not regime_family_binding["receipt_valid"]:
+            live_blocker_codes.append(
+                "REGIME_FAMILY_WEIGHTING_MISSING_OR_INVALID"
+            )
+        if not regime_family_binding["sha_bound"]:
+            live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_SHA_UNBOUND")
+        if (
+            not regime_family_binding["selected_method_bound"]
+            or not regime_family_binding["executable_method_bound"]
+        ):
+            live_blocker_codes.append("REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH")
+        if not regime_family_binding["family_direction_bound"]:
+            live_blocker_codes.append(
+                "REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND"
+            )
+        if not regime_family_binding["direction_consistent"]:
+            live_blocker_codes.append(
+                "REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION"
+            )
+        if not regime_family_binding["actionable_direction_bound"]:
+            live_blocker_codes.append(
+                "REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE"
+            )
+    live_blocker_codes = list(dict.fromkeys(live_blocker_codes))
     allocation_eligible = (
         str(result.get("status") or "").strip().upper() == "LIVE_READY"
         and result.get("risk_allowed") is True
         and not live_blocker_codes
         and method_scope_consistent
         and base_units > 0
-        and positive_edge_proven
+        and (positive_edge_proven or edge_collection_proven)
         and bool(allowed_size_multiples)
+    )
+    standard_edge_basis = (
+        "FORECAST_TECHNICAL_CONTEXT_UNKNOWN"
+        if not technical_context_envelope_valid
+        else "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT"
+        if not regime_family_binding["current_context_bound"]
+        else "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
+        if not regime_family_binding["canonical_policy_sources_bound"]
+        else "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
+        if not regime_family_binding["canonical_forecast_context_bound"]
+        else "FORECAST_DIRECTION_SIDE_MISMATCH"
+        if not forecast_binding["direction_side_aligned"]
+        else "FORECAST_CALIBRATION_IDENTITY_MISMATCH"
+        if not forecast_binding["calibration_identity_valid"]
+        else "REGIME_FAMILY_WEIGHTING_INVALID"
+        if not regime_family_binding["receipt_valid"]
+        else "REGIME_FAMILY_WEIGHTING_SHA_UNBOUND"
+        if not regime_family_binding["sha_bound"]
+        else "REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH"
+        if not regime_family_binding["executable_method_bound"]
+        or not regime_family_binding["selected_method_bound"]
+        else "REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND"
+        if not regime_family_binding["family_direction_bound"]
+        else "REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION"
+        if not regime_family_binding["direction_consistent"]
+        else "REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE"
+        if not regime_family_binding["actionable_direction_bound"]
+        else "METHOD_SCOPE_MISMATCH"
+        if not method_scope_consistent
+        else "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+        if predictive_scout
+        else "HEDGE_RISK_REDUCTION"
+        if hedge
+        else "EXACT_VEHICLE_TAKE_PROFIT"
+        if positive_tp_edge and range_nonmarket
+        else "EXACT_VEHICLE_ALL_EXIT_NET"
+        if exact_vehicle_net_edge["proven"]
+        else "EXACT_VEHICLE_TAKE_PROFIT"
+        if positive_tp_edge
+        else "EXACT_VEHICLE_ALL_EXIT_CONTRADICTS_TP"
+        if exact_vehicle_tp_edge
+        and exact_vehicle_net_edge["blocks_tp_exception"] is True
+        else "INVALID_PREDICTIVE_SCOUT_CLAIM"
+        if predictive_scout_claimed
+        else "UNKNOWN_OR_NON_EXACT_EDGE"
+        if not explicit_negative_edge
+        else "NO_POSITIVE_EDGE_PROOF"
+    )
+    edge_basis = (
+        m15_recovery["edge_basis"]
+        if m15_recovery_valid
+        else "M15_RECOVERY_ALLOCATION_INVALID"
+        if m15_recovery_claimed
+        else standard_edge_basis
     )
     return {
         "lane_id": str(result.get("lane_id") or ""),
@@ -5989,53 +6897,8 @@ def _capital_allocation_lane(
         "live_blocker_codes": live_blocker_codes,
         "allocation_eligible": allocation_eligible,
         "positive_edge_proven": positive_edge_proven,
-        "edge_basis": (
-            "FORECAST_TECHNICAL_CONTEXT_UNKNOWN"
-            if not technical_context_envelope_valid
-            else "FORECAST_TECHNICAL_CONTEXT_NOT_CURRENT"
-            if not regime_family_binding["current_context_bound"]
-            else "DYNAMIC_TF_POLICY_CANONICAL_SOURCE_MISMATCH"
-            if not regime_family_binding["canonical_policy_sources_bound"]
-            else "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
-            if not regime_family_binding["canonical_forecast_context_bound"]
-            else "FORECAST_DIRECTION_SIDE_MISMATCH"
-            if not forecast_binding["direction_side_aligned"]
-            else "FORECAST_CALIBRATION_IDENTITY_MISMATCH"
-            if not forecast_binding["calibration_identity_valid"]
-            else "REGIME_FAMILY_WEIGHTING_INVALID"
-            if not regime_family_binding["receipt_valid"]
-            else "REGIME_FAMILY_WEIGHTING_SHA_UNBOUND"
-            if not regime_family_binding["sha_bound"]
-            else "REGIME_FAMILY_WEIGHTING_METHOD_MISMATCH"
-            if not regime_family_binding["executable_method_bound"]
-            or not regime_family_binding["selected_method_bound"]
-            else "REGIME_FAMILY_WEIGHTING_DIRECTION_UNBOUND"
-            if not regime_family_binding["family_direction_bound"]
-            else "REGIME_FAMILY_WEIGHTING_FORECAST_CONTRADICTION"
-            if not regime_family_binding["direction_consistent"]
-            else "REGIME_FAMILY_WEIGHTING_DIRECTION_NOT_ACTIONABLE"
-            if not regime_family_binding["actionable_direction_bound"]
-            else "METHOD_SCOPE_MISMATCH"
-            if not method_scope_consistent
-            else "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
-            if predictive_scout
-            else "HEDGE_RISK_REDUCTION"
-            if hedge
-            else "EXACT_VEHICLE_TAKE_PROFIT"
-            if positive_tp_edge and range_nonmarket
-            else "EXACT_VEHICLE_ALL_EXIT_NET"
-            if exact_vehicle_net_edge["proven"]
-            else "EXACT_VEHICLE_TAKE_PROFIT"
-            if positive_tp_edge
-            else "EXACT_VEHICLE_ALL_EXIT_CONTRADICTS_TP"
-            if exact_vehicle_tp_edge
-            and exact_vehicle_net_edge["blocks_tp_exception"] is True
-            else "INVALID_PREDICTIVE_SCOUT_CLAIM"
-            if predictive_scout_claimed
-            else "UNKNOWN_OR_NON_EXACT_EDGE"
-            if not explicit_negative_edge
-            else "NO_POSITIVE_EDGE_PROOF"
-        ),
+        "edge_collection_proven": edge_collection_proven,
+        "edge_basis": edge_basis,
         "pair": intent.get("pair"),
         "side": intent.get("side"),
         "method": method,
@@ -6048,6 +6911,7 @@ def _capital_allocation_lane(
         "sl": _optional_float(intent.get("sl")),
         "allowed_size_multiples": allowed_size_multiples,
         "numeric_ceiling": numeric_ceiling,
+        "m15_recovery": m15_recovery,
         "predictive_scout": predictive_scout,
         "predictive_scout_claimed": predictive_scout_claimed,
         "hedge": hedge,
@@ -6221,6 +7085,60 @@ def _normalize_source_path(path: Path | str) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
 
+def _exact_guardian_p1_margin_warning(
+    *,
+    selected_event: Mapping[str, Any],
+    event_mirror: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    """Bind the shared source-event contract to the mirrored receipt shape."""
+
+    if (
+        str(selected_event.get("pair") or "").strip().upper()
+        != "PORTFOLIO"
+        or str(event_mirror.get("pair") or "").strip().upper()
+        != "PORTFOLIO"
+        or str(receipt.get("pair") or "").strip().upper()
+        != "PORTFOLIO"
+        or str(selected_event.get("thesis_state") or "").strip().upper()
+        != "WOUNDED"
+        or str(event_mirror.get("thesis_state") or "").strip().upper()
+        != "WOUNDED"
+        or str(receipt.get("thesis_state") or "").strip().upper()
+        != "WOUNDED"
+    ):
+        return False
+    selected_details = selected_event.get("details")
+    mirror_details = event_mirror.get("details")
+    if not isinstance(selected_details, Mapping) or not isinstance(
+        mirror_details,
+        Mapping,
+    ):
+        return False
+    if dict(selected_details) != dict(mirror_details):
+        return False
+    expected_cap = RiskPolicy().max_margin_utilization_pct
+    selected_valid = exact_p1_margin_warning_source_event(
+        event_type=selected_event.get("event_type"),
+        event_severity=selected_event.get("severity"),
+        action=selected_event.get("action_hint"),
+        details=selected_details,
+        expected_max_margin_utilization_pct=expected_cap,
+    )
+    mirror_valid = exact_p1_margin_warning_source_event(
+        event_type=event_mirror.get("event_type"),
+        event_severity=event_mirror.get("severity"),
+        action=event_mirror.get("action_hint"),
+        details=mirror_details,
+        expected_max_margin_utilization_pct=expected_cap,
+    )
+    receipt_action_valid = str(receipt.get("action") or "").strip().upper() in {
+        "HOLD",
+        "NO_ACTION",
+    }
+    return selected_valid and mirror_valid and receipt_action_valid
+
+
 def guardian_action_receipt_scope_material(
     path: Path | None,
     *,
@@ -6337,6 +7255,20 @@ def guardian_action_receipt_scope_material(
     severity = str(selected_event.get("severity") or "").strip().upper()
     action_hint = str(selected_event.get("action_hint") or "").strip().upper()
     action = str(receipt.get("action") or "").strip().upper()
+    p1_margin_warning_candidate = bool(
+        str(raw.get("receipt_status") or raw.get("status") or "")
+        .strip()
+        .upper()
+        == "ACCEPTED"
+        and str(raw.get("receipt_lifecycle") or "").strip().upper()
+        == "ACTIVE"
+        and raw.get("consumed_by_trader") is False
+        and _exact_guardian_p1_margin_warning(
+            selected_event=selected_event,
+            event_mirror=event_mirror,
+            receipt=receipt,
+        )
+    )
     global_reasons: list[str] = []
     producer_source = str(raw.get("source") or "").strip()
     producer_model = str(raw.get("model") or "").strip()
@@ -6578,11 +7510,17 @@ def guardian_action_receipt_scope_material(
         global_reasons.append("RECEIPT_GATEWAY_REQUIRED_CONTRACT_BROKEN")
     if receipt.get("no_direct_oanda") is not True:
         global_reasons.append("RECEIPT_NO_DIRECT_OANDA_CONTRACT_BROKEN")
-    if event_pair not in DEFAULT_TRADER_PAIRS:
+    if (
+        event_pair not in DEFAULT_TRADER_PAIRS
+        and not p1_margin_warning_candidate
+    ):
         global_reasons.append("PAIR_SCOPE_UNKNOWN")
     if severity == "P0":
         global_reasons.append("P0_EVENT")
-    if event_type in GUARDIAN_GLOBAL_SAFETY_EVENT_TYPES:
+    if (
+        event_type in GUARDIAN_GLOBAL_SAFETY_EVENT_TYPES
+        and not p1_margin_warning_candidate
+    ):
         global_reasons.append(f"GLOBAL_EVENT:{event_type}")
     if action in GUARDIAN_HIGH_URGENCY_ACTIONS:
         global_reasons.append(f"HIGH_URGENCY_ACTION:{action}")
@@ -6670,7 +7608,7 @@ def guardian_action_receipt_scope_material(
             global_reasons.append(f"EXECUTION_BOUNDARY_BROKEN:{field}")
 
     global_reasons = sorted(set(global_reasons))
-    relevant_pair = event_pair in scoped_pairs
+    relevant_pair = event_pair in scoped_pairs or p1_margin_warning_candidate
     routine_other_pair = (
         not relevant_pair
         and not global_reasons
@@ -6709,10 +7647,20 @@ def guardian_action_receipt_scope_material(
         "scope": (
             "GLOBAL_SAFETY"
             if global_reasons
+            else "GLOBAL_MARGIN_OBSERVATION"
+            if p1_margin_warning_candidate
             else "SELECTED_PAIR"
         ),
         "global_safety": bool(global_reasons),
         "global_reasons": global_reasons,
+        "p1_margin_warning_observed": bool(
+            p1_margin_warning_candidate and not global_reasons
+        ),
+        "margin_contract": (
+            GUARDIAN_P1_MARGIN_WARNING_CONTRACT
+            if p1_margin_warning_candidate and not global_reasons
+            else None
+        ),
         "event_pair_relevant": relevant_pair,
         "time_state": time_state,
         **common,

@@ -23,7 +23,8 @@ from quant_rabbit.automation import (
     _gpt_lanes_pass_prefilter_or_recovery,
     _cycle_perspective_alignment_parts,
     _filtered_gpt_trade_cancel_order_ids,
-    _fixed_predictive_scout_size_plan,
+    _fixed_prebounded_size_plan,
+    _passes_basket_prefilter,
     _passes_gpt_prefilter,
     _snapshot_to_json,
 )
@@ -3060,6 +3061,32 @@ class AutoTradeCycleTest(unittest.TestCase):
         )
 
         self.assertTrue(_passes_gpt_prefilter(score))
+
+    def test_verified_m15_recovery_no_trade_cannot_be_resurrected_by_prefilters(self) -> None:
+        score = LaneScore(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="SHORT",
+            method="BREAKOUT_FAILURE",
+            order_type="STOP-ENTRY",
+            entry=1.14420,
+            tp=1.14325,
+            sl=1.14515,
+            status="LIVE_READY",
+            score=120.0,
+            action=ACTION_NO_TRADE,
+            blockers=("arbitrary downstream risk/control tightening",),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=25.0,
+            m15_recovery_verified=True,
+        )
+
+        self.assertFalse(_passes_gpt_prefilter(score))
+        self.assertFalse(
+            _passes_basket_prefilter(score, allow_existing_pending=True)
+        )
+        self.assertTrue(_passes_gpt_prefilter(replace(score, action=ACTION_SEND_ENTRY)))
 
     def test_recovery_hedge_gpt_selection_can_bypass_empty_prefilter(self) -> None:
         lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
@@ -8461,8 +8488,10 @@ class AutoTradeCycleTest(unittest.TestCase):
                     nav_jpy=170_000.0,
                     balance_jpy=192_000.0,
                     unrealized_pl_jpy=-22_000.0,
-                    margin_used_jpy=162_000.0,
-                    margin_available_jpy=8_000.0,
+                    # This test isolates the open-position prefilter. Keep
+                    # the account below the independent 95% hard margin cap.
+                    margin_used_jpy=140_000.0,
+                    margin_available_jpy=30_000.0,
                     hedging_enabled=True,
                     fetched_at_utc=now,
                 ),
@@ -10722,11 +10751,12 @@ class MarginAwareBasketTest(unittest.TestCase):
         self.assertEqual(MARGIN_AWARE_BASKET_BUFFER, 0.9)
 
 
-class PredictiveScoutSizingBoundaryTest(unittest.TestCase):
-    def test_ai_cycle_normalizes_only_scout_lane_to_fixed_vehicle_size(self) -> None:
+class PreboundedSizingBoundaryTest(unittest.TestCase):
+    def test_ai_cycle_normalizes_scout_and_verified_recovery_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "intents.json"
             scout_lane = "predictive_scout:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+            recovery_lane = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
             ordinary_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
             path.write_text(
                 json.dumps(
@@ -10745,6 +10775,16 @@ class PredictiveScoutSizingBoundaryTest(unittest.TestCase):
                                 },
                             },
                             {
+                                "lane_id": recovery_lane,
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "SHORT",
+                                    "order_type": "STOP-ENTRY",
+                                    "market_context": {"method": "BREAKOUT_FAILURE"},
+                                    "metadata": {"m15_recovery_micro_contract": "QR_M15_RECOVERY_MICRO_V1"},
+                                },
+                            },
+                            {
                                 "lane_id": ordinary_lane,
                                 "intent": {
                                     "pair": "EUR_USD",
@@ -10759,15 +10799,27 @@ class PredictiveScoutSizingBoundaryTest(unittest.TestCase):
                 )
             )
 
-            multiples, selected = _fixed_predictive_scout_size_plan(
+            multiples, selected = _fixed_prebounded_size_plan(
                 intents_path=path,
-                lane_ids=(scout_lane, ordinary_lane),
-                size_multiples={scout_lane: 1.65, ordinary_lane: 1.4},
-                selected_lane_id=scout_lane,
-                selected_lane_size_multiple=1.65,
+                lane_ids=(scout_lane, recovery_lane, ordinary_lane),
+                size_multiples={
+                    scout_lane: 1.65,
+                    recovery_lane: 0.5,
+                    ordinary_lane: 0.75,
+                },
+                selected_lane_id=recovery_lane,
+                selected_lane_size_multiple=0.5,
+                verified_m15_recovery_lane_ids={recovery_lane},
             )
 
-        self.assertEqual(multiples, {scout_lane: 1.0, ordinary_lane: 1.4})
+        self.assertEqual(
+            multiples,
+            {
+                scout_lane: 1.0,
+                recovery_lane: 1.0,
+                ordinary_lane: 0.75,
+            },
+        )
         self.assertEqual(selected, 1.0)
 
 

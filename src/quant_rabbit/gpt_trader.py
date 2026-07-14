@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import asdict, dataclass
@@ -30,6 +31,14 @@ from quant_rabbit.close_discipline import (
 )
 from quant_rabbit.strategy.forecast_technical_context import (
     normalize_forecast_technical_context_evidence,
+)
+from quant_rabbit.strategy.m15_recovery_contract import (
+    FORECAST_CONTRACT as M15_RECOVERY_FORECAST_CONTRACT,
+    LANE_CONTRACT as M15_RECOVERY_LANE_CONTRACT,
+    RECOVERY_ORDER_TYPE as M15_RECOVERY_ORDER_TYPE,
+    recovery_claimed as m15_recovery_claimed,
+    validate_forecast_binding as validate_m15_recovery_forecast_binding,
+    validate_lane_binding as validate_m15_recovery_lane_binding,
 )
 
 
@@ -1839,6 +1848,7 @@ def _position_thesis_structural_break_text(text: str) -> bool:
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.guardian_receipt_consumption import (
     BLOCK_NEW_ENTRY_CODE,
+    P1_MARGIN_WARNING_OBSERVED_CODE,
     build_guardian_receipt_consumption,
     consumption_status_summary,
     guardian_receipt_new_entry_blockers,
@@ -2962,7 +2972,10 @@ class DecisionVerifier:
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
         projection_trade_blockers = _projection_ledger_trade_blockers(self.packet)
         news_trade_blockers = _news_health_trade_blockers(self.packet)
-        guardian_receipt_trade_blockers = _guardian_receipt_consumption_trade_blockers(self.packet)
+        guardian_receipt_trade_blockers = _guardian_receipt_consumption_trade_blockers(
+            self.packet,
+            selected_lane_ids=selected_lane_ids,
+        )
         self._verify_user_alpha_continuation(decision, selected_lane_ids, issues)
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
@@ -3211,6 +3224,11 @@ class DecisionVerifier:
                 forecast_issue = _lane_forecast_direction_issue(selected_lane)
                 if forecast_issue is not None:
                     issues.append(forecast_issue)
+                recovery_issue = _lane_m15_recovery_trade_issue(
+                    selected_lane
+                )
+                if recovery_issue is not None:
+                    issues.append(recovery_issue)
                 if str(selected_lane.get("evidence_ref") or "") not in decision.evidence_refs:
                     issues.append(
                         VerificationIssue(
@@ -5257,7 +5275,16 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
     blockers.extend(_entry_thesis_sidecar_reasons(packet))
     blockers.extend(_projection_ledger_trade_blockers(packet))
     blockers.extend(_news_health_trade_blockers(packet))
-    blockers.extend(_guardian_receipt_consumption_trade_blockers(packet))
+    guardian_routing_issues = _guardian_receipt_consumption_trade_routing_issues(
+        packet,
+        selected_lane_ids=selected_lane_ids,
+    )
+    blockers.extend(
+        f"{item.get('code') or BLOCK_NEW_ENTRY_CODE}: "
+        f"{item.get('message') or 'normal new-entry routing blocked'}"
+        for item in guardian_routing_issues
+        if str(item.get("severity") or "BLOCK").upper() == "BLOCK"
+    )
     if not live_ready_lane_ids:
         blockers.append("NO_LIVE_READY_LANES")
     if live_ready_lane_ids and not selected_lane_ids:
@@ -5285,6 +5312,11 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
             selected_lane_ids,
             lanes_by_id,
             cancel_order_ids=pending_cancel_order_ids,
+            guardian_warnings=[
+                str(item.get("message") or item.get("code") or "")
+                for item in guardian_routing_issues
+                if str(item.get("severity") or "").upper() == "WARN"
+            ],
         ), blockers
     if pending_cancel_order_ids and not live_ready_lane_ids and not position_close_reasons:
         return _cancel_pending_decision_draft(
@@ -5295,8 +5327,41 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
     return _non_trade_decision_draft(packet, blockers, live_ready_lane_ids, lanes_by_id), blockers
 
 
-def _guardian_receipt_consumption_trade_blockers(packet: dict[str, Any]) -> list[str]:
-    blockers = guardian_receipt_new_entry_blockers(
+def _guardian_receipt_consumption_trade_routing_issues(
+    packet: dict[str, Any],
+    *,
+    selected_lane_ids: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    lane = None
+    if len(selected_lane_ids) == 1:
+        lane = next(
+            (
+                item
+                for item in packet.get("lanes", [])
+                if isinstance(item, dict)
+                and str(item.get("lane_id") or "") == selected_lane_ids[0]
+            ),
+            None,
+        )
+    risk_metrics = (
+        lane.get("risk_metrics")
+        if isinstance(lane, dict) and isinstance(lane.get("risk_metrics"), dict)
+        else {}
+    )
+    broker = (
+        packet.get("broker_snapshot")
+        if isinstance(packet.get("broker_snapshot"), dict)
+        else {}
+    )
+    account = broker.get("account") if isinstance(broker.get("account"), dict) else {}
+    nav = _strict_packet_number(account.get("nav_jpy"))
+    used = _strict_packet_number(account.get("margin_used_jpy"))
+    current = (
+        used / nav * 100.0
+        if nav is not None and nav > 0.0 and used is not None and used >= 0.0
+        else None
+    )
+    return guardian_receipt_new_entry_blockers(
         packet.get("qr_trader_run_watchdog") if isinstance(packet.get("qr_trader_run_watchdog"), dict) else {},
         packet.get("guardian_receipt_consumption")
         if isinstance(packet.get("guardian_receipt_consumption"), dict)
@@ -5304,11 +5369,34 @@ def _guardian_receipt_consumption_trade_blockers(packet: dict[str, Any]) -> list
         packet.get("guardian_receipt_operator_review")
         if isinstance(packet.get("guardian_receipt_operator_review"), dict)
         else {},
-        packet.get("broker_snapshot") if isinstance(packet.get("broker_snapshot"), dict) else {},
+        broker,
+        allow_p1_margin_warning=lane is not None,
+        current_margin_utilization_pct=current,
+        projected_margin_utilization_pct=_strict_packet_number(
+            risk_metrics.get("margin_utilization_after_pct")
+        ),
+        max_margin_utilization_pct=_strict_packet_number(
+            risk_metrics.get("max_margin_utilization_pct")
+        ),
+        margin_available_jpy=_strict_packet_number(
+            account.get("margin_available_jpy")
+        ),
+    )
+
+
+def _guardian_receipt_consumption_trade_blockers(
+    packet: dict[str, Any],
+    *,
+    selected_lane_ids: tuple[str, ...] = (),
+) -> list[str]:
+    blockers = _guardian_receipt_consumption_trade_routing_issues(
+        packet,
+        selected_lane_ids=selected_lane_ids,
     )
     return [
         f"{item.get('code') or BLOCK_NEW_ENTRY_CODE}: {item.get('message') or 'normal new-entry routing blocked'}"
         for item in blockers
+        if str(item.get("severity") or "BLOCK").upper() == "BLOCK"
     ]
 
 
@@ -6261,6 +6349,7 @@ def _trade_decision_draft(
     lanes_by_id: dict[str, dict[str, Any]],
     *,
     cancel_order_ids: tuple[str, ...] = (),
+    guardian_warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     primary = lanes_by_id[selected_lane_ids[0]]
     pair = str(primary.get("pair") or "")
@@ -6303,7 +6392,18 @@ def _trade_decision_draft(
             or "Selected lane leaves LIVE_READY or broker truth invalidates the quoted structure."
         ),
         "rejected_alternatives": _draft_rejected_alternatives(packet, selected_lane_ids, lanes_by_id),
-        "risk_notes": _draft_risk_notes(selected_lane_ids, lanes_by_id, cancel_order_ids=cancel_order_ids),
+        "risk_notes": [
+            *_draft_risk_notes(
+                selected_lane_ids,
+                lanes_by_id,
+                cancel_order_ids=cancel_order_ids,
+            ),
+            *[
+                f"{P1_MARGIN_WARNING_OBSERVED_CODE}: {warning}"
+                for warning in (guardian_warnings or [])
+                if str(warning).strip()
+            ],
+        ],
         "evidence_refs": refs,
         "twenty_minute_plan": _draft_twenty_minute_plan(
             action="TRADE",
@@ -7133,6 +7233,7 @@ def _lane_packet(
                 "forecast": _lane_forecast_packet(
                     intent.get("metadata"),
                     pair=pair,
+                    intent=intent,
                 ),
                 "opportunity": _small_dict(
                     metadata,
@@ -9427,6 +9528,7 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
         return {"available": False}
     guardian = payload.get("guardian_receipt") if isinstance(payload.get("guardian_receipt"), dict) else {}
     issues = guardian.get("issues") if isinstance(guardian.get("issues"), list) else []
+    top_issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
     return {
         "available": True,
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -9439,6 +9541,22 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
         "last_trader_run_source": payload.get("last_trader_run_source"),
         "last_trader_run_path": payload.get("last_trader_run_path"),
         "minutes_since_last_run": payload.get("minutes_since_last_run"),
+        "issues": [
+            {
+                "code": item.get("code"),
+                "severity": item.get("severity"),
+                "message": item.get("message"),
+                "receipt_event_id": item.get("receipt_event_id"),
+                "receipt_action": item.get("receipt_action"),
+                "receipt_lifecycle": item.get("receipt_lifecycle"),
+                "event_type": item.get("event_type"),
+                "event_severity": item.get("event_severity"),
+                "event_action_hint": item.get("event_action_hint"),
+                "event_details": item.get("event_details"),
+            }
+            for item in top_issues
+            if isinstance(item, dict)
+        ],
         "guardian_receipt_issues": [
             {
                 "code": item.get("code"),
@@ -9450,6 +9568,10 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
                 "receipt_identity": item.get("receipt_identity"),
                 "receipt_source_paths": item.get("receipt_source_paths"),
                 "emergency_or_margin_risk": item.get("emergency_or_margin_risk"),
+                "event_type": item.get("event_type"),
+                "event_severity": item.get("event_severity"),
+                "event_action_hint": item.get("event_action_hint"),
+                "event_details": item.get("event_details"),
                 "consumed_by_trader": item.get("consumed_by_trader"),
                 "normal_routing_allowed": item.get("normal_routing_allowed"),
             }
@@ -9459,10 +9581,224 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
     }
 
 
+M15_RECOVERY_GPT_PACKET_CONTRACT = "QR_M15_RECOVERY_GPT_PACKET_V1"
+
+
+def _strict_packet_number(value: object) -> float | None:
+    if value.__class__ not in {int, float} or not math.isfinite(float(value)):
+        return None
+    return float(value)
+
+
+def _lane_m15_recovery_packet(
+    source: dict[str, Any],
+    *,
+    pair: str | None,
+    intent: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not m15_recovery_claimed(source):
+        body = {
+            "contract": M15_RECOVERY_GPT_PACKET_CONTRACT,
+            "status": "NOT_APPLICABLE",
+            "live_permission": False,
+        }
+        return {**body, "packet_sha256": canonical_json_sha256(body)}
+
+    receipt = source.get("m15_recovery_micro_receipt")
+    forecast_binding = source.get("forecast_m15_recovery_binding")
+    lane_binding = source.get("m15_recovery_lane_binding")
+    errors: list[str] = []
+    if not all(
+        isinstance(item, Mapping) and bool(item)
+        for item in (receipt, forecast_binding, lane_binding)
+    ):
+        errors.append("M15_RECOVERY_BINDING_MISSING")
+    if not isinstance(intent, Mapping):
+        errors.append("M15_RECOVERY_INTENT_IDENTITY_MISSING")
+
+    intent_map = intent if isinstance(intent, Mapping) else {}
+    market_context = (
+        intent_map.get("market_context")
+        if isinstance(intent_map.get("market_context"), Mapping)
+        else {}
+    )
+    intent_pair = str(intent_map.get("pair") or pair or "").strip().upper()
+    side = str(intent_map.get("side") or "").strip().upper()
+    method = str(market_context.get("method") or "").strip().upper()
+    order_type = str(intent_map.get("order_type") or "").strip().upper()
+    units = intent_map.get("units")
+    entry = _strict_packet_number(intent_map.get("entry"))
+    tp = _strict_packet_number(intent_map.get("tp"))
+    sl = _strict_packet_number(intent_map.get("sl"))
+    expected_direction = "UP" if side == "LONG" else "DOWN" if side == "SHORT" else None
+
+    forecast_valid = False
+    forecast_error: str | None = None
+    lane_valid = False
+    lane_error: str | None = None
+    if all(
+        isinstance(item, Mapping)
+        for item in (receipt, forecast_binding, lane_binding)
+    ):
+        forecast_valid, forecast_error = validate_m15_recovery_forecast_binding(
+            forecast_binding,
+            recovery_receipt=receipt,
+            metadata=source,
+        )
+        if (
+            units.__class__ is int
+            and entry is not None
+            and tp is not None
+            and sl is not None
+        ):
+            lane_valid, lane_error = validate_m15_recovery_lane_binding(
+                lane_binding,
+                forecast_binding=forecast_binding,
+                pair=intent_pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                current_units=units,
+                metadata=source,
+            )
+    if not forecast_valid:
+        errors.append(forecast_error or "M15_RECOVERY_FORECAST_BINDING_INVALID")
+    if not lane_valid:
+        errors.append(lane_error or "M15_RECOVERY_LANE_BINDING_INVALID")
+
+    if not isinstance(receipt, Mapping) or (
+        receipt.get("contract") != "QR_M15_RECOVERY_MICRO_V1"
+        or receipt.get("mode") != "M15_RECOVERY_MICRO"
+        or receipt.get("status") != "ELIGIBLE_FOR_MICRO_REVALIDATION"
+        or receipt.get("live_permission") is not False
+        or receipt.get("requires_risk_gateway_revalidation") is not True
+        or receipt.get("manual_position_mutation_allowed") is not False
+    ):
+        errors.append("M15_RECOVERY_SOURCE_RECEIPT_INVALID")
+    if (
+        not isinstance(forecast_binding, Mapping)
+        or forecast_binding.get("contract") != M15_RECOVERY_FORECAST_CONTRACT
+        or source.get("forecast_m15_recovery_binding_sha256")
+        != forecast_binding.get("binding_sha256")
+    ):
+        errors.append("M15_RECOVERY_FORECAST_BINDING_OUTER_MISMATCH")
+    if (
+        not isinstance(lane_binding, Mapping)
+        or lane_binding.get("contract") != M15_RECOVERY_LANE_CONTRACT
+        or source.get("m15_recovery_lane_binding_sha256")
+        != lane_binding.get("binding_sha256")
+    ):
+        errors.append("M15_RECOVERY_LANE_BINDING_OUTER_MISMATCH")
+    if (
+        not intent_pair
+        or (pair is not None and intent_pair != str(pair).strip().upper())
+        or expected_direction is None
+        or not isinstance(forecast_binding, Mapping)
+        or forecast_binding.get("final_direction") != expected_direction
+        or method != "BREAKOUT_FAILURE"
+        or order_type != M15_RECOVERY_ORDER_TYPE
+        or units.__class__ is not int
+        or not 1 <= units <= 999
+    ):
+        errors.append("M15_RECOVERY_INTENT_SCOPE_INVALID")
+    if (
+        source.get("m15_recovery_micro_risk_revalidated") is not True
+        or source.get("m15_recovery_micro_shape_eligible") is not True
+        or source.get("m15_recovery_micro_live_permission") is not False
+        or source.get("m15_recovery_micro_manual_position_mutation_allowed")
+        is not False
+        or source.get("m15_recovery_context_contract")
+        != M15_RECOVERY_FORECAST_CONTRACT
+        or source.get("m15_recovery_context_timeframes")
+        != ["M15", "M30", "H1", "H4", "D"]
+    ):
+        errors.append("M15_RECOVERY_RISK_OR_CONTEXT_SCOPE_INVALID")
+    proof_mode = str(source.get("positive_rotation_mode") or "").upper()
+    if (
+        proof_mode not in {
+            "TP_PROOF_COLLECTION_HARVEST",
+            "TP_PROVEN_HARVEST",
+        }
+        or source.get("capture_take_profit_exact_vehicle_required") is not True
+        or source.get("capture_take_profit_scope")
+        != "PAIR_SIDE_METHOD_VEHICLE"
+    ):
+        errors.append("M15_RECOVERY_EXACT_TP_PROOF_SCOPE_INVALID")
+
+    unique_errors = list(dict.fromkeys(errors))
+    body = {
+        "contract": M15_RECOVERY_GPT_PACKET_CONTRACT,
+        "status": "VERIFIED" if not unique_errors else "INVALID",
+        "validation_errors": unique_errors,
+        "mode": (
+            receipt.get("mode") if isinstance(receipt, Mapping) else None
+        ),
+        "pair": intent_pair or pair,
+        "side": side or None,
+        "method": method or None,
+        "order_type": order_type or None,
+        "units": units if units.__class__ is int else None,
+        "source_receipt_sha256": (
+            receipt.get("receipt_sha256")
+            if isinstance(receipt, Mapping)
+            else None
+        ),
+        "forecast_binding_sha256": (
+            forecast_binding.get("binding_sha256")
+            if isinstance(forecast_binding, Mapping)
+            else None
+        ),
+        "lane_binding_sha256": (
+            lane_binding.get("binding_sha256")
+            if isinstance(lane_binding, Mapping)
+            else None
+        ),
+        "source_timeframes": source.get("m15_recovery_context_timeframes"),
+        "forecast": {
+            "direction": source.get("forecast_direction"),
+            "confidence": source.get("forecast_confidence"),
+            "raw_confidence": source.get("forecast_raw_confidence"),
+            "calibration_multiplier": source.get(
+                "forecast_calibration_multiplier"
+            ),
+            "target_price": source.get("forecast_target_price"),
+            "invalidation_price": source.get(
+                "forecast_invalidation_price"
+            ),
+            "horizon_min": source.get("forecast_horizon_min"),
+        },
+        "exact_tp_proof": {
+            "mode": proof_mode or None,
+            "scope_key": source.get("capture_take_profit_scope_key"),
+            "vehicle": source.get("capture_take_profit_vehicle"),
+            "trades": source.get("capture_take_profit_trades"),
+            "wins": source.get("capture_take_profit_wins"),
+            "losses": source.get("capture_take_profit_losses"),
+            "expectancy_jpy": source.get(
+                "capture_take_profit_expectancy_jpy"
+            ),
+            "pessimistic_expectancy_jpy": source.get(
+                "positive_rotation_pessimistic_expectancy_jpy"
+            ),
+        },
+        "risk_revalidated": (
+            source.get("m15_recovery_micro_risk_revalidated") is True
+        ),
+        "gateway_revalidation_required": True,
+        "manual_position_mutation_allowed": False,
+        "live_permission": False,
+    }
+    return {**body, "packet_sha256": canonical_json_sha256(body)}
+
+
 def _lane_forecast_packet(
     metadata: object,
     *,
     pair: str | None = None,
+    intent: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     source = metadata if isinstance(metadata, dict) else {}
     packet = _small_dict(
@@ -9484,6 +9820,11 @@ def _lane_forecast_packet(
         source.get("forecast_technical_context"),
         pair=pair,
         current_price=source.get("forecast_current_price"),
+    )
+    packet["m15_recovery"] = _lane_m15_recovery_packet(
+        source,
+        pair=pair,
+        intent=intent,
     )
     return packet
 
@@ -10437,6 +10778,67 @@ def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | 
         (
             f"{lane.get('lane_id')} is {lane_side} but current pair forecast is "
             f"{direction} conf={confidence:.2f}; verifier refuses forecast-opposite TRADE."
+        ),
+    )
+
+
+def _lane_m15_recovery_trade_issue(
+    lane: dict[str, Any],
+) -> VerificationIssue | None:
+    """Fail closed when a selected recovery lane lost its verified chain.
+
+    `_lane_m15_recovery_packet` already rebuilds both content-addressed
+    bindings.  TRADE verification must consume that result; merely exposing an
+    INVALID packet to GPT is not an authorization gate.
+    """
+
+    forecast = lane.get("forecast")
+    if not isinstance(forecast, dict):
+        return None
+    recovery = forecast.get("m15_recovery")
+    if not isinstance(recovery, dict):
+        return None
+    status = str(recovery.get("status") or "").strip().upper()
+    if status == "NOT_APPLICABLE":
+        return None
+
+    body = dict(recovery)
+    packet_sha256 = body.pop("packet_sha256", None)
+    try:
+        digest_valid = (
+            isinstance(packet_sha256, str)
+            and len(packet_sha256) == 64
+            and canonical_json_sha256(body) == packet_sha256
+        )
+    except (TypeError, ValueError):
+        digest_valid = False
+    valid = bool(
+        digest_valid
+        and recovery.get("contract") == M15_RECOVERY_GPT_PACKET_CONTRACT
+        and status == "VERIFIED"
+        and not recovery.get("validation_errors")
+        and recovery.get("risk_revalidated") is True
+        and recovery.get("gateway_revalidation_required") is True
+        and recovery.get("manual_position_mutation_allowed") is False
+        and recovery.get("live_permission") is False
+        and recovery.get("source_timeframes")
+        == ["M15", "M30", "H1", "H4", "D"]
+    )
+    if valid:
+        return None
+    errors = recovery.get("validation_errors")
+    error_text = (
+        ", ".join(str(item) for item in errors)
+        if isinstance(errors, list) and errors
+        else "packet contract/status/digest or revalidation flags are invalid"
+    )
+    return VerificationIssue(
+        "M15_RECOVERY_PACKET_NOT_VERIFIED",
+        (
+            f"selected recovery lane {lane.get('lane_id')} cannot TRADE: "
+            f"{error_text}; require VERIFIED content-addressed M15 bindings, "
+            "Risk revalidation, mandatory gateway revalidation, no manual-position "
+            "mutation, and live_permission=false before the gateway independently approves POST"
         ),
     )
 
