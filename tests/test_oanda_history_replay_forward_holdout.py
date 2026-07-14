@@ -172,6 +172,14 @@ def _context() -> dict:
 
 
 class ForwardHoldoutTest(unittest.TestCase):
+    @staticmethod
+    def _future_holdout_start() -> datetime:
+        """Keep materialization tests valid beyond their original calendar day."""
+
+        return (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+            microsecond=0
+        )
+
     def _fixture(self, root: Path) -> tuple[Path, Path, Path, Path]:
         candidate = root / "candidate.json"
         training = root / "training.json"
@@ -205,7 +213,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             end = start + timedelta(minutes=1)
             locked = forward.create_lock(
                 candidate_path=candidate,
@@ -233,7 +241,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             forecast.write_text(json.dumps({"timestamp_utc": forward._iso(start)}) + "\n")
             with self.assertRaisesRegex(ValueError, "already contains"):
                 forward.create_lock(
@@ -436,7 +444,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             truth_root = root / "history"
             truth_root.mkdir()
             (truth_root / "preexisting.jsonl").write_text("{}\n", encoding="utf-8")
@@ -471,7 +479,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             locked = forward.create_lock(
                 candidate_path=candidate,
                 training_report_path=training,
@@ -517,7 +525,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             end = start + timedelta(minutes=1)
             locked = forward.create_lock(
                 candidate_path=candidate,
@@ -650,7 +658,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             end = start + timedelta(minutes=1)
             truth_root = root / "history"
             locked = forward.create_lock(
@@ -683,7 +691,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             end = start + timedelta(minutes=1)
             truth_root = root / "history"
             locked = forward.create_lock(
@@ -724,7 +732,7 @@ class ForwardHoldoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             locked = forward.create_lock(
                 candidate_path=candidate,
                 training_report_path=training,
@@ -848,7 +856,7 @@ class ForwardHoldoutTest(unittest.TestCase):
             root = Path(tmp)
             candidate, training, forecast, output = self._fixture(root)
             forecast.write_text("{}\n", encoding="utf-8")
-            start = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            start = self._future_holdout_start()
             locked = forward.create_lock(
                 candidate_path=candidate,
                 training_report_path=training,
