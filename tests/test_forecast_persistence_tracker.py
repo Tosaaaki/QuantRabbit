@@ -106,6 +106,26 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(rows[0]["range_high_price"], 0.921)
             self.assertEqual(rows[0]["range_width_pips"], 9.2)
 
+    def test_invalid_shadow_does_not_break_normal_forecast_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = _forecast("EUR_USD", "UNCLEAR", confidence=0.0)
+            forecast.regime_family_contradiction_shadow = {"tampered": True}
+
+            self.assertTrue(
+                record_forecast(
+                    forecast,
+                    data_root=root,
+                    cycle_id="invalid-shadow",
+                )
+            )
+            row = json.loads((root / "forecast_history.jsonl").read_text())
+            self.assertEqual(row["direction"], "UNCLEAR")
+            self.assertNotIn("regime_family_contradiction_shadow", row)
+            self.assertFalse(
+                (root / "regime_family_contradiction_shadow_ledger.jsonl").exists()
+            )
+
     def test_record_forecast_reuses_cycle_pair_index_when_file_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

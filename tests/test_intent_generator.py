@@ -3497,6 +3497,85 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertFalse((data_root / "forecast_history.jsonl").exists())
             self.assertFalse((data_root / "projection_ledger.jsonl").exists())
 
+    def test_forecast_seed_telemetry_rejects_inexact_or_far_future_clock(self) -> None:
+        from quant_rabbit.models import Quote
+        from quant_rabbit.strategy.intent_generator import (
+            _record_forecast_seed_telemetry,
+            _snapshot_from_json,
+        )
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        validation_time = datetime(2026, 6, 5, 3, 0, tzinfo=timezone.utc)
+        missing_clock_quote = _snapshot_from_json(
+            {
+                "fetched_at_utc": validation_time.isoformat(),
+                "positions": [],
+                "orders": [],
+                "quotes": {"EUR_USD": {"bid": 1.0999, "ask": 1.1001}},
+            }
+        ).quotes["EUR_USD"]
+        canonical_z_quote = _snapshot_from_json(
+            {
+                "fetched_at_utc": "2026-06-05T03:00:00Z",
+                "positions": [],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.0999,
+                        "ask": 1.1001,
+                        "timestamp_utc": "2026-06-05T03:00:00Z",
+                    }
+                },
+            }
+        ).quotes["EUR_USD"]
+        self.assertEqual(canonical_z_quote.timestamp_utc, validation_time)
+        quotes = {
+            "missing": missing_clock_quote,
+            "naive": Quote(
+                "EUR_USD",
+                1.0999,
+                1.1001,
+                datetime(2026, 6, 5, 3, 0),
+            ),
+            "far-future": Quote(
+                "EUR_USD",
+                1.0999,
+                1.1001,
+                validation_time + timedelta(minutes=1),
+            ),
+        }
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.72,
+            current_price=1.1,
+            target_price=1.105,
+            invalidation_price=1.098,
+            horizon_min=60,
+            projection_signals=(),
+        )
+
+        for label, quote in quotes.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                data_root = Path(tmp)
+                _record_forecast_seed_telemetry(
+                    forecast,
+                    pair="EUR_USD",
+                    quote=quote,
+                    pair_chart={},
+                    data_root=data_root,
+                    cycle_id=f"{label}-clock-cycle",
+                    validation_time_utc=validation_time,
+                )
+
+                self.assertFalse((data_root / "forecast_history.jsonl").exists())
+                self.assertFalse((data_root / "projection_ledger.jsonl").exists())
+                self.assertFalse(
+                    (
+                        data_root
+                        / "regime_family_contradiction_shadow_ledger.jsonl"
+                    ).exists()
+                )
+
     def test_market_context_matrix_metadata_is_advisory_on_intent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

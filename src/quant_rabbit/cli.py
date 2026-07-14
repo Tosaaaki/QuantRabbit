@@ -881,6 +881,7 @@ def _refresh_current_forecast_history(
         if quote is None:
             skipped[pair] = "quote_missing"
             continue
+        quote_emission_time = getattr(quote, "timestamp_utc", None)
         if not hit_rates_loaded:
             shared_hit_rates = _forecast_seed_hit_rates(data_root)
             hit_rates_loaded = True
@@ -905,7 +906,13 @@ def _refresh_current_forecast_history(
         ):
             skipped[pair] = "stale_quote_for_forecast_telemetry"
             continue
-        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id, now=emission_time)
+        record_forecast(
+            forecast,
+            data_root=data_root,
+            cycle_id=cycle_id,
+            now=emission_time,
+            shadow_emitted_at_utc=quote_emission_time,
+        )
         try:
             projection_recorded += record_directional_forecast(
                 forecast,
@@ -9689,6 +9696,10 @@ def main(argv: list[str] | None = None) -> int:
             FORECAST_LIVE_PRECISION_MIN_SAMPLES,
             FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
         )
+        from quant_rabbit.regime_family_contradiction_truth import (
+            TRUTH_ADAPTER_CONTRACT,
+            resolve_due_regime_family_contradiction_from_oanda,
+        )
         from pathlib import Path as _P
         data_root = _P("data")
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -9738,6 +9749,34 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 candles_by_pair = candle_truth.candles_by_pair
                 candle_truth_summary = projection_candle_truth_summary(candle_truth)
+        try:
+            contradiction_shadow_truth = (
+                resolve_due_regime_family_contradiction_from_oanda(
+                    data_root=data_root,
+                    client_factory=OandaReadOnlyClient,
+                )
+            )
+        except Exception as exc:
+            # Shadow acquisition must never turn ordinary projection
+            # verification into a routing or cycle failure.
+            contradiction_shadow_truth = {
+                "contract": TRUTH_ADAPTER_CONTRACT,
+                "status": "CLIENT_UNAVAILABLE",
+                "errors": [
+                    {
+                        "phase": "VERIFY_PROJECTIONS_ADAPTER",
+                        "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+                    }
+                ],
+                "read_only": True,
+                "broker_write_attempted": False,
+                "live_side_effects": [],
+                "proof_eligible": False,
+                "automatic_promotion_allowed": False,
+                "live_permission": False,
+                "sizing_permission": False,
+                "gate_relaxation_allowed": False,
+            }
         counts = verify_pending(
             data_root,
             quotes_by_pair=quotes_by_pair,
@@ -9776,6 +9815,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "status": "OK",
             "resolution_counts": counts,
+            "regime_family_contradiction_shadow": contradiction_shadow_truth,
             "price_truth": {
                 "pending_pairs": pending_pairs,
                 "retryable_timeout_pairs": retry_timeout_pairs,

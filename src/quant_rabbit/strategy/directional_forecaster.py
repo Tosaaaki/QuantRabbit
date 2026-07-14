@@ -212,6 +212,11 @@ class DirectionalForecast:
     technical_context_v1: dict[str, Any] = field(default_factory=dict)
     m15_recovery_receipt: dict[str, Any] = field(default_factory=dict)
     m15_recovery_forecast_evidence: dict[str, Any] = field(default_factory=dict)
+    # Evaluation-only counterfactual evidence.  This field is deliberately
+    # omitted from ``to_dict`` so it cannot enter intents, GPT allocation,
+    # RiskEngine, or the live gateway.  The forecast persistence boundary may
+    # bind it to a dedicated read-only shadow ledger instead.
+    regime_family_contradiction_shadow: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         payload = {
@@ -2404,6 +2409,38 @@ def _regime_family_adjustment(
     )
 
 
+def _build_regime_family_contradiction_shadow(
+    *,
+    pair: str,
+    current_price: float,
+    detector_direction: str,
+    detector_scores: dict[str, float],
+    technical_context_v1: dict[str, Any],
+    entry_bid: float | None,
+    entry_ask: float | None,
+) -> dict[str, Any]:
+    """Build isolated evaluation evidence without affecting the forecast."""
+
+    try:
+        from quant_rabbit.strategy.regime_family_contradiction_shadow import (
+            build_regime_family_contradiction_shadow,
+        )
+
+        return build_regime_family_contradiction_shadow(
+            pair=pair,
+            current_price=current_price,
+            detector_direction=detector_direction,
+            detector_scores=detector_scores,
+            technical_context_v1=technical_context_v1,
+            entry_bid=entry_bid,
+            entry_ask=entry_ask,
+        )
+    except (ImportError, TypeError, ValueError, OverflowError):
+        # Shadow telemetry is deliberately non-authoritative.  A malformed or
+        # unavailable evaluator must never change the fail-closed live result.
+        return {}
+
+
 def _top_reasons(
     contributions: list[tuple[str, float, str]],
     *,
@@ -2631,6 +2668,8 @@ def synthesize_forecast(
     hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
     regime: Optional[str] = None,
     spread_pips: Optional[float] = None,
+    entry_bid: Optional[float] = None,
+    entry_ask: Optional[float] = None,
     calendar_path: Path | None = None,
     strategy_profile_path: Path | None = None,
     now_utc: datetime | None = None,
@@ -2856,6 +2895,12 @@ def synthesize_forecast(
     candidates.sort(key=lambda x: -x[1])
     winner, winner_score = candidates[0]
     runner_up_score = candidates[1][1]
+    pre_family_detector_scores = {
+        "UP": up_score,
+        "DOWN": down_score,
+        "RANGE": range_score,
+        "EITHER": either_score,
+    }
     if m15_recovery_receipt:
         # The normal technical-context receipt includes M1/M5 families. The
         # recovery forecast may publish it diagnostically, but must not use it
@@ -2870,6 +2915,15 @@ def synthesize_forecast(
         )
     if family_adjusted_score != winner_score:
         contradicted_winner = winner
+        contradiction_shadow = _build_regime_family_contradiction_shadow(
+            pair=pair,
+            current_price=current_price,
+            detector_direction=contradicted_winner,
+            detector_scores=pre_family_detector_scores,
+            technical_context_v1=technical_context_v1,
+            entry_bid=entry_bid,
+            entry_ask=entry_ask,
+        )
         if winner == "UP":
             up_score = family_adjusted_score
         elif winner == "DOWN":
@@ -2914,6 +2968,7 @@ def synthesize_forecast(
             },
             technical_context_v1=technical_context_v1,
             m15_recovery_receipt=m15_recovery_receipt,
+            regime_family_contradiction_shadow=contradiction_shadow,
         )
     adjusted_winner_score, adjustment_reason = _countertrend_adjustment(
         pair_chart,

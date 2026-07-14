@@ -796,6 +796,12 @@ class CliHelpTest(unittest.TestCase):
                 },
             }
             stdout = io.StringIO()
+            shadow_summary = {
+                "status": "NO_LEDGER",
+                "read_only": True,
+                "broker_write_attempted": False,
+                "live_permission": False,
+            }
 
             with mock.patch(
                 "quant_rabbit.strategy.projection_ledger.load_ledger",
@@ -809,7 +815,11 @@ class CliHelpTest(unittest.TestCase):
             ), mock.patch(
                 "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
                 return_value=hit_rates,
-            ), redirect_stdout(stdout):
+            ), mock.patch(
+                "quant_rabbit.regime_family_contradiction_truth."
+                "resolve_due_regime_family_contradiction_from_oanda",
+                return_value=shadow_summary,
+            ) as shadow_resolver, redirect_stdout(stdout):
                 code = main(
                     [
                         "verify-projections",
@@ -828,6 +838,14 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "OK")
         self.assertEqual(
+            payload["regime_family_contradiction_shadow"],
+            shadow_summary,
+        )
+        shadow_resolver.assert_called_once_with(
+            data_root=Path("data"),
+            client_factory=mock.ANY,
+        )
+        self.assertEqual(
             payload["economic_precision_edges"][0]["signal_name"],
             "session_expansion_london",
         )
@@ -840,6 +858,65 @@ class CliHelpTest(unittest.TestCase):
                 for item in payload["economic_precision_edges"]
             )
         )
+
+    def test_verify_projections_isolates_shadow_resolver_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            snapshot.write_text(json.dumps({"quotes": {}}))
+            stdout = io.StringIO()
+            resolution_counts = {
+                "HIT": 0,
+                "MISS": 0,
+                "TIMEOUT": 0,
+                "PENDING": 0,
+            }
+
+            with mock.patch(
+                "quant_rabbit.strategy.projection_ledger.load_ledger",
+                return_value=[],
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger."
+                "retryable_truth_timeout_pairs",
+                return_value=[],
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.verify_pending",
+                return_value=resolution_counts,
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+                return_value={},
+            ), mock.patch(
+                "quant_rabbit.regime_family_contradiction_truth."
+                "resolve_due_regime_family_contradiction_from_oanda",
+                side_effect=RuntimeError("shadow transport failed"),
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "verify-projections",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(root / "missing_pair_charts.json"),
+                        "--m1-count",
+                        "0",
+                        "--m5-count",
+                        "0",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "OK")
+        self.assertEqual(payload["resolution_counts"], resolution_counts)
+        shadow = payload["regime_family_contradiction_shadow"]
+        self.assertEqual(shadow["status"], "CLIENT_UNAVAILABLE")
+        self.assertEqual(
+            shadow["errors"][0]["phase"],
+            "VERIFY_PROJECTIONS_ADAPTER",
+        )
+        self.assertTrue(shadow["read_only"])
+        self.assertFalse(shadow["broker_write_attempted"])
+        self.assertFalse(shadow["live_permission"])
 
     def test_profitability_acceptance_blocks_systemic_profit_leaks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4297,7 +4374,7 @@ class CliHelpTest(unittest.TestCase):
                 "charts": [{"pair": "EUR_USD", "views": []}],
             }))
             snapshot_payload = {
-                "fetched_at_utc": "2026-05-30T00:00:00+00:00",
+                "fetched_at_utc": "2026-05-30T00:00:10+00:00",
                 "positions": [],
                 "orders": [],
                 "quotes": {
@@ -4358,10 +4435,36 @@ class CliHelpTest(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             row = json.loads(rows[0])
             self.assertEqual(row["pair"], "EUR_USD")
-            self.assertEqual(row["cycle_id"], "test:2026-05-30T00:00:00+00:00:2026-05-30T00:01:00+00:00")
-            self.assertEqual(row["timestamp_utc"], "2026-05-30T00:00:00Z")
+            self.assertEqual(row["cycle_id"], "test:2026-05-30T00:00:10+00:00:2026-05-30T00:01:00+00:00")
+            self.assertEqual(row["timestamp_utc"], "2026-05-30T00:00:10Z")
             self.assertEqual(row["direction"], "UP")
-            self.assertTrue((data_root / "projection_ledger.jsonl").exists())
+            projection_row = json.loads(
+                (data_root / "projection_ledger.jsonl").read_text()
+            )
+            self.assertEqual(
+                projection_row["timestamp_emitted_utc"],
+                "2026-05-30T00:00:10Z",
+            )
+            from quant_rabbit.strategy.forecast_persistence_tracker import (
+                assess_position,
+            )
+
+            verdict = assess_position(
+                trade_id="same-snapshot-position",
+                pair="EUR_USD",
+                side="LONG",
+                data_root=data_root,
+                fresh_after_utc=datetime(
+                    2026,
+                    5,
+                    30,
+                    0,
+                    0,
+                    10,
+                    tzinfo=timezone.utc,
+                ),
+            )
+            self.assertNotIn("stale forecast history", verdict.reason)
 
     def test_refresh_current_forecast_history_skips_closed_market_without_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4422,6 +4525,80 @@ class CliHelpTest(unittest.TestCase):
             self.assertEqual(first["skipped"]["EUR_USD"], "market_closed_at_forecast_emission")
             self.assertFalse((data_root / "forecast_history.jsonl").exists())
             self.assertFalse((data_root / "projection_ledger.jsonl").exists())
+
+    def test_refresh_current_forecast_history_rejects_inexact_quote_clock(self) -> None:
+        forecast = SimpleNamespace(
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.72,
+            current_price=1.1001,
+            invalidation_price=1.0990,
+            target_price=1.1020,
+            horizon_min=60,
+            raw_confidence=0.72,
+            calibration_multiplier=1.0,
+            up_score=12.0,
+            down_score=3.0,
+            range_score=0.0,
+            drivers_for=("test up",),
+            drivers_against=(),
+            rationale_summary="UP=12 DOWN=3",
+        )
+        for label, quote_timestamp in (
+            ("missing", None),
+            ("naive", "2026-05-30T00:00:00"),
+            ("far-future", "2026-05-30T01:00:00+00:00"),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                pair_charts = root / "pair_charts.json"
+                pair_charts.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": "2026-05-30T00:01:00+00:00",
+                            "charts": [{"pair": "EUR_USD", "views": []}],
+                        }
+                    )
+                )
+                quote_payload = {"bid": 1.1000, "ask": 1.1002}
+                if quote_timestamp is not None:
+                    quote_payload["timestamp_utc"] = quote_timestamp
+                snapshot_payload = {
+                    "fetched_at_utc": "2026-05-30T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {"EUR_USD": quote_payload},
+                }
+
+                with mock.patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ), mock.patch(
+                    "quant_rabbit.strategy.projection_ledger.projection_telemetry_market_open",
+                    return_value=True,
+                ):
+                    result = _refresh_current_forecast_history(
+                        snapshot_payload=snapshot_payload,
+                        pair_charts_path=pair_charts,
+                        pairs=["EUR_USD"],
+                        data_root=data_root,
+                        cycle_source="inexact-clock-test",
+                    )
+
+                self.assertEqual(result["recorded"], 0)
+                self.assertEqual(
+                    result["skipped"]["EUR_USD"],
+                    "stale_quote_for_forecast_telemetry",
+                )
+                self.assertFalse((data_root / "forecast_history.jsonl").exists())
+                self.assertFalse(
+                    (
+                        data_root
+                        / "regime_family_contradiction_shadow_ledger.jsonl"
+                    ).exists()
+                )
+                self.assertFalse((data_root / "projection_ledger.jsonl").exists())
 
     def test_replay_execution_missing_prices_returns_json_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

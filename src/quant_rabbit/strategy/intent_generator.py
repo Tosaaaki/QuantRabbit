@@ -95,6 +95,7 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context_evidence,
 )
 from quant_rabbit.strategy.directional_forecaster import (
+    TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS,
     M15_RECOVERY_FORECAST_CONTRACT,
     M15_RECOVERY_MICRO_CONTRACT,
     M15_RECOVERY_MICRO_MAX_UNITS,
@@ -3624,17 +3625,21 @@ def _record_forecast_seed_telemetry(
             regime_label,
             recovery_receipt,
         )
-        emission_time = _ensure_utc(getattr(quote, "timestamp_utc", None))
+        raw_emission_time = getattr(quote, "timestamp_utc", None)
         if not _quote_fresh_for_forecast_seed_telemetry(
-            emission_time,
+            raw_emission_time,
             validation_time_utc=validation_time_utc,
         ):
+            return
+        emission_time = _ensure_utc(raw_emission_time)
+        if emission_time is None:
             return
         record_forecast(
             forecast_record,
             data_root=data_root,
             cycle_id=cycle_id,
             now=emission_time,
+            shadow_emitted_at_utc=emission_time,
             replace_existing=True,
         )
         if not projection_telemetry_market_open(emission_time):
@@ -3714,12 +3719,15 @@ def _quote_fresh_for_forecast_seed_telemetry(
     the current snapshot time. Reuse RiskPolicy's quote-age contract so the
     telemetry ledger and live-entry risk gate agree on freshness.
     """
+    if not isinstance(emission_time, datetime) or emission_time.tzinfo is None:
+        return False
     emitted = _ensure_utc(emission_time)
     if emitted is None:
         return False
     validation_time = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
     if emitted > validation_time:
-        return True
+        future_skew = (emitted - validation_time).total_seconds()
+        return future_skew <= TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS
     quote_age = (validation_time - emitted).total_seconds()
     return quote_age <= RiskPolicy().max_quote_age_seconds
 
@@ -3874,6 +3882,8 @@ def _forecast_seed_for_pair(
             hit_rates=hit_rates,
             regime=regime_label,
             spread_pips=spread_pips,
+            entry_bid=getattr(quote, "bid", None),
+            entry_ask=getattr(quote, "ask", None),
             calendar_path=artifact_root / "economic_calendar.json",
             strategy_profile_path=artifact_root / "strategy_profile.json",
             now_utc=getattr(snapshot, "fetched_at_utc", None),
@@ -17206,16 +17216,22 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
     quotes = {}
     for pair, item in (payload.get("quotes") or {}).items():
         timestamp = item.get("timestamp_utc")
+        parsed_timestamp = _strict_payload_utc_datetime(timestamp)
         quotes[pair] = Quote(
             pair=pair,
             bid=float(item["bid"]),
             ask=float(item["ask"]),
-            timestamp_utc=datetime.fromisoformat(timestamp) if timestamp else datetime.now(timezone.utc),
+            # A missing or timezone-less broker clock is deliberately ancient.
+            # It fails forecast/shadow freshness rather than fabricating a
+            # current observation that could later be scored as forward truth.
+            timestamp_utc=parsed_timestamp
+            or datetime(1970, 1, 1, tzinfo=timezone.utc),
         )
     fetched = payload.get("fetched_at_utc")
+    parsed_fetched = _strict_payload_utc_datetime(fetched)
     account = _account_summary_from_payload(payload.get("account"))
     return BrokerSnapshot(
-        fetched_at_utc=datetime.fromisoformat(fetched) if fetched else datetime.now(timezone.utc),
+        fetched_at_utc=parsed_fetched or datetime.now(timezone.utc),
         positions=positions,
         orders=orders,
         quotes=quotes,

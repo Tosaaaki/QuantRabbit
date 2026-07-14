@@ -1187,12 +1187,14 @@ def _pair_forecast(
     if forecast_cache is not None and pair in forecast_cache:
         return forecast_cache[pair]
 
+    current_quote = (snapshot.quotes or {}).get(pair)
     current_price = _current_mid_price_for(pair, snapshot)
     if current_price is None:
         if forecast_cache is not None:
             forecast_cache[pair] = None
         return None
     current_spread_pips = _current_spread_pips_for(pair, snapshot)
+    shadow_emission_time = getattr(current_quote, "timestamp_utc", None)
 
     cot_payload = None
     option_skew_payload = None
@@ -1275,6 +1277,8 @@ def _pair_forecast(
         hit_rates=hit_rates,
         regime=regime_label,
         spread_pips=current_spread_pips,
+        entry_bid=getattr(current_quote, "bid", None),
+        entry_ask=getattr(current_quote, "ask", None),
         calendar_path=_data_artifact_path(
             effective_data_root, DEFAULT_CALENDAR_SNAPSHOT
         ),
@@ -1311,6 +1315,7 @@ def _pair_forecast(
             forecast,
             data_root=effective_data_root,
             cycle_id=forecast_cycle_id,
+            shadow_emitted_at_utc=shadow_emission_time,
         )
         _record_directional_forecast(
             forecast,

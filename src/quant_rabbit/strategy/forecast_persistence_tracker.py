@@ -94,6 +94,7 @@ def record_forecast(
     *,
     data_root: Path,
     now: Optional[datetime] = None,
+    shadow_emitted_at_utc: Optional[datetime] = None,
     cycle_id: str | None = None,
     replace_existing: bool = False,
 ) -> bool:
@@ -150,6 +151,14 @@ def record_forecast(
         if not context_valid:
             raise ValueError(context_error or "TECHNICAL_CONTEXT_INVALID")
         entry["technical_context_v1"] = technical_context
+    if shadow_emitted_at_utc is not None:
+        _persist_regime_family_contradiction_shadow(
+            forecast,
+            data_root=data_root,
+            emitted_at_utc=shadow_emitted_at_utc,
+            cycle_id=cycle_id,
+            replace_existing=replace_existing,
+        )
     with _FORECAST_HISTORY_PROCESS_LOCK:
         with path.open("a+", encoding="utf-8") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -203,6 +212,40 @@ def record_forecast(
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
+
+
+def _persist_regime_family_contradiction_shadow(
+    forecast: Any,
+    *,
+    data_root: Path,
+    emitted_at_utc: datetime,
+    cycle_id: str | None,
+    replace_existing: bool,
+) -> int:
+    """Persist isolated counterfactual evidence without affecting live facts."""
+
+    shadow = getattr(forecast, "regime_family_contradiction_shadow", None)
+    if not cycle_id or not isinstance(shadow, dict) or not shadow:
+        return 0
+    try:
+        from quant_rabbit.strategy.regime_family_contradiction_shadow import (
+            persist_regime_family_contradiction_emission,
+        )
+
+        return persist_regime_family_contradiction_emission(
+            shadow,
+            emitted_at_utc=emitted_at_utc,
+            cycle_id=cycle_id,
+            data_root=data_root,
+            technical_context_v1=getattr(
+                forecast,
+                "technical_context_v1",
+                None,
+            ),
+            replace_existing=replace_existing,
+        )
+    except Exception:  # noqa: BLE001 - evaluation telemetry is fully isolated.
+        return 0
 
 
 def _append_forecast_emission_receipt(

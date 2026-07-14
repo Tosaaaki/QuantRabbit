@@ -1354,7 +1354,10 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
         return {
             "pair": "EUR_USD",
             "session": {"current_tag": "LONDON"},
-            "confluence": {"dominant_regime": "TREND_STRONG"},
+            "confluence": {
+                "dominant_regime": "TREND_STRONG",
+                "price_percentile_24h": 0.5,
+            },
             "views": [
                 {
                     "granularity": "M15",
@@ -1369,7 +1372,31 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
                         "disagreement": 0.0,
                     },
                     "indicators": {"pip_size": 0.0001, "atr_pips": 2.0},
-                }
+                    "structure": {
+                        "structure_events": [
+                            {
+                                "kind": "BOS_UP",
+                                "close_confirmed": True,
+                                "index": 1,
+                                "timestamp_utc": "2026-07-14T00:00:00Z",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "granularity": "M5",
+                    "regime_reading": {
+                        "state": "TREND_STRONG",
+                        "atr_percentile": 50.0,
+                    },
+                    "family_scores": {
+                        "trend_score": trend_score,
+                        "mean_rev_score": 0.0,
+                        "breakout_score": 0.0,
+                        "disagreement": 0.0,
+                    },
+                    "indicators": {"pip_size": 0.0001, "atr_pips": 2.0},
+                },
             ],
         }
 
@@ -1401,14 +1428,133 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
             projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
             correlation_signals=[],
             paths=[],
+            spread_pips=0.2,
+            entry_bid=1.09999,
+            entry_ask=1.10001,
         )
 
         self.assertEqual(forecast.direction, "UNCLEAR")
         self.assertEqual(forecast.confidence, 0.0)
+        self.assertEqual(forecast.horizon_min, 0)
         self.assertIn("contradiction vetoed UP", forecast.rationale_summary)
         self.assertTrue(
             any("CONTRADICTS_FORECAST" in reason for reason in forecast.drivers_against)
         )
+        shadow = forecast.regime_family_contradiction_shadow
+        self.assertEqual(shadow["entry_quote_source"], "EXPLICIT_BID_ASK")
+        self.assertEqual(shadow["entry_bid"], 1.09999)
+        self.assertEqual(shadow["entry_ask"], 1.10001)
+        self.assertEqual(shadow["detector_arm"]["direction"], "UP")
+        self.assertEqual(shadow["family_arm"]["direction"], "DOWN")
+        self.assertEqual(shadow["detector_scores"]["UP"], 100.0)
+        self.assertTrue(shadow["read_only"])
+        self.assertFalse(shadow["live_permission"])
+        self.assertFalse(shadow["sizing_permission"])
+        self.assertNotIn(
+            "regime_family_contradiction_shadow",
+            forecast.to_dict(),
+        )
+        from quant_rabbit.strategy.intent_generator import _forecast_context_payload
+
+        self.assertNotIn(
+            "regime_family_contradiction_shadow",
+            json.dumps(
+                _forecast_context_payload(
+                    forecast,
+                    cycle_id="contradiction-cycle",
+                ),
+                sort_keys=True,
+            ),
+        )
+        from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
+        from quant_rabbit.strategy.regime_family_contradiction_shadow import (
+            LEDGER_FILENAME,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            emitted_at = datetime.now(timezone.utc)
+            history_at = emitted_at + timedelta(seconds=10)
+            self.assertTrue(
+                record_forecast(
+                    forecast,
+                    data_root=data_root,
+                    cycle_id="contradiction-cycle",
+                    now=history_at,
+                    shadow_emitted_at_utc=emitted_at,
+                )
+            )
+            history_row = json.loads(
+                (data_root / "forecast_history.jsonl").read_text()
+            )
+            self.assertNotIn("regime_family_contradiction_shadow", history_row)
+            self.assertEqual(
+                history_row["timestamp_utc"],
+                history_at.isoformat().replace("+00:00", "Z"),
+            )
+            shadow_events = [
+                json.loads(line)
+                for line in (data_root / LEDGER_FILENAME).read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(shadow_events), 1)
+            self.assertEqual(
+                datetime.fromisoformat(
+                    shadow_events[0]["payload"]["emitted_at_utc"].replace(
+                        "Z",
+                        "+00:00",
+                    )
+                ),
+                emitted_at,
+            )
+            self.assertFalse((data_root / "projection_ledger.jsonl").exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.assertTrue(
+                record_forecast(
+                    forecast,
+                    data_root=data_root,
+                    cycle_id="missing-shadow-clock",
+                    now=history_at,
+                )
+            )
+            self.assertTrue((data_root / "forecast_history.jsonl").exists())
+            self.assertFalse((data_root / LEDGER_FILENAME).exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            self.assertTrue(
+                record_forecast(
+                    forecast,
+                    data_root=data_root,
+                    cycle_id="stale-shadow-clock",
+                    now=datetime.now(timezone.utc),
+                    shadow_emitted_at_utc=datetime.now(timezone.utc)
+                    - timedelta(minutes=2),
+                )
+            )
+            self.assertTrue((data_root / "forecast_history.jsonl").exists())
+            self.assertFalse((data_root / LEDGER_FILENAME).exists())
+
+    def test_bad_entry_quote_drops_only_shadow_not_the_fail_closed_veto(self) -> None:
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=self._chart(-1.0),
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+            spread_pips=0.2,
+            entry_bid=1.09990,
+            entry_ask=1.10010,
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertEqual(forecast.horizon_min, 0)
+        self.assertEqual(forecast.regime_family_contradiction_shadow, {})
 
 
 class ContestedRangePhaseEvidenceTest(unittest.TestCase):

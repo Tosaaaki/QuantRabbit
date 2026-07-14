@@ -785,7 +785,16 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   under that env, same triple gate as before). It never realizes a loss
 #   and never writes a stop-loss to manual/tagless positions.
 # - verify-projections resolves PENDING → HIT/MISS/TIMEOUT in
-#   data/projection_ledger.jsonl for the self-calibrating projection loop.
+#   data/projection_ledger.jsonl for the self-calibrating projection loop. In
+#   the same optional step it separately resolves due regime-family
+#   contradiction shadow rows from the exact due-derived production OANDA M1
+#   bid/ask interval. That GET-only adapter runs even when the ordinary
+#   projection ledger has no pairs; missing/malformed truth stays pending and
+#   is reported only under regime_family_contradiction_shadow, without changing
+#   ordinary projection metrics, command success, routing, risk, sizing, or
+#   live permission. It never substitutes a later candle. During the first 60
+#   minutes after an emission there is no due row; a later cycle can fetch the
+#   same frozen historical interval without changing the predeclared endpoint.
 # - position-thesis-check / thesis-evolution-check (2026-05-15 user
 #   directive 「どの視点でエントリーしたのか…市況が変わってないか」) /
 #   forecast-persistence-check emit the per-position EXTEND / HOLD /
