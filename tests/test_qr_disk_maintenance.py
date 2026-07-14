@@ -871,13 +871,25 @@ def _run(
         "--allow-p0-no-reclaim",
         *args,
     ]
-    result = subprocess.run(
-        command,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    # The subprocess tests exercise maintenance decisions, not the host's live
+    # open-file table.  A real lsof can time out under a loaded full-suite run,
+    # which correctly makes production fail closed but makes these fixtures
+    # nondeterministically look open.  Exit status 1 is lsof's "no matches"
+    # result; OPEN/UNKNOWN behavior is covered directly with test inspectors.
+    with tempfile.TemporaryDirectory(prefix="qr-test-lsof-") as tool_dir:
+        lsof_stub = Path(tool_dir) / "lsof"
+        lsof_stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        lsof_stub.chmod(0o700)
+        env = os.environ.copy()
+        env["PATH"] = f"{tool_dir}{os.pathsep}{env.get('PATH', '')}"
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
     if expect_report and report.exists():
         payload = json.loads(report.read_text(encoding="utf-8"))
     else:
