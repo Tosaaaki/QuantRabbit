@@ -8355,6 +8355,66 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertAlmostEqual(digest["total_step_seconds"], 0.2)
         self.assertEqual([row["index"] for row in digest["slowest_steps"]], [0, 1])
 
+    def test_cycle_digest_surfaces_goal_loop_repeat_suppression(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            goal_loop_path = Path(tmp) / "trader_goal_loop_orchestrator.json"
+            goal_loop_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-15T00:00:00+00:00",
+                        "status": "NEXT_WORK_SELECTED",
+                        "current_phase": "NO_ACTION_WAIT",
+                        "selected_next_work_type": "NO_ACTION_WAIT",
+                        "classified_next_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+                        "work_dispatch_allowed": False,
+                        "repeat_suppressed": True,
+                        "next_allowed_commands": [],
+                        "repeat_loop_guard": {
+                            "repeat_allowed": False,
+                            "repeat_reason": "material_state_seen_in_bounded_history",
+                            "material_history_hit": True,
+                            "material_history_sha256": ["a" * 64],
+                            "material_history_limit": 64,
+                            "current_fingerprint": {
+                                "material_state_sha256": "a" * 64,
+                            },
+                        },
+                        "live_permission_allowed": False,
+                        "live_side_effects": [],
+                    }
+                )
+            )
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR",
+                goal_loop_path,
+            ):
+                digest = _cycle_digest(
+                    kind="cycle_refresh_digest",
+                    step_results=[],
+                    aborted=False,
+                )
+
+        goal_loop = digest["trader_goal_loop_orchestrator"]
+        self.assertEqual(goal_loop["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertEqual(
+            goal_loop["classified_next_work_type"],
+            "EDGE_IMPROVEMENT_EXPERIMENT",
+        )
+        self.assertFalse(goal_loop["work_dispatch_allowed"])
+        self.assertTrue(goal_loop["repeat_suppressed"])
+        self.assertFalse(goal_loop["repeat_allowed"])
+        self.assertEqual(
+            goal_loop["repeat_reason"],
+            "material_state_seen_in_bounded_history",
+        )
+        self.assertTrue(goal_loop["material_history_hit"])
+        self.assertEqual(goal_loop["material_history_count"], 1)
+        self.assertEqual(goal_loop["material_history_limit"], 64)
+        self.assertEqual(goal_loop["material_state_sha256"], "a" * 64)
+        self.assertEqual(goal_loop["next_allowed_commands"], [])
+
     def test_cycle_digest_distinguishes_repeated_step_occurrences(self) -> None:
         from quant_rabbit.cli import _cycle_digest
 

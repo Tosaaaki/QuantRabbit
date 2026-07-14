@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import tempfile
@@ -13,14 +14,20 @@ from unittest.mock import patch
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND
 from quant_rabbit.trader_repair_orchestrator import (
+    EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+    EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
     READ_ONLY_EVIDENCE_WORK_STATUS,
     READ_ONLY_EVIDENCE_WAIT_STATUS,
     STATUS_APPROVAL_REQUIRED,
     STATUS_BLOCKED,
     STATUS_READY,
     TraderRepairOrchestrator,
+    _canonical_sha256,
     _count_watermark,
+    _evidence_action_has_pending_valid_watermark,
     _evaluate_success_condition,
+    _next_evidence_actions_for_empty_proof_queue,
+    validated_evidence_action_material,
 )
 from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
@@ -41,6 +48,222 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderRepairOrchestratorTest(unittest.TestCase):
+    def test_validated_evidence_action_material_accepts_recomputed_not_met_and_met(
+        self,
+    ) -> None:
+        origin_state = {
+            "proof_normal_routing_status": "BLOCKED",
+            "proof_routing_allowed": False,
+            "can_create_live_permission_count": 0,
+        }
+        action = _next_evidence_actions_for_empty_proof_queue(
+            {"categories": [{"category": "lane_board"}]},
+            current_state=origin_state,
+        )[0]
+
+        baseline_material = validated_evidence_action_material(
+            action,
+            current_state=origin_state,
+            source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+        )
+        self.assertIsNotNone(baseline_material)
+        self.assertEqual(baseline_material["evaluation_status"], "NOT_MET")
+        self.assertFalse(baseline_material["evaluation_passed"])
+        self.assertTrue(
+            _evidence_action_has_pending_valid_watermark(
+                action,
+                previous_current_state=origin_state,
+            )
+        )
+
+        still_pending_state = {
+            **origin_state,
+            "proof_normal_routing_status": "OPEN",
+        }
+        carried_action = copy.deepcopy(action)
+        carried_action["success_condition_evaluation"] = _evaluate_success_condition(
+            carried_action["success_condition"],
+            still_pending_state,
+        )
+        carried_material = validated_evidence_action_material(
+            carried_action,
+            current_state=still_pending_state,
+            source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+        )
+        self.assertIsNotNone(carried_material)
+        self.assertEqual(carried_material["evaluation_status"], "NOT_MET")
+        self.assertNotEqual(
+            baseline_material["evaluation_sha256"],
+            carried_material["evaluation_sha256"],
+        )
+
+        met_state = {
+            **still_pending_state,
+            "proof_routing_allowed": True,
+            "can_create_live_permission_count": 1,
+        }
+        met_action = copy.deepcopy(action)
+        met_action["success_condition_evaluation"] = _evaluate_success_condition(
+            met_action["success_condition"],
+            met_state,
+        )
+        met_material = validated_evidence_action_material(
+            met_action,
+            current_state=met_state,
+            source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+        )
+        self.assertIsNotNone(met_material)
+        self.assertEqual(met_material["evaluation_status"], "MET")
+        self.assertTrue(met_material["evaluation_passed"])
+        self.assertFalse(
+            _evidence_action_has_pending_valid_watermark(
+                met_action,
+                previous_current_state=met_state,
+            )
+        )
+
+        progress_receipt = {
+            key: copy.deepcopy(met_action[key])
+            for key in (
+                "action_id",
+                "category",
+                "progress_watermark_contract",
+                "progress_watermark_origin",
+                "success_condition",
+                "success_condition_evaluation",
+            )
+        }
+        progress_material = validated_evidence_action_material(
+            progress_receipt,
+            current_state=met_state,
+            source=EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
+        )
+        self.assertIsNotNone(progress_material)
+        self.assertEqual(progress_material["evaluation_status"], "MET")
+        self.assertEqual(
+            progress_material["evaluation_sha256"],
+            met_material["evaluation_sha256"],
+        )
+
+    def test_validated_evidence_action_material_rejects_tampering_and_source_confusion(
+        self,
+    ) -> None:
+        current_state = {
+            "proof_normal_routing_status": "BLOCKED",
+            "proof_routing_allowed": False,
+            "can_create_live_permission_count": 0,
+        }
+        action = _next_evidence_actions_for_empty_proof_queue(
+            {"categories": [{"category": "lane_board"}]},
+            current_state=current_state,
+        )[0]
+
+        tampered_condition_sha = copy.deepcopy(action)
+        tampered_condition_sha["progress_watermark_origin"]["condition_sha256"] = (
+            "0" * 64
+        )
+
+        tampered_condition = copy.deepcopy(action)
+        tampered_condition["success_condition"]["description"] = "forged condition"
+        tampered_condition["progress_watermark_origin"]["condition_sha256"] = (
+            _canonical_sha256(tampered_condition["success_condition"])
+        )
+
+        tampered_state_sha = copy.deepcopy(action)
+        tampered_state_sha["progress_watermark_origin"]["condition_state_sha256"] = (
+            "0" * 64
+        )
+
+        tampered_state_fields = copy.deepcopy(action)
+        tampered_origin = tampered_state_fields["progress_watermark_origin"]
+        tampered_origin["condition_state"]["unexpected"] = True
+        tampered_origin["condition_state_sha256"] = _canonical_sha256(
+            tampered_origin["condition_state"]
+        )
+
+        lowered_count_watermark = copy.deepcopy(action)
+        lowered_origin = lowered_count_watermark["progress_watermark_origin"]
+        lowered_origin["condition_state"]["can_create_live_permission_count"] = 1
+        lowered_origin["condition_state_sha256"] = _canonical_sha256(
+            lowered_origin["condition_state"]
+        )
+
+        tampered_evaluation = copy.deepcopy(action)
+        tampered_evaluation["success_condition_evaluation"]["checks"][0]["actual"] = (
+            "OPEN"
+        )
+
+        unknown_action = copy.deepcopy(action)
+        unknown_action["action_id"] = "unknown_action"
+        unknown_action["progress_watermark_origin"]["action_id"] = "unknown_action"
+
+        for label, candidate in (
+            ("condition_sha", tampered_condition_sha),
+            ("condition", tampered_condition),
+            ("state_sha", tampered_state_sha),
+            ("state_fields", tampered_state_fields),
+            ("count_watermark", lowered_count_watermark),
+            ("evaluation", tampered_evaluation),
+            ("unknown_action", unknown_action),
+        ):
+            with self.subTest(tamper=label):
+                self.assertIsNone(
+                    validated_evidence_action_material(
+                        candidate,
+                        current_state=current_state,
+                        source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+                    )
+                )
+
+        not_met_receipt = {
+            key: copy.deepcopy(action[key])
+            for key in (
+                "action_id",
+                "category",
+                "progress_watermark_contract",
+                "progress_watermark_origin",
+                "success_condition",
+                "success_condition_evaluation",
+            )
+        }
+        self.assertIsNone(
+            validated_evidence_action_material(
+                not_met_receipt,
+                current_state=current_state,
+                source=EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
+            )
+        )
+        self.assertIsNone(
+            validated_evidence_action_material(
+                not_met_receipt,
+                current_state=current_state,
+                source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+            )
+        )
+        self.assertIsNone(
+            validated_evidence_action_material(
+                action,
+                current_state=current_state,
+                source=EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
+            )
+        )
+        receipt_with_extra_field = copy.deepcopy(not_met_receipt)
+        receipt_with_extra_field["unexpected"] = True
+        self.assertIsNone(
+            validated_evidence_action_material(
+                receipt_with_extra_field,
+                current_state=current_state,
+                source=EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
+            )
+        )
+        self.assertIsNone(
+            validated_evidence_action_material(
+                action,
+                current_state=current_state,
+                source="unknown_source",
+            )
+        )
+
     def test_count_watermark_accepts_only_exact_non_negative_integer_counts(self) -> None:
         self.assertEqual(_count_watermark(0), 0)
         self.assertEqual(_count_watermark(3), 3)

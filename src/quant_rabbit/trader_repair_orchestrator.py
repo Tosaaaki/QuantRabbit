@@ -145,6 +145,18 @@ PROOF_CANDIDATE_BLOCKERS = {
 }
 GATEWAY_LIVE_READY_STATUSES = {"ACCEPTED", "STAGED", "SENT", "LIVE_READY"}
 EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT = "evidence_action_progress_v1"
+EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION = "next_action"
+EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT = "progress_receipt"
+_EVIDENCE_ACTION_PROGRESS_RECEIPT_FIELDS = frozenset(
+    {
+        "action_id",
+        "category",
+        "progress_watermark_contract",
+        "progress_watermark_origin",
+        "success_condition",
+        "success_condition_evaluation",
+    }
+)
 # The proof/support artifacts are rebuilt sequentially in one cycle. Five
 # minutes is the operational drift window used here to distinguish same-packet
 # evidence from an older cycle without tying the rule to market risk.
@@ -2825,37 +2837,114 @@ def _unique_evidence_actions_by_id(
     return by_id
 
 
+def validated_evidence_action_material(
+    action: Any,
+    *,
+    current_state: Any,
+    source: str,
+) -> dict[str, Any] | None:
+    """Return trusted repeat material for a canonical evidence action or receipt.
+
+    Serialized hashes and evaluations are treated only as assertions. The
+    condition, frozen origin state, and current evaluation must all reproduce
+    the canonical repair-orchestrator action before any of them can influence a
+    downstream repeat guard.
+    """
+
+    if not isinstance(action, dict) or not isinstance(current_state, dict):
+        return None
+    if source not in {
+        EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
+        EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT,
+    }:
+        return None
+    if (
+        action.get("progress_watermark_contract")
+        != EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT
+    ):
+        return None
+
+    action_id = str(action.get("action_id") or "").strip()
+    category = str(action.get("category") or "").strip()
+    if not action_id or not category:
+        return None
+    condition = action.get("success_condition")
+    if not _success_condition_is_carryable(condition):
+        return None
+    evaluation = action.get("success_condition_evaluation")
+    if not isinstance(evaluation, dict):
+        return None
+
+    origin_state = _validated_evidence_action_watermark_origin(action)
+    if origin_state is None:
+        return None
+    canonical_action = _canonical_evidence_action_for_origin(
+        action_id=action_id,
+        origin_state=origin_state,
+    )
+    if canonical_action is None:
+        return None
+
+    if source == EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION:
+        if _evidence_action_semantics(action) != _evidence_action_semantics(
+            canonical_action
+        ):
+            return None
+    else:
+        if set(action) != _EVIDENCE_ACTION_PROGRESS_RECEIPT_FIELDS:
+            return None
+        if (
+            str(action.get("action_id") or "")
+            != str(canonical_action.get("action_id") or "")
+            or str(action.get("category") or "")
+            != str(canonical_action.get("category") or "")
+            or condition != canonical_action.get("success_condition")
+        ):
+            return None
+
+    recomputed_evaluation = _evaluate_success_condition(condition, current_state)
+    if evaluation != recomputed_evaluation:
+        return None
+    evaluation_status = recomputed_evaluation.get("status")
+    evaluation_passed = recomputed_evaluation.get("passed")
+    if (evaluation_status, evaluation_passed) not in {
+        ("NOT_MET", False),
+        ("MET", True),
+    }:
+        return None
+    if source == EVIDENCE_ACTION_MATERIAL_SOURCE_PROGRESS_RECEIPT and (
+        evaluation_status,
+        evaluation_passed,
+    ) != ("MET", True):
+        return None
+
+    canonical_condition = canonical_action["success_condition"]
+    return {
+        "source": source,
+        "action_id": action_id,
+        "category": category,
+        "condition_sha256": _canonical_sha256(canonical_condition),
+        "origin_condition_state_sha256": _canonical_sha256(origin_state),
+        "evaluation_sha256": _canonical_sha256(recomputed_evaluation),
+        "evaluation_status": evaluation_status,
+        "evaluation_passed": evaluation_passed,
+    }
+
+
 def _evidence_action_has_pending_valid_watermark(
     action: dict[str, Any],
     *,
     previous_current_state: dict[str, Any],
 ) -> bool:
-    if (
-        action.get("progress_watermark_contract")
-        != EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT
-    ):
-        return False
-    evaluation = action.get("success_condition_evaluation")
-    if not isinstance(evaluation, dict):
-        return False
-    if evaluation.get("status") != "NOT_MET" or evaluation.get("passed") is not False:
-        return False
-    condition = action.get("success_condition")
-    if not _success_condition_is_carryable(condition):
-        return False
-    if evaluation != _evaluate_success_condition(condition, previous_current_state):
-        return False
-    origin_state = _validated_evidence_action_watermark_origin(action)
-    if origin_state is None:
-        return False
-    canonical_action = _canonical_evidence_action_for_origin(
-        action_id=str(action.get("action_id") or ""),
-        origin_state=origin_state,
+    material = validated_evidence_action_material(
+        action,
+        current_state=previous_current_state,
+        source=EVIDENCE_ACTION_MATERIAL_SOURCE_NEXT_ACTION,
     )
     return bool(
-        canonical_action is not None
-        and _evidence_action_semantics(action)
-        == _evidence_action_semantics(canonical_action)
+        material is not None
+        and material.get("evaluation_status") == "NOT_MET"
+        and material.get("evaluation_passed") is False
     )
 
 

@@ -4396,11 +4396,36 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
 
     goal_loop = _read_json_quiet(DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
     if isinstance(goal_loop, dict):
+        repeat_guard = (
+            goal_loop.get("repeat_loop_guard")
+            if isinstance(goal_loop.get("repeat_loop_guard"), dict)
+            else {}
+        )
+        current_fingerprint = (
+            repeat_guard.get("current_fingerprint")
+            if isinstance(repeat_guard.get("current_fingerprint"), dict)
+            else {}
+        )
+        material_history = (
+            repeat_guard.get("material_history_sha256")
+            if isinstance(repeat_guard.get("material_history_sha256"), list)
+            else []
+        )
         digest["trader_goal_loop_orchestrator"] = {
             "generated_at_utc": goal_loop.get("generated_at_utc"),
             "status": goal_loop.get("status"),
             "current_phase": goal_loop.get("current_phase"),
             "selected_next_work_type": goal_loop.get("selected_next_work_type"),
+            "classified_next_work_type": goal_loop.get("classified_next_work_type"),
+            "work_dispatch_allowed": goal_loop.get("work_dispatch_allowed"),
+            "repeat_suppressed": goal_loop.get("repeat_suppressed"),
+            "repeat_allowed": repeat_guard.get("repeat_allowed"),
+            "repeat_reason": repeat_guard.get("repeat_reason"),
+            "material_history_hit": repeat_guard.get("material_history_hit"),
+            "material_history_count": len(material_history),
+            "material_history_limit": repeat_guard.get("material_history_limit"),
+            "material_state_sha256": current_fingerprint.get("material_state_sha256"),
+            "next_allowed_commands": goal_loop.get("next_allowed_commands") or [],
             "selection_reason": goal_loop.get("selection_reason"),
             "live_permission_allowed": goal_loop.get("live_permission_allowed"),
             "live_side_effects": goal_loop.get("live_side_effects") or [],

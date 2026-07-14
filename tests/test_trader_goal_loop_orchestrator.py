@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import tempfile
 import threading
@@ -9,12 +10,32 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from quant_rabbit import trader_repair_orchestrator as repair_orchestrator
 from quant_rabbit.trader_goal_loop_orchestrator import TraderGoalLoopOrchestrator
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _goal_loop_kwargs(paths: dict[str, Path]) -> dict[str, Path]:
+    return {
+        "trader_repair_orchestrator_path": paths["repair"],
+        "active_trader_contract_path": paths["active_contract"],
+        "payoff_shape_diagnosis_path": paths["payoff"],
+        "harvest_live_grade_path": paths["harvest"],
+        "scout_plan_path": paths["scout"],
+        "as_proof_pack_queue_path": paths["proof"],
+        "as_lane_candidate_board_path": paths["board"],
+        "portfolio_4x_path_planner_path": paths["portfolio"],
+        "guardian_receipt_consumption_path": paths["guardian_consumption"],
+        "guardian_receipt_operator_review_path": paths["guardian_review"],
+        "live_order_request_path": paths["live_order"],
+        "broker_snapshot_path": paths["broker"],
+        "output_path": paths["output"],
+        "report_path": paths["report"],
+    }
 
 
 class TraderGoalLoopOrchestratorTest(unittest.TestCase):
@@ -819,6 +840,8 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertTrue(payload["repair_loop_state"]["waiting_for_evidence"])
         self.assertTrue(payload["repair_loop_state"]["material_evidence_wait"])
         self.assertFalse(payload["repair_loop_state"]["queued_evidence_wait"])
+        self.assertFalse(payload["repeat_loop_guard"]["repeat_allowed"])
+        self.assertFalse(payload["work_dispatch_allowed"])
         self.assertIn("suppressed an unchanged active-lane", payload["selection_reason"])
         self.assertIn(
             "REPAIR_MATERIAL_EVIDENCE_WAIT:EXACT_TP_PROOF_COLLECTION:material-digest-1",
@@ -1049,6 +1072,207 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("trader-repair-orchestrator", "\n".join(payload["next_allowed_commands"]))
         self.assertFalse(payload["live_permission_allowed"])
 
+    def test_timestamp_only_refresh_cannot_reopen_same_evidence_dispatch(self) -> None:
+        now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _write_base_artifacts(
+                root,
+                now=now,
+                scout_status="SCOUT_DIAGNOSIS_COMPLETE",
+            )
+            baseline_state = {
+                "proof_normal_routing_status": "BLOCKED",
+                "proof_routing_allowed": False,
+                "can_create_live_permission_count": 0,
+            }
+            baseline_action = next(
+                action
+                for action in repair_orchestrator._next_evidence_actions_for_empty_proof_queue(
+                    {"categories": [{"category": "lane_board"}]},
+                    current_state=baseline_state,
+                )
+                if action["action_id"]
+                == "refresh_lane_board_after_input_evidence_changes"
+            )
+
+            def write_inputs(
+                generated_at: datetime,
+                *,
+                state: dict[str, Any],
+                action: dict[str, Any],
+            ) -> None:
+                _write_json(
+                    paths["repair"],
+                    {
+                        "generated_at_utc": generated_at.isoformat(),
+                        "status": "ORCHESTRATOR_BLOCKED",
+                        "selected_request_code": None,
+                        "actionable_request_count": 0,
+                        "approval_required_request_count": 0,
+                        "waiting_request_count": 2,
+                        "repair_request_count": 2,
+                        "read_only": True,
+                        "live_side_effects": [],
+                        "next_evidence_actions": [action],
+                        "loop_engineering_prompt": {
+                            "current_state": state,
+                        },
+                    },
+                )
+                _write_json(
+                    paths["board"],
+                    {
+                        "generated_at_utc": generated_at.isoformat(),
+                        "status": "CONTRADICTED",
+                        "normal_routing_status": "BLOCKED",
+                        "routing_allowed": False,
+                        "as_live_ready_path_exists": False,
+                        "live_side_effects": [],
+                    },
+                )
+
+            kwargs = {
+                "trader_repair_orchestrator_path": paths["repair"],
+                "active_trader_contract_path": paths["active_contract"],
+                "payoff_shape_diagnosis_path": paths["payoff"],
+                "harvest_live_grade_path": paths["harvest"],
+                "scout_plan_path": paths["scout"],
+                "as_proof_pack_queue_path": paths["proof"],
+                "as_lane_candidate_board_path": paths["board"],
+                "portfolio_4x_path_planner_path": paths["portfolio"],
+                "guardian_receipt_consumption_path": paths["guardian_consumption"],
+                "guardian_receipt_operator_review_path": paths["guardian_review"],
+                "live_order_request_path": paths["live_order"],
+                "broker_snapshot_path": paths["broker"],
+                "output_path": paths["output"],
+                "report_path": paths["report"],
+            }
+
+            write_inputs(
+                now,
+                state=baseline_state,
+                action=baseline_action,
+            )
+            TraderGoalLoopOrchestrator(now_utc=now, **kwargs).run()
+            first = json.loads(paths["output"].read_text())
+
+            # Raw bytes and generated timestamps change, but the blocker and
+            # machine-readable evidence state do not.
+            write_inputs(
+                now + timedelta(minutes=1),
+                state=baseline_state,
+                action=baseline_action,
+            )
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=1),
+                **kwargs,
+            ).run()
+            timestamp_only = json.loads(paths["output"].read_text())
+
+            # A forged digest is not accepted as progress. It routes to one
+            # schema repair instead of reopening the evidence refresh.
+            tampered_action = copy.deepcopy(baseline_action)
+            tampered_action["progress_watermark_origin"][
+                "condition_state_sha256"
+            ] = "c" * 64
+            write_inputs(
+                now + timedelta(minutes=2),
+                state=baseline_state,
+                action=tampered_action,
+            )
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=2),
+                **kwargs,
+            ).run()
+            tampered = json.loads(paths["output"].read_text())
+
+            # Restoring the same valid baseline still hits bounded history;
+            # the forged SHA never created a new evidence watermark.
+            write_inputs(
+                now + timedelta(minutes=3),
+                state=baseline_state,
+                action=baseline_action,
+            )
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=3),
+                **kwargs,
+            ).run()
+            restored = json.loads(paths["output"].read_text())
+
+            # Real current-state progress plus an exactly recomputed
+            # evaluation is material and opens one new pass.
+            progressed_state = {
+                **baseline_state,
+                "proof_normal_routing_status": "READY",
+                "proof_routing_allowed": True,
+                "can_create_live_permission_count": 1,
+            }
+            progressed_action = copy.deepcopy(baseline_action)
+            progressed_action["progress_watermark_source"] = "PREVIOUS_REFRESH"
+            progressed_action["success_condition_evaluation"] = (
+                repair_orchestrator._evaluate_success_condition(
+                    progressed_action["success_condition"],
+                    progressed_state,
+                )
+            )
+            write_inputs(
+                now + timedelta(minutes=4),
+                state=progressed_state,
+                action=progressed_action,
+            )
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=4),
+                **kwargs,
+            ).run()
+            progressed = json.loads(paths["output"].read_text())
+
+        self.assertTrue(first["work_dispatch_allowed"])
+        self.assertNotEqual(
+            first["repeat_loop_guard"]["current_fingerprint"]["artifact_hash"],
+            timestamp_only["repeat_loop_guard"]["current_fingerprint"]["artifact_hash"],
+        )
+        self.assertEqual(
+            first["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+            timestamp_only["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+        )
+        self.assertFalse(timestamp_only["repeat_loop_guard"]["repeat_allowed"])
+        self.assertFalse(timestamp_only["work_dispatch_allowed"])
+        self.assertTrue(timestamp_only["repeat_suppressed"])
+        self.assertEqual(timestamp_only["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertEqual(
+            timestamp_only["classified_next_work_type"],
+            "READ_ONLY_EVIDENCE_REFRESH",
+        )
+        self.assertEqual(timestamp_only["next_allowed_commands"], [])
+        self.assertIn("意味のある状態変化がありません", timestamp_only["selected_next_prompt"])
+        self.assertEqual(tampered["classified_next_work_type"], "CODE_REPAIR")
+        self.assertEqual(
+            tampered["repair_loop_state"][
+                "invalid_evidence_action_watermark_count"
+            ],
+            1,
+        )
+        self.assertFalse(
+            tampered["schema_state"]["success_condition_schema_ok"]
+        )
+        self.assertEqual(restored["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertFalse(restored["work_dispatch_allowed"])
+        self.assertTrue(progressed["repeat_loop_guard"]["repeat_allowed"])
+        self.assertTrue(progressed["work_dispatch_allowed"])
+        self.assertEqual(
+            progressed["repair_loop_state"]["validated_evidence_action_count"],
+            1,
+        )
+        self.assertIn(
+            "trader-repair-orchestrator",
+            "\n".join(progressed["next_allowed_commands"]),
+        )
+
     def test_newer_active_contract_prompt_supersedes_repair_waiting_refresh_loop(self) -> None:
         now = datetime(2026, 7, 9, 12, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1155,7 +1379,7 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
         self.assertIn("GBP_USD|LONG|RANGE_ROTATION|LIMIT", payload["selected_next_prompt"])
         self.assertFalse(payload["live_permission_allowed"])
 
-    def test_repeat_guard_does_not_override_scout_blocked_classification(self) -> None:
+    def test_repeat_guard_preserves_classification_but_selects_no_action(self) -> None:
         now = datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1181,9 +1405,264 @@ class TraderGoalLoopOrchestratorTest(unittest.TestCase):
             TraderGoalLoopOrchestrator(**kwargs).run()
             payload = json.loads(paths["output"].read_text())
 
-        self.assertEqual(payload["selected_next_work_type"], "OPERATOR_REVIEW_REPORT")
+        self.assertEqual(payload["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertEqual(
+            payload["classified_next_work_type"],
+            "OPERATOR_REVIEW_REPORT",
+        )
+        self.assertTrue(payload["repeat_suppressed"])
+        self.assertFalse(payload["work_dispatch_allowed"])
         self.assertFalse(payload["repeat_loop_guard"]["repeat_allowed"])
         self.assertIn("repeat_loop_guard", payload["selection_reason"])
+
+    def test_bounded_history_blocks_a_b_a_while_gateway_transition_opens_b(self) -> None:
+        now = datetime(2026, 7, 10, 1, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(
+                Path(tmp),
+                now=now,
+                scout_status="SCOUT_BLOCKED_OPERATOR_REVIEW",
+            )
+            kwargs = _goal_loop_kwargs(paths)
+            baseline_live_order = json.loads(paths["live_order"].read_text())
+
+            TraderGoalLoopOrchestrator(now_utc=now, **kwargs).run()
+            state_a = json.loads(paths["output"].read_text())
+
+            staged_live_order = {
+                **baseline_live_order,
+                "generated_at_utc": (now + timedelta(minutes=1)).isoformat(),
+                "status": "STAGED",
+                "send_requested": True,
+                "order_request": {
+                    "status": "STAGED",
+                    "order_request_id": "request-1",
+                    "lane_id": "lane-1",
+                    "send_requested": True,
+                    "sent": False,
+                },
+            }
+            _write_json(paths["live_order"], staged_live_order)
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=1),
+                **kwargs,
+            ).run()
+            state_b = json.loads(paths["output"].read_text())
+
+            restored_live_order = {
+                **baseline_live_order,
+                "generated_at_utc": (now + timedelta(minutes=2)).isoformat(),
+            }
+            _write_json(paths["live_order"], restored_live_order)
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=2),
+                **kwargs,
+            ).run()
+            state_a_again = json.loads(paths["output"].read_text())
+
+        digest_a = state_a["repeat_loop_guard"]["current_fingerprint"][
+            "material_state_sha256"
+        ]
+        digest_b = state_b["repeat_loop_guard"]["current_fingerprint"][
+            "material_state_sha256"
+        ]
+        digest_a_again = state_a_again["repeat_loop_guard"][
+            "current_fingerprint"
+        ]["material_state_sha256"]
+        self.assertNotEqual(digest_a, digest_b)
+        self.assertEqual(digest_a, digest_a_again)
+        self.assertTrue(state_b["work_dispatch_allowed"])
+        self.assertFalse(state_b["repeat_loop_guard"]["material_history_hit"])
+        self.assertEqual(state_a_again["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertTrue(state_a_again["repeat_suppressed"])
+        self.assertTrue(
+            state_a_again["repeat_loop_guard"]["material_history_hit"]
+        )
+        self.assertIn(
+            digest_b,
+            state_a_again["repeat_loop_guard"]["material_history_sha256"],
+        )
+
+    def test_broker_age_only_change_does_not_reopen_work(self) -> None:
+        now = datetime(2026, 7, 10, 2, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(
+                Path(tmp),
+                now=now,
+                scout_status="SCOUT_BLOCKED_OPERATOR_REVIEW",
+            )
+            kwargs = _goal_loop_kwargs(paths)
+            TraderGoalLoopOrchestrator(now_utc=now, **kwargs).run()
+            fresh = json.loads(paths["output"].read_text())
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(minutes=11),
+                **kwargs,
+            ).run()
+            aged = json.loads(paths["output"].read_text())
+
+        self.assertTrue(
+            fresh["live_permission_ready_check_state"]["checks"][
+                "broker_truth_fresh"
+            ]
+        )
+        self.assertFalse(
+            aged["live_permission_ready_check_state"]["checks"][
+                "broker_truth_fresh"
+            ]
+        )
+        self.assertEqual(
+            fresh["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+            aged["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+        )
+        self.assertEqual(aged["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertFalse(aged["work_dispatch_allowed"])
+
+    def test_timestamp_only_work_type_flip_is_suppressed(self) -> None:
+        now = datetime(2026, 7, 10, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(
+                Path(tmp),
+                now=now,
+                scout_status="SCOUT_DIAGNOSIS_COMPLETE",
+            )
+            kwargs = _goal_loop_kwargs(paths)
+            repair_payload = {
+                "generated_at_utc": (now + timedelta(seconds=10)).isoformat(),
+                "status": "ORCHESTRATOR_BLOCKED",
+                "selected_request_code": None,
+                "actionable_request_count": 0,
+                "approval_required_request_count": 0,
+                "waiting_request_count": 1,
+                "repair_request_count": 1,
+                "read_only": True,
+                "live_side_effects": [],
+                "next_evidence_actions": [
+                    {
+                        "action_id": "waiting-for-current-evidence",
+                        "read_only": True,
+                        "live_side_effects": [],
+                    }
+                ],
+            }
+            _write_json(paths["repair"], repair_payload)
+            active_payload = {
+                "generated_at_utc": now.isoformat(),
+                "status": "ACTIVE_PATH_SELECTED_REPLAY_PASSED_STILL_BLOCKED",
+                "selected_active_path": "EVIDENCE_ACQUISITION",
+                "next_prompt": "Collect exact lane evidence without sending.",
+                "next_trade_enabling_action": "Collect exact lane evidence.",
+                "current_state": {},
+                "remaining_blockers": [{"code": "EXACT_TP_PROOF_REQUIRED"}],
+                "live_permission_allowed": False,
+                "live_side_effects": [],
+            }
+            _write_json(paths["active_contract"], active_payload)
+            board_payload = json.loads(paths["board"].read_text())
+            board_payload["status"] = "CONTRADICTED"
+            _write_json(paths["board"], board_payload)
+
+            TraderGoalLoopOrchestrator(now_utc=now, **kwargs).run()
+            before_flip = json.loads(paths["output"].read_text())
+
+            active_payload["generated_at_utc"] = (
+                now + timedelta(seconds=20)
+            ).isoformat()
+            _write_json(paths["active_contract"], active_payload)
+            TraderGoalLoopOrchestrator(
+                now_utc=now + timedelta(seconds=20),
+                **kwargs,
+            ).run()
+            after_flip = json.loads(paths["output"].read_text())
+
+        self.assertEqual(
+            before_flip["classified_next_work_type"],
+            "READ_ONLY_EVIDENCE_REFRESH",
+        )
+        self.assertEqual(
+            after_flip["classified_next_work_type"],
+            "ACTIVE_TRADER_CONTRACT_EVIDENCE",
+        )
+        self.assertEqual(
+            before_flip["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+            after_flip["repeat_loop_guard"]["current_fingerprint"][
+                "material_state_sha256"
+            ],
+        )
+        self.assertEqual(after_flip["selected_next_work_type"], "NO_ACTION_WAIT")
+        self.assertFalse(after_flip["work_dispatch_allowed"])
+
+    def test_generic_code_repair_dispatches_once_but_selected_repair_is_durable(self) -> None:
+        now = datetime(2026, 7, 10, 4, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            generic_paths = _write_base_artifacts(
+                Path(tmp) / "generic",
+                now=now,
+                scout_status="SCOUT_DIAGNOSIS_COMPLETE",
+            )
+            generic_paths["active_contract"].unlink()
+            payoff = json.loads(generic_paths["payoff"].read_text())
+            payoff.pop("status")
+            _write_json(generic_paths["payoff"], payoff)
+            generic_kwargs = _goal_loop_kwargs(generic_paths)
+
+            TraderGoalLoopOrchestrator(now_utc=now, **generic_kwargs).run()
+            generic_first = json.loads(generic_paths["output"].read_text())
+            TraderGoalLoopOrchestrator(now_utc=now, **generic_kwargs).run()
+            generic_repeat = json.loads(generic_paths["output"].read_text())
+
+            durable_paths = _write_base_artifacts(
+                Path(tmp) / "durable",
+                now=now,
+                scout_status="SCOUT_DIAGNOSIS_COMPLETE",
+            )
+            durable_repair = json.loads(durable_paths["repair"].read_text())
+            durable_repair.update(
+                {
+                    "status": "READY_FOR_CODEX_REPAIR",
+                    "selected_request_code": "REPAIR_FORECAST_PROVENANCE",
+                    "actionable_request_count": 1,
+                    "approval_required_request_count": 0,
+                    "waiting_request_count": 0,
+                    "repair_request_count": 1,
+                    "next_evidence_actions": [],
+                    "codex_work_order": {
+                        "status": "READY_FOR_CODEX_IMPLEMENTATION",
+                        "targeted_test_commands": ["python3 -m unittest tests.test_forecast"],
+                    },
+                }
+            )
+            _write_json(durable_paths["repair"], durable_repair)
+            durable_kwargs = _goal_loop_kwargs(durable_paths)
+            TraderGoalLoopOrchestrator(now_utc=now, **durable_kwargs).run()
+            TraderGoalLoopOrchestrator(now_utc=now, **durable_kwargs).run()
+            durable_repeat = json.loads(durable_paths["output"].read_text())
+
+        self.assertEqual(
+            generic_first["selected_next_work_type"],
+            "CODE_REPAIR",
+        )
+        self.assertTrue(generic_first["work_dispatch_allowed"])
+        self.assertEqual(
+            generic_repeat["classified_next_work_type"],
+            "CODE_REPAIR",
+        )
+        self.assertEqual(
+            generic_repeat["selected_next_work_type"],
+            "NO_ACTION_WAIT",
+        )
+        self.assertFalse(generic_repeat["work_dispatch_allowed"])
+        self.assertEqual(
+            durable_repeat["selected_next_work_type"],
+            "CODE_REPAIR",
+        )
+        self.assertTrue(durable_repeat["work_dispatch_allowed"])
+        self.assertFalse(durable_repeat["repeat_suppressed"])
 
 
 def _write_base_artifacts(root: Path, *, now: datetime, scout_status: str) -> dict[str, Path]:

@@ -633,17 +633,38 @@ def _live_order_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
 
 def _goal_loop_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
     if artifact.get("_artifact_status") == "missing":
-        return {"artifact_status": "missing", "selected_next_work_type": None}
+        return {
+            "artifact_status": "missing",
+            "selected_next_work_type": None,
+            "classified_next_work_type": None,
+            "work_dispatch_allowed": None,
+            "repeat_suppressed": None,
+        }
     return {
         "artifact_status": "present",
         "generated_at_utc": artifact.get("generated_at_utc"),
         "status": artifact.get("status"),
         "selected_next_work_type": artifact.get("selected_next_work_type"),
+        "classified_next_work_type": artifact.get("classified_next_work_type"),
+        "work_dispatch_allowed": artifact.get("work_dispatch_allowed"),
+        "repeat_suppressed": artifact.get("repeat_suppressed"),
         "four_x_progress_hypothesis": artifact.get("four_x_progress_hypothesis"),
         "root_improvement_target": artifact.get("root_improvement_target"),
         "expected_edge_improvement": artifact.get("expected_edge_improvement"),
         "live_permission_allowed": bool(artifact.get("live_permission_allowed")),
     }
+
+
+def _goal_loop_dispatch_allowed(goal_loop: dict[str, Any]) -> bool:
+    """Accept legacy artifacts, but fail closed on explicit or malformed suppression state."""
+
+    dispatch_allowed = goal_loop.get("work_dispatch_allowed")
+    repeat_suppressed = goal_loop.get("repeat_suppressed")
+    if dispatch_allowed is not None and not isinstance(dispatch_allowed, bool):
+        return False
+    if repeat_suppressed is not None and not isinstance(repeat_suppressed, bool):
+        return False
+    return dispatch_allowed is not False and repeat_suppressed is not True
 
 
 def _proof_floor_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -1360,7 +1381,10 @@ def _select_active_path(
             "Proof queue has candidates, so readiness can be checked without granting permission.",
         )
     selected = str(goal_loop.get("selected_next_work_type") or "")
-    if selected in {"EDGE_IMPROVEMENT_EXPERIMENT", "OPERATOR_REVIEW_REPORT"}:
+    if (
+        _goal_loop_dispatch_allowed(goal_loop)
+        and selected in {"EDGE_IMPROVEMENT_EXPERIMENT", "OPERATOR_REVIEW_REPORT"}
+    ):
         return selected, "Mirrors the trader goal-loop selected work type."
     if proof_floor.get("proof_floor_reached"):
         return (

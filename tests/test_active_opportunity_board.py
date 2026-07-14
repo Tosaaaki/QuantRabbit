@@ -12,6 +12,7 @@ from unittest.mock import patch
 from quant_rabbit.active_opportunity_board import (
     ActiveOpportunityBoard,
     _attach_capture_economics_local_tp,
+    _attach_goal_loop_edge_improvement_context,
     _exact_vehicle_take_profit_metrics,
 )
 
@@ -156,6 +157,52 @@ def _exact_tp_rows(
 
 
 class ActiveOpportunityBoardTest(unittest.TestCase):
+    def test_repeat_suppressed_goal_loop_edge_target_does_not_mark_lane(self) -> None:
+        def lanes() -> dict[str, dict[str, Any]]:
+            return {
+                "target": {
+                    "pair": "EUR_USD",
+                    "direction": "SHORT",
+                    "strategy_family": "BREAKOUT_FAILURE",
+                    "vehicle": "LIMIT",
+                    "source_refs": [],
+                }
+            }
+
+        base_artifact = {
+            "selected_next_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+            "classified_next_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+            "edge_improvement_state": {
+                "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT",
+            },
+        }
+        for artifact in (
+            dict(base_artifact, work_dispatch_allowed=False, repeat_suppressed=True),
+            dict(base_artifact, work_dispatch_allowed="false", repeat_suppressed=False),
+            dict(
+                base_artifact,
+                selected_next_work_type="NO_ACTION_WAIT",
+                work_dispatch_allowed=True,
+                repeat_suppressed=False,
+            ),
+        ):
+            with self.subTest(artifact=artifact):
+                candidate_lanes = lanes()
+                _attach_goal_loop_edge_improvement_context(candidate_lanes, artifact)
+                self.assertNotIn("edge_improvement_candidate", candidate_lanes["target"])
+                self.assertEqual(candidate_lanes["target"]["source_refs"], [])
+
+        candidate_lanes = lanes()
+        _attach_goal_loop_edge_improvement_context(
+            candidate_lanes,
+            dict(base_artifact, work_dispatch_allowed=True, repeat_suppressed=False),
+        )
+        self.assertTrue(candidate_lanes["target"]["edge_improvement_candidate"])
+        self.assertEqual(
+            candidate_lanes["target"]["edge_improvement_target"],
+            "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT",
+        )
+
     def test_board_unreadable_exact_audit_never_falls_back_to_broad_tp_as_vehicle_proof(self) -> None:
         lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
         lanes = {

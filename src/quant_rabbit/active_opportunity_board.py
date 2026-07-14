@@ -269,6 +269,7 @@ class ActiveOpportunityBoard:
         artifact_index = _artifact_index(artifacts, replay_artifacts, self.execution_ledger_db_path)
         active_contract = artifacts["active_trader_contract"]
         goal_loop = artifacts["trader_goal_loop_orchestrator"]
+        dispatchable_goal_loop = goal_loop if _goal_loop_dispatch_allowed(goal_loop) else {}
 
         payload = {
             "schema_version": BOARD_VERSION,
@@ -291,10 +292,18 @@ class ActiveOpportunityBoard:
                 top_lane,
                 public_lanes,
                 active_contract,
-                goal_loop,
+                dispatchable_goal_loop,
             ),
-            "root_improvement_target": _root_improvement_target(top_lane, active_contract, goal_loop),
-            "expected_edge_improvement": _expected_edge_improvement(top_lane, active_contract, goal_loop),
+            "root_improvement_target": _root_improvement_target(
+                top_lane,
+                active_contract,
+                dispatchable_goal_loop,
+            ),
+            "expected_edge_improvement": _expected_edge_improvement(
+                top_lane,
+                active_contract,
+                dispatchable_goal_loop,
+            ),
             "do_not_do": _do_not_do(),
             "artifact_index": artifact_index,
             "execution_ledger_summary": execution_ledger_summary,
@@ -720,7 +729,10 @@ def _verification_ledger_blocker_codes(row: dict[str, Any]) -> list[str]:
 
 
 def _attach_goal_loop_edge_improvement_context(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
-    if artifact.get("selected_next_work_type") != "EDGE_IMPROVEMENT_EXPERIMENT":
+    if (
+        not _goal_loop_dispatch_allowed(artifact)
+        or artifact.get("selected_next_work_type") != "EDGE_IMPROVEMENT_EXPERIMENT"
+    ):
         return
     state = artifact.get("edge_improvement_state") if isinstance(artifact.get("edge_improvement_state"), dict) else {}
     targets = _goal_loop_edge_targets(state)
@@ -734,6 +746,18 @@ def _attach_goal_loop_edge_improvement_context(lanes: dict[str, dict[str, Any]],
             lane["edge_improvement_target"] = _shape_from_target(target)
             lane["source_refs"].append("data/trader_goal_loop_orchestrator.json:edge_improvement_state")
             break
+
+
+def _goal_loop_dispatch_allowed(artifact: dict[str, Any]) -> bool:
+    """Accept legacy artifacts, but fail closed on explicit or malformed suppression state."""
+
+    dispatch_allowed = artifact.get("work_dispatch_allowed")
+    repeat_suppressed = artifact.get("repeat_suppressed")
+    if dispatch_allowed is not None and not isinstance(dispatch_allowed, bool):
+        return False
+    if repeat_suppressed is not None and not isinstance(repeat_suppressed, bool):
+        return False
+    return dispatch_allowed is not False and repeat_suppressed is not True
 
 
 def _add_execution_recovery_lanes(

@@ -22,6 +22,9 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
 )
+from quant_rabbit.trader_repair_orchestrator import (
+    validated_evidence_action_material,
+)
 
 
 CONTRACT_VERSION = "trader_goal_loop_orchestrator_v1"
@@ -64,6 +67,7 @@ BROKER_TRUTH_FRESH_SECONDS = 10 * 60
 SUCCESS_CONDITION_SCHEMA_VERSION = "success_condition_v1"
 REPAIR_MATERIAL_EVIDENCE_WAIT_STATUS = "WAITING_FOR_MATERIAL_EVIDENCE"
 REPAIR_ACTION_MAPPING_REQUIRED_STATUS = "ACTIVE_LANE_ACTION_MAPPING_REQUIRED"
+REPEAT_MATERIAL_HISTORY_LIMIT = 64
 
 
 @dataclass(frozen=True)
@@ -194,30 +198,7 @@ class TraderGoalLoopOrchestrator:
             active_contract_state=active_contract_state,
             repair_loop_state=repair_loop_state,
         )
-        repeat_loop_guard = _repeat_loop_guard(
-            output_path=self.output_path,
-            artifact_index=artifact_index,
-            selected_next_work_type=candidate_work_type,
-            key_blocker=key_blocker,
-        )
-        if repeat_loop_guard["same_work_type_artifact_and_blocker"]:
-            selection_reason += (
-                " repeat_loop_guard also shows the same work type/artifact hash/key blocker as the "
-                "previous goal-loop artifact; dispatch should wait for changed generated_at, artifact hash, "
-                "or key blocker, but the artifact-derived classification is preserved."
-            )
-        selected_next_work_type = candidate_work_type
-        current_phase = _current_phase(
-            selected_next_work_type=selected_next_work_type,
-            payoff_state=payoff_state,
-            harvest_state=harvest_state,
-            scout_state=scout_state,
-            operator_review_state=operator_review_state,
-            edge_improvement_state=edge_improvement_state,
-            active_contract_state=active_contract_state,
-            repair_loop_state=repair_loop_state,
-        )
-        success_condition = _success_condition(selected_next_work_type)
+        classified_success_condition = _success_condition(candidate_work_type)
         current_state = _current_state_for_evaluation(
             proof_state=proof_state,
             payoff_state=payoff_state,
@@ -231,10 +212,77 @@ class TraderGoalLoopOrchestrator:
             active_contract_state=active_contract_state,
             repair_loop_state=repair_loop_state,
         )
-        success_condition_evaluation = _evaluate_success_condition(success_condition, current_state)
-        next_allowed_commands = _next_allowed_commands(
-            selected_next_work_type,
+        repeat_loop_guard = _repeat_loop_guard(
+            output_path=self.output_path,
+            artifact_index=artifact_index,
+            selected_next_work_type=candidate_work_type,
+            key_blocker=key_blocker,
+            material_state=_repeat_material_state(
+                proof_state=proof_state,
+                payoff_state=payoff_state,
+                harvest_state=harvest_state,
+                scout_state=scout_state,
+                operator_review_state=operator_review_state,
+                edge_improvement_state=edge_improvement_state,
+                artifact_health=artifact_health,
+                schema_state=schema_state,
+                active_contract_state=active_contract_state,
+                repair_loop_state=repair_loop_state,
+                live_order_state=_live_order_repeat_state(
+                    artifacts["live_order_request"]
+                ),
+            ),
+        )
+        if repeat_loop_guard["material_history_hit"]:
+            selection_reason += (
+                " repeat_loop_guard found this canonical material state in bounded history; "
+                "generated_at, raw artifact hash, broker age, and timestamp-only classification churn "
+                "are not progress, so the classified task is recorded but not redispatched."
+            )
+        work_dispatch_allowed = _work_dispatch_allowed(
+            candidate_work_type,
+            repeat_loop_guard=repeat_loop_guard,
             repair_loop_state=repair_loop_state,
+        )
+        repeat_suppressed = bool(
+            candidate_work_type != "NO_ACTION_WAIT"
+            and not work_dispatch_allowed
+            and repeat_loop_guard.get("material_history_hit") is True
+        )
+        selected_next_work_type = (
+            "NO_ACTION_WAIT" if repeat_suppressed else candidate_work_type
+        )
+        current_phase = (
+            "WAITING_FOR_NEW_MATERIAL_STATE"
+            if repeat_suppressed
+            else _current_phase(
+                selected_next_work_type=selected_next_work_type,
+                payoff_state=payoff_state,
+                harvest_state=harvest_state,
+                scout_state=scout_state,
+                operator_review_state=operator_review_state,
+                edge_improvement_state=edge_improvement_state,
+                active_contract_state=active_contract_state,
+                repair_loop_state=repair_loop_state,
+            )
+        )
+        success_condition = _success_condition(selected_next_work_type)
+        current_state = {
+            **current_state,
+            "work_dispatch_allowed": work_dispatch_allowed,
+            "repeat_suppressed": repeat_suppressed,
+        }
+        success_condition_evaluation = _evaluate_success_condition(
+            success_condition,
+            current_state,
+        )
+        next_allowed_commands = (
+            _next_allowed_commands(
+                selected_next_work_type,
+                repair_loop_state=repair_loop_state,
+            )
+            if work_dispatch_allowed
+            else []
         )
         four_x_progress_hypothesis = _four_x_progress_hypothesis(
             edge_improvement_state,
@@ -251,17 +299,25 @@ class TraderGoalLoopOrchestrator:
             scout_state,
             active_contract_state=active_contract_state,
         )
-        selected_next_prompt = _selected_next_prompt(
-            selected_next_work_type=selected_next_work_type,
-            current_phase=current_phase,
-            selection_reason=selection_reason,
-            four_x_progress_hypothesis=four_x_progress_hypothesis,
-            root_improvement_target=root_improvement_target,
-            expected_edge_improvement=expected_edge_improvement,
-            success_condition=success_condition,
-            next_allowed_commands=next_allowed_commands,
-            active_contract_state=active_contract_state,
-            repair_loop_state=repair_loop_state,
+        selected_next_prompt = (
+            _repeat_suppressed_prompt(
+                classified_next_work_type=candidate_work_type,
+                key_blocker=key_blocker,
+                repeat_loop_guard=repeat_loop_guard,
+            )
+            if repeat_suppressed
+            else _selected_next_prompt(
+                selected_next_work_type=selected_next_work_type,
+                current_phase=current_phase,
+                selection_reason=selection_reason,
+                four_x_progress_hypothesis=four_x_progress_hypothesis,
+                root_improvement_target=root_improvement_target,
+                expected_edge_improvement=expected_edge_improvement,
+                success_condition=success_condition,
+                next_allowed_commands=next_allowed_commands,
+                active_contract_state=active_contract_state,
+                repair_loop_state=repair_loop_state,
+            )
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -271,6 +327,7 @@ class TraderGoalLoopOrchestrator:
             "live_side_effects": [],
             "current_phase": current_phase,
             "selected_next_work_type": selected_next_work_type,
+            "classified_next_work_type": candidate_work_type,
             "selected_next_prompt": selected_next_prompt,
             "selection_reason": selection_reason,
             "four_x_progress_hypothesis": four_x_progress_hypothesis,
@@ -285,8 +342,11 @@ class TraderGoalLoopOrchestrator:
             "edge_improvement_state": edge_improvement_state,
             "active_contract_state": active_contract_state,
             "repeat_loop_guard": repeat_loop_guard,
+            "work_dispatch_allowed": work_dispatch_allowed,
+            "repeat_suppressed": repeat_suppressed,
             "success_condition": success_condition,
             "success_condition_evaluation": success_condition_evaluation,
+            "classified_success_condition": classified_success_condition,
             "next_allowed_commands": next_allowed_commands,
             "requires_operator_approval_for_this_report": False,
             "requires_operator_review_before_scout_or_routing": bool(
@@ -722,6 +782,54 @@ def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "actionable_repair_selected": False,
         }
     actions = repair.get("next_evidence_actions") if isinstance(repair.get("next_evidence_actions"), list) else []
+    progress_receipts = (
+        repair.get("evidence_action_progress")
+        if isinstance(repair.get("evidence_action_progress"), list)
+        else []
+    )
+    repair_current_state = _repair_current_state(repair)
+    validated_actions: list[dict[str, Any]] = []
+    validated_progress: list[dict[str, Any]] = []
+    invalid_watermarks: list[str] = []
+    for index, action in enumerate(actions):
+        if not isinstance(action, dict):
+            invalid_watermarks.append(f"next_action:{index}:NOT_OBJECT")
+            continue
+        material = validated_evidence_action_material(
+            action,
+            current_state=repair_current_state,
+            source="next_action",
+        )
+        if material is None:
+            invalid_watermarks.append(
+                f"next_action:{action.get('action_id') or index}:INVALID_WATERMARK"
+            )
+            continue
+        validated_actions.append(material)
+    for index, receipt in enumerate(progress_receipts):
+        if not isinstance(receipt, dict):
+            invalid_watermarks.append(f"progress_receipt:{index}:NOT_OBJECT")
+            continue
+        material = validated_evidence_action_material(
+            receipt,
+            current_state=repair_current_state,
+            source="progress_receipt",
+        )
+        if material is None:
+            invalid_watermarks.append(
+                f"progress_receipt:{receipt.get('action_id') or index}:INVALID_WATERMARK"
+            )
+            continue
+        validated_progress.append(material)
+    evidence_action_material = {
+        "next_actions": validated_actions,
+        "progress_receipts": validated_progress,
+    }
+    evidence_action_material_sha256 = (
+        _stable_json_sha256(evidence_action_material)
+        if validated_actions or validated_progress
+        else None
+    )
     waiting_count = _first_int(repair.get("waiting_request_count"))
     actionable_count = _first_int(repair.get("actionable_request_count"))
     approval_count = _first_int(repair.get("approval_required_request_count"))
@@ -800,6 +908,11 @@ def _repair_loop_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
             for action in actions
             if isinstance(action, dict) and action.get("action_id")
         ],
+        "next_evidence_action_material_sha256": evidence_action_material_sha256,
+        "validated_evidence_action_count": len(validated_actions),
+        "validated_evidence_progress_count": len(validated_progress),
+        "invalid_evidence_action_watermark_count": len(invalid_watermarks),
+        "invalid_evidence_action_watermarks": invalid_watermarks,
     }
 
 
@@ -1020,11 +1133,17 @@ def _schema_state(artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     active_lane_action_mapping_required = bool(
         work_order.get("status") == REPAIR_ACTION_MAPPING_REQUIRED_STATUS
     )
+    invalid_evidence_action_watermark = any(
+        "invalid evidence action" in str(issue.get("issue") or "")
+        or "invalid progress receipt" in str(issue.get("issue") or "")
+        for issue in success_condition_issues
+    )
     return {
         "required_field_missing": bool(missing_fields),
         "missing_fields": missing_fields,
         "success_condition_schema_ok": not success_condition_issues,
         "success_condition_schema_issues": success_condition_issues,
+        "invalid_evidence_action_watermark": invalid_evidence_action_watermark,
         "active_lane_action_mapping_required": active_lane_action_mapping_required,
         "code_repair_required": bool(
             missing_fields
@@ -1111,6 +1230,13 @@ def _select_work_type(
             "trader_repair_orchestrator selected actionable repair "
             f"{repair_loop_state.get('selected_request_code')}; preserve its objective, files, tests, "
             "and verification contract ahead of active-lane or active-contract evidence work.",
+        )
+    if schema_state.get("invalid_evidence_action_watermark"):
+        return (
+            "CODE_REPAIR",
+            "trader_repair_orchestrator evidence progress failed canonical origin/hash/evaluation "
+            "validation; repair that schema boundary once instead of treating opaque SHA churn "
+            "as evidence progress.",
         )
     if repair_loop_state.get("active_lane_execution_pending"):
         return (
@@ -1297,14 +1423,17 @@ def _repeat_loop_guard(
     artifact_index: dict[str, Any],
     selected_next_work_type: str,
     key_blocker: str,
+    material_state: dict[str, Any],
 ) -> dict[str, Any]:
     previous = _read_previous_output(output_path)
     artifact_hash = artifact_index["combined_sha256"]
+    material_state_sha256 = _stable_json_sha256(material_state)
     current = {
         "work_type": selected_next_work_type,
         "artifact_hash": artifact_hash,
         "key_blocker": key_blocker,
         "latest_input_generated_at_utc": artifact_index.get("latest_input_generated_at_utc"),
+        "material_state_sha256": material_state_sha256,
     }
     previous_guard = (
         previous.get("repeat_loop_guard") if isinstance(previous.get("repeat_loop_guard"), dict) else {}
@@ -1314,21 +1443,422 @@ def _repeat_loop_guard(
         if isinstance(previous_guard.get("current_fingerprint"), dict)
         else {}
     )
-    same = bool(previous_fingerprint) and all(
-        previous_fingerprint.get(key) == value for key, value in current.items()
+    previous_history = _string_list(previous_guard.get("material_history_sha256"))
+    previous_material_sha = previous_fingerprint.get("material_state_sha256")
+    if (
+        isinstance(previous_material_sha, str)
+        and len(previous_material_sha) == 64
+        and previous_material_sha not in previous_history
+    ):
+        previous_history.append(previous_material_sha)
+    previous_history = previous_history[-REPEAT_MATERIAL_HISTORY_LIMIT:]
+    material_history_hit = material_state_sha256 in previous_history
+    same_material_as_previous = bool(previous_fingerprint) and (
+        previous_material_sha == material_state_sha256
     )
+    same_work_type_material_and_blocker = bool(same_material_as_previous) and (
+        previous_fingerprint.get("work_type") == selected_next_work_type
+        and previous_fingerprint.get("key_blocker") == key_blocker
+    )
+    same_raw_artifact_hash = bool(previous_fingerprint) and (
+        previous_fingerprint.get("artifact_hash") == artifact_hash
+    )
+    explicit_wait = selected_next_work_type == "NO_ACTION_WAIT"
+    repeat_allowed = not material_history_hit and not explicit_wait
+    material_history = [*previous_history]
+    if material_state_sha256 not in material_history:
+        material_history.append(material_state_sha256)
+    material_history = material_history[-REPEAT_MATERIAL_HISTORY_LIMIT:]
     return {
-        "policy": "Do not repeat the same work type for the same artifact hash and key blocker. Repeat only after input generated_at, artifact hash, or key blocker changes.",
+        "policy": (
+            "Do not redispatch any canonical material state already present in bounded history, "
+            "even when timestamp-only churn changes the classified work type or key blocker. "
+            "generated_at, fetched_at, path, age, and raw artifact hash churn never authorize "
+            "another dispatch."
+        ),
         "current_fingerprint": current,
         "previous_fingerprint": previous_fingerprint or None,
-        "same_work_type_artifact_and_blocker": same,
-        "repeat_allowed": not same,
+        "material_history_sha256": material_history,
+        "material_history_limit": REPEAT_MATERIAL_HISTORY_LIMIT,
+        "material_history_hit": material_history_hit,
+        "same_material_as_previous": same_material_as_previous,
+        "same_work_type_artifact_and_blocker": same_work_type_material_and_blocker,
+        "same_work_type_material_and_blocker": same_work_type_material_and_blocker,
+        "same_raw_artifact_hash": same_raw_artifact_hash,
+        "repeat_allowed": repeat_allowed,
         "repeat_reason": (
-            "new_or_changed_input_artifact"
-            if not same
-            else "same_work_type_artifact_hash_and_key_blocker"
+            "explicit_no_action_wait"
+            if explicit_wait
+            else (
+                "material_state_seen_in_bounded_history"
+                if material_history_hit
+                else (
+                    "no_previous_material_fingerprint"
+                    if not previous_history
+                    else "new_material_state"
+                )
+            )
         ),
     }
+
+
+def _repeat_material_state(
+    *,
+    proof_state: dict[str, Any],
+    payoff_state: dict[str, Any],
+    harvest_state: dict[str, Any],
+    scout_state: dict[str, Any],
+    operator_review_state: dict[str, Any],
+    edge_improvement_state: dict[str, Any],
+    artifact_health: dict[str, Any],
+    schema_state: dict[str, Any],
+    active_contract_state: dict[str, Any],
+    repair_loop_state: dict[str, Any],
+    live_order_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Return only decision-relevant state; volatile refresh metadata is excluded."""
+
+    return {
+        "proof": {
+            key: proof_state.get(key)
+            for key in (
+                "as_proof_pack_queue_artifact_status",
+                "as_lane_candidate_board_artifact_status",
+                "portfolio_4x_path_planner_artifact_status",
+                "proof_queue_count",
+                "proof_ready_count",
+                "can_create_live_permission_count",
+                "rejected_proof_candidate_count",
+                "proof_queue_empty",
+                "as_live_ready_path_exists",
+                "normal_routing_status",
+                "routing_allowed",
+                "primary_blocker",
+                "portfolio_status",
+                "portfolio_can_reach_4x_now",
+                "portfolio_can_create_live_permission",
+            )
+        }
+        | {
+            "global_blockers": sorted(_string_list(proof_state.get("global_blockers"))),
+            "p0_rows": sorted(_string_list(proof_state.get("p0_rows"))),
+        },
+        "payoff": {
+            key: payoff_state.get(key)
+            for key in (
+                "artifact_status",
+                "status",
+                "verdict",
+                "capture_economics_status",
+                "live_promotion_allowed",
+                "runner_candidate_count",
+                "harvest_candidate_count",
+                "negative_expectancy_visible",
+                "month_scale_negative_visible",
+            )
+        }
+        | {
+            "live_promotion_blockers": sorted(
+                _string_list(payoff_state.get("live_promotion_blockers"))
+            ),
+        },
+        "harvest": {
+            key: harvest_state.get(key)
+            for key in (
+                "artifact_status",
+                "status",
+                "closest_harvest_candidate_id",
+                "closest_harvest_selected",
+                "live_promotion_allowed",
+                "replay_status",
+            )
+        }
+        | {
+            "promotion_blockers": sorted(
+                _string_list(harvest_state.get("promotion_blockers"))
+            ),
+            "tp_proof": harvest_state.get("tp_proof") or {},
+        },
+        "scout": {
+            key: scout_state.get(key)
+            for key in (
+                "artifact_status",
+                "diagnosed",
+                "status",
+                "target_shape",
+                "scout_mode_allowed",
+                "operator_approval_required",
+                "max_loss_jpy_cap",
+            )
+        }
+        | {
+            "blocker_codes": sorted(
+                _string_list(scout_state.get("blocker_codes"))
+            ),
+            "min_lot_feasibility": {
+                key: (scout_state.get("min_lot_feasibility") or {}).get(key)
+                for key in (
+                    "status",
+                    "min_production_lot_units",
+                    "units_mode",
+                    "loss_budget_min_lot_blocker_present",
+                    "feasibility_proven_current",
+                    "feasible_if_all_non_lot_gates_clear",
+                    "no_4x_deficit_lot_backsolve",
+                )
+            },
+        },
+        "operator_review": {
+            key: operator_review_state.get(key)
+            for key in (
+                "normal_routing_allowed",
+                "inferred_normal_routing_allowed",
+                "normal_routing_status",
+                "operator_review_required",
+                "guardian_clear",
+                "guardian_expired_or_operator_review_stale",
+                "missing_raw_guardian_receipt_artifact",
+            )
+        }
+        | {
+            "blocker_codes": sorted(
+                _string_list(operator_review_state.get("blocker_codes"))
+            ),
+            "raw_guardian_receipt_state": operator_review_state.get(
+                "raw_guardian_receipt_state"
+            )
+            or {},
+        },
+        "edge_improvement": {
+            key: edge_improvement_state.get(key)
+            for key in (
+                "candidate_available",
+                "candidate_work_type",
+                "target_shape",
+                "proof_gap_trades",
+                "take_profit_trades",
+                "take_profit_losses",
+                "take_profit_expectancy_jpy",
+                "min_lot_numerically_feasible",
+                "proof_queue_count",
+                "live_promotion_allowed",
+            )
+        }
+        | {
+            "blockers_to_preserve": sorted(
+                _string_list(edge_improvement_state.get("blockers_to_preserve"))
+            ),
+        },
+        "artifact_health": {
+            "explicit_issues": sorted(
+                (
+                    str(row.get("artifact")),
+                    str(row.get("issue")),
+                )
+                for row in artifact_health.get("explicit_issues") or []
+                if isinstance(row, dict)
+            ),
+            "artifact_contradiction_codes": sorted(
+                _string_list(artifact_health.get("artifact_contradiction_codes"))
+            ),
+        },
+        "schema": {
+            "required_field_missing": schema_state.get("required_field_missing"),
+            "missing_fields": sorted(
+                (
+                    str(row.get("artifact")),
+                    str(row.get("field")),
+                )
+                for row in schema_state.get("missing_fields") or []
+                if isinstance(row, dict)
+            ),
+            "success_condition_schema_ok": schema_state.get(
+                "success_condition_schema_ok"
+            ),
+            "success_condition_schema_issues": sorted(
+                (
+                    str(row.get("artifact")),
+                    str(row.get("issue")),
+                )
+                for row in schema_state.get("success_condition_schema_issues") or []
+                if isinstance(row, dict)
+            ),
+            "active_lane_action_mapping_required": schema_state.get(
+                "active_lane_action_mapping_required"
+            ),
+            "code_repair_required": schema_state.get("code_repair_required"),
+        },
+        "active_contract": {
+            key: active_contract_state.get(key)
+            for key in (
+                "artifact_status",
+                "status",
+                "selected_active_path",
+                "target_shape",
+                "top_lane_id",
+                "top_lane_status",
+                "top_lane_vehicle",
+                "frontier_lane_id",
+                "frontier_lane_vehicle",
+                "next_trade_enabling_action",
+                "live_permission_allowed",
+            )
+        }
+        | {
+            "remaining_blockers": sorted(
+                _string_list(active_contract_state.get("remaining_blockers"))
+            ),
+        },
+        "repair_loop": {
+            key: repair_loop_state.get(key)
+            for key in (
+                "artifact_status",
+                "status",
+                "actionable_request_count",
+                "approval_required_request_count",
+                "waiting_request_count",
+                "repair_request_count",
+                "selected_request_code",
+                "next_evidence_action_count",
+                "waiting_for_evidence",
+                "queued_evidence_wait",
+                "material_evidence_wait",
+                "action_mapping_required",
+                "actionable_repair_selected",
+                "active_lane_execution_pending",
+                "codex_work_order_status",
+                "codex_work_order_reason_code",
+                "active_lane_action_code",
+                "active_lane_material_digest",
+                "active_lane_pending_dispatch_id",
+                "next_evidence_action_material_sha256",
+            )
+        }
+        | {
+            "waiting_request_codes": sorted(
+                _string_list(repair_loop_state.get("waiting_request_codes"))
+            ),
+            "next_evidence_action_ids": sorted(
+                _string_list(repair_loop_state.get("next_evidence_action_ids"))
+            ),
+        },
+        "live_order": live_order_state,
+    }
+
+
+def _live_order_repeat_state(artifact: dict[str, Any]) -> dict[str, Any]:
+    """Normalize gateway transitions without refresh timestamps or prose churn."""
+
+    request = (
+        artifact.get("order_request")
+        if isinstance(artifact.get("order_request"), dict)
+        else {}
+    )
+    return {
+        "artifact_status": artifact.get("_artifact_status"),
+        "status": artifact.get("status"),
+        "cycle_send_requested": artifact.get("cycle_send_requested"),
+        "send_requested": artifact.get("send_requested"),
+        "sent": artifact.get("sent"),
+        "sent_count": artifact.get("sent_count"),
+        "lane_id": artifact.get("lane_id"),
+        "lane_ids": sorted(_string_list(artifact.get("lane_ids"))),
+        "requested_units": artifact.get("requested_units"),
+        "scaled_units": artifact.get("scaled_units"),
+        "size_multiple": artifact.get("size_multiple"),
+        "portfolio_position_cap": artifact.get("portfolio_position_cap"),
+        "risk_issue_codes": _normalized_issue_codes(artifact.get("risk_issues")),
+        "strategy_issue_codes": _normalized_issue_codes(
+            artifact.get("strategy_issues")
+        ),
+        "order_request": {
+            key: request.get(key)
+            for key in (
+                "status",
+                "request_id",
+                "order_request_id",
+                "client_order_id",
+                "decision_id",
+                "lane_id",
+                "send_requested",
+                "sent",
+            )
+            if key in request
+        },
+    }
+
+
+def _normalized_issue_codes(value: Any) -> list[str]:
+    codes: list[str] = []
+    for row in value if isinstance(value, list) else []:
+        if isinstance(row, str):
+            codes.append(row)
+            continue
+        if not isinstance(row, dict):
+            continue
+        code = _first_str(
+            row.get("code"),
+            row.get("reason_code"),
+            row.get("status"),
+        )
+        if code:
+            codes.append(code)
+    return sorted(_unique(codes))
+
+
+def _stable_json_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _work_dispatch_allowed(
+    selected_next_work_type: str,
+    *,
+    repeat_loop_guard: dict[str, Any],
+    repair_loop_state: dict[str, Any],
+) -> bool:
+    if selected_next_work_type == "NO_ACTION_WAIT":
+        return False
+    if selected_next_work_type == "ACTIVE_LANE_EVIDENCE_DISPATCH":
+        # Exact pending dispatch ids have an acknowledgement lifecycle and must
+        # remain available until the repair orchestrator records the ACK.
+        return True
+    if (
+        selected_next_work_type == "CODE_REPAIR"
+        and repair_loop_state.get("actionable_repair_selected") is True
+        and bool(repair_loop_state.get("selected_request_code"))
+    ):
+        # A selected repair request is durable. Generic schema repair has no
+        # request id/ack lifecycle and is therefore subject to repeat history.
+        return True
+    return bool(repeat_loop_guard.get("repeat_allowed"))
+
+
+def _repeat_suppressed_prompt(
+    *,
+    classified_next_work_type: str,
+    key_blocker: str,
+    repeat_loop_guard: dict[str, Any],
+) -> str:
+    material_sha = (
+        repeat_loop_guard.get("current_fingerprint", {}).get(
+            "material_state_sha256"
+        )
+    )
+    return f"""QuantRabbit の同一改善作業は再実行しないでください。
+
+分類候補: `{classified_next_work_type}`
+実行選択: `NO_ACTION_WAIT`
+key blocker: `{key_blocker}`
+canonical material state: `{material_sha}`
+
+前回から意味のある状態変化がありません。generated_at、fetched_at、age、path、raw artifact hash の更新だけは進捗ではありません。コード修正、同じ証拠更新コマンド、同じ検証、発注、cancel、close、launchd変更を実行せず、machine-readable success state、material digest、lane/blocker、または broker/gateway permission state が変わるまで待ってください。"""
 
 
 def _current_phase(
@@ -1478,9 +2008,9 @@ def _success_condition(work_type: str) -> dict[str, Any]:
         ),
         "NO_ACTION_WAIT": (
             "all",
-            "the repair orchestrator remains in an explicit evidence wait without live permission.",
+            "no work is dispatchable and live permission remains false until canonical material changes.",
             [
-                {"field": "repair_orchestrator_waiting_for_evidence", "operator": "eq", "value": True},
+                {"field": "work_dispatch_allowed", "operator": "eq", "value": False},
                 {"field": "live_permission_allowed", "operator": "eq", "value": False},
             ],
         ),
@@ -1925,6 +2455,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- requires_operator_review_before_scout_or_routing: `{payload.get('requires_operator_review_before_scout_or_routing')}`",
         f"- Current phase: `{payload.get('current_phase')}`",
         f"- Selected next work type: `{payload.get('selected_next_work_type')}`",
+        f"- Classified next work type: `{payload.get('classified_next_work_type')}`",
         f"- Selection reason: {payload.get('selection_reason')}",
         f"- Four x progress hypothesis: {payload.get('four_x_progress_hypothesis')}",
         f"- Root improvement target: {payload.get('root_improvement_target')}",
@@ -1956,7 +2487,11 @@ def _render_report(payload: dict[str, Any]) -> str:
         "## Repeat Guard",
         "",
         f"- Repeat allowed: `{payload.get('repeat_loop_guard', {}).get('repeat_allowed')}`",
+        f"- Work dispatch allowed: `{payload.get('work_dispatch_allowed')}`",
+        f"- Repeat suppressed: `{payload.get('repeat_suppressed')}`",
+        f"- Material history hit: `{payload.get('repeat_loop_guard', {}).get('material_history_hit')}`",
         f"- Key blocker: `{payload.get('repeat_loop_guard', {}).get('current_fingerprint', {}).get('key_blocker')}`",
+        f"- Canonical material state: `{payload.get('repeat_loop_guard', {}).get('current_fingerprint', {}).get('material_state_sha256')}`",
         "",
         "## Success Condition Evaluation",
         "",
@@ -1967,6 +2502,8 @@ def _render_report(payload: dict[str, Any]) -> str:
     ]
     for command in payload.get("next_allowed_commands") or []:
         lines.append(f"- `{command}`")
+    if not payload.get("next_allowed_commands"):
+        lines.append("- (none; no new material state to dispatch)")
     lines.extend(
         [
             "",
@@ -2110,13 +2647,17 @@ def _freshness_issues(repair: dict[str, Any]) -> list[dict[str, Any]]:
 def _success_condition_schema_issues(repair: dict[str, Any]) -> list[dict[str, str]]:
     if repair.get("_artifact_status") == "missing":
         return []
-    actions = []
+    actions: list[Any] = []
     top_actions = repair.get("next_evidence_actions")
     if isinstance(top_actions, list):
         actions.extend(top_actions)
     state_actions = _repair_current_state(repair).get("next_evidence_actions")
     if isinstance(state_actions, list):
         actions.extend(state_actions)
+    progress_receipts = repair.get("evidence_action_progress")
+    if not isinstance(progress_receipts, list):
+        progress_receipts = []
+    current_state = _repair_current_state(repair)
     issues: list[dict[str, str]] = []
     for index, action in enumerate(actions):
         if not isinstance(action, dict):
@@ -2133,6 +2674,43 @@ def _success_condition_schema_issues(repair: dict[str, Any]) -> list[dict[str, s
             issues.append({"artifact": "trader_repair_orchestrator", "issue": f"{action.get('action_id') or index}: success_condition mode invalid"})
         if not isinstance(checks, list) or not checks:
             issues.append({"artifact": "trader_repair_orchestrator", "issue": f"{action.get('action_id') or index}: success_condition checks missing"})
+        watermark_fields_present = any(
+            key in action
+            for key in (
+                "progress_watermark_contract",
+                "progress_watermark_origin",
+                "progress_watermark_source",
+                "success_condition_evaluation",
+            )
+        )
+        if watermark_fields_present and validated_evidence_action_material(
+            action,
+            current_state=current_state,
+            source="next_action",
+        ) is None:
+            issues.append(
+                {
+                    "artifact": "trader_repair_orchestrator",
+                    "issue": (
+                        f"{action.get('action_id') or index}: invalid evidence action "
+                        "watermark/origin/evaluation"
+                    ),
+                }
+            )
+    for index, receipt in enumerate(progress_receipts):
+        if not isinstance(receipt, dict) or validated_evidence_action_material(
+            receipt,
+            current_state=current_state,
+            source="progress_receipt",
+        ) is None:
+            issues.append(
+                {
+                    "artifact": "trader_repair_orchestrator",
+                    "issue": (
+                        f"evidence_action_progress[{index}]: invalid progress receipt"
+                    ),
+                }
+            )
     return issues
 
 

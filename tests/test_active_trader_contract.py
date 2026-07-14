@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.active_trader_contract import ActiveTraderContract
+from quant_rabbit.active_trader_contract import (
+    ActiveTraderContract,
+    _goal_loop_contract_state,
+    _select_active_path,
+)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -16,6 +20,55 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 class ActiveTraderContractTest(unittest.TestCase):
+    def test_repeat_suppressed_goal_loop_work_is_not_mirrored(self) -> None:
+        def selected_path(goal_loop: dict[str, Any]) -> tuple[str, str]:
+            return _select_active_path(
+                no_action={"no_action_allowed": True},
+                replay={
+                    "artifact_status": "present",
+                    "passed": True,
+                    "live_grade_candidate": True,
+                    "blocker_codes": [],
+                },
+                proof_floor={"proof_floor_reached": False},
+                scout={"status": "SCOUT_NOT_READY"},
+                goal_loop=goal_loop,
+                harvest={"candidate_present": False},
+                proof={"proof_queue_count": 0},
+                active_opportunity_board={},
+                non_eurusd_frontier={},
+            )
+
+        suppressed = _goal_loop_contract_state(
+            {
+                "_artifact_status": "present",
+                "selected_next_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+                "classified_next_work_type": "EDGE_IMPROVEMENT_EXPERIMENT",
+                "work_dispatch_allowed": False,
+                "repeat_suppressed": True,
+                "live_permission_allowed": False,
+            }
+        )
+        self.assertEqual(
+            suppressed["classified_next_work_type"],
+            "EDGE_IMPROVEMENT_EXPERIMENT",
+        )
+        self.assertFalse(suppressed["work_dispatch_allowed"])
+        self.assertTrue(suppressed["repeat_suppressed"])
+        path, reason = selected_path(suppressed)
+        self.assertEqual(path, "NO_TRADE_WITH_CAUSE")
+        self.assertNotIn("Mirrors the trader goal-loop", reason)
+
+        malformed = dict(suppressed, work_dispatch_allowed="false", repeat_suppressed=False)
+        path, reason = selected_path(malformed)
+        self.assertEqual(path, "NO_TRADE_WITH_CAUSE")
+        self.assertNotIn("Mirrors the trader goal-loop", reason)
+
+        dispatchable = dict(suppressed, work_dispatch_allowed=True, repeat_suppressed=False)
+        path, reason = selected_path(dispatchable)
+        self.assertEqual(path, "EDGE_IMPROVEMENT_EXPERIMENT")
+        self.assertIn("Mirrors the trader goal-loop", reason)
+
     def test_replay_passed_still_selects_evidence_acquisition_not_no_action(self) -> None:
         now = datetime(2026, 7, 8, 6, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
