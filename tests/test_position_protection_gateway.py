@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from quant_rabbit.broker.position_execution import PositionProtectionGateway
+from quant_rabbit.broker.position_execution import (
+    PositionProtectionGateway as _PositionProtectionGateway,
+)
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.position_execution_evidence import (
@@ -35,7 +37,35 @@ from quant_rabbit.strategy.position_manager import (
 TEST_SNAPSHOT_AT = datetime.now(timezone.utc)
 
 
+class PositionProtectionGateway(_PositionProtectionGateway):
+    """Keep the gateway clock aligned with the module's fixed test fixtures."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("clock", lambda: TEST_SNAPSHOT_AT)
+        super().__init__(*args, **kwargs)
+
+
 class PositionProtectionGatewayTest(unittest.TestCase):
+    def test_fixture_clock_remains_consistent_after_discovery_delay(self) -> None:
+        delayed_fixture_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        with (
+            patch(f"{__name__}.TEST_SNAPSHOT_AT", delayed_fixture_at),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            root = Path(tmp)
+            summary = PositionProtectionGateway(
+                client=FakePositionClient(),
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_PROFIT_PROTECT, stop=1.1729),
+                snapshot=_snapshot(),
+                send=False,
+            )
+
+        self.assertEqual(summary.status, "STAGED")
+
     def test_predictive_scout_rejects_stale_exit_management_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
