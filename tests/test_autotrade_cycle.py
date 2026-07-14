@@ -6762,6 +6762,72 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
+            guardian_event_id = "cycle-ledger-sync-eur-usd"
+            guardian_dedupe_key = (
+                "EUR_USD|cycle-ledger-sync|TECHNICAL_STATE_CHANGE|NO_ACTION"
+            )
+            guardian_event = {
+                "event_id": guardian_event_id,
+                "dedupe_key": guardian_dedupe_key,
+                "pair": "EUR_USD",
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "severity": "P2",
+                "action_hint": "NO_ACTION",
+                "direction": None,
+                "thesis_state": "ALIVE",
+                "recommended_review_type": "TUNING_REVIEW",
+                "details": {
+                    "material_fingerprint": {
+                        "dominant_regime": "UNCLEAR",
+                        "volatility_bucket": "NORMAL",
+                    }
+                },
+            }
+            (root / "guardian_action_receipt.json").write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "source": "guardian_wake_dispatcher",
+                        "model": "gpt-5.5",
+                        "receipt_status": "ACCEPTED",
+                        "receipt_lifecycle": "ACTIVE",
+                        "consumed_by_trader": False,
+                        "dispatcher_status": "RECEIPT_WRITTEN",
+                        "generated_at_utc": (now - timedelta(seconds=1)).isoformat(),
+                        "expires_at_utc": (now + timedelta(hours=1)).isoformat(),
+                        "selected_event_id": guardian_event_id,
+                        "selected_event_dedupe_key": guardian_dedupe_key,
+                        "gateway_required": True,
+                        "no_direct_oanda": True,
+                        "selected_event": guardian_event,
+                        "event": dict(guardian_event),
+                        "receipt": {
+                            "action": "NO_ACTION",
+                            "event_id": guardian_event_id,
+                            "dedupe_key": guardian_dedupe_key,
+                            "pair": "EUR_USD",
+                            "side": "NONE",
+                            "thesis_state": "ALIVE",
+                            "new_information": True,
+                            "ownership": "SYSTEM",
+                            "reason": "synthetic technical review",
+                            "invalidation": "technical invalidation",
+                            "harvest_trigger": "technical target",
+                            "margin_state": "NORMAL",
+                            "gateway_required": True,
+                            "no_direct_oanda": True,
+                        },
+                        "execution_boundary": {
+                            "gpt_wake_never_calls_oanda_directly": True,
+                            "guardian_never_trades": True,
+                            "only_live_order_gateway_may_send_cancel_close": True,
+                        },
+                        "issues": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             snapshot = BrokerSnapshot(
                 fetched_at_utc=now,
                 quotes={

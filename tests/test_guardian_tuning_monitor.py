@@ -64,19 +64,25 @@ def _write_terminal_queue(
     experiment_id: str,
     evidence_ref: str,
 ) -> None:
+    consumed_at = datetime.now(timezone.utc).isoformat()
+    semantic_digest = "e" * 64
     terminal = {
         "work_order_id": "work-order-monitor",
         "status": "CONSUMED",
+        "consumed_at_utc": consumed_at,
+        "consumed_by": "qr-trader-hourly",
         "experiment_id": experiment_id,
         "experiment_result": "ACCEPTED_IMPROVEMENT",
         "experiment_evidence_ref": evidence_ref,
         "experiment_contract_digest": "a" * 64,
+        "experiment_semantic_digest": semantic_digest,
         "terminal_transition_source": "guardian_tuning_work_order_lifecycle",
         "tuning_override_application": application,
         "bot_tuning_review": _review(),
         "prepared_experiment_contract": _contract(),
         "live_permission_allowed": False,
         "no_direct_oanda": True,
+        "preserve_blockers": True,
     }
     digest = overrides._canonical_terminal_digest(terminal)
     terminal_ref = overrides.write_terminal_commitment_manifest(
@@ -112,8 +118,10 @@ def _write_terminal_queue(
         "pending_count": 0,
         "terminal_history": [terminal],
         "terminal_history_count": 1,
-        "experiment_semantic_digest_history": [],
-        "experiment_id_digest_history": [],
+        "experiment_semantic_digest_history": [semantic_digest],
+        "experiment_id_digest_history": [
+            dispatcher._experiment_id_digest(experiment_id)
+        ],
         "override_lifecycle_heads": [head],
     }
     queue_path.write_text(json.dumps(queue))
@@ -710,12 +718,6 @@ class GuardianTuningMonitorTest(unittest.TestCase):
                     + "d" * 64
                 )
 
-                def load_queue(path: Path) -> dict:
-                    raw = path.read_bytes()
-                    payload = json.loads(raw)
-                    payload["_queue_source_sha256"] = hashlib.sha256(raw).hexdigest()
-                    return payload
-
                 valid_monitor = {
                     "status": "VALID",
                     "decision": "KEEP",
@@ -724,8 +726,8 @@ class GuardianTuningMonitorTest(unittest.TestCase):
                 with (
                     patch.object(
                         dispatcher,
-                        "_load_tuning_work_order",
-                        side_effect=load_queue,
+                        "_tuning_queue_terminal_evidence_error",
+                        return_value=None,
                     ),
                     patch.object(
                         dispatcher,
@@ -758,8 +760,22 @@ class GuardianTuningMonitorTest(unittest.TestCase):
                     )
 
             self.assertEqual(result["status"], "POST_ACTIVATION_MONITOR_COMMITTED")
+            committed_queue = json.loads(queue_path.read_text())
             self.assertEqual(
-                json.loads(queue_path.read_text())["override_lifecycle_heads"][0]["status"],
+                committed_queue["queue_schema_revision"],
+                dispatcher.TUNING_QUEUE_SCHEMA_REVISION,
+            )
+            self.assertEqual(committed_queue["pending_count"], 0)
+            self.assertEqual(
+                committed_queue["admission_rejection_ledger"],
+                dispatcher._empty_tuning_admission_rejection_commitment(),
+            )
+            rejection_path = queue_path.with_name(
+                "guardian_tuning_admission_rejections.json"
+            )
+            self.assertFalse(rejection_path.exists())
+            self.assertEqual(
+                committed_queue["override_lifecycle_heads"][0]["status"],
                 "MONITORED_KEEP_COMMITTED",
             )
             self.assertEqual(resolution["status"], "ACTIVE_OVERRIDE")
