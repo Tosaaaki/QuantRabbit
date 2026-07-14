@@ -6621,9 +6621,15 @@ class IntentGeneratorTest(unittest.TestCase):
                 drivers_against=("limited directional extension",),
             )
 
-            with patch(
-                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
-                return_value=forecast,
+            with (
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator.record_range_vehicle_candidates",
+                    return_value=0,
+                ),
             ):
                 IntentGenerator(
                     campaign_plan=_range_campaign(root, direction="LONG"),
@@ -6952,6 +6958,10 @@ class IntentGeneratorTest(unittest.TestCase):
             with (
                 patch("quant_rabbit.strategy.intent_generator._forecast_seed_for_pair", return_value=forecast),
                 patch("quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry", return_value=None),
+                patch(
+                    "quant_rabbit.strategy.intent_generator.record_range_vehicle_candidates",
+                    return_value=0,
+                ),
             ):
                 IntentGenerator(
                     campaign_plan=_campaign(root),
@@ -7130,9 +7140,15 @@ class IntentGeneratorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             output = root / "intents.json"
-            with patch(
-                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
-                return_value=forecast,
+            with (
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator.record_range_vehicle_candidates",
+                    return_value=0,
+                ),
             ):
                 IntentGenerator(
                     campaign_plan=_campaign(root, direction="LONG"),

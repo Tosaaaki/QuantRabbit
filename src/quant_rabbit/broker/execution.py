@@ -837,6 +837,9 @@ class LiveOrderGateway:
             "lane_id": selected_lane_id,
             "order_request": order_request,
             "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
+            "range_vehicle_candidate_receipt": _range_vehicle_candidate_receipt_from_intent(
+                intent, order_request
+            ),
             "predictive_scout": predictive_scout_intent_claimed(intent),
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
@@ -1732,6 +1735,9 @@ class LiveOrderGateway:
             "lane_id": selected_lane_id,
             "order_request": order_request,
             "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
+            "range_vehicle_candidate_receipt": _range_vehicle_candidate_receipt_from_intent(
+                intent, order_request
+            ),
             "predictive_scout": predictive_scout_intent_claimed(intent),
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
             "context_evidence": _context_evidence_from_intent(intent),
@@ -4800,6 +4806,9 @@ class LiveOrderGateway:
             "lane_id": lane_id,
             "order_request": order_request,
             "decision_lineage": _decision_lineage_receipt_from_intent(intent, order_request),
+            "range_vehicle_candidate_receipt": _range_vehicle_candidate_receipt_from_intent(
+                intent, order_request
+            ),
             "predictive_scout": True,
             "predictive_scout_post_reserved": True,
             "predictive_scout_receipt": _predictive_scout_receipt_from_intent(intent),
@@ -11380,6 +11389,90 @@ def _predictive_scout_receipt_from_intent(intent: OrderIntent) -> dict[str, Any]
         "predictive_scout_generated_at_utc": metadata.get("predictive_scout_generated_at_utc"),
         "predictive_scout_expires_at_utc": metadata.get("predictive_scout_expires_at_utc"),
         "bidask_replay_precision_seed_rule": dict(rule) if isinstance(rule, dict) else None,
+    }
+
+
+def _range_vehicle_candidate_receipt_from_intent(
+    intent: OrderIntent,
+    order_request: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Bind a final gateway request to its immutable RANGE candidate shape.
+
+    Candidate generation cannot prove activation, final repricing, or broker
+    acceptance.  This receipt carries the stable identity into the gateway
+    artifact while keeping broker truth and live permission explicitly
+    separate.  Sent predictive-SCOUT results are subsequently indexed by the
+    existing durable gateway-receipt path.
+    """
+
+    metadata = intent.metadata or {}
+    candidate_id = str(metadata.get("range_vehicle_candidate_id") or "")
+    shape_sha = str(metadata.get("range_vehicle_shape_sha256") or "")
+    projection_sha = str(
+        metadata.get("range_vehicle_gateway_projection_sha256") or ""
+    )
+    if not candidate_id and not shape_sha and not projection_sha:
+        return None
+    if not all(
+        len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+        for value in (candidate_id, shape_sha, projection_sha)
+    ):
+        return {
+            "status": "INVALID_CANDIDATE_IDENTITY",
+            "candidate_id": candidate_id or None,
+            "vehicle_shape_sha256": shape_sha or None,
+            "gateway_contract_projection_sha256": projection_sha or None,
+            "live_permission_allowed": False,
+        }
+    request_sha = (
+        _canonical_json_sha256(order_request)
+        if isinstance(order_request, dict)
+        else None
+    )
+    take_profit_on_fill = (
+        order_request.get("takeProfitOnFill")
+        if isinstance(order_request, dict)
+        and isinstance(order_request.get("takeProfitOnFill"), dict)
+        else {}
+    )
+    stop_loss_on_fill = (
+        order_request.get("stopLossOnFill")
+        if isinstance(order_request, dict)
+        and isinstance(order_request.get("stopLossOnFill"), dict)
+        else {}
+    )
+    return {
+        "status": (
+            "CANDIDATE_IDENTITY_CARRIED_WITH_FINAL_GATEWAY_ORDER_REQUEST"
+            if request_sha is not None
+            else "CANDIDATE_PRESENT_ORDER_REQUEST_MISSING"
+        ),
+        "candidate_id": candidate_id,
+        "vehicle_shape_sha256": shape_sha,
+        "gateway_contract_projection_sha256": projection_sha,
+        "final_order_request_sha256": request_sha,
+        "final_order_contract": (
+            {
+                "instrument": order_request.get("instrument"),
+                "type": order_request.get("type"),
+                "units": order_request.get("units"),
+                "price": order_request.get("price"),
+                "time_in_force": order_request.get("timeInForce"),
+                "gtd_time": order_request.get("gtdTime"),
+                "position_fill": order_request.get("positionFill"),
+                "take_profit_on_fill": take_profit_on_fill.get("price"),
+                "stop_loss_on_fill": stop_loss_on_fill.get("price"),
+            }
+            if isinstance(order_request, dict)
+            else None
+        ),
+        "candidate_ledger_row_proved": False,
+        "join_caveat": (
+            "this gateway receipt binds the carried identity claim to the final request; "
+            "a separate candidate-ledger receipt join is required to prove the source row"
+        ),
+        "broker_acceptance_proved": False,
+        "live_permission_allowed": False,
     }
 
 

@@ -71,6 +71,13 @@ DEFAULT_MIN_TRAIN_FILLS = 20
 DEFAULT_MIN_VALIDATION_FILLS = 10
 DEFAULT_MIN_TOTAL_FILLS = 30
 MIN_TRUTH_WINDOW_COVERAGE_RATE = 0.95
+ATTACHED_MIN_TRUTH_WINDOW_COVERAGE_RATE = 1.0
+TTL_CLOSE_RESEARCH_CONTRACT = "TTL_CLOSE_RESEARCH"
+BROKER_ATTACHED_TP_SL_CONTRACT = "BROKER_ATTACHED_TP_SL"
+EXIT_CONTRACTS = (
+    TTL_CLOSE_RESEARCH_CONTRACT,
+    BROKER_ATTACHED_TP_SL_CONTRACT,
+)
 JST = timezone(timedelta(hours=9), "JST")
 S5_CANDLE_INTERVAL = timedelta(seconds=5)
 _FETCH_SUMMARY_KEYS = {
@@ -201,27 +208,33 @@ def main() -> int:
         dedupe_minutes=args.dedupe_minutes,
     )
     now = datetime.now(timezone.utc)
+    maturity_cutoff = args.observation_end_utc or now
     mature_rows = [
         row
         for row in rows
-        if raw_truth_end(row, ttl_minutes=args.ttl_minutes) <= now
+        if raw_truth_end(row, ttl_minutes=args.ttl_minutes) <= maturity_cutoff
     ]
-    no_market_rows = [
-        row
-        for row in mature_rows
-        if range_truth_is_no_market(row, ttl_minutes=args.ttl_minutes)
-    ]
-    no_market_row_set = set(no_market_rows)
-    scorable_rows = [row for row in mature_rows if row not in no_market_row_set]
+    scorable_rows, no_market_rows = partition_scorable_range_rows(
+        mature_rows,
+        ttl_minutes=args.ttl_minutes,
+        exit_contract=args.exit_contract,
+    )
     history_dirs = _range_history_dirs(
         args.history_dir,
         granularity=args.granularity,
         auto_min_days=args.auto_history_min_days,
     )
-    load_windows = range_truth_windows(scorable_rows, ttl_minutes=args.ttl_minutes)
+    load_windows = range_truth_windows(
+        scorable_rows,
+        ttl_minutes=args.ttl_minutes,
+        exit_contract=args.exit_contract,
+        observation_end_utc=args.observation_end_utc,
+    )
     exact_truth_windows = range_exact_truth_windows(
         scorable_rows,
         ttl_minutes=args.ttl_minutes,
+        exit_contract=args.exit_contract,
+        observation_end_utc=args.observation_end_utc,
     )
     verified_truth = validate_sparse_s5_truth_provenance(
         history_dirs,
@@ -243,6 +256,13 @@ def main() -> int:
         sl_grid=args.sl_grid_pips,
         candle_interval=granularity_interval(args.granularity),
         verified_sparse_s5_coverage_by_pair=verified_truth.coverage_by_pair,
+        exit_contract=args.exit_contract,
+        observation_end_utc=args.observation_end_utc,
+    )
+    minimum_truth_coverage_rate = (
+        ATTACHED_MIN_TRUTH_WINDOW_COVERAGE_RATE
+        if args.exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+        else MIN_TRUTH_WINDOW_COVERAGE_RATE
     )
     selections = train_validation_selections(
         results,
@@ -254,17 +274,25 @@ def main() -> int:
             (str(item["pair"]), str(item["side"])): item
             for item in score_stats.get("pair_side_truth_coverage", [])
         },
+        minimum_truth_window_coverage_rate=minimum_truth_coverage_rate,
+        require_complete_outcome_resolution=(
+            args.exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+        ),
+        purge_train_outcomes_at_validation_start=(
+            args.exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+        ),
+    )
+    attached_contract = args.exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+    adoption_blockers = _adoption_blockers(
+        args.exit_contract,
+        score_stats=score_stats,
     )
     report = {
         "generated_at_utc": _iso(now),
         "kind": "oanda_range_scout_replay_validate",
         "read_only": True,
         "live_permission_allowed": False,
-        "adoption_blockers": [
-            "RANGE_SCOUT_TTL_CLOSE_LIVE_CONTRACT_MISMATCH",
-            "RANGE_SCOUT_ZERO_LATENCY_ENTRY_ASSUMPTION",
-            "RANGE_SCOUT_LIVE_GATE_REPLAY_INCOMPLETE",
-        ],
+        "adoption_blockers": adoption_blockers,
         "source": str(args.forecast_history),
         "history_dirs": [str(path) for path in history_dirs],
         "truth_acquisition_provenance": {
@@ -279,13 +307,17 @@ def main() -> int:
             "receipt_count": verified_truth.receipt_count,
             "synthetic_flat_candles_added": 0,
         },
-        "truth_source": (
-            f"local OANDA {args.granularity} bid/ask; LONG LIMIT fills on ask low and exits on bid, "
-            "SHORT LIMIT fills on bid high and exits on ask; a fill-candle stop is conservative, "
-            "while an ordering-ambiguous fill-candle target "
-            "is ignored until a later bar (or the same close) proves a post-fill re-cross"
+        "truth_source": _truth_source_description(
+            args.granularity,
+            exit_contract=args.exit_contract,
         ),
         "vehicle": {
+            "research_contract": (
+                "STATIC_PREDICTIVE_SCOUT_BROKER_ATTACHED_TP_SL"
+                if attached_contract
+                else "STATIC_PREDICTIVE_SCOUT_TTL_CLOSE"
+            ),
+            "exit_contract": args.exit_contract,
             "selector": "NEAREST_RANGE_RAIL_ONE_SIDE",
             "granularity": args.granularity.upper(),
             "entry": "forecast range_low for LONG or range_high for SHORT",
@@ -298,31 +330,35 @@ def main() -> int:
                 "order_activation": "ceil forecast emission to the first S5 boundary at/after emission",
                 "ttl_boundary": (
                     "floor raw forecast TTL/horizon end to the last S5 boundary at/before it; "
-                    "no post-horizon candle is read"
+                    + (
+                        "this is GTD only for an unfilled entry, while a filled position is "
+                        "observed through the explicit observation end"
+                        if attached_contract
+                        else "no post-horizon candle is read"
+                    )
                 ),
                 "boundary_adjustment_seconds": (
-                    "each boundary changes by 0 to <5 seconds; effective activation-to-expiry "
-                    "holding duration can be 0 to <10 seconds shorter than the raw TTL"
+                    "activation and GTD each change by 0 to <5 seconds; the effective unfilled "
+                    "order lifetime can be 0 to <10 seconds shorter than the raw TTL"
                 ),
             },
             "ttl_minutes": args.ttl_minutes,
+            "observation_end_utc": (
+                _iso(args.observation_end_utc)
+                if args.observation_end_utc is not None
+                else None
+            ),
             "candle_interval_seconds": granularity_interval(args.granularity).total_seconds(),
             "same_pair_dedupe_minutes": args.dedupe_minutes,
             "take_profit_pips": list(args.tp_grid_pips),
             "stop_loss_pips": list(args.sl_grid_pips),
             "tp_must_not_cross_midpoint": True,
             "unfilled_is_not_a_trade": True,
-            "timeout_exit_included": True,
-            "live_contract_alignment": {
-                "status": "MISMATCH",
-                "simulation_exit": "TP, SL, or executable bid/ask TTL_CLOSE after fill",
-                "current_live_exit": "attached broker TP/SL only; GTD expires only an unfilled entry order",
-                "required_before_adoption": (
-                    "either implement and audit a gateway-controlled filled-position time exit, "
-                    "or rerun with the actual attached-TP/SL holding contract"
-                ),
-            },
-            "minimum_pair_side_truth_window_coverage_rate": MIN_TRUTH_WINDOW_COVERAGE_RATE,
+            "timeout_exit_included": not attached_contract,
+            "live_contract_alignment": _live_contract_alignment(
+                args.exit_contract,
+            ),
+            "minimum_pair_side_truth_window_coverage_rate": minimum_truth_coverage_rate,
         },
         **load_stats,
         "mature_rows": len(mature_rows),
@@ -334,7 +370,17 @@ def main() -> int:
             "forecast_start_utc": _iso(min(row.timestamp_utc for row in scorable_rows))
             if scorable_rows
             else None,
-            "forecast_end_utc": _iso(max(truth_end(row, ttl_minutes=args.ttl_minutes) for row in scorable_rows))
+            "forecast_end_utc": _iso(
+                max(
+                    _replay_truth_end(
+                        row,
+                        ttl_minutes=args.ttl_minutes,
+                        exit_contract=args.exit_contract,
+                        observation_end_utc=args.observation_end_utc,
+                    )
+                    for row in scorable_rows
+                )
+            )
             if scorable_rows
             else None,
         },
@@ -363,7 +409,11 @@ def main() -> int:
             "Student-t lower bounds reduce but do not eliminate family-wise selection risk"
         ),
         "candidate_rules": [item for item in selections if item.get("hypothesis_candidate") is True],
-        "status": _report_status(selections),
+        "status": _report_status(
+            selections,
+            exit_contract=args.exit_contract,
+            score_stats=score_stats,
+        ),
     }
     # Recheck immediately before publishing: scoring/report assembly can be
     # long enough for a concurrently replaced ledger, summary, or candle file
@@ -389,6 +439,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-train-fills", type=int, default=DEFAULT_MIN_TRAIN_FILLS)
     parser.add_argument("--min-validation-fills", type=int, default=DEFAULT_MIN_VALIDATION_FILLS)
     parser.add_argument("--min-total-fills", type=int, default=DEFAULT_MIN_TOTAL_FILLS)
+    parser.add_argument(
+        "--exit-contract",
+        choices=EXIT_CONTRACTS,
+        default=TTL_CLOSE_RESEARCH_CONTRACT,
+        help=(
+            "TTL_CLOSE_RESEARCH preserves the legacy forced TTL close; "
+            "BROKER_ATTACHED_TP_SL expires only unfilled orders at GTD and "
+            "observes filled positions without a forced close"
+        ),
+    )
+    parser.add_argument(
+        "--observation-end-utc",
+        default=None,
+        help=(
+            "required explicit S5-aligned UTC boundary for "
+            "BROKER_ATTACHED_TP_SL, for example 2026-07-14T07:35:00Z"
+        ),
+    )
     args = parser.parse_args()
     args.granularity = str(args.granularity).upper()
     if args.granularity != "S5":
@@ -408,6 +476,33 @@ def _parse_args() -> argparse.Namespace:
         parser.error("minimum fill counts must be positive")
     if args.min_total_fills < args.min_train_fills + args.min_validation_fills:
         parser.error("--min-total-fills must cover train plus validation minimums")
+    if args.exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        if args.observation_end_utc is None:
+            parser.error(
+                "--observation-end-utc is required with "
+                "--exit-contract BROKER_ATTACHED_TP_SL"
+            )
+        try:
+            observation_end = _strict_utc_timestamp(
+                args.observation_end_utc,
+                label="--observation-end-utc",
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        if (
+            observation_end.microsecond != 0
+            or int(observation_end.timestamp()) % int(S5_CANDLE_INTERVAL.total_seconds())
+            != 0
+        ):
+            parser.error("--observation-end-utc must be aligned to an exact S5 boundary")
+        if observation_end > datetime.now(timezone.utc):
+            parser.error("--observation-end-utc must not be in the future")
+        args.observation_end_utc = observation_end
+    elif args.observation_end_utc is not None:
+        parser.error(
+            "--observation-end-utc is valid only with "
+            "--exit-contract BROKER_ATTACHED_TP_SL"
+        )
     return args
 
 
@@ -455,13 +550,131 @@ def _range_history_dirs(
     return [resolved_output]
 
 
-def _report_status(selections: Sequence[dict[str, Any]]) -> str:
+def _report_status(
+    selections: Sequence[dict[str, Any]],
+    *,
+    exit_contract: str = TTL_CLOSE_RESEARCH_CONTRACT,
+    score_stats: Mapping[str, Any] | None = None,
+) -> str:
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        stats = score_stats or {}
+        if (
+            float(stats.get("truth_window_coverage_rate") or 0.0)
+            < ATTACHED_MIN_TRUTH_WINDOW_COVERAGE_RATE
+            or int(stats.get("skipped_no_price_window") or 0) > 0
+            or int(stats.get("skipped_incomplete_truth_window") or 0) > 0
+        ):
+            return "INCOMPLETE_TRUTH_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT"
+        if (
+            int(stats.get("open_unresolved_results") or 0) > 0
+            or int(stats.get("ambiguous_ordering_results") or 0) > 0
+        ):
+            return "UNRESOLVED_OR_AMBIGUOUS_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT"
+        powered = [item for item in selections if item.get("oos_powered") is True]
+        if not powered:
+            return "INSUFFICIENT_OOS_SAMPLE_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT"
+        if any(item.get("hypothesis_candidate") is True for item in powered):
+            return "STATIC_PREDICTIVE_SCOUT_RESEARCH_HYPOTHESES_NO_LIVE_PERMISSION"
+        return "NO_OOS_EDGE_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT"
+    if exit_contract != TTL_CLOSE_RESEARCH_CONTRACT:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
     powered = [item for item in selections if item.get("oos_powered") is True]
     if not powered:
         return "INSUFFICIENT_OOS_SAMPLE_UNDER_TTL_CLOSE_RESEARCH_CONTRACT"
     if any(item.get("hypothesis_candidate") is True for item in powered):
         return "RANGE_SCOUT_RESEARCH_HYPOTHESES_EXIT_CONTRACT_MISMATCH"
     return "NO_OOS_EDGE_UNDER_TTL_CLOSE_RESEARCH_CONTRACT"
+
+
+def _adoption_blockers(
+    exit_contract: str,
+    *,
+    score_stats: Mapping[str, Any] | None = None,
+) -> list[str]:
+    if exit_contract == TTL_CLOSE_RESEARCH_CONTRACT:
+        return [
+            "RANGE_SCOUT_TTL_CLOSE_LIVE_CONTRACT_MISMATCH",
+            "RANGE_SCOUT_ZERO_LATENCY_ENTRY_ASSUMPTION",
+            "RANGE_SCOUT_LIVE_GATE_REPLAY_INCOMPLETE",
+        ]
+    if exit_contract != BROKER_ATTACHED_TP_SL_CONTRACT:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+    stats = score_stats or {}
+    blockers = [
+        "RANGE_SCOUT_ZERO_LATENCY_ENTRY_ASSUMPTION",
+        "RANGE_SCOUT_ENTRY_LATENCY_UNBOUND",
+        "RANGE_SCOUT_GAP_THROUGH_STOP_FILL_UNMODELED",
+        "RANGE_SCOUT_STOP_SLIPPAGE_UNMODELED",
+        "RANGE_SCOUT_FINANCING_NOT_MODELED",
+        "RANGE_SCOUT_EXACT_GEOMETRY_LINEAGE_INVALID",
+        "RANGE_SCOUT_MULTIPLE_TESTING_NOT_PREREGISTERED",
+        "RANGE_SCOUT_LIVE_GATE_REPLAY_INCOMPLETE",
+    ]
+    if (
+        float(stats.get("truth_window_coverage_rate") or 0.0)
+        < ATTACHED_MIN_TRUTH_WINDOW_COVERAGE_RATE
+        or int(stats.get("skipped_no_price_window") or 0) > 0
+        or int(stats.get("skipped_incomplete_truth_window") or 0) > 0
+    ):
+        blockers.append("RANGE_SCOUT_INCOMPLETE_TRUTH_COVERAGE")
+    if int(stats.get("open_unresolved_results") or 0) > 0:
+        blockers.append("RANGE_SCOUT_OPEN_UNRESOLVED_PRESENT")
+    if int(stats.get("ambiguous_ordering_results") or 0) > 0:
+        blockers.append("RANGE_SCOUT_SAME_BAR_ORDERING_AMBIGUOUS")
+    return blockers
+
+
+def _truth_source_description(granularity: str, *, exit_contract: str) -> str:
+    base = (
+        f"local OANDA {granularity} bid/ask; LONG LIMIT fills on ask low and exits on bid, "
+        "SHORT LIMIT fills on bid high and exits on ask"
+    )
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        return (
+            f"{base}; unfilled entries expire at the forecast GTD boundary, while filled "
+            "static predictive-SCOUT positions remain open until attached TP/SL or the "
+            "explicit observation end; unresolved and OHLC-ordering-ambiguous outcomes "
+            "remain non-scorable observations"
+        )
+    if exit_contract == TTL_CLOSE_RESEARCH_CONTRACT:
+        return (
+            f"{base}; a fill-candle stop is conservative, while an ordering-ambiguous "
+            "fill-candle target is ignored until a later bar (or the same close) proves "
+            "a post-fill re-cross"
+        )
+    raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+
+
+def _live_contract_alignment(exit_contract: str) -> dict[str, Any]:
+    if exit_contract == TTL_CLOSE_RESEARCH_CONTRACT:
+        return {
+            "status": "MISMATCH",
+            "simulation_exit": "TP, SL, or executable bid/ask TTL_CLOSE after fill",
+            "current_live_exit": (
+                "attached broker TP/SL only; GTD expires only an unfilled entry order"
+            ),
+            "required_before_adoption": (
+                "either implement and audit a gateway-controlled filled-position time exit, "
+                "or rerun with the actual attached-TP/SL holding contract"
+            ),
+        }
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        return {
+            "status": "STATIC_PREDICTIVE_SCOUT_ONLY_NOT_RANGE_ROTATION_ALIGNMENT",
+            "simulation_exit": (
+                "static grid broker-attached TP/SL; GTD expires only an unfilled entry; "
+                "no forced close at observation end"
+            ),
+            "current_live_exit": (
+                "adaptive RANGE_ROTATION uses intent-time rail/ATR/spread geometry and may "
+                "be managed after fill"
+            ),
+            "required_before_adoption": (
+                "bind replay geometry to exact append-only intent lineage, model entry/stop "
+                "execution and financing, preregister the hypothesis, and pass the full live gate"
+            ),
+        }
+    raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
 
 
 def load_range_forecasts(
@@ -594,17 +807,58 @@ def range_truth_is_no_market(row: RangeForecastRow, *, ttl_minutes: int) -> bool
     )
 
 
+def partition_scorable_range_rows(
+    mature_rows: Sequence[RangeForecastRow],
+    *,
+    ttl_minutes: int,
+    exit_contract: str,
+) -> tuple[list[RangeForecastRow], list[RangeForecastRow]]:
+    """Keep receipted no-tick windows in attached-order signal statistics.
+
+    The legacy TTL-close study cannot score a terminal executable close when
+    the whole forecast window has no market.  The broker-attached contract has
+    no such close: a verified no-tick window is an ordinary unfilled GTD
+    expiry, so removing it here would inflate fill rates and erase signals.
+    """
+
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        return list(mature_rows), []
+    if exit_contract != TTL_CLOSE_RESEARCH_CONTRACT:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+    no_market_rows = [
+        row
+        for row in mature_rows
+        if range_truth_is_no_market(row, ttl_minutes=ttl_minutes)
+    ]
+    no_market_row_set = set(no_market_rows)
+    return (
+        [row for row in mature_rows if row not in no_market_row_set],
+        no_market_rows,
+    )
+
+
 def range_truth_windows(
     rows: Sequence[RangeForecastRow],
     *,
     ttl_minutes: int,
+    exit_contract: str = TTL_CLOSE_RESEARCH_CONTRACT,
+    observation_end_utc: datetime | None = None,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     pad = timedelta(minutes=1)
     by_pair: dict[str, list[tuple[datetime, datetime]]] = collections.defaultdict(list)
     for row in rows:
         activation = range_order_activation_at(row)
         by_pair[row.pair].append(
-            (activation - pad, truth_end(row, ttl_minutes=ttl_minutes) + pad)
+            (
+                activation - pad,
+                _replay_truth_end(
+                    row,
+                    ttl_minutes=ttl_minutes,
+                    exit_contract=exit_contract,
+                    observation_end_utc=observation_end_utc,
+                )
+                + pad,
+            )
         )
     return {pair: merge_windows(windows) for pair, windows in by_pair.items()}
 
@@ -613,16 +867,44 @@ def range_exact_truth_windows(
     rows: Sequence[RangeForecastRow],
     *,
     ttl_minutes: int,
+    exit_contract: str = TTL_CLOSE_RESEARCH_CONTRACT,
+    observation_end_utc: datetime | None = None,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     by_pair: dict[str, list[tuple[datetime, datetime]]] = collections.defaultdict(list)
     for row in rows:
         by_pair[row.pair].append(
             (
                 range_order_activation_at(row),
-                truth_end(row, ttl_minutes=ttl_minutes),
+                _replay_truth_end(
+                    row,
+                    ttl_minutes=ttl_minutes,
+                    exit_contract=exit_contract,
+                    observation_end_utc=observation_end_utc,
+                ),
             )
         )
     return {pair: merge_windows(windows) for pair, windows in by_pair.items()}
+
+
+def _replay_truth_end(
+    row: RangeForecastRow,
+    *,
+    ttl_minutes: int,
+    exit_contract: str,
+    observation_end_utc: datetime | None,
+) -> datetime:
+    if exit_contract == TTL_CLOSE_RESEARCH_CONTRACT:
+        if observation_end_utc is not None:
+            raise ValueError("TTL_CLOSE_RESEARCH does not accept an observation end")
+        return truth_end(row, ttl_minutes=ttl_minutes)
+    if exit_contract != BROKER_ATTACHED_TP_SL_CONTRACT:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+    if observation_end_utc is None:
+        raise ValueError("BROKER_ATTACHED_TP_SL requires an observation end")
+    order_expiry = truth_end(row, ttl_minutes=ttl_minutes)
+    if observation_end_utc < order_expiry:
+        raise ValueError("observation end precedes the unfilled-order GTD boundary")
+    return observation_end_utc
 
 
 def validate_sparse_s5_truth_provenance(
@@ -1336,7 +1618,21 @@ def score_range_forecasts(
         Sequence[tuple[datetime, datetime]],
     ]
     | None = None,
+    exit_contract: str = TTL_CLOSE_RESEARCH_CONTRACT,
+    observation_end_utc: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    attached_contract = exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+    if exit_contract not in EXIT_CONTRACTS:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+    if attached_contract:
+        if observation_end_utc is None:
+            raise ValueError("BROKER_ATTACHED_TP_SL requires an observation end")
+        if verified_sparse_s5_coverage_by_pair is None:
+            raise ValueError(
+                "BROKER_ATTACHED_TP_SL requires receipted sparse S5 truth coverage"
+            )
+    elif observation_end_utc is not None:
+        raise ValueError("TTL_CLOSE_RESEARCH does not accept an observation end")
     results: list[dict[str, Any]] = []
     eligible_signals = 0
     complete_truth_windows = 0
@@ -1345,7 +1641,12 @@ def score_range_forecasts(
     skipped_incomplete_truth_window = 0
     skipped_not_passive = 0
     skipped_unfilled = 0
+    unfilled_expired_orders = 0
     ambiguous_fill_bar_target_cases = 0
+    open_unresolved_results = 0
+    ambiguous_ordering_results = 0
+    resolved_results = 0
+    ttl_close_results = 0
     pair_side_truth_counts: dict[tuple[str, str], collections.Counter[str]] = (
         collections.defaultdict(collections.Counter)
     )
@@ -1366,31 +1667,22 @@ def score_range_forecasts(
         truth_counts = pair_side_truth_counts[family]
         truth_counts["forecast_rows"] += 1
         pair_side_forecast_rows_by_day[family][forecast_day] += 1
-        candles = candles_by_pair.get(row.pair) or []
-        if not candles:
-            skipped_no_window += 1
-            continue
-        times = times_by_pair[row.pair]
         activation_at = range_order_activation_at(row)
-        forecast_end = truth_end(row, ttl_minutes=ttl_minutes)
-        if forecast_end <= activation_at:
+        order_expiry = truth_end(row, ttl_minutes=ttl_minutes)
+        replay_end = _replay_truth_end(
+            row,
+            ttl_minutes=ttl_minutes,
+            exit_contract=exit_contract,
+            observation_end_utc=observation_end_utc,
+        )
+        if order_expiry <= activation_at or replay_end <= activation_at:
             skipped_incomplete_truth_window += 1
             continue
-        start = bisect.bisect_left(times, activation_at)
-        # OANDA candle timestamps mark interval start.  Requiring the candle's
-        # full interval to end by the truth boundary prevents its high/low or
-        # close from reading price action after forecast/TTL expiry.
-        last_complete_start = forecast_end - candle_interval
-        end = bisect.bisect_right(times, last_complete_start)
-        if start >= len(candles) or end <= start:
-            skipped_no_window += 1
-            continue
-        window_candles = candles[start:end]
         sparse_coverage_verified = (
             _window_is_covered(
                 verified_sparse_s5_coverage_by_pair.get(row.pair, ()),
                 activation_at,
-                forecast_end,
+                replay_end,
             )
             if verified_sparse_s5_coverage_by_pair is not None
             else False
@@ -1401,12 +1693,44 @@ def score_range_forecasts(
         ):
             skipped_incomplete_truth_window += 1
             continue
+        candles = candles_by_pair.get(row.pair) or []
+        if not candles:
+            if attached_contract and sparse_coverage_verified:
+                complete_truth_windows += 1
+                truth_counts["complete_truth_windows"] += 1
+                pair_side_complete_windows_by_day[family][forecast_day] += 1
+                eligible_signals += 1
+                skipped_unfilled += 1
+                unfilled_expired_orders += 1
+                continue
+            skipped_no_window += 1
+            continue
+        times = times_by_pair[row.pair]
+        start = bisect.bisect_left(times, activation_at)
+        # OANDA candle timestamps mark interval start.  Requiring the candle's
+        # full interval to end by the truth boundary prevents its high/low or
+        # close from reading price action after forecast/TTL expiry.
+        last_complete_start = replay_end - candle_interval
+        end = bisect.bisect_right(times, last_complete_start)
+        if start >= len(candles) or end <= start:
+            if attached_contract and sparse_coverage_verified:
+                complete_truth_windows += 1
+                truth_counts["complete_truth_windows"] += 1
+                pair_side_complete_windows_by_day[family][forecast_day] += 1
+                eligible_signals += 1
+                skipped_unfilled += 1
+                unfilled_expired_orders += 1
+                continue
+            skipped_no_window += 1
+            continue
+        window_candles = candles[start:end]
         if not complete_truth_window(
             window_candles,
             forecast_start=activation_at,
-            forecast_end=forecast_end,
+            forecast_end=replay_end,
             candle_interval=candle_interval,
             verified_sparse_no_tick_coverage=sparse_coverage_verified,
+            require_terminal_candle=not attached_contract,
         ):
             skipped_incomplete_truth_window += 1
             continue
@@ -1414,6 +1738,16 @@ def score_range_forecasts(
         truth_counts["complete_truth_windows"] += 1
         pair_side_complete_windows_by_day[family][forecast_day] += 1
         pip = 1.0 / instrument_pip_factor(row.pair)
+        order_last_complete_start = order_expiry - candle_interval
+        order_end = min(end, bisect.bisect_right(times, order_last_complete_start))
+        if order_end <= start:
+            # A fully receipted no-tick interval has no executable quote and
+            # therefore cannot fill before GTD.  Preserve the expired order in
+            # the signal statistics without inventing a trade.
+            eligible_signals += 1
+            skipped_unfilled += 1
+            unfilled_expired_orders += 1
+            continue
         first = candles[start]
         leading_verified_no_tick_gap = (
             sparse_coverage_verified and first.timestamp_utc > activation_at
@@ -1439,7 +1773,7 @@ def score_range_forecasts(
         fill_index = next(
             (
                 idx
-                for idx in range(start, end)
+                for idx in range(start, order_end)
                 if (signal.side == "LONG" and candles[idx].ask.l <= signal.entry)
                 or (signal.side == "SHORT" and candles[idx].bid.h >= signal.entry)
             ),
@@ -1447,6 +1781,8 @@ def score_range_forecasts(
         )
         if fill_index is None:
             skipped_unfilled += 1
+            if attached_contract:
+                unfilled_expired_orders += 1
             continue
         filled_signals.add((row.source_index, signal.side))
         for take_profit_pips in tp_grid:
@@ -1461,10 +1797,20 @@ def score_range_forecasts(
                     stop_loss_pips=float(stop_loss_pips),
                     pip=pip,
                     candle_interval=candle_interval,
-                    timeout_at_utc=forecast_end,
+                    timeout_at_utc=(order_expiry if not attached_contract else None),
+                    exit_contract=exit_contract,
+                    observation_end_utc=(replay_end if attached_contract else None),
                 )
                 if outcome.get("fill_bar_target_ambiguous") is True:
                     ambiguous_fill_bar_target_cases += 1
+                if outcome.get("exit_reason") == "OPEN_UNRESOLVED":
+                    open_unresolved_results += 1
+                elif outcome.get("exit_reason") == "AMBIGUOUS_ORDERING":
+                    ambiguous_ordering_results += 1
+                elif outcome.get("scorable") is True:
+                    resolved_results += 1
+                if outcome.get("exit_reason") == "TTL_CLOSE":
+                    ttl_close_results += 1
                 results.append(
                     {
                         "source_index": row.source_index,
@@ -1478,6 +1824,7 @@ def score_range_forecasts(
                         "range_width_pips": round(signal.range_width_pips, 6),
                         "range_width_bucket": range_width_bucket(signal.range_width_pips),
                         "box_position": round(signal.box_position, 6),
+                        "exit_contract": exit_contract,
                         "take_profit_pips": float(take_profit_pips),
                         "stop_loss_pips": float(stop_loss_pips),
                         **outcome,
@@ -1491,7 +1838,12 @@ def score_range_forecasts(
         "skipped_incomplete_truth_window": skipped_incomplete_truth_window,
         "skipped_not_passive": skipped_not_passive,
         "skipped_unfilled": skipped_unfilled,
+        "unfilled_expired_orders": unfilled_expired_orders,
         "ambiguous_fill_bar_target_cases": ambiguous_fill_bar_target_cases,
+        "open_unresolved_results": open_unresolved_results,
+        "ambiguous_ordering_results": ambiguous_ordering_results,
+        "resolved_results": resolved_results,
+        "ttl_close_results": ttl_close_results,
         "complete_truth_windows": complete_truth_windows,
         "truth_window_coverage_rate": round(
             complete_truth_windows
@@ -1531,6 +1883,7 @@ def complete_truth_window(
     forecast_end: datetime,
     candle_interval: timedelta,
     verified_sparse_no_tick_coverage: bool = False,
+    require_terminal_candle: bool = True,
 ) -> bool:
     if not candles:
         return False
@@ -1546,15 +1899,24 @@ def complete_truth_window(
         # natural no-tick truth.  The first later bar is the first executable
         # quote at which passivity/fill can be tested; requiring a synthetic
         # activation-boundary bar would selectively discard real later losses.
-        # The TTL boundary still needs a real bar because carrying an old close
-        # across a sparse tail would invent an executable TTL price/timestamp.
-        return (
-            forecast_start <= candles[0].timestamp_utc < forecast_end
-            and candles[-1].timestamp_utc + candle_interval == forecast_end
+        # A forced TTL close still needs a real terminal bar because carrying
+        # an old close across a sparse tail would invent an executable price.
+        # The attached-TP/SL contract has no observation-end close, so a
+        # receipted no-tick tail is valid evidence that neither exit traded.
+        terminal_ok = (
+            candles[-1].timestamp_utc + candle_interval == forecast_end
+            if require_terminal_candle
+            else candles[-1].timestamp_utc + candle_interval <= forecast_end
         )
+        return forecast_start <= candles[0].timestamp_utc < forecast_end and terminal_ok
     if candles[0].timestamp_utc - forecast_start >= candle_interval:
         return False
-    if candles[-1].timestamp_utc + candle_interval != forecast_end:
+    if (
+        require_terminal_candle
+        and candles[-1].timestamp_utc + candle_interval != forecast_end
+    ):
+        return False
+    if candles[-1].timestamp_utc + candle_interval > forecast_end:
         return False
     return all(
         current.timestamp_utc - previous.timestamp_utc <= candle_interval
@@ -1571,6 +1933,8 @@ def simulate_filled_signal(
     pip: float,
     candle_interval: timedelta = timedelta(seconds=5),
     timeout_at_utc: datetime | None = None,
+    exit_contract: str = TTL_CLOSE_RESEARCH_CONTRACT,
+    observation_end_utc: datetime | None = None,
 ) -> dict[str, Any]:
     if (
         not math.isfinite(float(take_profit_pips))
@@ -1579,6 +1943,28 @@ def simulate_filled_signal(
         or stop_loss_pips <= 0.0
     ):
         raise ValueError("RANGE SCOUT TP/SL distances must be finite and positive")
+    if not candles:
+        raise ValueError("a filled RANGE SCOUT signal requires at least one candle")
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        if timeout_at_utc is not None:
+            raise ValueError("BROKER_ATTACHED_TP_SL cannot force a TTL close")
+        if observation_end_utc is None:
+            raise ValueError("BROKER_ATTACHED_TP_SL requires an observation end")
+        if candles[-1].timestamp_utc + candle_interval > observation_end_utc:
+            raise ValueError("attached replay candle crosses the observation end")
+        return _simulate_broker_attached_filled_signal(
+            signal,
+            candles,
+            take_profit_pips=take_profit_pips,
+            stop_loss_pips=stop_loss_pips,
+            pip=pip,
+            candle_interval=candle_interval,
+            observation_end_utc=observation_end_utc,
+        )
+    if exit_contract != TTL_CLOSE_RESEARCH_CONTRACT:
+        raise ValueError(f"unsupported RANGE SCOUT exit contract: {exit_contract}")
+    if observation_end_utc is not None:
+        raise ValueError("TTL_CLOSE_RESEARCH does not accept an observation end")
     fill_bar_target_ambiguous = False
     for index, candle in enumerate(candles):
         if signal.side == "LONG":
@@ -1652,6 +2038,112 @@ def simulate_filled_signal(
     }
 
 
+def _simulate_broker_attached_filled_signal(
+    signal: RangeSignal,
+    candles: Sequence[QuoteCandle],
+    *,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+    pip: float,
+    candle_interval: timedelta,
+    observation_end_utc: datetime,
+) -> dict[str, Any]:
+    """Score a static broker-attached TP/SL without inventing an end close.
+
+    S5 OHLC cannot order intrabar TP/SL touches.  A fill-bar target alone also
+    may predate the passive fill; only an executable close still beyond target
+    proves a post-fill re-cross.  These cases remain in the sample as explicit
+    non-scorable observations instead of being dropped or converted to profit.
+    """
+
+    fill_at = _iso(candles[0].timestamp_utc)
+    for index, candle in enumerate(candles):
+        if signal.side == "LONG":
+            target_price = signal.entry + take_profit_pips * pip
+            stop_hit = candle.bid.l <= signal.entry - stop_loss_pips * pip
+            target_hit = candle.bid.h >= target_price
+            close_proves_post_fill_target = candle.bid.c >= target_price
+        else:
+            target_price = signal.entry - take_profit_pips * pip
+            stop_hit = candle.ask.h >= signal.entry + stop_loss_pips * pip
+            target_hit = candle.ask.l <= target_price
+            close_proves_post_fill_target = candle.ask.c <= target_price
+        exit_at = candle.timestamp_utc + candle_interval
+        if stop_hit and target_hit:
+            return {
+                "realized_pips": None,
+                "exit_reason": "AMBIGUOUS_ORDERING",
+                "same_candle_stop_first": False,
+                "scorable": False,
+                "fill_bar_target_ambiguous": index == 0,
+                "fill_at_utc": fill_at,
+                "exit_at_utc": None,
+                "ambiguity_at_utc": _iso(exit_at),
+                "resolved_day_utc": None,
+                "observation_end_utc": _iso(observation_end_utc),
+            }
+        if index == 0 and target_hit:
+            if close_proves_post_fill_target:
+                return {
+                    "realized_pips": take_profit_pips,
+                    "exit_reason": "TAKE_PROFIT",
+                    "same_candle_stop_first": False,
+                    "scorable": True,
+                    "fill_bar_target_ambiguous": True,
+                    "fill_at_utc": fill_at,
+                    "exit_at_utc": _iso(exit_at),
+                    "resolved_day_utc": exit_at.date().isoformat(),
+                    "observation_end_utc": _iso(observation_end_utc),
+                }
+            return {
+                "realized_pips": None,
+                "exit_reason": "AMBIGUOUS_ORDERING",
+                "same_candle_stop_first": False,
+                "scorable": False,
+                "fill_bar_target_ambiguous": True,
+                "fill_at_utc": fill_at,
+                "exit_at_utc": None,
+                "ambiguity_at_utc": _iso(exit_at),
+                "resolved_day_utc": None,
+                "observation_end_utc": _iso(observation_end_utc),
+            }
+        if stop_hit:
+            return {
+                "realized_pips": -stop_loss_pips,
+                "exit_reason": "STOP_LOSS",
+                "same_candle_stop_first": False,
+                "scorable": True,
+                "fill_bar_target_ambiguous": False,
+                "fill_at_utc": fill_at,
+                "exit_at_utc": _iso(exit_at),
+                "resolved_day_utc": exit_at.date().isoformat(),
+                "observation_end_utc": _iso(observation_end_utc),
+            }
+        if target_hit:
+            return {
+                "realized_pips": take_profit_pips,
+                "exit_reason": "TAKE_PROFIT",
+                "same_candle_stop_first": False,
+                "scorable": True,
+                "fill_bar_target_ambiguous": False,
+                "fill_at_utc": fill_at,
+                "exit_at_utc": _iso(exit_at),
+                "resolved_day_utc": exit_at.date().isoformat(),
+                "observation_end_utc": _iso(observation_end_utc),
+            }
+    return {
+        "realized_pips": None,
+        "exit_reason": "OPEN_UNRESOLVED",
+        "same_candle_stop_first": False,
+        "scorable": False,
+        "fill_bar_target_ambiguous": False,
+        "fill_at_utc": fill_at,
+        "exit_at_utc": None,
+        "resolved_day_utc": None,
+        "observation_end_utc": _iso(observation_end_utc),
+    }
+
+
 def group_metrics(results: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = collections.defaultdict(list)
     for item in results:
@@ -1679,7 +2171,12 @@ def train_validation_selections(
     min_validation_fills: int,
     min_total_fills: int,
     family_truth_coverage: dict[tuple[str, str], dict[str, Any]] | None = None,
+    minimum_truth_window_coverage_rate: float = MIN_TRUTH_WINDOW_COVERAGE_RATE,
+    require_complete_outcome_resolution: bool = False,
+    purge_train_outcomes_at_validation_start: bool = False,
 ) -> list[dict[str, Any]]:
+    if not 0.0 < minimum_truth_window_coverage_rate <= 1.0:
+        raise ValueError("minimum truth-window coverage rate must be in (0, 1]")
     by_vehicle: dict[tuple[str, str, float, float], list[dict[str, Any]]] = collections.defaultdict(list)
     for item in results:
         by_vehicle[(item["pair"], item["side"], item["take_profit_pips"], item["stop_loss_pips"])].append(item)
@@ -1690,6 +2187,13 @@ def train_validation_selections(
 
     selections: list[dict[str, Any]] = []
     for family, vehicles in sorted(by_family.items()):
+        family_metrics = metrics(
+            [item for _vehicle_key, vehicle_items in vehicles for item in vehicle_items]
+        )
+        family_outcome_resolution_complete = bool(
+            int(family_metrics["open_unresolved_fills"]) == 0
+            and int(family_metrics["ambiguous_ordering_fills"]) == 0
+        )
         result_days = {
             str(item["timestamp_utc"])[:10]
             for _key, items in vehicles
@@ -1723,6 +2227,26 @@ def train_validation_selections(
         )
         train_days = set(family_days[:day_cut])
         validation_days = set(family_days[day_cut:])
+        validation_start_utc = f"{min(validation_days)}T00:00:00Z"
+
+        def train_items_known_before_validation(
+            items: Sequence[dict[str, Any]],
+        ) -> tuple[list[dict[str, Any]], int]:
+            raw_train = [
+                item
+                for item in items
+                if str(item["timestamp_utc"])[:10] in train_days
+            ]
+            if not purge_train_outcomes_at_validation_start:
+                return raw_train, 0
+            known = [
+                item
+                for item in raw_train
+                if isinstance(item.get("exit_at_utc"), str)
+                and str(item["exit_at_utc"]) < validation_start_utc
+            ]
+            return known, len(raw_train) - len(known)
+
         train_truth_coverage = _truth_coverage_for_days(coverage, train_days)
         validation_truth_coverage = _truth_coverage_for_days(
             coverage,
@@ -1738,19 +2262,15 @@ def train_validation_selections(
             ]
         ] = []
         for key, items in vehicles:
-            train = [
-                item
-                for item in items
-                if str(item["timestamp_utc"])[:10] in train_days
-            ]
+            train, _purged_train = train_items_known_before_validation(items)
             train_metrics = metrics(train)
-            if len(train) < min_train_fills:
+            if int(train_metrics["scorable_fills"]) < min_train_fills:
                 continue
             candidates.append(
                 (
                     float(train_metrics["mean_pips"]),
                     _profit_factor_value(train_metrics.get("profit_factor")),
-                    len(train),
+                    int(train_metrics["scorable_fills"]),
                     key,
                     items,
                 )
@@ -1758,31 +2278,36 @@ def train_validation_selections(
         if not candidates:
             continue
         _mean, _pf, _n, key, items = max(candidates)
-        train = [
-            item
-            for item in items
-            if str(item["timestamp_utc"])[:10] in train_days
-        ]
+        train, purged_train_fills = train_items_known_before_validation(items)
         validation = [
             item
             for item in items
-            if str(item["timestamp_utc"])[:10] not in train_days
+            if str(item["timestamp_utc"])[:10] in validation_days
         ]
         full_metrics = metrics(items)
         train_metrics = metrics(train)
         validation_metrics = metrics(validation)
         truth_coverage_rate = float(coverage.get("coverage_rate") or 0.0)
+        outcome_resolution_complete = bool(
+            int(full_metrics["open_unresolved_fills"]) == 0
+            and int(full_metrics["ambiguous_ordering_fills"]) == 0
+            and family_outcome_resolution_complete
+        )
         oos_powered = bool(
-            len(items) >= min_total_fills
-            and len(train) >= min_train_fills
-            and len(validation) >= min_validation_fills
+            int(full_metrics["scorable_fills"]) >= min_total_fills
+            and int(train_metrics["scorable_fills"]) >= min_train_fills
+            and int(validation_metrics["scorable_fills"]) >= min_validation_fills
             and int(train_metrics["active_days"]) >= 5
             and int(validation_metrics["active_days"]) >= 5
-            and truth_coverage_rate >= MIN_TRUTH_WINDOW_COVERAGE_RATE
+            and truth_coverage_rate >= minimum_truth_window_coverage_rate
             and train_truth_coverage["coverage_rate"]
-            >= MIN_TRUTH_WINDOW_COVERAGE_RATE
+            >= minimum_truth_window_coverage_rate
             and validation_truth_coverage["coverage_rate"]
-            >= MIN_TRUTH_WINDOW_COVERAGE_RATE
+            >= minimum_truth_window_coverage_rate
+            and (
+                outcome_resolution_complete
+                or not require_complete_outcome_resolution
+            )
         )
         hypothesis_candidate = bool(
             oos_powered
@@ -1820,7 +2345,13 @@ def train_validation_selections(
                     "train": train_truth_coverage,
                     "validation": validation_truth_coverage,
                 },
-                "minimum_truth_window_coverage_rate": MIN_TRUTH_WINDOW_COVERAGE_RATE,
+                "minimum_truth_window_coverage_rate": minimum_truth_window_coverage_rate,
+                "complete_outcome_resolution_required": require_complete_outcome_resolution,
+                "train_outcome_purge_required": purge_train_outcomes_at_validation_start,
+                "validation_start_utc": validation_start_utc,
+                "purged_train_fills": purged_train_fills,
+                "outcome_resolution_complete": outcome_resolution_complete,
+                "family_outcome_resolution_complete": family_outcome_resolution_complete,
                 "oos_powered": oos_powered,
                 "hypothesis_candidate": hypothesis_candidate,
                 "live_permission_allowed": False,
@@ -1848,9 +2379,25 @@ def _truth_coverage_for_days(
 
 
 def metrics(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    scorable_items = [
+        item
+        for item in items
+        if item.get("scorable", True) is True
+        and _safe_float(item.get("realized_pips")) is not None
+    ]
+    open_unresolved = sum(
+        item.get("exit_reason") == "OPEN_UNRESOLVED" for item in items
+    )
+    ambiguous_ordering = sum(
+        item.get("exit_reason") == "AMBIGUOUS_ORDERING" for item in items
+    )
     if not items:
         return {
             "fills": 0,
+            "scorable_fills": 0,
+            "open_unresolved_fills": 0,
+            "ambiguous_ordering_fills": 0,
+            "outcome_resolution_rate": 0.0,
             "mean_pips": 0.0,
             "profit_factor": 0.0,
             "win_rate": 0.0,
@@ -1863,12 +2410,31 @@ def metrics(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
             "stop_loss_rate": 0.0,
             "ttl_close_rate": 0.0,
         }
-    pnls = [float(item["realized_pips"]) for item in items]
+    if not scorable_items:
+        return {
+            "fills": len(items),
+            "scorable_fills": 0,
+            "open_unresolved_fills": open_unresolved,
+            "ambiguous_ordering_fills": ambiguous_ordering,
+            "outcome_resolution_rate": 0.0,
+            "mean_pips": None,
+            "profit_factor": None,
+            "win_rate": None,
+            "active_days": 0,
+            "positive_day_rate": 0.0,
+            "max_daily_sample_share": 0.0,
+            "one_sided_95_mean_lower_pips": None,
+            "one_sided_95_daily_mean_lower_pips": None,
+            "take_profit_rate": 0.0,
+            "stop_loss_rate": 0.0,
+            "ttl_close_rate": 0.0,
+        }
+    pnls = [float(item["realized_pips"]) for item in scorable_items]
     gross_profit = sum(value for value in pnls if value > 0.0)
     gross_loss = -sum(value for value in pnls if value < 0.0)
     by_day: dict[str, float] = collections.defaultdict(float)
     day_counts: collections.Counter[str] = collections.Counter()
-    for item in items:
+    for item in scorable_items:
         day = str(
             item.get("resolved_day_utc")
             or str(item.get("timestamp_utc") or "")[:10]
@@ -1893,6 +2459,10 @@ def metrics(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
         ) * statistics.stdev(daily_pnls) / math.sqrt(len(daily_pnls))
     return {
         "fills": len(items),
+        "scorable_fills": len(scorable_items),
+        "open_unresolved_fills": open_unresolved,
+        "ambiguous_ordering_fills": ambiguous_ordering,
+        "outcome_resolution_rate": round(len(scorable_items) / len(items), 6),
         "mean_pips": round(mean, 6),
         "profit_factor": round(gross_profit / gross_loss, 6) if gross_loss > 0.0 else None,
         "win_rate": round(sum(value > 0.0 for value in pnls) / len(pnls), 6),
@@ -1903,7 +2473,7 @@ def metrics(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
         )
         if by_day
         else 0.0,
-        "max_daily_sample_share": round(max(day_counts.values()) / len(items), 6)
+        "max_daily_sample_share": round(max(day_counts.values()) / len(scorable_items), 6)
         if day_counts
         else 0.0,
         "one_sided_95_mean_lower_pips": round(lower, 6) if lower is not None else None,
@@ -1981,6 +2551,12 @@ def write_report(report: dict[str, Any], output_dir: Path) -> None:
 
 
 def markdown_report(report: dict[str, Any]) -> str:
+    vehicle = report.get("vehicle") or {}
+    exit_contract = str(vehicle.get("exit_contract") or TTL_CLOSE_RESEARCH_CONTRACT)
+    minimum_coverage = float(
+        vehicle.get("minimum_pair_side_truth_window_coverage_rate")
+        or MIN_TRUTH_WINDOW_COVERAGE_RATE
+    )
     lines = [
         "# OANDA RANGE SCOUT Replay Validation",
         "",
@@ -1993,7 +2569,9 @@ def markdown_report(report: dict[str, Any]) -> str:
         "- Live permission: `false`",
         f"- Adoption blockers: {', '.join(f'`{item}`' for item in report.get('adoption_blockers') or [])}",
         f"- Complete truth windows: {report.get('complete_truth_windows')} (coverage={report.get('truth_window_coverage_rate')})",
-        f"- Ordering-ambiguous fill-bar target cases conservatively continued: {report.get('ambiguous_fill_bar_target_cases')}",
+        f"- Fill-bar target-ordering ambiguity observations: {report.get('ambiguous_fill_bar_target_cases')}",
+        f"- Open unresolved grid outcomes: {report.get('open_unresolved_results', 0)}",
+        f"- Ambiguous-ordering grid outcomes: {report.get('ambiguous_ordering_results', 0)}",
         "",
         "## Chronological Train / Validation",
         "",
@@ -2015,15 +2593,35 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
         "- Forecast persistence is deduplicated per pair for the full pending TTL.",
         "- Spread is included through executable bid/ask fills and exits.",
-        "- Only candles whose full interval ends by forecast expiry are read.",
+        (
+            "- Only candles whose full interval ends by the explicit observation end are read."
+            if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT
+            else "- Only candles whose full interval ends by forecast expiry are read."
+        ),
         "- Observation starts at the first complete S5 boundary at/after forecast emission; no pre-forecast OHLC range is consumed.",
         "- The best train grid is judged on the later chronological validation slice.",
-        f"- Pair/side truth-window coverage must be at least {MIN_TRUTH_WINDOW_COVERAGE_RATE:.0%} before an OOS family is called powered.",
+        f"- Pair/side truth-window coverage must be at least {minimum_coverage:.0%} before an OOS family is called powered.",
         "- Both trade-level and UTC resolved-day Student-t lower bounds must remain above zero for a research candidate.",
-        "- Replay TTL_CLOSE after fill does not match current live SCOUT, whose GTD expires only unfilled entries; adoption is blocked until the exit contracts match.",
-        "- A candidate is only a bounded forward hypothesis; it is not positive-expectancy proof or live permission.",
-        "",
     ])
+    if exit_contract == BROKER_ATTACHED_TP_SL_CONTRACT:
+        lines.extend(
+            [
+                "- Unfilled entries expire at GTD; filled entries are never forced closed at the observation end.",
+                "- OPEN_UNRESOLVED and AMBIGUOUS_ORDERING remain in group counts and prevent a powered hypothesis.",
+                "- Train outcomes resolving at or after the first validation day are purged before grid selection.",
+                "- This is a static predictive-SCOUT grid contract, not exact adaptive RANGE_ROTATION intent geometry or live permission.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Replay TTL_CLOSE after fill does not match current live SCOUT, whose GTD expires only unfilled entries; adoption is blocked until the exit contracts match."
+        )
+    lines.extend(
+        [
+            "- A candidate is only a bounded forward hypothesis; it is not positive-expectancy proof or live permission.",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

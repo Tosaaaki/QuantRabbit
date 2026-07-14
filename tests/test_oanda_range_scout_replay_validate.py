@@ -1225,6 +1225,585 @@ class OandaRangeScoutReplayValidateTest(unittest.TestCase):
         self.assertLess(selected[0]["validation"]["mean_pips"], 0)
         self.assertFalse(selected[0]["hypothesis_candidate"])
 
+    def test_attached_selection_purges_train_outcomes_resolved_after_validation_starts(
+        self,
+    ) -> None:
+        items = []
+        for tp, train_pnl, train_exit in (
+            (3.0, 10.0, "2026-06-03T01:00:00Z"),
+            (5.0, 1.0, "2026-06-02T12:00:00Z"),
+        ):
+            for day in range(1, 5):
+                is_train = day <= 2
+                pnl = train_pnl if is_train else 1.0
+                exit_at = (
+                    train_exit
+                    if is_train
+                    else f"2026-06-{day:02d}T12:00:00Z"
+                )
+                items.append(
+                    {
+                        "source_index": len(items),
+                        "timestamp_utc": f"2026-06-{day:02d}T00:00:00Z",
+                        "resolved_day_utc": exit_at[:10],
+                        "exit_at_utc": exit_at,
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit_pips": tp,
+                        "stop_loss_pips": 10.0,
+                        "realized_pips": pnl,
+                        "exit_reason": "TAKE_PROFIT",
+                        "scorable": True,
+                    }
+                )
+
+        selected = range_replay.train_validation_selections(
+            items,
+            train_fraction=0.5,
+            min_train_fills=2,
+            min_validation_fills=2,
+            min_total_fills=4,
+            purge_train_outcomes_at_validation_start=True,
+        )
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["take_profit_pips"], 5.0)
+        self.assertEqual(selected[0]["validation_start_utc"], "2026-06-03T00:00:00Z")
+        self.assertEqual(selected[0]["purged_train_fills"], 0)
+        self.assertTrue(selected[0]["train_outcome_purge_required"])
+
+    def test_attached_contract_args_require_explicit_observation_end(self) -> None:
+        with mock.patch.object(sys, "argv", ["range-replay"]):
+            legacy_args = range_replay._parse_args()
+        self.assertEqual(
+            legacy_args.exit_contract,
+            range_replay.TTL_CLOSE_RESEARCH_CONTRACT,
+        )
+        self.assertIsNone(legacy_args.observation_end_utc)
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "range-replay",
+                "--exit-contract",
+                range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            ],
+        ), mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit):
+                range_replay._parse_args()
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "range-replay",
+                "--observation-end-utc",
+                "2020-01-01T00:00:00Z",
+            ],
+        ), mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit):
+                range_replay._parse_args()
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "range-replay",
+                "--exit-contract",
+                range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+                "--observation-end-utc",
+                "2020-01-01T00:00:00Z",
+            ],
+        ):
+            args = range_replay._parse_args()
+
+        self.assertEqual(
+            args.exit_contract,
+            range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+        )
+        self.assertEqual(args.observation_end_utc, _dt("2020-01-01T00:00:00Z"))
+
+    def test_attached_contract_unfilled_limit_expires_at_gtd(self) -> None:
+        row = _row(current=1.103)
+        observation_end = _dt("2026-07-01T00:02:00Z")
+        candles = [
+            _candle(
+                timestamp=timestamp,
+                bid_o=1.1001,
+                bid_h=1.1003,
+                bid_l=1.1001,
+                bid_c=1.1002,
+                ask_o=1.1003,
+                ask_h=1.1005,
+                ask_l=1.1002,
+                ask_c=1.1004,
+            )
+            for timestamp in (
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:55Z",
+                "2026-07-01T00:01:55Z",
+            )
+        ]
+
+        results, stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": candles},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(10.0,),
+            candle_interval=timedelta(seconds=5),
+            verified_sparse_s5_coverage_by_pair={
+                "EUR_USD": [(_dt("2026-07-01T00:00:00Z"), observation_end)]
+            },
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(stats["unfilled_expired_orders"], 1)
+        self.assertEqual(stats["filled_signals"], 0)
+        self.assertEqual(stats["ttl_close_results"], 0)
+
+        empty_results, empty_stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": []},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(10.0,),
+            candle_interval=timedelta(seconds=5),
+            verified_sparse_s5_coverage_by_pair={
+                "EUR_USD": [(_dt("2026-07-01T00:00:00Z"), observation_end)]
+            },
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+        self.assertEqual(empty_results, [])
+        self.assertEqual(empty_stats["unfilled_expired_orders"], 1)
+        self.assertEqual(empty_stats["complete_truth_windows"], 1)
+        self.assertEqual(empty_stats["truth_window_coverage_rate"], 1.0)
+
+    def test_attached_contract_keeps_no_market_rows_as_unfilled_orders(self) -> None:
+        row = _row(current=1.103)
+        with mock.patch.object(
+            range_replay,
+            "range_truth_is_no_market",
+            return_value=True,
+        ) as no_market:
+            attached_rows, attached_excluded = (
+                range_replay.partition_scorable_range_rows(
+                    [row],
+                    ttl_minutes=60,
+                    exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+                )
+            )
+            legacy_rows, legacy_excluded = range_replay.partition_scorable_range_rows(
+                [row],
+                ttl_minutes=60,
+                exit_contract=range_replay.TTL_CLOSE_RESEARCH_CONTRACT,
+            )
+
+        self.assertEqual(attached_rows, [row])
+        self.assertEqual(attached_excluded, [])
+        self.assertEqual(legacy_rows, [])
+        self.assertEqual(legacy_excluded, [row])
+        no_market.assert_called_once_with(row, ttl_minutes=60)
+
+    def test_attached_contract_fill_before_gtd_can_take_profit_after_gtd(self) -> None:
+        row = _row(current=1.103)
+        observation_end = _dt("2026-07-01T00:02:00Z")
+        candles = [
+            _candle(
+                timestamp="2026-07-01T00:00:00Z",
+                bid_o=1.1001,
+                bid_h=1.1003,
+                bid_l=1.1000,
+                bid_c=1.1002,
+                ask_o=1.1003,
+                ask_h=1.1005,
+                ask_l=1.1001,
+                ask_c=1.1004,
+            ),
+            _candle(
+                timestamp="2026-07-01T00:00:55Z",
+                bid_o=1.1000,
+                bid_h=1.1004,
+                bid_l=1.0994,
+                bid_c=1.1001,
+                ask_o=1.1002,
+                ask_h=1.1006,
+                ask_l=1.0999,
+                ask_c=1.1003,
+            ),
+            _candle(
+                timestamp="2026-07-01T00:01:05Z",
+                bid_o=1.1003,
+                bid_h=1.1012,
+                bid_l=1.1002,
+                bid_c=1.1008,
+                ask_o=1.1005,
+                ask_h=1.1014,
+                ask_l=1.1004,
+                ask_c=1.1010,
+            ),
+        ]
+
+        results, stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": candles},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(10.0,),
+            candle_interval=timedelta(seconds=5),
+            verified_sparse_s5_coverage_by_pair={
+                "EUR_USD": [(_dt("2026-07-01T00:00:00Z"), observation_end)]
+            },
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["exit_reason"], "TAKE_PROFIT")
+        self.assertEqual(results[0]["exit_at_utc"], "2026-07-01T00:01:10Z")
+        self.assertGreater(
+            _dt(results[0]["exit_at_utc"]),
+            range_replay.truth_end(row, ttl_minutes=1),
+        )
+        self.assertEqual(stats["ttl_close_results"], 0)
+
+    def test_attached_contract_observation_end_keeps_open_fill_unresolved(self) -> None:
+        signal = range_replay.range_signal(_row(current=1.103))
+        observation_end = _dt("2026-07-01T00:00:20Z")
+        candles = [
+            _candle(
+                timestamp="2026-07-01T00:00:05Z",
+                bid_o=1.1000,
+                bid_h=1.1004,
+                bid_l=1.0995,
+                bid_c=1.1002,
+                ask_o=1.1002,
+                ask_h=1.1006,
+                ask_l=1.0999,
+                ask_c=1.1004,
+            ),
+            _candle(
+                timestamp="2026-07-01T00:00:15Z",
+                bid_o=1.1002,
+                bid_h=1.1005,
+                bid_l=1.0996,
+                bid_c=1.1003,
+                ask_o=1.1004,
+                ask_h=1.1007,
+                ask_l=1.0998,
+                ask_c=1.1005,
+            ),
+        ]
+
+        result = range_replay.simulate_filled_signal(
+            signal,
+            candles,
+            take_profit_pips=10.0,
+            stop_loss_pips=10.0,
+            pip=0.0001,
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+        grouped = range_replay.group_metrics(
+            [
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "take_profit_pips": 10.0,
+                    "stop_loss_pips": 10.0,
+                    **result,
+                }
+            ]
+        )[0]
+
+        self.assertEqual(result["exit_reason"], "OPEN_UNRESOLVED")
+        self.assertFalse(result["scorable"])
+        self.assertIsNone(result["realized_pips"])
+        self.assertNotEqual(result["exit_reason"], "TTL_CLOSE")
+        self.assertEqual(grouped["fills"], 1)
+        self.assertEqual(grouped["scorable_fills"], 0)
+        self.assertEqual(grouped["open_unresolved_fills"], 1)
+
+    def test_attached_contract_later_same_bar_tp_sl_is_ambiguous(self) -> None:
+        signal = range_replay.range_signal(_row(current=1.103))
+        observation_end = _dt("2026-07-01T00:00:15Z")
+        candles = [
+            _candle(
+                timestamp="2026-07-01T00:00:05Z",
+                bid_o=1.1000,
+                bid_h=1.1004,
+                bid_l=1.0995,
+                bid_c=1.1002,
+                ask_o=1.1002,
+                ask_h=1.1006,
+                ask_l=1.0999,
+                ask_c=1.1004,
+            ),
+            _candle(
+                timestamp="2026-07-01T00:00:10Z",
+                bid_o=1.1002,
+                bid_h=1.1012,
+                bid_l=1.0988,
+                bid_c=1.1003,
+                ask_o=1.1004,
+                ask_h=1.1014,
+                ask_l=1.0990,
+                ask_c=1.1005,
+            ),
+        ]
+
+        result = range_replay.simulate_filled_signal(
+            signal,
+            candles,
+            take_profit_pips=10.0,
+            stop_loss_pips=10.0,
+            pip=0.0001,
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+
+        self.assertEqual(result["exit_reason"], "AMBIGUOUS_ORDERING")
+        self.assertFalse(result["scorable"])
+        self.assertIsNone(result["realized_pips"])
+
+    def test_attached_contract_fill_bar_target_needs_close_recross_proof(self) -> None:
+        signal = range_replay.range_signal(_row(current=1.103))
+        observation_end = _dt("2026-07-01T00:00:10Z")
+        ambiguous = _candle(
+            timestamp="2026-07-01T00:00:05Z",
+            bid_o=1.1000,
+            bid_h=1.1012,
+            bid_l=1.0995,
+            bid_c=1.1004,
+            ask_o=1.1002,
+            ask_h=1.1014,
+            ask_l=1.0999,
+            ask_c=1.1006,
+        )
+
+        result = range_replay.simulate_filled_signal(
+            signal,
+            [ambiguous],
+            take_profit_pips=10.0,
+            stop_loss_pips=10.0,
+            pip=0.0001,
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+
+        self.assertEqual(result["exit_reason"], "AMBIGUOUS_ORDERING")
+        self.assertTrue(result["fill_bar_target_ambiguous"])
+        self.assertFalse(result["scorable"])
+
+        proved = _candle(
+            timestamp="2026-07-01T00:00:05Z",
+            bid_o=1.1000,
+            bid_h=1.1012,
+            bid_l=1.0995,
+            bid_c=1.1011,
+            ask_o=1.1002,
+            ask_h=1.1014,
+            ask_l=1.0999,
+            ask_c=1.1013,
+        )
+        proved_result = range_replay.simulate_filled_signal(
+            signal,
+            [proved],
+            take_profit_pips=10.0,
+            stop_loss_pips=10.0,
+            pip=0.0001,
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            observation_end_utc=observation_end,
+        )
+        self.assertEqual(proved_result["exit_reason"], "TAKE_PROFIT")
+        self.assertTrue(proved_result["scorable"])
+
+    def test_attached_contract_status_and_blockers_never_claim_live_alignment(self) -> None:
+        stats = {
+            "truth_window_coverage_rate": 1.0,
+            "skipped_no_price_window": 0,
+            "skipped_incomplete_truth_window": 0,
+            "open_unresolved_results": 1,
+            "ambiguous_ordering_results": 1,
+        }
+
+        status = range_replay._report_status(
+            [],
+            exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            score_stats=stats,
+        )
+        blockers = range_replay._adoption_blockers(
+            range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+            score_stats=stats,
+        )
+        alignment = range_replay._live_contract_alignment(
+            range_replay.BROKER_ATTACHED_TP_SL_CONTRACT
+        )
+
+        self.assertEqual(
+            status,
+            "UNRESOLVED_OR_AMBIGUOUS_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT",
+        )
+        for blocker in (
+            "RANGE_SCOUT_ENTRY_LATENCY_UNBOUND",
+            "RANGE_SCOUT_OPEN_UNRESOLVED_PRESENT",
+            "RANGE_SCOUT_SAME_BAR_ORDERING_AMBIGUOUS",
+            "RANGE_SCOUT_GAP_THROUGH_STOP_FILL_UNMODELED",
+            "RANGE_SCOUT_STOP_SLIPPAGE_UNMODELED",
+            "RANGE_SCOUT_FINANCING_NOT_MODELED",
+            "RANGE_SCOUT_EXACT_GEOMETRY_LINEAGE_INVALID",
+            "RANGE_SCOUT_MULTIPLE_TESTING_NOT_PREREGISTERED",
+            "RANGE_SCOUT_LIVE_GATE_REPLAY_INCOMPLETE",
+        ):
+            self.assertIn(blocker, blockers)
+        self.assertNotIn("RANGE_SCOUT_TTL_CLOSE_LIVE_CONTRACT_MISMATCH", blockers)
+        self.assertIn("NOT_RANGE_ROTATION_ALIGNMENT", alignment["status"])
+        attached_markdown = range_replay.markdown_report(
+            {
+                "vehicle": {
+                    "exit_contract": range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+                    "minimum_pair_side_truth_window_coverage_rate": 1.0,
+                }
+            }
+        )
+        self.assertNotIn("Replay TTL_CLOSE after fill", attached_markdown)
+        self.assertIn("static predictive-SCOUT grid contract", attached_markdown)
+
+        incomplete_stats = {
+            **stats,
+            "truth_window_coverage_rate": 0.999,
+            "open_unresolved_results": 0,
+            "ambiguous_ordering_results": 0,
+        }
+        self.assertEqual(
+            range_replay._report_status(
+                [],
+                exit_contract=range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+                score_stats=incomplete_stats,
+            ),
+            "INCOMPLETE_TRUTH_UNDER_BROKER_ATTACHED_TP_SL_RESEARCH_CONTRACT",
+        )
+        self.assertIn(
+            "RANGE_SCOUT_INCOMPLETE_TRUTH_COVERAGE",
+            range_replay._adoption_blockers(
+                range_replay.BROKER_ATTACHED_TP_SL_CONTRACT,
+                score_stats=incomplete_stats,
+            ),
+        )
+
+    def test_attached_candidate_requires_all_outcomes_and_truth_resolved(self) -> None:
+        items = []
+        for day in range(1, 16):
+            for sample in range(3):
+                items.append(
+                    {
+                        "source_index": len(items),
+                        "timestamp_utc": f"2026-06-{day:02d}T00:00:{sample:02d}Z",
+                        "resolved_day_utc": f"2026-06-{day:02d}",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 5.0,
+                        "realized_pips": 5.0,
+                        "exit_reason": "TAKE_PROFIT",
+                        "scorable": True,
+                    }
+                )
+        items.append(
+            {
+                "source_index": len(items),
+                "timestamp_utc": "2026-06-15T01:00:00Z",
+                "resolved_day_utc": None,
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "take_profit_pips": 5.0,
+                "stop_loss_pips": 5.0,
+                "realized_pips": None,
+                "exit_reason": "OPEN_UNRESOLVED",
+                "scorable": False,
+            }
+        )
+        by_day = {f"2026-06-{day:02d}": 3 for day in range(1, 15)}
+        by_day["2026-06-15"] = 4
+
+        selected = range_replay.train_validation_selections(
+            items,
+            train_fraction=0.7,
+            min_train_fills=20,
+            min_validation_fills=10,
+            min_total_fills=30,
+            family_truth_coverage={
+                ("EUR_USD", "LONG"): {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "forecast_rows": 46,
+                    "complete_truth_windows": 46,
+                    "coverage_rate": 1.0,
+                    "forecast_rows_by_day": by_day,
+                    "complete_truth_windows_by_day": by_day,
+                }
+            },
+            minimum_truth_window_coverage_rate=1.0,
+            require_complete_outcome_resolution=True,
+        )
+
+        self.assertEqual(len(selected), 1)
+        self.assertFalse(selected[0]["outcome_resolution_complete"])
+        self.assertFalse(selected[0]["oos_powered"])
+        self.assertFalse(selected[0]["hypothesis_candidate"])
+
+    def test_attached_candidate_requires_exact_truth_coverage(self) -> None:
+        items = []
+        for day in range(1, 16):
+            for sample in range(3):
+                items.append(
+                    {
+                        "source_index": len(items),
+                        "timestamp_utc": f"2026-06-{day:02d}T00:00:{sample:02d}Z",
+                        "resolved_day_utc": f"2026-06-{day:02d}",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 5.0,
+                        "realized_pips": 5.0,
+                        "exit_reason": "TAKE_PROFIT",
+                        "scorable": True,
+                    }
+                )
+        forecast_by_day = {f"2026-06-{day:02d}": 3 for day in range(1, 16)}
+        complete_by_day = dict(forecast_by_day)
+        complete_by_day["2026-06-15"] = 2
+
+        selected = range_replay.train_validation_selections(
+            items,
+            train_fraction=0.7,
+            min_train_fills=20,
+            min_validation_fills=10,
+            min_total_fills=30,
+            family_truth_coverage={
+                ("EUR_USD", "LONG"): {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "forecast_rows": 45,
+                    "complete_truth_windows": 44,
+                    "coverage_rate": round(44 / 45, 6),
+                    "forecast_rows_by_day": forecast_by_day,
+                    "complete_truth_windows_by_day": complete_by_day,
+                }
+            },
+            minimum_truth_window_coverage_rate=1.0,
+            require_complete_outcome_resolution=True,
+        )
+
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(selected[0]["outcome_resolution_complete"])
+        self.assertFalse(selected[0]["oos_powered"])
+        self.assertFalse(selected[0]["hypothesis_candidate"])
+
 
 if __name__ == "__main__":
     unittest.main()

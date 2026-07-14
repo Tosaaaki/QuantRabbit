@@ -93,6 +93,10 @@ from quant_rabbit.strategy.lane_history_ledger import (
 from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context_evidence,
 )
+from quant_rabbit.strategy.range_vehicle_candidate_ledger import (
+    bind_range_vehicle_candidate_ids,
+    record_range_vehicle_candidates,
+)
 from quant_rabbit.strategy.failed_break_evidence import failed_break_for_side
 from quant_rabbit.strategy.price_action import structural_tp_target
 from quant_rabbit.strategy.profile import StrategyProfile, issues_to_dicts
@@ -6228,15 +6232,71 @@ class IntentGenerator:
         snapshot_path: Path | None,
     ) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        result_payloads = [asdict(item) for item in results]
+        bind_range_vehicle_candidate_ids(
+            result_payloads,
+            generated_at_utc=generated_at,
+        )
         payload = {
             "generated_at_utc": generated_at,
             "campaign_plan": str(self.campaign_plan),
             "strategy_profile": str(self.strategy_profile),
             "snapshot_path": str(snapshot_path) if snapshot_path else None,
             "self_improvement_p0_shadow_live_ready": _self_improvement_p0_shadow_summary(results),
-            "results": [asdict(item) for item in results],
+            "results": result_payloads,
         }
-        self.output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        serialized_bytes = serialized.encode("utf-8")
+        # Prepare the complete packet, append its candidate receipts, and only
+        # then atomically publish current state.  If ledger validation fails,
+        # the previous order_intents packet remains intact instead of exposing
+        # candidate ids that have no durable shadow receipt.  A crash after a
+        # ledger append but before replace can leave only a harmless SHADOW row
+        # with no live permission and no gateway-visible packet.
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=self.output_path.parent,
+                prefix=f".{self.output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(serialized_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary_path = Path(handle.name)
+            temporary_path.chmod(0o644)
+            record_range_vehicle_candidates(
+                payload["results"],
+                generated_at_utc=generated_at,
+                order_intents_path=self.output_path,
+                order_intents_serialized=serialized_bytes,
+                snapshot_path=snapshot_path,
+                pair_charts_path=self.pair_charts_path,
+                market_context_matrix_path=self.market_context_matrix_path,
+                campaign_plan_path=self.campaign_plan,
+                strategy_profile_path=self.strategy_profile,
+            )
+            # Make both a newly-created ledger entry and the prepared packet's
+            # directory entry durable before the packet can become current.
+            # Otherwise a crash immediately after replace could retain the new
+            # packet while losing the first ledger filename from the directory.
+            directory_fd = os.open(self.output_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            os.replace(temporary_path, self.output_path)
+            temporary_path = None
+            directory_fd = os.open(self.output_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def _write_report(
         self,
