@@ -14,6 +14,11 @@ from quant_rabbit.analysis.candles import (
     PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
     TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
     TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+    TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
     TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE,
     TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
     TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
@@ -3411,6 +3416,30 @@ def _bind_clean_oanda_mba_integrity(
             "latest_clean_timestamp_utc": latest_candle,
             "quarantine_details": [],
             "quarantine_details_truncated": 0,
+            "quarantine_details_window": {
+                "selection": TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+                "order": TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+                "limit": TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+                "start_index": 0,
+                "end_index_exclusive": 0,
+                "total_count": 0,
+                "total_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+                "published_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+                "omitted_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+                "total_timestamped_count": 0,
+                "published_timestamped_count": 0,
+                "omitted_timestamped_count": 0,
+                "latest_timestamp_utc": None,
+            },
         }
         view["candle_integrity"] = integrity
         timeframe_integrity[timeframe] = integrity

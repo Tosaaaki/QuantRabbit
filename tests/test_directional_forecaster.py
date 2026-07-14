@@ -16,6 +16,9 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
     TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
     TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
     TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
 )
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
@@ -26,6 +29,7 @@ from quant_rabbit.strategy.directional_forecaster import (
     FORECAST_OPERATING_SWING_HORIZON_MIN,
     TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS,
     TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS,
+    _valid_mba_integrity,
     synthesize_forecast as _synthesize_forecast,
 )
 
@@ -109,6 +113,30 @@ def _production_mba_integrity(*, recovered: bool) -> dict[str, object]:
             "spread_cap_pips": spread_cap_pips,
         }],
         "quarantine_details_truncated": 0,
+        "quarantine_details_window": {
+            "selection": TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+            "order": TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+            "limit": TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+            "start_index": 0,
+            "end_index_exclusive": 1,
+            "total_count": 1,
+            "total_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 1,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "published_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 1,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "omitted_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "total_timestamped_count": 1,
+            "published_timestamped_count": 1,
+            "omitted_timestamped_count": 0,
+            "latest_timestamp_utc": quarantine_timestamp,
+        },
     }
     m5_item = copy.deepcopy(item)
     m5_item.update({
@@ -134,6 +162,30 @@ def _production_mba_integrity(*, recovered: bool) -> dict[str, object]:
         "latest_complete_timestamp_utc": "2026-07-14T00:40:00+00:00",
         "latest_clean_timestamp_utc": "2026-07-14T00:40:00+00:00",
         "quarantine_details": [],
+        "quarantine_details_window": {
+            "selection": TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+            "order": TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+            "limit": TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+            "start_index": 0,
+            "end_index_exclusive": 0,
+            "total_count": 0,
+            "total_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "published_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "omitted_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "total_timestamped_count": 0,
+            "published_timestamped_count": 0,
+            "omitted_timestamped_count": 0,
+            "latest_timestamp_utc": None,
+        },
     })
     return {
         "schema": PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
@@ -1527,7 +1579,7 @@ class TechnicalCandleIntegrityForecastGateTest(unittest.TestCase):
         self.assertGreater(forecast.confidence, 0.0)
         self.assertNotIn(TECHNICAL_CANDLE_SPREAD_CONTAMINATED, forecast.drivers_against)
 
-    def test_claimed_clean_tail_cannot_bridge_a_quarantine_inside_recent_evidence(self) -> None:
+    def test_reordered_0042_then_0013_quarantines_cannot_fake_a_clean_tail(self) -> None:
         chart = self._chart(recovered=True)
         integrity = chart["technical_candle_integrity"]
         assert isinstance(integrity, dict)
@@ -1537,15 +1589,432 @@ class TechnicalCandleIntegrityForecastGateTest(unittest.TestCase):
         assert isinstance(item, dict)
         details = item["quarantine_details"]
         assert isinstance(details, list) and isinstance(details[-1], dict)
-        # Keep all receipt counts/booleans self-consistent, but move the last
-        # known quarantine inside the published 30-clean-candle claim.
-        details[-1]["timestamp_utc"] = "2026-07-14T00:42:00+00:00"
+        older = copy.deepcopy(details[-1])
+        recent = copy.deepcopy(details[-1])
+        recent["timestamp_utc"] = "2026-07-14T00:42:00+00:00"
+        older["timestamp_utc"] = "2026-07-14T00:13:00+00:00"
+        # Reproduce the bypass exactly: a quarantine inside the published
+        # clean window is placed before an older detail so a last-row-only
+        # verifier sees 00:13 and misses 00:42.
+        details[:] = [recent, older]
+        item["requested_count"] = 71
+        item["raw_entry_count"] = 71
+        item["complete_entry_count"] = 71
+        item["contaminated_count"] = 2
+        item["quarantined_count"] = 2
+        window = item["quarantine_details_window"]
+        assert isinstance(window, dict)
+        window.update({
+            "start_index": 0,
+            "end_index_exclusive": 2,
+            "total_count": 2,
+            "total_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "published_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "omitted_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "total_timestamped_count": 2,
+            "published_timestamped_count": 2,
+            "omitted_timestamped_count": 0,
+            "latest_timestamp_utc": "2026-07-14T00:13:00+00:00",
+        })
 
         forecast = self._production_forecast(chart)
 
         self.assertEqual(forecast.direction, "UNCLEAR")
         self.assertEqual(forecast.confidence, 0.0)
         self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_equal_time_reorder_or_duplicate_quarantine_is_rejected(self) -> None:
+        for case in (
+            "equal_time_reordered",
+            "equal_time_canonical",
+            "offset_equivalent",
+            "exact_duplicate",
+        ):
+            with self.subTest(case=case):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                details = item["quarantine_details"]
+                assert isinstance(details, list) and isinstance(details[0], dict)
+                first = copy.deepcopy(details[0])
+                second = copy.deepcopy(details[0])
+                if case == "equal_time_reordered":
+                    first["max_spread_pips"] = second["max_spread_pips"] + 1.0
+                elif case == "equal_time_canonical":
+                    second["max_spread_pips"] = first["max_spread_pips"] + 1.0
+                elif case == "offset_equivalent":
+                    second["timestamp_utc"] = "2026-07-14T00:13:00Z"
+                details[:] = [first, second]
+                item.update(
+                    {
+                        "requested_count": 71,
+                        "raw_entry_count": 71,
+                        "complete_entry_count": 71,
+                        "contaminated_count": 2,
+                        "quarantined_count": 2,
+                    }
+                )
+                window = item["quarantine_details_window"]
+                assert isinstance(window, dict)
+                window.update(
+                    {
+                        "start_index": 0,
+                        "end_index_exclusive": 2,
+                        "total_count": 2,
+                        "total_code_counts": {
+                            TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                            TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                        },
+                        "published_code_counts": {
+                            TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                            TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                        },
+                        "omitted_code_counts": {
+                            TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                            TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                        },
+                        "total_timestamped_count": 2,
+                        "published_timestamped_count": 2,
+                        "omitted_timestamped_count": 0,
+                    }
+                )
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    forecast.drivers_against,
+                )
+
+    def test_huge_integrity_integer_fails_closed_without_overflow(self) -> None:
+        for field in ("normal_spread_pips", "quarantine_max_spread_pips"):
+            with self.subTest(field=field):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                if field == "normal_spread_pips":
+                    item["normal_spread_pips"] = 10**1000
+                else:
+                    details = item["quarantine_details"]
+                    assert isinstance(details, list) and isinstance(details[0], dict)
+                    details[0]["max_spread_pips"] = 10**1000
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    forecast.drivers_against,
+                )
+
+    def test_noncanonical_latest_quarantine_timestamp_is_rejected(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        window = item["quarantine_details_window"]
+        assert isinstance(window, dict)
+        window["latest_timestamp_utc"] = "2026-07-14T09:13:00+09:00"
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(
+            TECHNICAL_CANDLE_PROVENANCE_INVALID,
+            forecast.drivers_against,
+        )
+
+    def test_null_timestamp_spread_detail_cannot_fake_a_clean_tail(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        details = item["quarantine_details"]
+        assert isinstance(details, list) and isinstance(details[0], dict)
+        older = copy.deepcopy(details[0])
+        hidden = copy.deepcopy(details[0])
+        hidden["timestamp_utc"] = None
+        details[:] = [hidden, older]
+        item.update({
+            "requested_count": 71,
+            "raw_entry_count": 71,
+            "complete_entry_count": 71,
+            "contaminated_count": 2,
+            "quarantined_count": 2,
+        })
+        window = item["quarantine_details_window"]
+        assert isinstance(window, dict)
+        window.update({
+            "start_index": 0,
+            "end_index_exclusive": 2,
+            "total_count": 2,
+            "total_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "published_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "omitted_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "total_timestamped_count": 1,
+            "published_timestamped_count": 1,
+            "omitted_timestamped_count": 0,
+            "latest_timestamp_utc": older["timestamp_utc"],
+        })
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_relabelled_quarantine_code_cannot_escape_malformed_count(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        details = item["quarantine_details"]
+        assert isinstance(details, list) and isinstance(details[0], dict)
+        older = copy.deepcopy(details[0])
+        details[:] = [
+            {
+                "timestamp_utc": None,
+                "code": TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                "reason": "timestamp missing or malformed",
+            },
+            older,
+        ]
+        item.update({
+            "requested_count": 71,
+            "raw_entry_count": 71,
+            "complete_entry_count": 71,
+            "contaminated_count": 2,
+            "quarantined_count": 2,
+        })
+        window = item["quarantine_details_window"]
+        assert isinstance(window, dict)
+        window.update({
+            "start_index": 0,
+            "end_index_exclusive": 2,
+            "total_count": 2,
+            "total_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 2,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "published_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 1,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 1,
+            },
+            "omitted_code_counts": {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+            "total_timestamped_count": 1,
+            "published_timestamped_count": 1,
+            "omitted_timestamped_count": 0,
+            "latest_timestamp_utc": older["timestamp_utc"],
+        })
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_valid_truncated_mixed_window_matches_producer_contract(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        views = chart["views"]
+        assert isinstance(integrity, dict) and isinstance(views, list)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        spread_cap = item["spread_cap_pips"]
+        spread_details = [
+            {
+                "timestamp_utc": f"2026-07-14T00:{minute:02d}:00+00:00",
+                "code": TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                "max_spread_pips": float(spread_cap) + 1.0,
+                "spread_cap_pips": spread_cap,
+            }
+            for minute in range(7, 14)
+        ]
+        item.update({
+            "requested_count": 78,
+            "raw_entry_count": 78,
+            "complete_entry_count": 78,
+            "contaminated_count": 7,
+            "malformed_count": 2,
+            "quarantined_count": 9,
+            "provenance_complete": False,
+            "forecast_blocking": True,
+            "codes": [
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID,
+            ],
+            "blocking_codes": [TECHNICAL_CANDLE_PROVENANCE_INVALID],
+            "evaluation_status": "BLOCKED",
+            "quarantine_details": [
+                {
+                    "timestamp_utc": None,
+                    "code": TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    "reason": "candles[1] is not an object",
+                },
+                *spread_details,
+            ],
+            "quarantine_details_truncated": 1,
+            "quarantine_details_window": {
+                "selection": TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+                "order": TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+                "limit": TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+                "start_index": 1,
+                "end_index_exclusive": 9,
+                "total_count": 9,
+                "total_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 7,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 2,
+                },
+                "published_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 7,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 1,
+                },
+                "omitted_code_counts": {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 0,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 1,
+                },
+                "total_timestamped_count": 7,
+                "published_timestamped_count": 7,
+                "omitted_timestamped_count": 0,
+                "latest_timestamp_utc": "2026-07-14T00:13:00+00:00",
+            },
+        })
+        view = next(
+            candidate
+            for candidate in views
+            if isinstance(candidate, dict) and candidate.get("granularity") == "M1"
+        )
+
+        self.assertTrue(
+            _valid_mba_integrity(
+                item,
+                chart_generated_at=datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc),
+                view=view,
+                forecast_now=datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_quarantine_window_boolean_counts_fail_closed(self) -> None:
+        for path in (
+            ("limit",),
+            ("start_index",),
+            ("end_index_exclusive",),
+            ("total_count",),
+            ("total_code_counts", TECHNICAL_CANDLE_SPREAD_CONTAMINATED),
+            ("published_code_counts", TECHNICAL_CANDLE_SPREAD_CONTAMINATED),
+            ("omitted_code_counts", TECHNICAL_CANDLE_PROVENANCE_INVALID),
+            ("total_timestamped_count",),
+            ("published_timestamped_count",),
+            ("omitted_timestamped_count",),
+        ):
+            with self.subTest(path=path):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                window = item["quarantine_details_window"]
+                assert isinstance(window, dict)
+                if len(path) == 1:
+                    window[path[0]] = bool(window[path[0]])
+                else:
+                    nested = window[path[0]]
+                    assert isinstance(nested, dict)
+                    nested[path[1]] = bool(nested[path[1]])
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    forecast.drivers_against,
+                )
+
+    def test_quarantine_window_float_counts_fail_closed(self) -> None:
+        for path in (
+            ("limit",),
+            ("start_index",),
+            ("end_index_exclusive",),
+            ("total_count",),
+            ("total_code_counts", TECHNICAL_CANDLE_SPREAD_CONTAMINATED),
+            ("published_code_counts", TECHNICAL_CANDLE_SPREAD_CONTAMINATED),
+            ("omitted_code_counts", TECHNICAL_CANDLE_PROVENANCE_INVALID),
+            ("total_timestamped_count",),
+            ("published_timestamped_count",),
+            ("omitted_timestamped_count",),
+        ):
+            with self.subTest(path=path):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                window = item["quarantine_details_window"]
+                assert isinstance(window, dict)
+                if len(path) == 1:
+                    window[path[0]] = float(window[path[0]])
+                else:
+                    nested = window[path[0]]
+                    assert isinstance(nested, dict)
+                    nested[path[1]] = float(nested[path[1]])
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    forecast.drivers_against,
+                )
 
     def test_count_and_recent_cadence_tampering_fail_closed(self) -> None:
         count_tamper = self._chart(recovered=True)

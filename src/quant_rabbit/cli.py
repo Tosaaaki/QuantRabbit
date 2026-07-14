@@ -53,6 +53,7 @@ from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
 from quant_rabbit.execution_ledger import (
     ExecutionLedger,
+    gateway_receipt_sent_count,
     validated_gateway_receipt_sent_mutations,
 )
 from quant_rabbit.execution_timing_audit import (
@@ -73,6 +74,9 @@ from quant_rabbit.market_read_overlay import (
     prepare_market_read_baseline,
 )
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.position_execution_evidence import (
+    load_position_execution_snapshot_evidence,
+)
 from quant_rabbit.predictive_scout import write_predictive_scout_forward_proof
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
@@ -3190,6 +3194,7 @@ def _cycle_gateway_mutation_digest(
     current_cycle_sent_count = 0
     relevant_step_count = 0
     integrity_blocked = False
+    seen_cycle_mutation_identities: dict[str, dict[str, Any]] = {}
     for command, path in receipt_specs:
         matching_steps = [
             item
@@ -3251,12 +3256,46 @@ def _cycle_gateway_mutation_digest(
             receipts.append(receipt)
             continue
 
+        observed_sent_count: int | None = None
         try:
+            observed_sent_count = gateway_receipt_sent_count(
+                kind="position_execution",
+                payload=payload,
+            )
+        except ValueError as exc:
+            receipt["sent_count_error"] = str(exc)
+            observed_sent_count = _consistent_detailed_gateway_sent_count(
+                payload
+            )
+        else:
+            pass
+        if observed_sent_count is not None:
+            receipt["sent_count"] = observed_sent_count
+            # Preserve independently consistent detailed broker exposure even
+            # if a summary boolean or deeper response/evidence validation
+            # fails closed.
+            current_cycle_sent_count += observed_sent_count
+
+        try:
+            receipt_broker_snapshot = broker_snapshot
+            if (
+                command == "position-execution"
+                and observed_sent_count is not None
+                and observed_sent_count > 0
+            ):
+                receipt_broker_snapshot = (
+                    load_position_execution_snapshot_evidence(
+                        receipt_payload=payload,
+                        receipt_path=path,
+                    )
+                )
             sent_mutations = validated_gateway_receipt_sent_mutations(
                 schema=command,
                 payload=payload,
                 broker_snapshot=(
-                    broker_snapshot if isinstance(broker_snapshot, dict) else None
+                    receipt_broker_snapshot
+                    if isinstance(receipt_broker_snapshot, dict)
+                    else None
                 ),
             )
         except ValueError as exc:
@@ -3267,9 +3306,18 @@ def _cycle_gateway_mutation_digest(
             continue
 
         sent_count = len(sent_mutations)
-        receipt["sent_count"] = sent_count
-        receipt["integrity_status"] = "CURRENT_CYCLE_RECEIPT_VERIFIED"
-        current_cycle_sent_count += sent_count
+        if observed_sent_count is None:
+            receipt["sent_count"] = sent_count
+            current_cycle_sent_count += sent_count
+        elif sent_count != observed_sent_count:
+            receipt["integrity_status"] = "SENT_EVIDENCE_INVALID"
+            receipt["integrity_error"] = (
+                "strict sent mutation count contradicts independently observed "
+                "receipt sent count"
+            )
+            integrity_blocked = True
+            receipts.append(receipt)
+            continue
         receipt["sent_mutations"] = [
             {
                 "trade_id": mutation.get("trade_id"),
@@ -3278,10 +3326,12 @@ def _cycle_gateway_mutation_digest(
                 "management_action": mutation.get("management_action"),
                 "request_type": mutation.get("request_type"),
                 "units": mutation.get("units"),
+                "request": mutation.get("request"),
                 "send_boundary_checked_at_utc": mutation.get(
                     "send_boundary_checked_at_utc"
                 ),
                 "order_id": mutation.get("order_id"),
+                "order_ids": mutation.get("order_ids"),
                 "fill_transaction_id": mutation.get("fill_transaction_id"),
                 "response_transaction_ids": mutation.get(
                     "response_transaction_ids"
@@ -3289,6 +3339,54 @@ def _cycle_gateway_mutation_digest(
             }
             for mutation in sent_mutations[:8]
         ]
+        cross_receipt_conflicts: list[dict[str, str]] = []
+        for mutation_index, mutation in enumerate(sent_mutations):
+            mutation_origin = (command, mutation_index)
+            identity_groups = {
+                "order_id": mutation.get("order_ids") or [],
+                "transaction_id": mutation.get("response_transaction_ids")
+                or [],
+            }
+            for identity_type, raw_values in identity_groups.items():
+                for raw_value in raw_values:
+                    identity = str(raw_value)
+                    prior = seen_cycle_mutation_identities.get(identity)
+                    prior_origin = (
+                        (str(prior["command"]), int(prior["mutation_index"]))
+                        if prior is not None
+                        else None
+                    )
+                    if prior_origin is not None and prior_origin != mutation_origin:
+                        cross_receipt_conflicts.append(
+                            {
+                                "identity_type": identity_type,
+                                "identity": identity,
+                                "prior_identity_types": ",".join(
+                                    sorted(prior["identity_types"])
+                                ),
+                                "prior_command": str(prior["command"]),
+                                "current_command": command,
+                            }
+                        )
+                    elif prior is None:
+                        seen_cycle_mutation_identities[identity] = {
+                            "command": command,
+                            "mutation_index": mutation_index,
+                            "identity_types": {identity_type},
+                        }
+                    else:
+                        prior["identity_types"].add(identity_type)
+        if cross_receipt_conflicts:
+            receipt["integrity_status"] = (
+                "CROSS_RECEIPT_MUTATION_IDENTITY_CONFLICT"
+            )
+            receipt["integrity_error"] = (
+                "current cycle reuses broker mutation identities across commands"
+            )
+            receipt["cross_receipt_conflicts"] = cross_receipt_conflicts[:32]
+            integrity_blocked = True
+        else:
+            receipt["integrity_status"] = "CURRENT_CYCLE_RECEIPT_VERIFIED"
         receipts.append(receipt)
 
     if relevant_step_count == 0:
@@ -3305,6 +3403,43 @@ def _cycle_gateway_mutation_digest(
         "receipt_count": len(receipts),
         "receipts": receipts,
     }
+
+
+def _consistent_detailed_gateway_sent_count(
+    payload: dict[str, Any],
+) -> int | None:
+    """Recover only an exact count shared by detailed receipt views.
+
+    A contradictory top-level ``sent`` flag must not erase exposure proved by
+    matching sent_count/actions/results.  Conflicting or malformed detailed
+    views remain uncountable and the receipt is still integrity-blocked.
+    """
+
+    counts: list[int] = []
+    if "sent_count" in payload:
+        raw_count = payload.get("sent_count")
+        if (
+            not isinstance(raw_count, int)
+            or isinstance(raw_count, bool)
+            or raw_count < 0
+        ):
+            return None
+        counts.append(raw_count)
+    for collection_name in ("actions", "results"):
+        if collection_name not in payload:
+            continue
+        collection = payload.get(collection_name)
+        if not isinstance(collection, list):
+            return None
+        count = 0
+        for item in collection:
+            if not isinstance(item, dict) or not isinstance(item.get("sent"), bool):
+                return None
+            count += int(item["sent"])
+        counts.append(count)
+    if not counts or len(set(counts)) != 1:
+        return None
+    return counts[0]
 
 
 def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: bool) -> dict[str, Any]:

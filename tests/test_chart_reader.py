@@ -207,8 +207,8 @@ class ChartReaderTest(unittest.TestCase):
                     "granularity": granularity,
                     "candles": _fresh_fast_mba_entries(
                         granularity=granularity,
-                        count=60,
-                        contaminated_indices={29},
+                        count=70,
+                        contaminated_indices=set(range(40)),
                     ),
                 }
 
@@ -216,7 +216,7 @@ class ChartReaderTest(unittest.TestCase):
             "EUR_USD",
             client=_Client(),
             timeframes=("M1", "M5"),
-            count=60,
+            count=70,
         )
         pair_chart = chart.to_dict()
         pair_chart["generated_at_utc"] = "2026-07-14T00:45:00+00:00"
@@ -238,6 +238,43 @@ class ChartReaderTest(unittest.TestCase):
 
         self.assertEqual(chart.technical_candle_integrity["evaluation_status"], "DEGRADED")
         self.assertFalse(chart.technical_candle_integrity["forecast_blocking"])
+        for timeframe in ("M1", "M5"):
+            receipt = chart.technical_candle_integrity["timeframes"][timeframe]
+            details = receipt["quarantine_details"]
+            window = receipt["quarantine_details_window"]
+            self.assertEqual(receipt["contaminated_count"], 40)
+            self.assertEqual(len(details), 8)
+            self.assertEqual(receipt["quarantine_details_truncated"], 32)
+            self.assertEqual(window["start_index"], 32)
+            self.assertEqual(window["total_count"], 40)
+            self.assertEqual(
+                window["total_code_counts"],
+                {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 40,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+            )
+            self.assertEqual(
+                window["published_code_counts"],
+                {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 8,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+            )
+            self.assertEqual(
+                window["omitted_code_counts"],
+                {
+                    TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 32,
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+                },
+            )
+            self.assertEqual(window["total_timestamped_count"], 40)
+            self.assertEqual(window["published_timestamped_count"], 8)
+            self.assertEqual(window["omitted_timestamped_count"], 32)
+            self.assertEqual(
+                window["latest_timestamp_utc"],
+                details[-1]["timestamp_utc"],
+            )
         self.assertEqual([view.indicators.candles_count for view in chart.views], [30, 30])
         self.assertEqual(forecast.direction, "UP")
         self.assertGreater(forecast.confidence, 0.0)

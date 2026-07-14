@@ -11,6 +11,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -1045,6 +1046,19 @@ def validated_gateway_receipt_sent_mutations(
     if not isinstance(actions, list):
         raise ValueError("current gateway receipt actions must be an array")
     _validate_current_mutation_attempt_rows(actions, context="actions")
+    if schema == "position-execution" and sent_count > 0:
+        seen_action_trade_ids: set[str] = set()
+        for index, item in enumerate(actions):
+            trade_id = _required_receipt_text(
+                item.get("trade_id"),
+                f"actions[{index}].trade_id",
+            )
+            if trade_id in seen_action_trade_ids:
+                raise ValueError(
+                    "current position-execution receipt has duplicate action "
+                    f"trade_id={trade_id}"
+                )
+            seen_action_trade_ids.add(trade_id)
     sent_actions = [item for item in actions if item.get("sent") is True]
     if len(sent_actions) != sent_count:
         raise ValueError(
@@ -1079,6 +1093,7 @@ def validated_gateway_receipt_sent_mutations(
         for index, item in enumerate(actions)
         if item.get("sent") is True
     ]
+    _validate_unique_sent_mutation_identities(normalized_actions)
     _validate_mutations_against_broker_snapshot(
         mutations=normalized_actions,
         broker_snapshot=broker_snapshot,
@@ -1294,6 +1309,7 @@ def _validated_gateway_mutation_row(
             f"current gateway receipt {context} trade_id contradicts request.trade_id"
         )
     units: str | None = None
+    dependent_order_request: dict[str, dict[str, Any]] | None = None
     if request_type == "CLOSE":
         units = _required_receipt_text(
             request.get("units"),
@@ -1301,10 +1317,10 @@ def _validated_gateway_mutation_row(
         )
     else:
         order_request = request.get("order_request")
-        if not isinstance(order_request, dict) or not order_request:
-            raise ValueError(
-                f"current gateway receipt {context}.request.order_request must be a non-empty object"
-            )
+        dependent_order_request = _validated_dependent_order_request(
+            order_request,
+            context=context,
+        )
 
     response = item.get("response")
     if not isinstance(response, dict) or not response:
@@ -1321,6 +1337,14 @@ def _validated_gateway_mutation_row(
             f"current gateway receipt {context}.response contains broker reject "
             "transaction evidence alongside a claimed sent mutation"
         )
+    _validate_gateway_response_transaction_contract(
+        response=response,
+        response_identity=response_identity,
+        request_type=request_type,
+        request_orders=dependent_order_request,
+        trade_id=trade_id,
+        context=context,
+    )
     if not response_identity["transaction_ids"]:
         raise ValueError(
             f"current gateway receipt {context}.response has no broker transaction identity"
@@ -1412,6 +1436,10 @@ def _validated_gateway_mutation_row(
             f"current gateway receipt {context}.response lacks replacement order identity"
         )
     else:
+        if dependent_order_request is None:
+            raise ValueError(
+                f"current gateway receipt {context}.request.order_request is unavailable"
+            )
         transaction_trade_ids = response_identity["transaction_trade_ids"]
         for transaction_key in response_identity["order_transaction_keys"]:
             if set(transaction_trade_ids.get(transaction_key, ())) != {trade_id}:
@@ -1419,6 +1447,12 @@ def _validated_gateway_mutation_row(
                     f"current gateway receipt {context}.response replacement order "
                     "must carry the exact broker trade identity"
                 )
+        _validate_dependent_order_response(
+            request_orders=dependent_order_request,
+            response=response,
+            response_identity=response_identity,
+            context=context,
+        )
 
     return {
         "trade_id": trade_id,
@@ -1436,6 +1470,419 @@ def _validated_gateway_mutation_row(
         "fill_transaction_id": fill_transaction_id,
         "response_transaction_ids": response_identity["transaction_ids"],
     }
+
+
+_DEPENDENT_ORDER_RESPONSE_CONTRACT = {
+    "takeProfit": ("takeProfitOrderTransaction", "TAKE_PROFIT_ORDER"),
+    "stopLoss": ("stopLossOrderTransaction", "STOP_LOSS_ORDER"),
+}
+
+
+def _validated_dependent_order_request(
+    value: Any,
+    *,
+    context: str,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(
+            f"current gateway receipt {context}.request.order_request must be a non-empty object"
+        )
+    unknown = set(value).difference(_DEPENDENT_ORDER_RESPONSE_CONTRACT)
+    if unknown:
+        raise ValueError(
+            f"current gateway receipt {context}.request.order_request contains unsupported order types"
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for request_key, raw_order in value.items():
+        if not isinstance(raw_order, dict) or set(raw_order) != {
+            "price",
+            "timeInForce",
+        }:
+            raise ValueError(
+                f"current gateway receipt {context}.request.order_request.{request_key} "
+                "must contain exact price/timeInForce fields"
+            )
+        price_text = _required_receipt_text(
+            raw_order.get("price"),
+            f"{context}.request.order_request.{request_key}.price",
+        )
+        price = _strict_positive_decimal(
+            price_text,
+            field=f"{context}.request.order_request.{request_key}.price",
+        )
+        time_in_force = _required_receipt_text(
+            raw_order.get("timeInForce"),
+            f"{context}.request.order_request.{request_key}.timeInForce",
+        )
+        normalized[request_key] = {
+            "price": price,
+            "time_in_force": time_in_force,
+        }
+    return normalized
+
+
+def _validate_dependent_order_response(
+    *,
+    request_orders: dict[str, dict[str, Any]],
+    response: dict[str, Any],
+    response_identity: dict[str, Any],
+    context: str,
+) -> None:
+    expected_transaction_keys = {
+        _DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]
+        for request_key in request_orders
+    }
+    actual_transaction_keys = set(response_identity["order_transaction_keys"])
+    if actual_transaction_keys != expected_transaction_keys:
+        raise ValueError(
+            f"current gateway receipt {context}.response dependent-order transaction "
+            "types contradict request.order_request"
+        )
+    for request_key, request_order in request_orders.items():
+        transaction_key, expected_type = _DEPENDENT_ORDER_RESPONSE_CONTRACT[
+            request_key
+        ]
+        transaction = response.get(transaction_key)
+        if not isinstance(transaction, dict):
+            raise ValueError(
+                f"current gateway receipt {context}.response.{transaction_key} "
+                "must be an object"
+            )
+        if transaction.get("type") != expected_type:
+            raise ValueError(
+                f"current gateway receipt {context}.response.{transaction_key}.type "
+                "contradicts request.order_request"
+            )
+        response_price_text = _required_receipt_text(
+            transaction.get("price"),
+            f"{context}.response.{transaction_key}.price",
+        )
+        response_price = _strict_positive_decimal(
+            response_price_text,
+            field=f"{context}.response.{transaction_key}.price",
+        )
+        if response_price != request_order["price"]:
+            raise ValueError(
+                f"current gateway receipt {context}.response.{transaction_key}.price "
+                "contradicts request.order_request"
+            )
+        response_time_in_force = _required_receipt_text(
+            transaction.get("timeInForce"),
+            f"{context}.response.{transaction_key}.timeInForce",
+        )
+        if response_time_in_force != request_order["time_in_force"]:
+            raise ValueError(
+                f"current gateway receipt {context}.response.{transaction_key}.timeInForce "
+                "contradicts request.order_request"
+            )
+
+
+def _validate_gateway_response_transaction_contract(
+    *,
+    response: dict[str, Any],
+    response_identity: dict[str, Any],
+    request_type: str,
+    request_orders: dict[str, dict[str, Any]] | None,
+    trade_id: str,
+    context: str,
+) -> None:
+    """Reject transaction objects outside the exact OANDA response surface."""
+
+    actual_keys = set(response_identity["transaction_object_keys"])
+    allowed_top_level_keys = actual_keys | {
+        "relatedTransactionIDs",
+        "lastTransactionID",
+    }
+    if set(response) != allowed_top_level_keys:
+        raise ValueError(
+            f"current gateway receipt {context}.response contains unsupported "
+            "top-level fields or local error evidence"
+        )
+    if request_type == "CLOSE":
+        expected_keys = {"orderCreateTransaction", "orderFillTransaction"}
+        if actual_keys != expected_keys:
+            raise ValueError(
+                f"current gateway receipt {context}.response close transaction "
+                "objects contradict the exact OANDA trade-close response contract"
+            )
+        return
+
+    if request_orders is None:
+        raise ValueError(
+            f"current gateway receipt {context}.request.order_request is unavailable"
+        )
+    if set(response_identity["transaction_object_ids"]) != set(
+        response_identity["transaction_ids"]
+    ):
+        raise ValueError(
+            f"current gateway receipt {context}.response dependent-order transaction "
+            "object IDs must exactly match relatedTransactionIDs"
+        )
+    expected_types: dict[str, str] = {}
+    required_keys: set[str] = set()
+    for request_key in request_orders:
+        creation_key, creation_type = _DEPENDENT_ORDER_RESPONSE_CONTRACT[
+            request_key
+        ]
+        required_keys.add(creation_key)
+        expected_types.update(
+            {
+                creation_key: creation_type,
+                f"{request_key}OrderCancelTransaction": "ORDER_CANCEL",
+                f"{request_key}OrderFillTransaction": "ORDER_FILL",
+                f"{request_key}OrderCreatedCancelTransaction": "ORDER_CANCEL",
+            }
+        )
+    if not required_keys.issubset(actual_keys) or not actual_keys.issubset(
+        expected_types
+    ):
+        raise ValueError(
+            f"current gateway receipt {context}.response dependent-order transaction "
+            "objects contradict the exact requested OANDA response contract"
+        )
+    fill_keys = {
+        key for key in actual_keys if key.endswith("OrderFillTransaction")
+    }
+    if len(fill_keys) > 1:
+        raise ValueError(
+            f"current gateway receipt {context}.response carries multiple "
+            "dependent-order fill identities"
+        )
+    for request_key in request_orders:
+        if (
+            f"{request_key}OrderFillTransaction" in actual_keys
+            and f"{request_key}OrderCreatedCancelTransaction" in actual_keys
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response {request_key} "
+                "cannot be both immediately filled and immediately cancelled"
+            )
+    for transaction_key in actual_keys:
+        transaction = response.get(transaction_key)
+        expected_type = expected_types[transaction_key]
+        if (
+            not isinstance(transaction, dict)
+            or transaction.get("type") != expected_type
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response.{transaction_key}.type "
+                "contradicts the exact OANDA response contract"
+            )
+
+        if (
+            transaction_key.endswith("OrderCancelTransaction")
+            and not transaction_key.endswith("OrderCreatedCancelTransaction")
+        ):
+            _required_receipt_text(
+                transaction.get("orderID"),
+                f"{context}.response.{transaction_key}.orderID",
+            )
+        elif transaction_key.endswith("OrderFillTransaction"):
+            request_key = transaction_key.removesuffix("OrderFillTransaction")
+            creation_key = _DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]
+            creation = response.get(creation_key)
+            fill_trade_ids = set(
+                response_identity["transaction_trade_ids"].get(
+                    transaction_key,
+                    (),
+                )
+            )
+            expected_reason = {
+                "takeProfit": "TAKE_PROFIT_ORDER",
+                "stopLoss": "STOP_LOSS_ORDER",
+            }[request_key]
+            if (
+                not isinstance(creation, dict)
+                or fill_trade_ids != {trade_id}
+                or transaction.get("reason") != expected_reason
+                or _required_receipt_text(
+                    transaction.get("orderID"),
+                    f"{context}.response.{transaction_key}.orderID",
+                )
+                != _required_receipt_text(
+                    creation.get("id"),
+                    f"{context}.response.{creation_key}.id",
+                )
+            ):
+                raise ValueError(
+                    f"current gateway receipt {context}.response.{transaction_key} "
+                    "does not bind the exact requested order/trade fill"
+                )
+        elif transaction_key.endswith("OrderCreatedCancelTransaction"):
+            request_key = transaction_key.removesuffix(
+                "OrderCreatedCancelTransaction"
+            )
+            creation_key = _DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]
+            creation = response.get(creation_key)
+            _required_receipt_text(
+                transaction.get("reason"),
+                f"{context}.response.{transaction_key}.reason",
+            )
+            if (
+                not isinstance(creation, dict)
+                or _required_receipt_text(
+                    transaction.get("orderID"),
+                    f"{context}.response.{transaction_key}.orderID",
+                )
+                != _required_receipt_text(
+                    creation.get("id"),
+                    f"{context}.response.{creation_key}.id",
+                )
+            ):
+                raise ValueError(
+                    f"current gateway receipt {context}.response.{transaction_key}.orderID "
+                    "contradicts its requested order transaction"
+                )
+
+    for request_key in request_orders:
+        creation_key = _DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]
+        cancel_key = f"{request_key}OrderCancelTransaction"
+        creation = response.get(creation_key)
+        cancel = response.get(cancel_key)
+        if not isinstance(creation, dict):
+            raise ValueError(
+                f"current gateway receipt {context}.response.{creation_key} "
+                "must be an object"
+            )
+        if cancel is None:
+            if any(
+                field in creation
+                for field in ("replacesOrderID", "cancellingTransactionID")
+            ):
+                raise ValueError(
+                    f"current gateway receipt {context}.response.{creation_key} "
+                    "claims replacement linkage without its cancel transaction"
+                )
+            continue
+        if not isinstance(cancel, dict):
+            raise ValueError(
+                f"current gateway receipt {context}.response.{cancel_key} "
+                "must be an object"
+            )
+        creation_id = _required_receipt_text(
+            creation.get("id"),
+            f"{context}.response.{creation_key}.id",
+        )
+        cancel_id = _required_receipt_text(
+            cancel.get("id"),
+            f"{context}.response.{cancel_key}.id",
+        )
+        cancelled_order_id = _required_receipt_text(
+            cancel.get("orderID"),
+            f"{context}.response.{cancel_key}.orderID",
+        )
+        if (
+            cancel.get("reason") != "CLIENT_REQUEST_REPLACED"
+            or _required_receipt_text(
+                cancel.get("replacedByOrderID"),
+                f"{context}.response.{cancel_key}.replacedByOrderID",
+            )
+            != creation_id
+            or _required_receipt_text(
+                creation.get("replacesOrderID"),
+                f"{context}.response.{creation_key}.replacesOrderID",
+            )
+            != cancelled_order_id
+            or _required_receipt_text(
+                creation.get("cancellingTransactionID"),
+                f"{context}.response.{creation_key}.cancellingTransactionID",
+            )
+            != cancel_id
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response {request_key} "
+                "replacement linkage contradicts its cancel/create transactions"
+            )
+
+    creation_ids = [
+        _required_receipt_text(
+            response[_DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]].get("id"),
+            (
+                f"{context}.response."
+                f"{_DEPENDENT_ORDER_RESPONSE_CONTRACT[request_key][0]}.id"
+            ),
+        )
+        for request_key in request_orders
+    ]
+    cancelled_order_ids = [
+        _required_receipt_text(
+            response[f"{request_key}OrderCancelTransaction"].get("orderID"),
+            f"{context}.response.{request_key}OrderCancelTransaction.orderID",
+        )
+        for request_key in request_orders
+        if isinstance(response.get(f"{request_key}OrderCancelTransaction"), dict)
+    ]
+    if len(creation_ids) != len(set(creation_ids)):
+        raise ValueError(
+            f"current gateway receipt {context}.response reuses a new order identity "
+            "across requested prefixes"
+        )
+    if len(cancelled_order_ids) != len(set(cancelled_order_ids)):
+        raise ValueError(
+            f"current gateway receipt {context}.response reuses a cancelled order "
+            "identity across requested prefixes"
+        )
+    if set(creation_ids).intersection(cancelled_order_ids):
+        raise ValueError(
+            f"current gateway receipt {context}.response replacement cancellation "
+            "targets a new requested order identity"
+        )
+    if set(cancelled_order_ids).intersection(
+        response_identity["transaction_object_ids"]
+    ):
+        raise ValueError(
+            f"current gateway receipt {context}.response replacement cancellation "
+            "target reuses a current response transaction identity"
+        )
+
+
+def _strict_positive_decimal(value: str, *, field: str) -> Decimal:
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(
+            f"current gateway receipt {field} must be a finite positive decimal"
+        ) from exc
+    if not parsed.is_finite() or parsed <= 0:
+        raise ValueError(
+            f"current gateway receipt {field} must be a finite positive decimal"
+        )
+    return parsed
+
+
+def _validate_unique_sent_mutation_identities(
+    mutations: list[dict[str, Any]],
+) -> None:
+    seen_trade_ids: set[str] = set()
+    seen_broker_identities: dict[str, int] = {}
+    for mutation_index, mutation in enumerate(mutations):
+        trade_id = str(mutation["trade_id"])
+        if trade_id in seen_trade_ids:
+            raise ValueError(
+                f"current gateway receipt has duplicate sent trade_id={trade_id}"
+            )
+        seen_trade_ids.add(trade_id)
+        identity_groups = (
+            ("order", mutation.get("order_ids") or ()),
+            ("transaction", mutation.get("response_transaction_ids") or ()),
+        )
+        for identity_type, raw_values in identity_groups:
+            for raw_value in raw_values:
+                identity = str(raw_value)
+                prior_mutation_index = seen_broker_identities.get(identity)
+                if (
+                    prior_mutation_index is not None
+                    and prior_mutation_index != mutation_index
+                ):
+                    raise ValueError(
+                        f"current gateway receipt has duplicate sent {identity_type} "
+                        f"identity={identity} across broker order/transaction "
+                        "mutation identities"
+                    )
+                # OANDA commonly uses the create transaction id as the broker
+                # order id.  That cross-kind overlap is valid only inside the
+                # same mutation; another mutation may not reuse the identity.
+                seen_broker_identities[identity] = mutation_index
 
 
 def _validate_current_mutation_attempt_rows(
@@ -1596,11 +2043,13 @@ def _gateway_response_identity(response: dict[str, Any]) -> dict[str, Any]:
     last_transaction_id = last_transaction_id.strip()
 
     transaction_object_ids: list[str] = []
+    transaction_object_keys: list[str] = []
     trade_ids: list[str] = []
     order_ids: list[str] = []
+    referenced_order_ids: list[str] = []
     instruments: list[str] = []
     owners: list[str] = []
-    fill_transaction_id: str | None = None
+    fill_transaction_ids: list[str] = []
     fill_order_id: str | None = None
     order_create_transaction_id: str | None = None
     order_transaction_keys: list[str] = []
@@ -1622,10 +2071,18 @@ def _gateway_response_identity(response: dict[str, Any]) -> dict[str, Any]:
             f"response.{key}.id",
         )
         transaction_object_ids.append(transaction_id)
+        transaction_object_keys.append(key)
+        if "orderID" in value:
+            referenced_order_ids.append(
+                _required_receipt_text(
+                    value.get("orderID"),
+                    f"response.{key}.orderID",
+                )
+            )
         if "RejectTransaction" in key:
             rejection_transaction_keys.append(key)
-        if key == "orderFillTransaction":
-            fill_transaction_id = transaction_id
+        if key == "orderFillTransaction" or key.endswith("OrderFillTransaction"):
+            fill_transaction_ids.append(transaction_id)
         if key == "orderCreateTransaction":
             order_create_transaction_id = transaction_id
         is_order_transaction = key == "orderCreateTransaction" or (
@@ -1713,6 +2170,9 @@ def _gateway_response_identity(response: dict[str, Any]) -> dict[str, Any]:
             )
 
     order_id = order_ids[0] if order_ids else fill_order_id
+    fill_transaction_id = (
+        fill_transaction_ids[0] if len(fill_transaction_ids) == 1 else None
+    )
     if len(transaction_object_ids) != len(set(transaction_object_ids)):
         raise ValueError(
             "current gateway receipt response transaction object IDs are duplicated"
@@ -1734,11 +2194,14 @@ def _gateway_response_identity(response: dict[str, Any]) -> dict[str, Any]:
     return {
         "transaction_ids": related_transaction_ids,
         "transaction_object_ids": transaction_object_ids,
+        "transaction_object_keys": transaction_object_keys,
         "trade_ids": list(dict.fromkeys(trade_ids)),
         "instruments": list(dict.fromkeys(instruments)),
         "owners": list(dict.fromkeys(owners)),
         "order_id": order_id,
-        "order_ids": list(dict.fromkeys(order_ids)),
+        "order_ids": list(
+            dict.fromkeys([*order_ids, *referenced_order_ids])
+        ),
         "order_transaction_keys": order_transaction_keys,
         "order_create_transaction_id": order_create_transaction_id,
         "fill_transaction_id": fill_transaction_id,

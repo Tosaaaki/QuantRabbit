@@ -31,6 +31,8 @@ OANDA_CANDLE_COUNT_MAX = 5000
 # Keep serialized quarantine evidence bounded inside each of the seven
 # pair-chart timeframes. Counts still cover the complete requested packet.
 TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT = 8
+TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER = "CHRONOLOGICAL_ASC_NULLS_FIRST"
+TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION = "LATEST_BOUNDED_WINDOW"
 # ``compute_indicators`` deliberately marks a panel invalid below 30 bars,
 # and ``chart_reader`` publishes the same 30-bar recent evidence window.  A
 # quarantined packet therefore needs both 30 clean observations in total and
@@ -594,6 +596,58 @@ def _bounded_payload_identity(value: object, *, limit: int = 64) -> str | None:
     return value[:limit] if value.__class__ is str and value else None
 
 
+def _quarantine_detail_timestamp(detail: dict[str, Any]) -> datetime | None:
+    value = detail.get("timestamp_utc")
+    if value.__class__ is not str or not value:
+        return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _canonical_quarantine_details(
+    details: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Sort quarantine evidence chronologically with unknown clocks first."""
+
+    minimum = datetime.min.replace(tzinfo=timezone.utc)
+
+    def _key(detail: dict[str, Any]) -> tuple[object, ...]:
+        timestamp = _quarantine_detail_timestamp(detail)
+        tie_breaker = tuple(
+            (key, repr(detail[key])) for key in sorted(detail)
+        )
+        return (
+            0 if timestamp is None else 1,
+            timestamp or minimum,
+            tie_breaker,
+        )
+
+    return tuple(sorted(details, key=_key))
+
+
+def _quarantine_code_counts(
+    details: tuple[dict[str, Any], ...],
+) -> dict[str, int]:
+    """Count the two producer-owned quarantine classes exactly."""
+
+    return {
+        TECHNICAL_CANDLE_SPREAD_CONTAMINATED: sum(
+            detail.get("code") == TECHNICAL_CANDLE_SPREAD_CONTAMINATED
+            for detail in details
+        ),
+        TECHNICAL_CANDLE_PROVENANCE_INVALID: sum(
+            detail.get("code") == TECHNICAL_CANDLE_PROVENANCE_INVALID
+            for detail in details
+        ),
+    }
+
+
 def _technical_candle_integrity(
     *,
     pair: str,
@@ -658,7 +712,36 @@ def _technical_candle_integrity(
     else:
         evaluation_status = "PASS"
 
-    published_details = quarantine_details[-TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT:]
+    canonical_details = _canonical_quarantine_details(quarantine_details)
+    published_details = canonical_details[-TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT:]
+    omitted_details = canonical_details[:-TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT]
+    quarantine_total = len(canonical_details)
+    quarantine_window_start = max(
+        0,
+        quarantine_total - TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    )
+    latest_quarantine_timestamp = next(
+        (
+            timestamp
+            for timestamp in reversed(tuple(
+                _quarantine_detail_timestamp(detail)
+                for detail in canonical_details
+            ))
+            if timestamp is not None
+        ),
+        None,
+    )
+    total_code_counts = _quarantine_code_counts(canonical_details)
+    published_code_counts = _quarantine_code_counts(published_details)
+    omitted_code_counts = _quarantine_code_counts(omitted_details)
+    total_timestamped_count = sum(
+        _quarantine_detail_timestamp(detail) is not None
+        for detail in canonical_details
+    )
+    published_timestamped_count = sum(
+        _quarantine_detail_timestamp(detail) is not None
+        for detail in published_details
+    )
     return {
         "schema": TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
         "pair": pair,
@@ -695,7 +778,28 @@ def _technical_candle_integrity(
         "latest_complete_timestamp_utc": latest_complete_timestamp_utc.isoformat() if latest_complete_timestamp_utc else None,
         "latest_clean_timestamp_utc": latest_clean_timestamp_utc.isoformat() if latest_clean_timestamp_utc else None,
         "quarantine_details": list(published_details),
-        "quarantine_details_truncated": max(0, len(quarantine_details) - len(published_details)),
+        "quarantine_details_truncated": quarantine_window_start,
+        "quarantine_details_window": {
+            "selection": TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
+            "order": TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+            "limit": TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+            "start_index": quarantine_window_start,
+            "end_index_exclusive": quarantine_total,
+            "total_count": quarantine_total,
+            "total_code_counts": total_code_counts,
+            "published_code_counts": published_code_counts,
+            "omitted_code_counts": omitted_code_counts,
+            "total_timestamped_count": total_timestamped_count,
+            "published_timestamped_count": published_timestamped_count,
+            "omitted_timestamped_count": (
+                total_timestamped_count - published_timestamped_count
+            ),
+            "latest_timestamp_utc": (
+                latest_quarantine_timestamp.isoformat()
+                if latest_quarantine_timestamp is not None
+                else None
+            ),
+        },
     }
 
 

@@ -23,6 +23,7 @@ from quant_rabbit.execution_ledger import (
     ExecutionLedger,
     _events_from_transaction,
     _migrate_legacy_transaction_coverage_marker,
+    _validate_unique_sent_mutation_identities,
     validated_gateway_receipt_sent_mutations,
 )
 import quant_rabbit.execution_ledger as execution_ledger_module
@@ -149,6 +150,42 @@ def _current_broker_snapshot() -> dict[str, object]:
                 "owner": "trader",
             }
         ],
+    }
+
+
+def _current_dependent_order_action() -> dict[str, object]:
+    return {
+        "trade_id": "T-dependent",
+        "pair": "USD_JPY",
+        "owner": "trader",
+        "broker_position_identity": {
+            "snapshot_fetched_at_utc": "2026-07-13T20:24:27+00:00",
+            "trade_id": "T-dependent",
+            "pair": "USD_JPY",
+            "owner": "trader",
+        },
+        "send_boundary_checked_at_utc": "2026-07-13T20:24:28+00:00",
+        "management_action": "REPAIR_TAKE_PROFIT",
+        "sent": True,
+        "broker_post_attempted": True,
+        "request": {
+            "type": "DEPENDENT_ORDER_REPLACE",
+            "trade_id": "T-dependent",
+            "order_request": {
+                "takeProfit": {"price": "158.500", "timeInForce": "GTC"}
+            },
+        },
+        "response": {
+            "takeProfitOrderTransaction": {
+                "id": "tp-dependent",
+                "tradeID": "T-dependent",
+                "type": "TAKE_PROFIT_ORDER",
+                "price": "158.500",
+                "timeInForce": "GTC",
+            },
+            "relatedTransactionIDs": ["tp-dependent"],
+            "lastTransactionID": "tp-dependent",
+        },
     }
 
 
@@ -1275,7 +1312,25 @@ class ExecutionLedgerTest(unittest.TestCase):
                         )
                     }
                 ),
-                "lacks exact orderCreateTransaction/fill identity",
+                "close transaction objects contradict",
+            ),
+            (
+                "hidden_order_mutation_for_close",
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "auditTransaction": {
+                                "id": "hidden-close-cancel",
+                                "orderID": "dependent-old",
+                                "type": "ORDER_CANCEL",
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].insert(
+                        -1, "hidden-close-cancel"
+                    ),
+                ),
+                "close transaction objects contradict",
             ),
             (
                 "non_string_owner_tag",
@@ -1464,6 +1519,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                 "takeProfitOrderTransaction": {
                     "id": "tp-order",
                     "tradeID": "T-tp",
+                    "type": "TAKE_PROFIT_ORDER",
+                    "price": "158.500",
+                    "timeInForce": "GTC",
                 },
                 "relatedTransactionIDs": ["tp-order"],
                 "lastTransactionID": "tp-order",
@@ -1503,6 +1561,792 @@ class ExecutionLedgerTest(unittest.TestCase):
                 schema="tp-rebalance",
                 payload=forged,
                 broker_snapshot=snapshot,
+            )
+
+    def test_dependent_order_response_is_strictly_bound_to_request(self) -> None:
+        cases = {
+            "wrong_transaction_kind": (
+                lambda action: action["response"].update(
+                    {
+                        "stopLossOrderTransaction": {
+                            **action["response"].pop(
+                                "takeProfitOrderTransaction"
+                            ),
+                            "type": "STOP_LOSS_ORDER",
+                        }
+                    }
+                ),
+                "transaction objects contradict",
+            ),
+            "wrong_transaction_type": (
+                lambda action: action["response"][
+                    "takeProfitOrderTransaction"
+                ].update({"type": "STOP_LOSS_ORDER"}),
+                r"takeProfitOrderTransaction\.type contradicts",
+            ),
+            "wrong_price": (
+                lambda action: action["response"][
+                    "takeProfitOrderTransaction"
+                ].update({"price": "159.900"}),
+                r"takeProfitOrderTransaction\.price contradicts",
+            ),
+            "wrong_time_in_force": (
+                lambda action: action["response"][
+                    "takeProfitOrderTransaction"
+                ].update({"timeInForce": "FOK"}),
+                r"takeProfitOrderTransaction\.timeInForce contradicts",
+            ),
+            "unrequested_extra_order": (
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "stopLossOrderTransaction": {
+                                "id": "sl-unrequested",
+                                "tradeID": "T-dependent",
+                                "type": "STOP_LOSS_ORDER",
+                                "price": "160.500",
+                                "timeInForce": "GTC",
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].append(
+                        "sl-unrequested"
+                    ),
+                    action["response"].update(
+                        {"lastTransactionID": "sl-unrequested"}
+                    ),
+                ),
+                "transaction objects contradict",
+            ),
+            "unrequested_cancel": (
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "stopLossOrderCancelTransaction": {
+                                "id": "sl-cancel-unrequested",
+                                "orderID": "sl-old",
+                                "type": "ORDER_CANCEL",
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].append(
+                        "sl-cancel-unrequested"
+                    ),
+                    action["response"].update(
+                        {"lastTransactionID": "sl-cancel-unrequested"}
+                    ),
+                ),
+                "transaction objects contradict",
+            ),
+            "matching_cancel_without_order_identity": (
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "takeProfitOrderCancelTransaction": {
+                                "id": "tp-cancel-no-order",
+                                "type": "ORDER_CANCEL",
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].append(
+                        "tp-cancel-no-order"
+                    ),
+                    action["response"].update(
+                        {"lastTransactionID": "tp-cancel-no-order"}
+                    ),
+                ),
+                r"takeProfitOrderCancelTransaction\.orderID must be a non-empty string",
+            ),
+            "unrelated_cancel_create_linkage": (
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "takeProfitOrderCancelTransaction": {
+                                "id": "cancel-unrelated",
+                                "orderID": "OTHER-OLD",
+                                "replacedByOrderID": "OTHER-NEW",
+                                "reason": "CLIENT_REQUEST_REPLACED",
+                                "type": "ORDER_CANCEL",
+                            }
+                        }
+                    ),
+                    action["response"]["takeProfitOrderTransaction"].update(
+                        {
+                            "replacesOrderID": "OTHER-OLD",
+                            "cancellingTransactionID": "cancel-unrelated",
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].insert(
+                        0, "cancel-unrelated"
+                    ),
+                ),
+                "replacement linkage contradicts",
+            ),
+            "hidden_semantic_order_under_arbitrary_key": (
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "auditTransaction": {
+                                "id": "sl-hidden",
+                                "tradeID": "T-dependent",
+                                "type": "STOP_LOSS_ORDER",
+                                "price": "160.500",
+                                "timeInForce": "GTC",
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].append(
+                        "sl-hidden"
+                    ),
+                    action["response"].update(
+                        {"lastTransactionID": "sl-hidden"}
+                    ),
+                ),
+                "transaction objects contradict",
+            ),
+            "unbacked_related_transaction_id": (
+                lambda action: (
+                    action["response"]["relatedTransactionIDs"].append(
+                        "hidden-related"
+                    ),
+                    action["response"].update(
+                        {"lastTransactionID": "hidden-related"}
+                    ),
+                ),
+                "must exactly match relatedTransactionIDs",
+            ),
+        }
+        for name, (mutate, error) in cases.items():
+            with self.subTest(name=name):
+                action = copy.deepcopy(_current_dependent_order_action())
+                mutate(action)
+                with self.assertRaisesRegex(ValueError, error):
+                    validated_gateway_receipt_sent_mutations(
+                        schema="position-execution",
+                        payload={
+                            "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                            "status": "SENT",
+                            "send_requested": True,
+                            "sent": True,
+                            "actions": [action],
+                        },
+                        broker_snapshot={
+                            "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                            "positions": [
+                                {
+                                    "trade_id": "T-dependent",
+                                    "pair": "USD_JPY",
+                                    "owner": "trader",
+                                }
+                            ],
+                        },
+                    )
+
+    def test_dependent_order_response_accepts_matching_existing_order_cancel(self) -> None:
+        action = _current_dependent_order_action()
+        action["response"]["takeProfitOrderCancelTransaction"] = {
+            "id": "tp-old-cancel",
+            "orderID": "tp-old",
+            "replacedByOrderID": "tp-dependent",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        action["response"]["takeProfitOrderTransaction"].update(
+            {
+                "replacesOrderID": "tp-old",
+                "cancellingTransactionID": "tp-old-cancel",
+            }
+        )
+        action["response"].update(
+            {
+                "relatedTransactionIDs": ["tp-old-cancel", "tp-dependent"],
+                "lastTransactionID": "tp-dependent",
+            }
+        )
+
+        accepted = validated_gateway_receipt_sent_mutations(
+            schema="position-execution",
+            payload={
+                "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                "status": "SENT",
+                "send_requested": True,
+                "sent": True,
+                "actions": [action],
+            },
+            broker_snapshot={
+                "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                "positions": [
+                    {
+                        "trade_id": "T-dependent",
+                        "pair": "USD_JPY",
+                        "owner": "trader",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(
+            accepted[0]["response_transaction_ids"],
+            ["tp-old-cancel", "tp-dependent"],
+        )
+        self.assertEqual(
+            accepted[0]["order_ids"],
+            ["tp-dependent", "tp-old"],
+        )
+
+    def test_dependent_order_rejects_cross_prefix_cancel_of_new_order(self) -> None:
+        action = _current_dependent_order_action()
+        action["request"]["order_request"]["stopLoss"] = {
+            "price": "157.500",
+            "timeInForce": "GTC",
+        }
+        action["response"]["stopLossOrderTransaction"] = {
+            "id": "sl-dependent",
+            "tradeID": "T-dependent",
+            "type": "STOP_LOSS_ORDER",
+            "price": "157.500",
+            "timeInForce": "GTC",
+        }
+        action["response"]["takeProfitOrderCancelTransaction"] = {
+            "id": "tp-old-cancel",
+            "orderID": "sl-dependent",
+            "replacedByOrderID": "tp-dependent",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        action["response"]["takeProfitOrderTransaction"].update(
+            {
+                "replacesOrderID": "sl-dependent",
+                "cancellingTransactionID": "tp-old-cancel",
+            }
+        )
+        action["response"].update(
+            {
+                "relatedTransactionIDs": [
+                    "tp-old-cancel",
+                    "tp-dependent",
+                    "sl-dependent",
+                ],
+                "lastTransactionID": "sl-dependent",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "cancellation targets a new requested order identity",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [action],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        }
+                    ],
+                },
+            )
+
+    def test_dependent_order_rejects_old_order_equal_to_cancel_transaction(self) -> None:
+        action = _current_dependent_order_action()
+        action["request"]["order_request"]["stopLoss"] = {
+            "price": "157.500",
+            "timeInForce": "GTC",
+        }
+        action["response"]["stopLossOrderTransaction"] = {
+            "id": "sl-dependent",
+            "tradeID": "T-dependent",
+            "type": "STOP_LOSS_ORDER",
+            "price": "157.500",
+            "timeInForce": "GTC",
+            "replacesOrderID": "sl-old",
+            "cancellingTransactionID": "sl-old-cancel",
+        }
+        action["response"]["takeProfitOrderCancelTransaction"] = {
+            "id": "tp-old-cancel",
+            "orderID": "sl-old-cancel",
+            "replacedByOrderID": "tp-dependent",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        action["response"]["takeProfitOrderTransaction"].update(
+            {
+                "replacesOrderID": "sl-old-cancel",
+                "cancellingTransactionID": "tp-old-cancel",
+            }
+        )
+        action["response"]["stopLossOrderCancelTransaction"] = {
+            "id": "sl-old-cancel",
+            "orderID": "sl-old",
+            "replacedByOrderID": "sl-dependent",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        action["response"].update(
+            {
+                "relatedTransactionIDs": [
+                    "tp-old-cancel",
+                    "sl-old-cancel",
+                    "tp-dependent",
+                    "sl-dependent",
+                ],
+                "lastTransactionID": "sl-dependent",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "target reuses a current response transaction identity",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [action],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        }
+                    ],
+                },
+            )
+
+    def test_dependent_order_optional_fill_binds_exact_trade_and_is_surfaced(self) -> None:
+        action = _current_dependent_order_action()
+        action["response"]["takeProfitOrderFillTransaction"] = {
+            "id": "tp-fill",
+            "type": "ORDER_FILL",
+            "reason": "TAKE_PROFIT_ORDER",
+            "orderID": "tp-dependent",
+            "tradeReduced": {"tradeID": "T-dependent"},
+        }
+        action["response"].update(
+            {
+                "relatedTransactionIDs": ["tp-dependent", "tp-fill"],
+                "lastTransactionID": "tp-fill",
+            }
+        )
+        payload = {
+            "generated_at_utc": "2026-07-13T20:24:28+00:00",
+            "status": "SENT",
+            "send_requested": True,
+            "sent": True,
+            "actions": [action],
+        }
+        snapshot = {
+            "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+            "positions": [
+                {
+                    "trade_id": "T-dependent",
+                    "pair": "USD_JPY",
+                    "owner": "trader",
+                }
+            ],
+        }
+
+        accepted = validated_gateway_receipt_sent_mutations(
+            schema="position-execution",
+            payload=payload,
+            broker_snapshot=snapshot,
+        )
+        self.assertEqual(accepted[0]["fill_transaction_id"], "tp-fill")
+
+        missing_trade = copy.deepcopy(payload)
+        missing_trade["actions"][0]["response"][
+            "takeProfitOrderFillTransaction"
+        ].pop("tradeReduced")
+        with self.assertRaisesRegex(ValueError, "exact requested order/trade fill"):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload=missing_trade,
+                broker_snapshot=snapshot,
+            )
+
+        contradictory = copy.deepcopy(payload)
+        contradictory_response = contradictory["actions"][0]["response"]
+        contradictory_response["takeProfitOrderCreatedCancelTransaction"] = {
+            "id": "tp-created-cancel",
+            "type": "ORDER_CANCEL",
+            "reason": "LINKED_TRADE_CLOSED",
+            "orderID": "tp-dependent",
+        }
+        contradictory_response["relatedTransactionIDs"].append(
+            "tp-created-cancel"
+        )
+        contradictory_response["lastTransactionID"] = "tp-created-cancel"
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot be both immediately filled and immediately cancelled",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload=contradictory,
+                broker_snapshot=snapshot,
+            )
+
+    def test_dependent_order_accepts_matching_created_cancel_transaction(self) -> None:
+        action = _current_dependent_order_action()
+        action["response"]["takeProfitOrderCreatedCancelTransaction"] = {
+            "id": "tp-created-cancel",
+            "type": "ORDER_CANCEL",
+            "reason": "LINKED_TRADE_CLOSED",
+            "orderID": "tp-dependent",
+        }
+        action["response"].update(
+            {
+                "relatedTransactionIDs": [
+                    "tp-dependent",
+                    "tp-created-cancel",
+                ],
+                "lastTransactionID": "tp-created-cancel",
+            }
+        )
+
+        accepted = validated_gateway_receipt_sent_mutations(
+            schema="position-execution",
+            payload={
+                "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                "status": "SENT",
+                "send_requested": True,
+                "sent": True,
+                "actions": [action],
+            },
+            broker_snapshot={
+                "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                "positions": [
+                    {
+                        "trade_id": "T-dependent",
+                        "pair": "USD_JPY",
+                        "owner": "trader",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(len(accepted), 1)
+        self.assertIsNone(accepted[0]["fill_transaction_id"])
+
+    def test_sent_response_rejects_local_error_or_unknown_top_level_field(self) -> None:
+        cases = (
+            (_current_position_execution_action(), _current_broker_snapshot()),
+            (
+                _current_dependent_order_action(),
+                {
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        }
+                    ],
+                },
+            ),
+        )
+        for action, snapshot in cases:
+            with self.subTest(request_type=action["request"]["type"]):
+                action["response"]["error"] = "broker reported failure"
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "unsupported top-level fields or local error evidence",
+                ):
+                    validated_gateway_receipt_sent_mutations(
+                        schema="position-execution",
+                        payload={
+                            "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                            "status": "SENT",
+                            "send_requested": True,
+                            "sent": True,
+                            "actions": [action],
+                        },
+                        broker_snapshot=snapshot,
+                    )
+
+    def test_rejects_duplicate_sent_identities_across_position_actions(self) -> None:
+        first = _current_dependent_order_action()
+        duplicate_trade = copy.deepcopy(first)
+        duplicate_trade["response"]["takeProfitOrderTransaction"].update(
+            {"id": "tp-dependent-2"}
+        )
+        duplicate_trade["response"].update(
+            {
+                "relatedTransactionIDs": ["tp-dependent-2"],
+                "lastTransactionID": "tp-dependent-2",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate action trade_id"):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [first, duplicate_trade],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        }
+                    ],
+                },
+            )
+
+        duplicate_order = copy.deepcopy(first)
+        duplicate_order.update({"trade_id": "T-other"})
+        duplicate_order["broker_position_identity"].update(
+            {"trade_id": "T-other"}
+        )
+        duplicate_order["request"].update({"trade_id": "T-other"})
+        duplicate_order["response"]["takeProfitOrderTransaction"].update(
+            {"tradeID": "T-other"}
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate sent order identity"):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [first, duplicate_order],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                        {
+                            "trade_id": "T-other",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                    ],
+                },
+            )
+
+        shared_transaction_first = copy.deepcopy(first)
+        shared_transaction_first["response"]["takeProfitOrderCancelTransaction"] = {
+            "id": "shared-cancel",
+            "orderID": "tp-old-first",
+            "replacedByOrderID": "tp-dependent",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        shared_transaction_first["response"]["takeProfitOrderTransaction"].update(
+            {
+                "replacesOrderID": "tp-old-first",
+                "cancellingTransactionID": "shared-cancel",
+            }
+        )
+        shared_transaction_first["response"].update(
+            {
+                "relatedTransactionIDs": ["shared-cancel", "tp-dependent"],
+                "lastTransactionID": "tp-dependent",
+            }
+        )
+        shared_transaction_second = copy.deepcopy(duplicate_order)
+        shared_transaction_second["response"]["takeProfitOrderTransaction"].update(
+            {"id": "tp-other"}
+        )
+        shared_transaction_second["response"]["takeProfitOrderCancelTransaction"] = {
+            "id": "shared-cancel",
+            "orderID": "tp-old-second",
+            "replacedByOrderID": "tp-other",
+            "reason": "CLIENT_REQUEST_REPLACED",
+            "type": "ORDER_CANCEL",
+        }
+        shared_transaction_second["response"]["takeProfitOrderTransaction"].update(
+            {
+                "replacesOrderID": "tp-old-second",
+                "cancellingTransactionID": "shared-cancel",
+            }
+        )
+        shared_transaction_second["response"].update(
+            {
+                "relatedTransactionIDs": ["shared-cancel", "tp-other"],
+                "lastTransactionID": "tp-other",
+            }
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate sent transaction identity",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [
+                        shared_transaction_first,
+                        shared_transaction_second,
+                    ],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                        {
+                            "trade_id": "T-other",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                    ],
+                },
+            )
+
+        shared_old_first = copy.deepcopy(shared_transaction_first)
+        shared_old_second = copy.deepcopy(shared_transaction_second)
+        for action, cancel_id, creation_id in (
+            (shared_old_first, "cancel-first", "tp-dependent"),
+            (shared_old_second, "cancel-second", "tp-other"),
+        ):
+            cancel = action["response"]["takeProfitOrderCancelTransaction"]
+            cancel.update(
+                {
+                    "id": cancel_id,
+                    "orderID": "shared-old-order",
+                    "replacedByOrderID": creation_id,
+                }
+            )
+            action["response"]["takeProfitOrderTransaction"].update(
+                {
+                    "replacesOrderID": "shared-old-order",
+                    "cancellingTransactionID": cancel_id,
+                }
+            )
+            action["response"].update(
+                {
+                    "relatedTransactionIDs": [cancel_id, creation_id],
+                    "lastTransactionID": creation_id,
+                }
+            )
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate sent order identity=shared-old-order",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [shared_old_first, shared_old_second],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                        {
+                            "trade_id": "T-other",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        },
+                    ],
+                },
+            )
+
+    def test_rejects_cross_kind_identity_reuse_across_sent_mutations(self) -> None:
+        _validate_unique_sent_mutation_identities(
+            [
+                {
+                    "trade_id": "T-first",
+                    "order_ids": ["create-first"],
+                    "response_transaction_ids": ["create-first", "fill-first"],
+                }
+            ]
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate sent order identity=fill-first",
+        ):
+            _validate_unique_sent_mutation_identities(
+                [
+                    {
+                        "trade_id": "T-first",
+                        "order_ids": ["create-first"],
+                        "response_transaction_ids": [
+                            "create-first",
+                            "fill-first",
+                        ],
+                    },
+                    {
+                        "trade_id": "T-second",
+                        "order_ids": ["fill-first"],
+                        "response_transaction_ids": ["create-second"],
+                    },
+                ]
+            )
+
+    def test_position_receipt_rejects_duplicate_trade_in_non_sent_action(self) -> None:
+        sent = _current_dependent_order_action()
+        blocked = copy.deepcopy(sent)
+        blocked.update(
+            {
+                "sent": False,
+                "broker_post_attempted": False,
+                "response": None,
+            }
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate action trade_id=T-dependent",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "PARTIAL_SENT_WITH_BLOCKS",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [sent, blocked],
+                },
+                broker_snapshot={
+                    "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+                    "positions": [
+                        {
+                            "trade_id": "T-dependent",
+                            "pair": "USD_JPY",
+                            "owner": "trader",
+                        }
+                    ],
+                },
             )
 
     def test_current_receipt_rejects_uncertain_post_outcome_as_zero_send(self) -> None:

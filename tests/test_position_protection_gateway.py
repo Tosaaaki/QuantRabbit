@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,14 @@ from unittest.mock import patch
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
+from quant_rabbit.position_execution_evidence import (
+    POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME,
+    POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD,
+    POSITION_EXECUTION_SNAPSHOT_EVIDENCE_MAX_BYTES,
+    POSITION_EXECUTION_SNAPSHOT_EVIDENCE_SCHEMA,
+    load_position_execution_snapshot_evidence,
+    persist_position_execution_snapshot_evidence,
+)
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
     ACTION_PROFIT_PROTECT,
@@ -811,6 +821,349 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             payload["actions"][1]["issues"][0]["code"],
             "BROKER_SNAPSHOT_STALE",
         )
+
+    def test_rejects_duplicate_decision_trade_ids_before_any_broker_post(self) -> None:
+        original = _decision(
+            ACTION_REPAIR_TAKE_PROFIT,
+            stop=None,
+            take_profit=1.1750,
+        )
+        duplicate = PositionManagementDecision(
+            generated_at_utc=original.generated_at_utc,
+            snapshot_fetched_at_utc=original.snapshot_fetched_at_utc,
+            action="MIXED",
+            positions=(original.positions[0], original.positions[0]),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(decision=duplicate, snapshot=_snapshot(), send=True)
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertTrue(
+            all(
+                "POSITION_DECISION_TRADE_ID_DUPLICATE"
+                in {issue["code"] for issue in action["issues"]}
+                for action in payload["actions"]
+            )
+        )
+
+    def test_rejects_duplicate_snapshot_trade_ids_before_any_broker_post(self) -> None:
+        base = _snapshot()
+        duplicate_snapshot = BrokerSnapshot(
+            fetched_at_utc=base.fetched_at_utc,
+            positions=(base.positions[0], base.positions[0]),
+            orders=base.orders,
+            quotes=base.quotes,
+            account=base.account,
+            home_conversions=base.home_conversions,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                ),
+                snapshot=duplicate_snapshot,
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertIn(
+            "BROKER_SNAPSHOT_TRADE_ID_DUPLICATE",
+            {issue["code"] for issue in payload["actions"][0]["issues"]},
+        )
+
+    def test_snapshot_evidence_persistence_failure_blocks_before_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "quant_rabbit.broker.position_execution."
+            "persist_position_execution_snapshot_evidence",
+            side_effect=OSError("evidence disk unavailable"),
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                ),
+                snapshot=_snapshot(),
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertIsNone(payload["pre_send_broker_snapshot_evidence"])
+        self.assertIn(
+            "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+            {issue["code"] for issue in payload["actions"][0]["issues"]},
+        )
+
+    def test_invalid_snapshot_evidence_body_blocks_before_post(self) -> None:
+        base = _snapshot()
+        invalid_snapshot = replace(
+            base,
+            positions=(
+                replace(
+                    base.positions[0],
+                    unrealized_pl_jpy="100",
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                ),
+                snapshot=invalid_snapshot,
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+            evidence_dir_exists = (
+                root / POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME
+            ).exists()
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertIsNone(payload["pre_send_broker_snapshot_evidence"])
+        self.assertFalse(evidence_dir_exists)
+        self.assertIn(
+            "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+            {issue["code"] for issue in payload["actions"][0]["issues"]},
+        )
+
+    def test_quote_key_pair_mismatch_blocks_before_post(self) -> None:
+        base = _snapshot()
+        mismatched_snapshot = replace(
+            base,
+            quotes={
+                "EUR_USD": Quote(
+                    "GBP_USD",
+                    bid=1.1738,
+                    ask=1.1739,
+                    timestamp_utc=TEST_SNAPSHOT_AT,
+                )
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                ),
+                snapshot=mismatched_snapshot,
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertIn(
+            "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+            {issue["code"] for issue in payload["actions"][0]["issues"]},
+        )
+
+    def test_noncanonical_home_conversion_blocks_before_post(self) -> None:
+        invalid_snapshot = replace(
+            _snapshot(),
+            home_conversions={"usd": 1.0},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                ),
+                snapshot=invalid_snapshot,
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertIn(
+            "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+            {issue["code"] for issue in payload["actions"][0]["issues"]},
+        )
+
+    def test_snapshot_evidence_rejects_content_addressed_truncated_body(self) -> None:
+        body = {
+            "evidence_schema": POSITION_EXECUTION_SNAPSHOT_EVIDENCE_SCHEMA,
+        }
+        raw = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        digest = hashlib.sha256(raw).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt_path = root / "position_execution.json"
+            evidence_path = (
+                root
+                / POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME
+                / f"{digest}.json"
+            )
+            evidence_path.parent.mkdir(parents=True)
+            evidence_path.write_bytes(raw)
+            receipt = {
+                POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD: {
+                    "schema": POSITION_EXECUTION_SNAPSHOT_EVIDENCE_SCHEMA,
+                    "sha256": digest,
+                    "byte_count": len(raw),
+                    "path": (
+                        f"{POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME}/"
+                        f"{digest}.json"
+                    ),
+                }
+            }
+
+            with self.assertRaisesRegex(ValueError, "body fields are invalid"):
+                load_position_execution_snapshot_evidence(
+                    receipt_payload=receipt,
+                    receipt_path=receipt_path,
+                )
+
+    def test_snapshot_evidence_directory_symlink_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actual = root / "redirected"
+            actual.mkdir()
+            evidence_dir = root / POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME
+            evidence_dir.symlink_to(actual, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+                persist_position_execution_snapshot_evidence(
+                    snapshot=_snapshot(),
+                    receipt_path=root / "position_execution.json",
+                )
+
+    def test_snapshot_evidence_size_is_checked_before_bounded_read(self) -> None:
+        digest = "0" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence_dir = root / POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME
+            evidence_dir.mkdir()
+            evidence_path = evidence_dir / f"{digest}.json"
+            with evidence_path.open("wb") as handle:
+                handle.truncate(POSITION_EXECUTION_SNAPSHOT_EVIDENCE_MAX_BYTES + 1)
+            receipt = {
+                POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD: {
+                    "schema": POSITION_EXECUTION_SNAPSHOT_EVIDENCE_SCHEMA,
+                    "sha256": digest,
+                    "byte_count": 1,
+                    "path": (
+                        f"{POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME}/"
+                        f"{digest}.json"
+                    ),
+                }
+            }
+
+            with self.assertRaisesRegex(ValueError, "digest/size mismatch"):
+                load_position_execution_snapshot_evidence(
+                    receipt_payload=receipt,
+                    receipt_path=root / "position_execution.json",
+                )
+
+    def test_snapshot_evidence_huge_integer_is_normalized_to_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt_path = root / "position_execution.json"
+            proof = persist_position_execution_snapshot_evidence(
+                snapshot=_snapshot(),
+                receipt_path=receipt_path,
+            )
+            original_path = root / str(proof["path"])
+            body = json.loads(original_path.read_text())
+            body["positions"][0]["unrealized_pl_jpy"] = 10**1000
+            raw = json.dumps(
+                body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            digest = hashlib.sha256(raw).hexdigest()
+            altered_path = (
+                root
+                / POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME
+                / f"{digest}.json"
+            )
+            altered_path.write_bytes(raw)
+            receipt = {
+                POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD: {
+                    "schema": POSITION_EXECUTION_SNAPSHOT_EVIDENCE_SCHEMA,
+                    "sha256": digest,
+                    "byte_count": len(raw),
+                    "path": (
+                        f"{POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME}/"
+                        f"{digest}.json"
+                    ),
+                }
+            }
+
+            with self.assertRaisesRegex(ValueError, "is not finite"):
+                load_position_execution_snapshot_evidence(
+                    receipt_payload=receipt,
+                    receipt_path=receipt_path,
+                )
 
 
 class FakePositionClient:

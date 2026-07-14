@@ -492,6 +492,40 @@ class CandleParsingTest(unittest.TestCase):
         self.assertEqual(batch.integrity["contaminated_count"], 20)
         self.assertEqual(len(batch.integrity["quarantine_details"]), 8)
         self.assertEqual(batch.integrity["quarantine_details_truncated"], 12)
+        window = batch.integrity["quarantine_details_window"]
+        self.assertEqual(window["selection"], "LATEST_BOUNDED_WINDOW")
+        self.assertEqual(window["order"], "CHRONOLOGICAL_ASC_NULLS_FIRST")
+        self.assertEqual(window["start_index"], 12)
+        self.assertEqual(window["end_index_exclusive"], 20)
+        self.assertEqual(window["total_count"], 20)
+        self.assertEqual(
+            window["total_code_counts"],
+            {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 20,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+        )
+        self.assertEqual(
+            window["published_code_counts"],
+            {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 8,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+        )
+        self.assertEqual(
+            window["omitted_code_counts"],
+            {
+                TECHNICAL_CANDLE_SPREAD_CONTAMINATED: 12,
+                TECHNICAL_CANDLE_PROVENANCE_INVALID: 0,
+            },
+        )
+        self.assertEqual(window["total_timestamped_count"], 20)
+        self.assertEqual(window["published_timestamped_count"], 8)
+        self.assertEqual(window["omitted_timestamped_count"], 12)
+        self.assertEqual(
+            window["latest_timestamp_utc"],
+            batch.integrity["quarantine_details"][-1]["timestamp_utc"],
+        )
 
     def test_fetch_uses_one_mba_request(self) -> None:
         class _Client:

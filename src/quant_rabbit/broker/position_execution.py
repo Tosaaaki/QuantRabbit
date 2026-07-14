@@ -17,6 +17,10 @@ from quant_rabbit.position_execution_contract import (
     POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS,
     POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS,
 )
+from quant_rabbit.position_execution_evidence import (
+    POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD,
+    persist_position_execution_snapshot_evidence,
+)
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
@@ -86,6 +90,14 @@ class PositionProtectionGateway:
     ) -> PositionExecutionSummary:
         generated_at_utc = self.clock().astimezone(timezone.utc)
         generated_at = generated_at_utc.isoformat()
+        snapshot_trade_id_duplicates = _duplicate_trade_ids(
+            position.trade_id for position in snapshot.positions
+        )
+        decision_trade_id_duplicates = _duplicate_trade_ids(
+            managed.trade_id for managed in decision.positions
+        )
+        snapshot_evidence: dict[str, Any] | None = None
+        snapshot_evidence_error: str | None = None
         positions = {position.trade_id: position for position in snapshot.positions}
         actions = [
             self._plan_action(
@@ -97,6 +109,57 @@ class PositionProtectionGateway:
             )
             for managed in decision.positions
         ]
+        if send and any(action["request"] is not None for action in actions):
+            try:
+                snapshot_evidence = persist_position_execution_snapshot_evidence(
+                    snapshot=snapshot,
+                    receipt_path=self.output_path,
+                )
+            # This is the last local boundary before a broker POST.  Any
+            # serialization/validation failure must become a durable block,
+            # including malformed runtime dataclass fields.
+            except Exception as exc:  # noqa: BLE001
+                snapshot_evidence_error = str(exc)
+        preflight_issues: list[dict[str, str]] = []
+        if snapshot_trade_id_duplicates:
+            preflight_issues.append(
+                {
+                    "severity": "BLOCK",
+                    "code": "BROKER_SNAPSHOT_TRADE_ID_DUPLICATE",
+                    "message": (
+                        "broker snapshot contains duplicate trade ids; no position "
+                        "mutation may be sent: "
+                        + ",".join(snapshot_trade_id_duplicates)
+                    ),
+                }
+            )
+        if decision_trade_id_duplicates:
+            preflight_issues.append(
+                {
+                    "severity": "BLOCK",
+                    "code": "POSITION_DECISION_TRADE_ID_DUPLICATE",
+                    "message": (
+                        "position-management decision contains duplicate trade ids; "
+                        "no position mutation may be sent: "
+                        + ",".join(decision_trade_id_duplicates)
+                    ),
+                }
+            )
+        if snapshot_evidence_error is not None:
+            preflight_issues.append(
+                {
+                    "severity": "BLOCK",
+                    "code": "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+                    "message": (
+                        "exact pre-send broker snapshot evidence could not be "
+                        f"persisted: {snapshot_evidence_error}"
+                    ),
+                }
+            )
+        if preflight_issues:
+            for action in actions:
+                if action["request"] is not None:
+                    action["issues"].extend(dict(issue) for issue in preflight_issues)
         if send and not self.live_enabled:
             for action in actions:
                 if action["request"] is not None:
@@ -169,6 +232,7 @@ class PositionProtectionGateway:
         result = {
             "generated_at_utc": generated_at,
             "cycle_step_run_id": os.environ.get("QR_CYCLE_STEP_RUN_ID"),
+            POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD: snapshot_evidence,
             "status": status,
             "send_requested": send,
             "sent": sent_count > 0,
@@ -479,6 +543,17 @@ def _position_owner_value(owner: Any) -> str:
     value = getattr(owner, "value", owner)
     normalized = str(value or "").strip().lower()
     return normalized if normalized in {item.value for item in Owner} else Owner.UNKNOWN.value
+
+
+def _duplicate_trade_ids(values: Any) -> tuple[str, ...]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        trade_id = str(value or "").strip()
+        if trade_id in seen:
+            duplicates.add(trade_id)
+        seen.add(trade_id)
+    return tuple(sorted(duplicates))
 
 
 def _aware_utc_datetime(value: Any) -> datetime | None:

@@ -62,6 +62,9 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
     TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
     TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER,
+    TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION,
     TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE,
     TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
     TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
@@ -618,6 +621,7 @@ def _valid_mba_integrity(
     recent_candles = view.get("recent_candles")
     if not isinstance(recent_candles, list):
         return False
+    first_recent: datetime | None = None
     if counts["recent_clean_tail_count"] > 0:
         expected_recent_count = min(
             counts["recent_clean_tail_count"],
@@ -638,6 +642,8 @@ def _valid_mba_integrity(
                 prior_timestamp=prior_recent,
             ):
                 return False
+            if first_recent is None:
+                first_recent = recent_time
             prior_recent = recent_time
         recent_tail_raw = recent_candles[-1].get("t")
         if (
@@ -650,14 +656,110 @@ def _valid_mba_integrity(
 
     quarantine_details = item.get("quarantine_details")
     truncated = item.get("quarantine_details_truncated")
+    quarantine_window = item.get("quarantine_details_window")
+    quarantine_codes = (
+        TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+        TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    )
+    expected_total_code_counts = {
+        TECHNICAL_CANDLE_SPREAD_CONTAMINATED: counts["contaminated_count"],
+        TECHNICAL_CANDLE_PROVENANCE_INVALID: counts["malformed_count"],
+    }
+    expected_window_start = max(
+        0,
+        counts["quarantined_count"] - TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    )
+    expected_published_count = min(
+        counts["quarantined_count"],
+        TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT,
+    )
     if (
         not isinstance(quarantine_details, list)
-        or len(quarantine_details) > 8
+        or len(quarantine_details) != expected_published_count
         or not _is_exact_nonnegative_int(truncated)
-        or len(quarantine_details) + truncated != counts["quarantined_count"]
+        or truncated != expected_window_start
+        or not isinstance(quarantine_window, dict)
+        or set(quarantine_window) != {
+            "selection",
+            "order",
+            "limit",
+            "start_index",
+            "end_index_exclusive",
+            "total_count",
+            "total_code_counts",
+            "published_code_counts",
+            "omitted_code_counts",
+            "total_timestamped_count",
+            "published_timestamped_count",
+            "omitted_timestamped_count",
+            "latest_timestamp_utc",
+        }
+        or quarantine_window.get("selection")
+        != TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION
+        or quarantine_window.get("order") != TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER
+        or not _is_exact_nonnegative_int(quarantine_window.get("limit"))
+        or quarantine_window.get("limit") != TECHNICAL_CANDLE_QUARANTINE_DETAIL_LIMIT
+        or not _is_exact_nonnegative_int(quarantine_window.get("start_index"))
+        or quarantine_window.get("start_index") != expected_window_start
+        or not _is_exact_nonnegative_int(
+            quarantine_window.get("end_index_exclusive")
+        )
+        or quarantine_window.get("end_index_exclusive") != counts["quarantined_count"]
+        or not _is_exact_nonnegative_int(quarantine_window.get("total_count"))
+        or quarantine_window.get("total_count") != counts["quarantined_count"]
+    ):
+        return False
+    total_code_counts_raw = quarantine_window.get("total_code_counts")
+    published_code_counts_raw = quarantine_window.get("published_code_counts")
+    omitted_code_counts_raw = quarantine_window.get("omitted_code_counts")
+    total_timestamped_count = quarantine_window.get("total_timestamped_count")
+    published_timestamped_count = quarantine_window.get(
+        "published_timestamped_count"
+    )
+    omitted_timestamped_count = quarantine_window.get("omitted_timestamped_count")
+    if (
+        not isinstance(total_code_counts_raw, dict)
+        or set(total_code_counts_raw) != set(quarantine_codes)
+        or not isinstance(published_code_counts_raw, dict)
+        or set(published_code_counts_raw) != set(quarantine_codes)
+        or not isinstance(omitted_code_counts_raw, dict)
+        or set(omitted_code_counts_raw) != set(quarantine_codes)
+        or any(
+            not _is_exact_nonnegative_int(total_code_counts_raw.get(code))
+            or total_code_counts_raw.get(code) != expected_total_code_counts[code]
+            or not _is_exact_nonnegative_int(published_code_counts_raw.get(code))
+            or not _is_exact_nonnegative_int(omitted_code_counts_raw.get(code))
+            for code in quarantine_codes
+        )
+        or sum(published_code_counts_raw.values()) != expected_published_count
+        or sum(omitted_code_counts_raw.values()) != truncated
+        or any(
+            published_code_counts_raw[code] + omitted_code_counts_raw[code]
+            != total_code_counts_raw[code]
+            for code in quarantine_codes
+        )
+        or not _is_exact_nonnegative_int(total_timestamped_count)
+        or not _is_exact_nonnegative_int(published_timestamped_count)
+        or not _is_exact_nonnegative_int(omitted_timestamped_count)
+        or total_timestamped_count > counts["quarantined_count"]
+        or total_timestamped_count < counts["contaminated_count"]
+        or published_timestamped_count
+        < published_code_counts_raw[TECHNICAL_CANDLE_SPREAD_CONTAMINATED]
+        or omitted_timestamped_count
+        < omitted_code_counts_raw[TECHNICAL_CANDLE_SPREAD_CONTAMINATED]
+        or published_timestamped_count
+        != min(total_timestamped_count, expected_published_count)
+        or omitted_timestamped_count
+        != total_timestamped_count - published_timestamped_count
     ):
         return False
     parsed_quarantine: list[tuple[str, datetime | None]] = []
+    actual_published_code_counts = dict.fromkeys(quarantine_codes, 0)
+    prior_quarantine_time: datetime | None = None
+    timestamped_quarantine_seen = False
+    quarantine_detail_identities: set[tuple[tuple[str, str], ...]] = set()
+    quarantine_detail_sort_keys: list[tuple[object, ...]] = []
+    minimum_quarantine_time = datetime.min.replace(tzinfo=timezone.utc)
     for detail in quarantine_details:
         if not isinstance(detail, dict):
             return False
@@ -667,6 +769,25 @@ def _valid_mba_integrity(
             TECHNICAL_CANDLE_PROVENANCE_INVALID,
         }:
             return False
+        expected_detail_fields = (
+            {
+                "timestamp_utc",
+                "code",
+                "max_spread_pips",
+                "spread_cap_pips",
+            }
+            if code == TECHNICAL_CANDLE_SPREAD_CONTAMINATED
+            else {"timestamp_utc", "code", "reason"}
+        )
+        if set(detail) != expected_detail_fields:
+            return False
+        detail_identity = tuple(
+            (key, repr(detail[key])) for key in sorted(detail)
+        )
+        if detail_identity in quarantine_detail_identities:
+            return False
+        quarantine_detail_identities.add(detail_identity)
+        actual_published_code_counts[code] += 1
         if code == TECHNICAL_CANDLE_SPREAD_CONTAMINATED:
             detail_max_spread = _strict_finite_number(detail.get("max_spread_pips"))
             detail_spread_cap = _strict_finite_number(detail.get("spread_cap_pips"))
@@ -689,9 +810,68 @@ def _valid_mba_integrity(
         )
         if detail_time_raw is not None and detail_time is None:
             return False
+        if code == TECHNICAL_CANDLE_SPREAD_CONTAMINATED and detail_time is None:
+            return False
+        if (
+            code == TECHNICAL_CANDLE_SPREAD_CONTAMINATED
+            and detail_time_raw != detail_time.isoformat()
+        ):
+            return False
+        if detail_time is None:
+            if timestamped_quarantine_seen:
+                return False
+        else:
+            if prior_quarantine_time is not None and (
+                detail_time < prior_quarantine_time
+                or (
+                    counts["malformed_count"] == 0
+                    and detail_time == prior_quarantine_time
+                )
+            ):
+                return False
+            timestamped_quarantine_seen = True
+            prior_quarantine_time = detail_time
         if detail_time is not None and chart_generated_at is not None and detail_time > chart_generated_at:
             return False
+        quarantine_detail_sort_keys.append(
+            (
+                0 if detail_time is None else 1,
+                detail_time or minimum_quarantine_time,
+                detail_identity,
+            )
+        )
         parsed_quarantine.append((code, detail_time))
+    if quarantine_detail_sort_keys != sorted(quarantine_detail_sort_keys):
+        return False
+    if actual_published_code_counts != published_code_counts_raw:
+        return False
+    if (
+        sum(timestamp is not None for _, timestamp in parsed_quarantine)
+        != published_timestamped_count
+    ):
+        return False
+    latest_quarantine_raw = quarantine_window.get("latest_timestamp_utc")
+    latest_quarantine = (
+        _strict_aware_iso_datetime(latest_quarantine_raw)
+        if latest_quarantine_raw is not None
+        else None
+    )
+    if (
+        (latest_quarantine_raw is not None and latest_quarantine is None)
+        or (
+            latest_quarantine is not None
+            and latest_quarantine_raw != latest_quarantine.isoformat()
+        )
+        or latest_quarantine != prior_quarantine_time
+        or (
+            first_recent is not None
+            and any(
+                timestamp is not None and timestamp >= first_recent
+                for _, timestamp in parsed_quarantine
+            )
+        )
+    ):
+        return False
     if state == "SPREAD_CONTAMINATED":
         if (
             not parsed_quarantine
@@ -706,12 +886,6 @@ def _valid_mba_integrity(
             or parsed_quarantine[-1][1] is None
             or latest_complete is None
             or parsed_quarantine[-1][1] >= latest_complete
-        ):
-            return False
-        if (
-            recent_candles
-            and parsed_quarantine[-1][1]
-            >= _strict_aware_iso_datetime(recent_candles[0].get("t"))
         ):
             return False
 
@@ -752,7 +926,10 @@ def _valid_mba_integrity(
 def _strict_finite_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
     return number if isfinite(number) else None
 
 
