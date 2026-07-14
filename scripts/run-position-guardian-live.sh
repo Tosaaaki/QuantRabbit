@@ -5,7 +5,9 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="${QR_TRADER_ROOT_DIR:-/Users/tossaki/App/QuantRabbit-live}"
 cd "$ROOT_DIR"
 
-export PYTHONPATH="src"
+# Resolve from the wrapper itself so test/runtime roots and live worktree
+# indirection cannot make helper imports depend on the current directory.
+export PYTHONPATH="${SCRIPT_DIR}/../src"
 if [[ -z "${QR_PYTHON:-}" ]]; then
   if [[ -x /opt/homebrew/bin/python3 ]]; then
     QR_PYTHON="/opt/homebrew/bin/python3"
@@ -91,19 +93,34 @@ skip_if_live_lock_busy() {
 }
 
 position_guardian_pair_scope() {
-  "$QR_PYTHON" - "$1" "$2" "$3" "$4" <<'PY'
+  "$QR_PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
 import json
+import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 snapshot_path = Path(sys.argv[1])
 trigger_contract_path = Path(sys.argv[2])
 order_intents_path = Path(sys.argv[3])
+active_board_path = Path(sys.argv[5])
+frontier_path = Path(sys.argv[6])
+freshness_path = Path(sys.argv[7])
 try:
-    max_candidate_pairs = min(6, max(0, int(sys.argv[4])))
+    max_candidate_pairs = max(0, int(sys.argv[4]))
 except (TypeError, ValueError):
     max_candidate_pairs = 6
+configured_universe = tuple(DEFAULT_TRADER_PAIRS)
+configured_pair_set = set(configured_universe)
+if max_candidate_pairs > len(configured_universe):
+    raise SystemExit(
+        "QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS must be in "
+        f"0..{len(configured_universe)}; "
+        f"received {max_candidate_pairs}"
+    )
 
 
 def load(path):
@@ -122,6 +139,117 @@ def pair_of(item):
 
 
 snapshot = load(snapshot_path)
+prior_freshness = load(freshness_path)
+now_utc = datetime.now(timezone.utc)
+
+
+def parse_utc(value):
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+cursor_override = os.environ.get("QR_POSITION_GUARDIAN_ROTATION_CURSOR")
+cursor_override_value = None
+if cursor_override is not None:
+    try:
+        cursor_override_value = int(cursor_override)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            "QR_POSITION_GUARDIAN_ROTATION_CURSOR must be a non-negative integer"
+        )
+    if cursor_override_value < 0:
+        raise SystemExit(
+            "QR_POSITION_GUARDIAN_ROTATION_CURSOR must be a non-negative integer"
+        )
+    cursor_override_value %= len(configured_universe)
+scope_frozen_before_next_close = False
+scope_retry_required = False
+coverage_next_cursor_hint = None
+prior_scope_available = all(
+    isinstance(prior_freshness.get(key), list)
+    for key in ("candidate_pairs", "monitor_pairs")
+)
+prior_retry_required = bool(prior_freshness.get("coverage_retry_required")) or str(
+    prior_freshness.get("status") or ""
+).upper() in {"PARTIAL", "STALE"}
+if cursor_override_value is not None and not prior_freshness:
+    # An environment variable is persistent across launchd cycles, while a
+    # coverage reset must be one-shot.  Treat the override as a bootstrap seed
+    # only; after the first artifact exists, its successful absolute cursor is
+    # authoritative.  Otherwise a configured override would pin every closed
+    # M1 cycle to the same pair window and silently stop 28-pair coverage.
+    coverage_cursor = cursor_override_value
+    coverage_cursor_source = "BOOTSTRAP_EXPLICIT_OVERRIDE"
+else:
+    cursor_semantics = str(
+        prior_freshness.get("coverage_cursor_semantics") or ""
+    ).upper()
+    if cursor_semantics == "NEXT_CONFIGURED_PAIR_INDEX":
+        prior_success_value = prior_freshness.get("coverage_cursor")
+    elif prior_freshness:
+        # Legacy cursors counted refresh attempts and multiplied that value by
+        # the current number of free slots.  Because priority churn changed the
+        # multiplier, no safe next-pair position can be reconstructed. Restart
+        # once from the first configured pair; duplicate reads are preferable
+        # to carrying a hidden coverage hole into the new cursor contract.
+        prior_success_value = 0
+    else:
+        prior_success_value = -1
+    try:
+        last_success_cursor = int(prior_success_value)
+    except (TypeError, ValueError):
+        last_success_cursor = -1
+    try:
+        active_scope_cursor = int(
+            prior_freshness.get("active_scope_cursor", last_success_cursor)
+        )
+    except (TypeError, ValueError):
+        active_scope_cursor = last_success_cursor
+    try:
+        prior_proposed_next_cursor = int(
+            prior_freshness.get(
+                "proposed_coverage_next_cursor",
+                last_success_cursor,
+            )
+        )
+    except (TypeError, ValueError):
+        prior_proposed_next_cursor = last_success_cursor
+    retry_required = prior_retry_required
+    next_refresh_after = parse_utc(prior_freshness.get("next_refresh_after_utc"))
+    if (
+        next_refresh_after is not None
+        and now_utc < next_refresh_after
+        and active_scope_cursor >= 0
+    ):
+        coverage_cursor = active_scope_cursor
+        coverage_cursor_source = "PERSISTED_ACTIVE_SCOPE_BEFORE_NEXT_CLOSED_M1"
+        coverage_next_cursor_hint = prior_proposed_next_cursor
+        scope_frozen_before_next_close = prior_scope_available
+    elif retry_required and active_scope_cursor >= 0 and prior_scope_available:
+        coverage_cursor = active_scope_cursor
+        coverage_cursor_source = "RETRY_ACTIVE_SCOPE_AFTER_PARTIAL_OR_STALE"
+        coverage_next_cursor_hint = prior_proposed_next_cursor
+        scope_retry_required = True
+    elif retry_required:
+        coverage_cursor = 0
+        coverage_cursor_source = "RETRY_SCOPE_MISSING_RESET_TO_FIRST_CONFIGURED_PAIR"
+    elif last_success_cursor < 0:
+        coverage_cursor = 0
+        coverage_cursor_source = "INITIAL_PROPOSED_CURSOR"
+    else:
+        coverage_cursor = last_success_cursor
+        coverage_cursor_source = (
+            "NEXT_UNCOVERED_PAIR_AFTER_CLOSED_M1"
+            if next_refresh_after is not None and now_utc >= next_refresh_after
+            else "LAST_SUCCESS_NEXT_PAIR_CURSOR"
+        )
+    coverage_cursor %= len(configured_universe)
+
 positions = [item for item in snapshot.get("positions", []) or [] if isinstance(item, dict)]
 open_pairs = sorted({pair_of(item) for item in positions if pair_of(item)})
 trader_pairs = sorted(
@@ -132,31 +260,32 @@ trader_pairs = sorted(
     }
 )
 
-# The hourly trader publishes the trigger contract in priority order. Keep
-# every open-position pair, then add only a small candidate frontier so this
-# 30-second loop never degenerates into all-pairs/all-timeframes polling.
-candidate_rows = []
+# Keep every open-position pair. Pending/LIVE/TRIGGER-ready pairs are hard
+# priority, the hourly board/frontier is pinned next, and the remaining G8
+# universe rotates once per M1 window. This preserves the six-pair steady-state
+# request budget while removing the old permanent first-six blind spot.
+hard_rows = []
 for index, item in enumerate(snapshot.get("orders", []) or []):
     if not isinstance(item, dict):
         continue
     state = str(item.get("state") or "PENDING").strip().upper()
     pair = pair_of(item)
-    if pair and state in {"PENDING", "LIVE", "OPEN"}:
-        candidate_rows.append((-2, 0, index, pair))
+    if pair in configured_pair_set and state in {"PENDING", "LIVE", "OPEN"}:
+        hard_rows.append((-3, index, pair, "active_pending_order"))
 contract = load(trigger_contract_path)
 for index, item in enumerate(contract.get("entries", []) or []):
     pair = pair_of(item)
-    if not pair or not isinstance(item, dict) or not item.get("lane_id"):
+    if pair not in configured_pair_set or not isinstance(item, dict) or not item.get("lane_id"):
         continue
     status = str(item.get("status") or "").strip().upper()
-    candidate_rows.append(
-        (
-            0 if status == "LIVE_READY" else 1 if status in {"RISK_ALLOWED", "TRIGGER_READY"} else 2,
-            1 if bool(item.get("watch_only")) else 0,
-            index,
-            pair,
-        )
+    row = (
+        0 if status == "LIVE_READY" else 1,
+        index,
+        pair,
+        f"trigger_contract:{status or 'UNKNOWN'}",
     )
+    if status in {"LIVE_READY", "RISK_ALLOWED", "TRIGGER_READY"}:
+        hard_rows.append(row)
 
 # A newly generated LIVE_READY intent may precede its next trigger-contract
 # refresh. Parse the much larger intent packet only in that narrow newer-file
@@ -174,21 +303,185 @@ for index, item in enumerate(intents.get("results", []) or []):
         continue
     intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
     pair = pair_of(intent) or pair_of(item)
+    if pair in configured_pair_set:
+        hard_rows.append((-1, index, pair, f"order_intent:{status}"))
+
+
+def fresh_hourly_artifact(payload):
+    generated_at = parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return False
+    age_seconds = (now_utc - generated_at).total_seconds()
+    return -300 <= age_seconds <= 90 * 60 and not str(
+        payload.get("status") or ""
+    ).upper().startswith(("ERROR", "FAILED", "MISSING"))
+
+
+def lane_pair(payload, *keys):
+    if not fresh_hourly_artifact(payload):
+        return ""
+    current = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key)
+    if not isinstance(current, dict) or not str(current.get("lane_id") or "").strip():
+        return ""
+    pair = pair_of(current)
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    return pair if pair in configured_pair_set and pair in quotes else ""
+
+
+priority_rows = []
+board = load(active_board_path)
+frontier = load(frontier_path)
+for index, pair in enumerate(
+    (
+        lane_pair(board, "top_lane"),
+        lane_pair(frontier, "next_evidence_lane"),
+        lane_pair(frontier, "top_non_eurusd_lane"),
+        lane_pair(frontier, "top_lane"),
+    )
+):
     if pair:
-        candidate_rows.append((-1, 0, index, pair))
+        priority_rows.append((index, pair, "hourly_active_frontier"))
 
 candidates = []
+hard_candidates = []
+priority_candidates = []
 seen = set(open_pairs)
-if max_candidate_pairs > 0:
-    for _status_rank, _watch_rank, _index, pair in sorted(candidate_rows):
-        if pair in seen:
-            continue
-        seen.add(pair)
-        candidates.append(pair)
-        if len(candidates) >= max_candidate_pairs:
-            break
+for _status_rank, _index, pair, _source in sorted(hard_rows):
+    if pair in seen:
+        continue
+    seen.add(pair)
+    candidates.append(pair)
+    hard_candidates.append(pair)
+
+# Hard execution-adjacent pairs must not be evicted even when the operator set
+# the ordinary rotation budget to zero. Filtering to the configured G8 set
+# above guarantees this expansion can never exceed 28 candidate pairs.
+effective_limit = max(max_candidate_pairs, len(candidates))
+if effective_limit > len(configured_universe):
+    raise SystemExit("hard-priority candidate scope exceeds configured G8 universe")
+for _index, pair, _source in sorted(priority_rows):
+    if len(candidates) >= effective_limit or pair in seen:
+        continue
+    seen.add(pair)
+    candidates.append(pair)
+    priority_candidates.append(pair)
+
+remaining = max(0, effective_limit - len(candidates))
+coverage_next_cursor = coverage_cursor
+scanned = 0
+while remaining and scanned < len(configured_universe):
+    pair_index = (coverage_cursor + scanned) % len(configured_universe)
+    pair = configured_universe[pair_index]
+    scanned += 1
+    coverage_next_cursor = (pair_index + 1) % len(configured_universe)
+    if pair in seen:
+        # Open/hard/hourly-priority pairs are already in this same fetch, so
+        # advancing past them preserves complete coverage without duplication.
+        continue
+    seen.add(pair)
+    candidates.append(pair)
+    remaining -= 1
+coverage_scanned_count = scanned
 
 monitor_pairs = [*open_pairs, *candidates]
+if scope_frozen_before_next_close:
+    # The current packet remains the authoritative technical surface until the
+    # next closed M1 candle plus grace.  Keep current ownership separately, but
+    # do not claim a newly proposed pair is being monitored before its charts
+    # have actually been fetched.
+    candidate_pairs = prior_freshness.get("candidate_pairs", [])
+    monitor_pairs = prior_freshness.get("monitor_pairs", [])
+    hard_candidates = prior_freshness.get("hard_priority_candidate_pairs", [])
+    priority_candidates = prior_freshness.get("hourly_priority_candidate_pairs", [])
+    if not isinstance(candidate_pairs, list):
+        candidate_pairs = []
+    if not isinstance(monitor_pairs, list):
+        monitor_pairs = []
+    if not isinstance(hard_candidates, list):
+        hard_candidates = []
+    if not isinstance(priority_candidates, list):
+        priority_candidates = []
+    try:
+        effective_limit = max(
+            0,
+            int(
+                prior_freshness.get(
+                    "effective_candidate_pair_limit",
+                    len(candidate_pairs),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        effective_limit = len(candidate_pairs)
+    candidates = [str(item) for item in candidate_pairs if str(item)]
+    monitor_pairs = [str(item) for item in monitor_pairs if str(item)]
+    hard_candidates = [str(item) for item in hard_candidates if str(item)]
+    priority_candidates = [str(item) for item in priority_candidates if str(item)]
+    if coverage_next_cursor_hint is not None:
+        coverage_next_cursor = coverage_next_cursor_hint % len(configured_universe)
+    try:
+        coverage_scanned_count = max(
+            0,
+            int(prior_freshness.get("proposed_coverage_scanned_count", 0)),
+        )
+    except (TypeError, ValueError):
+        coverage_scanned_count = 0
+elif scope_retry_required:
+    # Retry the exact failed candidate surface even if the hourly board moves.
+    # New open/hard execution-adjacent pairs may be added for safety, but they
+    # can never replace a pair whose prior refresh was partial or stale.
+    prior_candidates = prior_freshness.get("candidate_pairs", [])
+    prior_monitor = prior_freshness.get("monitor_pairs", [])
+    prior_hard = prior_freshness.get("hard_priority_candidate_pairs", [])
+    prior_hourly = prior_freshness.get("hourly_priority_candidate_pairs", [])
+    if not isinstance(prior_candidates, list):
+        prior_candidates = []
+    if not isinstance(prior_monitor, list):
+        prior_monitor = []
+    if not isinstance(prior_hard, list):
+        prior_hard = []
+    if not isinstance(prior_hourly, list):
+        prior_hourly = []
+    current_hard = list(hard_candidates)
+    open_set = set(open_pairs)
+    candidates = []
+    prior_retry_pairs = [
+        str(pair)
+        for pair in prior_monitor
+        if str(pair) in configured_pair_set
+    ]
+    for pair in [*prior_retry_pairs, *prior_candidates, *current_hard]:
+        pair = str(pair)
+        if pair and pair not in open_set and pair not in candidates:
+            candidates.append(pair)
+    monitor_pairs = [*open_pairs, *candidates]
+    hard_candidates = []
+    for pair in [*prior_hard, *current_hard]:
+        pair = str(pair)
+        if pair and pair not in hard_candidates:
+            hard_candidates.append(pair)
+    priority_candidates = [str(item) for item in prior_hourly if str(item)]
+    try:
+        prior_effective_limit = max(
+            0,
+            int(prior_freshness.get("effective_candidate_pair_limit", 0)),
+        )
+    except (TypeError, ValueError):
+        prior_effective_limit = 0
+    effective_limit = max(prior_effective_limit, len(candidates))
+    if coverage_next_cursor_hint is not None:
+        coverage_next_cursor = coverage_next_cursor_hint % len(configured_universe)
+    try:
+        coverage_scanned_count = max(
+            0,
+            int(prior_freshness.get("proposed_coverage_scanned_count", 0)),
+        )
+    except (TypeError, ValueError):
+        coverage_scanned_count = 0
 print(
     "|".join(
         (
@@ -196,6 +489,13 @@ print(
             ",".join(trader_pairs),
             ",".join(candidates),
             ",".join(monitor_pairs),
+            ",".join(hard_candidates),
+            ",".join(priority_candidates),
+            str(coverage_cursor),
+            str(coverage_next_cursor),
+            str(coverage_scanned_count),
+            coverage_cursor_source,
+            str(effective_limit),
         )
     )
 )
@@ -257,9 +557,6 @@ except Exception:
 if charts.get("generated_at_utc") != freshness.get("source_generated_at_utc"):
     print("1")
     raise SystemExit(0)
-if freshness.get("monitor_pairs") != expected_pairs:
-    print("1")
-    raise SystemExit(0)
 if freshness.get("timeframes") != ["M1", "M5", "M15"]:
     print("1")
     raise SystemExit(0)
@@ -270,12 +567,23 @@ except ValueError:
     raise SystemExit(0)
 if next_due.tzinfo is None:
     next_due = next_due.replace(tzinfo=timezone.utc)
-print("1" if datetime.now(timezone.utc) >= next_due else "0")
+now = datetime.now(timezone.utc)
+# A newly prioritized/rotated scope is not a new closed candle. Reuse the
+# current bounded packet until the persisted close-plus-grace deadline, then
+# refresh the proposed next scope once. This prevents priority churn from
+# multiplying M1/M5/M15 broker reads inside one candle.
+if now < next_due:
+    print("0")
+    raise SystemExit(0)
+if freshness.get("monitor_pairs") != expected_pairs:
+    print("1")
+    raise SystemExit(0)
+print("1")
 PY
 }
 
 write_chart_freshness() {
-  "$QR_PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" <<'PY'
+  "$QR_PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}" "${15}" "${16}" "${17}" "${18}" <<'PY'
 import json
 import os
 import sys
@@ -295,8 +603,37 @@ except (TypeError, ValueError):
 snapshot_path = Path(sys.argv[8])
 trigger_contract_path = Path(sys.argv[9])
 order_intents_path = Path(sys.argv[10])
+hard_priority_pairs = [item for item in sys.argv[11].split(",") if item]
+hourly_priority_pairs = [item for item in sys.argv[12].split(",") if item]
+try:
+    coverage_cursor = int(sys.argv[13])
+except (TypeError, ValueError):
+    coverage_cursor = None
+try:
+    coverage_next_cursor = int(sys.argv[14])
+except (TypeError, ValueError):
+    coverage_next_cursor = coverage_cursor
+try:
+    coverage_scanned_count = max(0, int(sys.argv[15]))
+except (TypeError, ValueError):
+    coverage_scanned_count = 0
+coverage_cursor_source = str(sys.argv[16] or "UNKNOWN")
+try:
+    configured_candidate_limit = max(0, int(sys.argv[17]))
+except (TypeError, ValueError):
+    configured_candidate_limit = 6
+try:
+    effective_candidate_limit = max(0, int(sys.argv[18]))
+except (TypeError, ValueError):
+    effective_candidate_limit = configured_candidate_limit
 
 payload = json.loads(charts_path.read_text())
+try:
+    prior_freshness = json.loads(freshness_path.read_text())
+except Exception:
+    prior_freshness = {}
+if not isinstance(prior_freshness, dict):
+    prior_freshness = {}
 now = datetime.now(timezone.utc)
 timeframe_seconds = {"M1": 60, "M5": 300, "M15": 900}
 monitor_pairs = [*open_pairs, *candidate_pairs]
@@ -442,7 +779,52 @@ for pair in monitor_pairs:
         )
 
 next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1, seconds=close_grace_seconds)
-status = "FRESH" if not missing and not stale and not bool(payload.get("partial")) else "PARTIAL" if missing else "STALE"
+status = (
+    "FRESH"
+    if not missing and not stale and not bool(payload.get("partial"))
+    else "PARTIAL"
+    if missing or bool(payload.get("partial"))
+    else "STALE"
+)
+prior_success_value = (
+    prior_freshness.get("coverage_cursor")
+    if str(prior_freshness.get("coverage_cursor_semantics") or "").upper()
+    == "NEXT_CONFIGURED_PAIR_INDEX"
+    else None
+)
+try:
+    prior_success_cursor = int(prior_success_value)
+except (TypeError, ValueError):
+    prior_success_cursor = None
+proposed_coverage_cursor = coverage_cursor
+proposed_coverage_next_cursor = coverage_next_cursor
+if status == "FRESH":
+    committed_coverage_cursor = proposed_coverage_next_cursor
+    committed_coverage_cursor_source = coverage_cursor_source
+    coverage_retry_required = False
+    coverage_retry_status = None
+else:
+    committed_coverage_cursor = prior_success_cursor
+    committed_coverage_cursor_source = (
+        f"PRIOR_SUCCESS_RETAINED_AFTER_{status}"
+        if prior_success_cursor is not None
+        else f"NO_SUCCESS_CURSOR_AFTER_{status}"
+    )
+    coverage_retry_required = True
+    coverage_retry_status = status
+coverage_cursor_advanced = bool(
+    status == "FRESH" and coverage_scanned_count > 0
+)
+candidate_limit_expanded = bool(
+    effective_candidate_limit > configured_candidate_limit
+)
+candidate_limit_expansion_reasons = []
+if candidate_limit_expanded and hard_priority_pairs:
+    candidate_limit_expansion_reasons.append("HARD_PRIORITY_SCOPE")
+if candidate_limit_expanded and coverage_cursor_source.startswith("RETRY_"):
+    candidate_limit_expansion_reasons.append("RETRY_SCOPE_RETENTION")
+if candidate_limit_expanded and not candidate_limit_expansion_reasons:
+    candidate_limit_expansion_reasons.append("SAFETY_SCOPE_RETENTION")
 freshness = {
     "checked_at_utc": now.isoformat(),
     "status": status,
@@ -456,10 +838,39 @@ freshness = {
     "open_position_pairs": open_pairs,
     "trader_management_pairs": trader_pairs,
     "candidate_pairs": candidate_pairs,
+    "hard_priority_candidate_pairs": hard_priority_pairs,
+    "hourly_priority_candidate_pairs": hourly_priority_pairs,
+    "coverage_cursor": committed_coverage_cursor,
+    "coverage_cursor_semantics": "NEXT_CONFIGURED_PAIR_INDEX",
+    "coverage_cursor_source": committed_coverage_cursor_source,
+    "proposed_coverage_cursor": proposed_coverage_cursor,
+    "proposed_coverage_next_cursor": proposed_coverage_next_cursor,
+    "proposed_coverage_scanned_count": coverage_scanned_count,
+    "proposed_coverage_cursor_source": coverage_cursor_source,
+    "active_scope_cursor": proposed_coverage_cursor,
+    "coverage_cursor_advanced": coverage_cursor_advanced,
+    "coverage_cursor_wrapped": bool(
+        status == "FRESH"
+        and coverage_cursor_advanced
+        and proposed_coverage_next_cursor <= proposed_coverage_cursor
+    ),
+    "coverage_retry_required": coverage_retry_required,
+    "coverage_retry_status": coverage_retry_status,
+    "coverage_cursor_advance_policy": "AFTER_SUCCESSFUL_CLOSED_M1_REFRESH_ONLY",
+    "rotation_period_seconds": 60,
+    "coverage_policy": "HARD_PRIORITY_THEN_HOURLY_FRONTIER_THEN_G8_ROUND_ROBIN",
     "monitor_pairs": monitor_pairs,
     "guardian_monitor_pairs": monitor_pairs,
     "guardian_monitor_scope": monitor_scope,
-    "candidate_pair_limit_applied": True,
+    "configured_candidate_pair_limit": configured_candidate_limit,
+    "effective_candidate_pair_limit": effective_candidate_limit,
+    "candidate_pair_limit_expanded": candidate_limit_expanded,
+    "candidate_pair_limit_expansion_reasons": candidate_limit_expansion_reasons,
+    "candidate_pair_limit_expanded_for_hard_priority": (
+        candidate_limit_expanded and bool(hard_priority_pairs)
+    ),
+    "requested_candidate_pair_count": len(candidate_pairs),
+    "candidate_pair_limit_applied": len(candidate_pairs) <= effective_candidate_limit,
     "missing_complete_candles": missing,
     "stale_complete_candles": stale,
     "rows": rows,
@@ -487,7 +898,7 @@ PY
 }
 
 write_empty_monitor_charts() {
-  "$QR_PYTHON" - "$1" "$2" "$3" <<'PY'
+  "$QR_PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" <<'PY'
 import json
 import os
 import sys
@@ -497,6 +908,41 @@ from pathlib import Path
 charts_path = Path(sys.argv[1])
 freshness_path = Path(sys.argv[2])
 report_path = Path(sys.argv[3])
+try:
+    proposed_cursor = max(0, int(sys.argv[4]))
+except (TypeError, ValueError):
+    proposed_cursor = 0
+try:
+    proposed_next_cursor = max(0, int(sys.argv[5]))
+except (TypeError, ValueError):
+    proposed_next_cursor = proposed_cursor
+proposed_cursor_source = str(sys.argv[6] or "NO_MONITOR_SCOPE")
+try:
+    configured_candidate_limit = max(0, int(sys.argv[7]))
+except (TypeError, ValueError):
+    configured_candidate_limit = 0
+try:
+    effective_candidate_limit = max(0, int(sys.argv[8]))
+except (TypeError, ValueError):
+    effective_candidate_limit = configured_candidate_limit
+try:
+    prior_freshness = json.loads(freshness_path.read_text())
+except Exception:
+    prior_freshness = {}
+if not isinstance(prior_freshness, dict):
+    prior_freshness = {}
+prior_cursor_is_absolute = (
+    str(prior_freshness.get("coverage_cursor_semantics") or "").upper()
+    == "NEXT_CONFIGURED_PAIR_INDEX"
+)
+try:
+    committed_cursor = (
+        int(prior_freshness.get("coverage_cursor"))
+        if prior_cursor_is_absolute
+        else proposed_cursor
+    )
+except (TypeError, ValueError):
+    committed_cursor = proposed_cursor
 now = datetime.now(timezone.utc).isoformat()
 charts = {
     "generated_at_utc": now,
@@ -524,6 +970,35 @@ freshness = {
     "monitor_pairs": [],
     "guardian_monitor_pairs": [],
     "guardian_monitor_scope": {},
+    "hard_priority_candidate_pairs": [],
+    "hourly_priority_candidate_pairs": [],
+    "coverage_cursor": committed_cursor,
+    "coverage_cursor_semantics": "NEXT_CONFIGURED_PAIR_INDEX",
+    "coverage_cursor_source": str(
+        prior_freshness.get("coverage_cursor_source")
+        if prior_cursor_is_absolute
+        else proposed_cursor_source
+    )
+    or "NO_MONITOR_SCOPE_RETAINED",
+    "proposed_coverage_cursor": proposed_cursor,
+    "proposed_coverage_next_cursor": proposed_next_cursor,
+    "proposed_coverage_scanned_count": 0,
+    "proposed_coverage_cursor_source": proposed_cursor_source,
+    "active_scope_cursor": proposed_cursor,
+    "coverage_cursor_advanced": False,
+    "coverage_cursor_wrapped": False,
+    "coverage_retry_required": False,
+    "coverage_retry_status": None,
+    "coverage_cursor_advance_policy": "AFTER_SUCCESSFUL_CLOSED_M1_REFRESH_ONLY",
+    "rotation_period_seconds": 60,
+    "coverage_policy": "HARD_PRIORITY_THEN_HOURLY_FRONTIER_THEN_G8_ROUND_ROBIN",
+    "configured_candidate_pair_limit": configured_candidate_limit,
+    "effective_candidate_pair_limit": effective_candidate_limit,
+    "candidate_pair_limit_expanded": False,
+    "candidate_pair_limit_expansion_reasons": [],
+    "candidate_pair_limit_expanded_for_hard_priority": False,
+    "requested_candidate_pair_count": 0,
+    "candidate_pair_limit_applied": True,
     "rows": [],
 }
 for path, payload in ((charts_path, charts), (freshness_path, freshness)):
@@ -621,9 +1096,17 @@ guardian_chart_freshness="${QR_POSITION_GUARDIAN_CHART_FRESHNESS:-data/position_
 guardian_trader_snapshot="${QR_POSITION_GUARDIAN_TRADER_SNAPSHOT:-data/position_guardian_trader_snapshot.json}"
 guardian_trigger_contract="${QR_POSITION_GUARDIAN_TRIGGER_CONTRACT:-data/guardian_trigger_contract.json}"
 guardian_order_intents="${QR_POSITION_GUARDIAN_ORDER_INTENTS:-data/order_intents.json}"
+guardian_active_board="${QR_POSITION_GUARDIAN_ACTIVE_BOARD:-data/active_opportunity_board.json}"
+guardian_non_eurusd_frontier="${QR_POSITION_GUARDIAN_NON_EURUSD_FRONTIER:-data/non_eurusd_live_grade_frontier.json}"
 guardian_count="${QR_POSITION_GUARDIAN_CANDLE_COUNT:-120}"
 guardian_candidate_limit="${QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS:-6}"
 guardian_candle_close_grace_seconds="${QR_POSITION_GUARDIAN_CANDLE_CLOSE_GRACE_SECONDS:-5}"
+
+if [[ ! "$guardian_candidate_limit" =~ ^[0-9]+$ ]] \
+  || (( guardian_candidate_limit > 28 )); then
+  echo "[run-position-guardian-live] QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS must be an integer in 0..28; received ${guardian_candidate_limit}." >&2
+  exit 2
+fi
 
 run_guardian_event_router() {
   "$QR_PYTHON" -m quant_rabbit.cli guardian-event-router \
@@ -645,8 +1128,11 @@ pair_scope="$(position_guardian_pair_scope \
   "$guardian_snapshot" \
   "$guardian_trigger_contract" \
   "$guardian_order_intents" \
-  "$guardian_candidate_limit")"
-IFS='|' read -r open_pairs trader_pairs candidate_pairs monitor_pairs <<< "$pair_scope"
+  "$guardian_candidate_limit" \
+  "$guardian_active_board" \
+  "$guardian_non_eurusd_frontier" \
+  "$guardian_chart_freshness")"
+IFS='|' read -r open_pairs trader_pairs candidate_pairs monitor_pairs hard_priority_pairs hourly_priority_pairs coverage_cursor coverage_next_cursor coverage_scanned_count coverage_cursor_source effective_candidate_limit <<< "$pair_scope"
 
 if [[ -n "$monitor_pairs" ]]; then
   refresh_due="$(chart_refresh_due "$guardian_charts" "$guardian_chart_freshness" "$monitor_pairs")"
@@ -667,13 +1153,29 @@ if [[ -n "$monitor_pairs" ]]; then
       "$guardian_candle_close_grace_seconds" \
       "$guardian_snapshot" \
       "$guardian_trigger_contract" \
-      "$guardian_order_intents")"
+      "$guardian_order_intents" \
+      "$hard_priority_pairs" \
+      "$hourly_priority_pairs" \
+      "$coverage_cursor" \
+      "$coverage_next_cursor" \
+      "$coverage_scanned_count" \
+      "$coverage_cursor_source" \
+      "$guardian_candidate_limit" \
+      "$effective_candidate_limit")"
     echo "[run-position-guardian-live] closed-candle chart refresh ${freshness_summary} pairs=${monitor_pairs}." >&2
   else
     echo "[run-position-guardian-live] closed-candle charts remain within M1 cadence; reused ${guardian_charts}." >&2
   fi
 else
-  write_empty_monitor_charts "$guardian_charts" "$guardian_chart_freshness" "$guardian_report"
+  write_empty_monitor_charts \
+    "$guardian_charts" \
+    "$guardian_chart_freshness" \
+    "$guardian_report" \
+    "$coverage_cursor" \
+    "$coverage_next_cursor" \
+    "$coverage_cursor_source" \
+    "$guardian_candidate_limit" \
+    "$effective_candidate_limit"
 fi
 
 if [[ -z "$trader_pairs" ]]; then

@@ -853,6 +853,164 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertFalse(escalation["wake_gpt"])
         self.assertNotIn("TECHNICAL_STATE_CHANGE", escalation["wake_reason_codes"])
 
+    def test_rotating_pair_scope_retains_baseline_and_does_not_emit_false_new_event(self) -> None:
+        snapshot = _snapshot()
+        source_time = NOW - timedelta(minutes=1)
+        first_events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW,
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW,
+        )
+        _, first_state = evaluate_guardian_escalation(
+            events=first_events,
+            previous_state={},
+            now=NOW,
+        )
+
+        rotated_out, retained_state = evaluate_guardian_escalation(
+            events=[],
+            previous_state=first_state,
+            now=NOW + timedelta(seconds=30),
+        )
+        self.assertFalse(rotated_out["wake_gpt"])
+        retained = [
+            item
+            for item in retained_state["events"].values()
+            if item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+        ]
+        self.assertEqual(len(retained), 1)
+        self.assertTrue(retained[0]["baseline_retained_out_of_current_event_set"])
+
+        returned_events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": _technical_chart_payload(
+                    mid=1.17305,
+                    generated_at=NOW + timedelta(minutes=1),
+                    structure_time=source_time,
+                    timeframes=("M1", "M5", "M15"),
+                ),
+            },
+            now=NOW + timedelta(minutes=1),
+        )
+        returned, _ = evaluate_guardian_escalation(
+            events=returned_events,
+            previous_state=retained_state,
+            now=NOW + timedelta(minutes=1),
+        )
+
+        self.assertFalse(returned["wake_gpt"])
+        self.assertNotIn("NEW_EVENT", returned["wake_reason_codes"])
+
+    def test_current_technical_action_replaces_prior_pair_type_baseline(self) -> None:
+        chart = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M1", "M5", "M15"),
+        )
+        flat_events = detect_guardian_events(
+            inputs={"snapshot": _snapshot(), "pair_charts": chart},
+            now=NOW,
+        )
+        _, flat_state = evaluate_guardian_escalation(
+            events=flat_events,
+            previous_state={},
+            now=NOW,
+        )
+        flat_technical = [
+            item
+            for item in flat_state["events"].values()
+            if item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+        ]
+        self.assertEqual(len(flat_technical), 1)
+        self.assertEqual(flat_technical[0]["action_hint"], "NO_ACTION")
+
+        open_events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(
+                    positions=[
+                        {
+                            "pair": "EUR_USD",
+                            "side": "SHORT",
+                            "units": -1000,
+                            "owner": "trader",
+                        }
+                    ]
+                ),
+                "pair_charts": chart,
+            },
+            now=NOW + timedelta(seconds=30),
+        )
+        _, open_state = evaluate_guardian_escalation(
+            events=open_events,
+            previous_state=flat_state,
+            now=NOW + timedelta(seconds=30),
+        )
+        current_technical = [
+            item
+            for item in open_state["events"].values()
+            if item.get("event_type") == "TECHNICAL_STATE_CHANGE"
+            and item.get("pair") == "EUR_USD"
+        ]
+
+        self.assertEqual(len(current_technical), 1)
+        self.assertEqual(current_technical[0]["action_hint"], "HOLD")
+        self.assertFalse(
+            current_technical[0].get("baseline_retained_out_of_current_event_set", False)
+        )
+
+    def test_rotating_pair_scope_retains_stale_input_baseline_without_false_new_event(self) -> None:
+        snapshot = _snapshot()
+        stale_packet = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M15",),
+        )
+        first_events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": stale_packet},
+            now=NOW,
+        )
+        self.assertEqual(
+            [event.event_type for event in first_events if event.event_type.startswith("TECHNICAL_")],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+        _, first_state = evaluate_guardian_escalation(
+            events=first_events,
+            previous_state={},
+            now=NOW,
+        )
+        _, retained_state = evaluate_guardian_escalation(
+            events=[],
+            previous_state=first_state,
+            now=NOW + timedelta(seconds=30),
+        )
+
+        returned_events = detect_guardian_events(
+            inputs={
+                "snapshot": snapshot,
+                "pair_charts": {
+                    **stale_packet,
+                    "generated_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+                },
+            },
+            now=NOW + timedelta(minutes=1),
+        )
+        returned, _ = evaluate_guardian_escalation(
+            events=returned_events,
+            previous_state=retained_state,
+            now=NOW + timedelta(minutes=1),
+        )
+
+        self.assertFalse(returned["wake_gpt"])
+        self.assertNotIn("NEW_EVENT", returned["wake_reason_codes"])
+
     def test_quick_full_surface_switch_without_fast_close_does_not_wake_tuning(self) -> None:
         snapshot = _snapshot()
         source_time = NOW - timedelta(minutes=1)

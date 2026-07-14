@@ -7,9 +7,11 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.automation import _acquire_autotrade_lock
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.live_runtime_lock import (
     LiveLockAlreadyHeld,
     acquire_live_lock_owner,
@@ -629,9 +631,13 @@ class LiveWrapperTest(unittest.TestCase):
             lock_dir = root / "lock"
             lock_dir.mkdir()
             holder = root / "delayed-lock-owner.sh"
+            ready = root / "delayed-lock-owner.ready"
+            release = root / "delayed-lock-owner.release"
+            contender_stderr = root / "delayed-lock-contender.stderr"
             holder.write_text(
                 "#!/usr/bin/env bash\n"
-                "sleep 0.02\n"
+                "printf 'ready\\n' > \"$QR_READY\"\n"
+                "while [[ ! -f \"$QR_RELEASE\" ]]; do sleep 0.005; done\n"
                 "printf '%s\\n' \"$$\" > \"$QR_LOCK_DIR/pid\"\n"
                 "printf '%s\\n' run-position-guardian-live > \"$QR_LOCK_DIR/command\"\n"
                 "sleep 0.7\n"
@@ -642,6 +648,8 @@ class LiveWrapperTest(unittest.TestCase):
                 {
                     "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
                     "QR_LOCK_DIR": str(lock_dir),
+                    "QR_READY": str(ready),
+                    "QR_RELEASE": str(release),
                     "QR_LIVE_LOCK_INIT_GRACE_SECONDS": "0.5",
                 }
             )
@@ -652,31 +660,53 @@ class LiveWrapperTest(unittest.TestCase):
                 stderr=subprocess.DEVNULL,
             )
             try:
-                result = subprocess.run(
-                    [
-                        "bash",
-                        "-c",
-                        (
-                            "set -euo pipefail; "
-                            "source \"$QR_HELPER\"; "
-                            "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 2 "
-                            "run-position-guardian-live 0.05; "
-                            "qr_live_lock_release"
-                        ),
-                    ],
-                    env=env,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                )
+                ready_deadline = time.monotonic() + 1.0
+                while not ready.exists() and time.monotonic() < ready_deadline:
+                    time.sleep(0.005)
+                self.assertTrue(ready.exists(), "delayed lock holder did not start")
+                with contender_stderr.open("w") as stderr_handle:
+                    contender = subprocess.Popen(
+                        [
+                            "bash",
+                            "-c",
+                            (
+                                "set -euo pipefail; "
+                                "source \"$QR_HELPER\"; "
+                                "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 2 "
+                                "run-position-guardian-live 0.05; "
+                                "qr_live_lock_release"
+                            ),
+                        ],
+                        env=env,
+                        text=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=stderr_handle,
+                    )
+                    observed_deadline = time.monotonic() + 2.0
+                    while time.monotonic() < observed_deadline:
+                        stderr_handle.flush()
+                        if (
+                            contender_stderr.exists()
+                            and "lock owner metadata is initializing"
+                            in contender_stderr.read_text()
+                        ):
+                            break
+                        time.sleep(0.005)
+                    else:
+                        contender.terminate()
+                        contender.wait(timeout=2)
+                        self.fail("contender did not observe initializing owner metadata")
+                    release.write_text("release\n")
+                    contender.wait(timeout=4)
             finally:
+                release.write_text("release\n")
                 proc.wait(timeout=2)
 
-            self.assertEqual(result.returncode, 0, result.stderr)
+            stderr = contender_stderr.read_text()
+            self.assertEqual(contender.returncode, 0, stderr)
             self.assertFalse(lock_dir.exists())
-            self.assertIn("lock owner metadata is initializing", result.stderr)
-            self.assertIn("waiting up to 2s", result.stderr)
+            self.assertIn("lock owner metadata is initializing", stderr)
+            self.assertIn("waiting up to 2s", stderr)
 
     def test_position_guardian_yields_to_initializing_full_trader_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1018,7 +1048,7 @@ class LiveWrapperTest(unittest.TestCase):
             pair_call = next(call for call in calls if "pair-charts" in call)
             self.assertEqual(
                 pair_call[pair_call.index("--pairs") + 1],
-                "EUR_USD,GBP_USD,USD_JPY,AUD_CAD,AUD_JPY",
+                "EUR_USD,GBP_USD,USD_JPY,AUD_CAD,AUD_USD",
             )
             self.assertEqual(pair_call[pair_call.index("--timeframes") + 1], "M1,M5,M15")
             self.assertNotIn("M30", pair_call)
@@ -1046,15 +1076,16 @@ class LiveWrapperTest(unittest.TestCase):
             charts = json.loads((root / "data" / "position_guardian_pair_charts.json").read_text())
             self.assertEqual(
                 charts["guardian_monitor_pairs"],
-                ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_CAD", "AUD_JPY"],
+                ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_CAD", "AUD_USD"],
             )
             scope = charts["guardian_monitor_scope"]
             self.assertEqual(scope["USD_JPY"]["position_owners"], ["operator_manual"])
             self.assertTrue(scope["USD_JPY"]["non_trader_monitor_only"])
             self.assertFalse(scope["USD_JPY"]["management_write_eligible"])
-            self.assertIn("active_trigger_candidate", scope["AUD_JPY"]["reasons"])
             self.assertIn("active_pending_order", scope["AUD_CAD"]["reasons"])
             freshness = json.loads((root / "data" / "position_guardian_chart_freshness.json").read_text())
+            self.assertEqual(freshness["hard_priority_candidate_pairs"], ["AUD_CAD"])
+            self.assertNotIn("AUD_JPY", freshness["monitor_pairs"])
             self.assertEqual(freshness["status"], "FRESH")
             self.assertEqual(freshness["timeframes"], ["M1", "M5", "M15"])
             self.assertIn("closed-candle chart refresh FRESH", result.stderr)
@@ -1109,7 +1140,903 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("completed read-only monitor scope", results[-1].stderr)
             self.assertIn("reused data/position_guardian_pair_charts.json", results[-1].stderr)
 
-    def test_position_guardian_clears_old_chart_scope_when_nothing_is_open_or_active(self) -> None:
+    def test_position_guardian_success_cursor_covers_configured_g8_without_raising_pair_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quote_pairs = [
+                "AUD_CAD",
+                "AUD_CHF",
+                "AUD_JPY",
+                "AUD_NZD",
+                "CAD_CHF",
+                "CAD_JPY",
+                "CHF_JPY",
+                "EUR_AUD",
+            ]
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        **{pair: {"bid": 1.0, "ask": 1.0001} for pair in quote_pairs},
+                        "XAU_USD": {"bid": 2000.0, "ask": 2000.1},
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+
+            cycle_count = (len(DEFAULT_TRADER_PAIRS) + 1) // 2
+            for cycle in range(cycle_count):
+                result = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if cycle + 1 < cycle_count:
+                    freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+                    freshness = json.loads(freshness_path.read_text())
+                    freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+                    freshness_path.write_text(json.dumps(freshness))
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), cycle_count)
+            observed: set[str] = set()
+            for call in pair_calls:
+                selected = call[call.index("--pairs") + 1].split(",")
+                self.assertEqual(len(selected), 2)
+                observed.update(selected)
+            self.assertEqual(observed, set(DEFAULT_TRADER_PAIRS))
+
+            freshness = json.loads((root / "data" / "position_guardian_chart_freshness.json").read_text())
+            self.assertEqual(freshness["coverage_policy"], "HARD_PRIORITY_THEN_HOURLY_FRONTIER_THEN_G8_ROUND_ROBIN")
+            self.assertEqual(freshness["coverage_cursor"], 0)
+            self.assertEqual(
+                freshness["coverage_cursor_semantics"],
+                "NEXT_CONFIGURED_PAIR_INDEX",
+            )
+            self.assertEqual(
+                freshness["coverage_cursor_advance_policy"],
+                "AFTER_SUCCESSFUL_CLOSED_M1_REFRESH_ONLY",
+            )
+            self.assertEqual(freshness["rotation_period_seconds"], 60)
+
+    def test_position_guardian_scope_change_waits_for_next_closed_m1_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        "EUR_USD": {"bid": 1.0, "ask": 1.0001},
+                        "USD_JPY": {"bid": 150.0, "ask": 150.01},
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=1,
+            )
+            first = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            initial_freshness = json.loads(
+                (root / "data" / "position_guardian_chart_freshness.json").read_text()
+            )
+            self.assertEqual(initial_freshness["coverage_cursor"], 1)
+
+            (root / "data" / "active_opportunity_board.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                        "top_lane": {"pair": "USD_JPY", "lane_id": "new-hourly-lane"},
+                    }
+                )
+            )
+            env["QR_POSITION_GUARDIAN_ROTATION_CURSOR"] = "5"
+            second = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(sum("pair-charts" in call for call in calls), 1)
+            persisted = json.loads(
+                (root / "data" / "position_guardian_chart_freshness.json").read_text()
+            )
+            self.assertEqual(persisted["coverage_cursor"], 1)
+            self.assertEqual(
+                persisted["next_refresh_after_utc"],
+                initial_freshness["next_refresh_after_utc"],
+            )
+            charts = json.loads(
+                (root / "data" / "position_guardian_pair_charts.json").read_text()
+            )
+            management = json.loads(
+                (root / "data" / "position_guardian_management.json").read_text()
+            )
+            heartbeat = json.loads((root / "data" / "position_guardian.json").read_text())
+            self.assertEqual(
+                management["monitor_scope"]["candidate_pairs"],
+                persisted["candidate_pairs"],
+            )
+            self.assertEqual(
+                management["monitor_scope"]["monitor_pairs"],
+                persisted["monitor_pairs"],
+            )
+            self.assertEqual(heartbeat["monitor_pairs"], persisted["monitor_pairs"])
+            self.assertEqual(
+                charts["guardian_monitor_pairs"],
+                persisted["monitor_pairs"],
+            )
+
+    def test_position_guardian_rotation_override_is_bootstrap_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        pair: {"bid": 1.0, "ask": 1.0001}
+                        for pair in DEFAULT_TRADER_PAIRS
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            env["QR_POSITION_GUARDIAN_ROTATION_CURSOR"] = "5"
+
+            first = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+            first_freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(first_freshness["coverage_cursor"], 7)
+            self.assertEqual(
+                first_freshness["coverage_cursor_source"],
+                "BOOTSTRAP_EXPLICIT_OVERRIDE",
+            )
+            first_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(first_freshness))
+
+            second = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), 2)
+            self.assertEqual(
+                pair_calls[0][pair_calls[0].index("--pairs") + 1].split(","),
+                list(DEFAULT_TRADER_PAIRS[5:7]),
+            )
+            self.assertEqual(
+                pair_calls[1][pair_calls[1].index("--pairs") + 1].split(","),
+                list(DEFAULT_TRADER_PAIRS[7:9]),
+            )
+            final_freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(final_freshness["coverage_cursor"], 9)
+            self.assertEqual(
+                final_freshness["coverage_cursor_source"],
+                "NEXT_UNCOVERED_PAIR_AFTER_CLOSED_M1",
+            )
+
+    def test_position_guardian_legacy_scope_without_active_cursor_stays_frozen_until_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        "EUR_USD": {"bid": 1.0, "ask": 1.0001},
+                        "USD_JPY": {"bid": 150.0, "ask": 150.01},
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=1,
+            )
+            first = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+            legacy = json.loads(freshness_path.read_text())
+            initial_candidates = list(legacy["candidate_pairs"])
+            initial_monitor = list(legacy["monitor_pairs"])
+            for key in (
+                "coverage_cursor_semantics",
+                "active_scope_cursor",
+                "proposed_coverage_next_cursor",
+                "proposed_coverage_scanned_count",
+            ):
+                legacy.pop(key, None)
+            freshness_path.write_text(json.dumps(legacy))
+            (root / "data" / "active_opportunity_board.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                        "top_lane": {"pair": "USD_JPY", "lane_id": "legacy-board-churn"},
+                    }
+                )
+            )
+            env["QR_POSITION_GUARDIAN_ROTATION_CURSOR"] = "5"
+
+            second = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(second.returncode, 0, second.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(sum("pair-charts" in call for call in calls), 1)
+            persisted = json.loads(freshness_path.read_text())
+            self.assertEqual(persisted["candidate_pairs"], initial_candidates)
+            self.assertEqual(persisted["monitor_pairs"], initial_monitor)
+            management = json.loads(
+                (root / "data" / "position_guardian_management.json").read_text()
+            )
+            heartbeat = json.loads((root / "data" / "position_guardian.json").read_text())
+            charts = json.loads(
+                (root / "data" / "position_guardian_pair_charts.json").read_text()
+            )
+            self.assertEqual(
+                management["monitor_scope"]["candidate_pairs"],
+                initial_candidates,
+            )
+            self.assertEqual(
+                management["monitor_scope"]["monitor_pairs"],
+                initial_monitor,
+            )
+            self.assertEqual(heartbeat["monitor_pairs"], initial_monitor)
+            self.assertEqual(charts["guardian_monitor_pairs"], initial_monitor)
+
+    def test_position_guardian_retries_partial_or_stale_scope_before_advancing_cursor(self) -> None:
+        for failure_mode in ("PARTIAL", "STALE"):
+            with self.subTest(failure_mode=failure_mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env, capture = _guardian_wrapper_env(
+                    root,
+                    snapshot={
+                        "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                        "positions": [],
+                        "orders": [],
+                        "quotes": {
+                            pair: {"bid": 1.0, "ask": 1.0001}
+                            for pair in DEFAULT_TRADER_PAIRS
+                        },
+                    },
+                    trigger_contract={"entries": []},
+                    candidate_limit=2,
+                )
+
+                initial = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(initial.returncode, 0, initial.stderr)
+                freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+                first_freshness = json.loads(freshness_path.read_text())
+                self.assertEqual(first_freshness["coverage_cursor"], 2)
+                first_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+                freshness_path.write_text(json.dumps(first_freshness))
+
+                env["QR_FAKE_GUARDIAN_CHART_MODE"] = failure_mode
+                failed = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(failed.returncode, 0, failed.stderr)
+                failed_freshness = json.loads(freshness_path.read_text())
+                self.assertEqual(failed_freshness["status"], failure_mode)
+                self.assertEqual(failed_freshness["coverage_cursor"], 2)
+                self.assertEqual(failed_freshness["proposed_coverage_cursor"], 2)
+                self.assertEqual(failed_freshness["proposed_coverage_next_cursor"], 4)
+                self.assertEqual(failed_freshness["active_scope_cursor"], 2)
+                self.assertTrue(failed_freshness["coverage_retry_required"])
+                self.assertFalse(failed_freshness["coverage_cursor_advanced"])
+                failed_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+                freshness_path.write_text(json.dumps(failed_freshness))
+
+                (root / "data" / "active_opportunity_board.json").write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                            "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                            "top_lane": {
+                                "pair": "USD_JPY",
+                                "lane_id": "changed-before-retry",
+                            },
+                        }
+                    )
+                )
+
+                env["QR_FAKE_GUARDIAN_CHART_MODE"] = "FRESH"
+                recovered = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(recovered.returncode, 0, recovered.stderr)
+
+                calls = [json.loads(line) for line in capture.read_text().splitlines()]
+                pair_calls = [call for call in calls if "pair-charts" in call]
+                self.assertEqual(len(pair_calls), 3)
+                failed_pairs = pair_calls[1][pair_calls[1].index("--pairs") + 1]
+                retried_pairs = pair_calls[2][pair_calls[2].index("--pairs") + 1]
+                self.assertEqual(retried_pairs, failed_pairs)
+                final_freshness = json.loads(freshness_path.read_text())
+                self.assertEqual(final_freshness["status"], "FRESH")
+                self.assertEqual(final_freshness["coverage_cursor"], 4)
+                self.assertEqual(final_freshness["active_scope_cursor"], 2)
+                self.assertFalse(final_freshness["coverage_retry_required"])
+                self.assertTrue(final_freshness["coverage_cursor_advanced"])
+
+    def test_position_guardian_retry_expansion_records_new_hard_pair_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_snapshot = {
+                "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                "positions": [],
+                "orders": [],
+                "quotes": {
+                    pair: {"bid": 1.0, "ask": 1.0001}
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
+            }
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot=base_snapshot,
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+            snapshot_source = Path(env["QR_FAKE_GUARDIAN_SNAPSHOT"])
+
+            initial = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(initial.returncode, 0, initial.stderr)
+            initial_freshness = json.loads(freshness_path.read_text())
+            initial_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(initial_freshness))
+
+            env["QR_FAKE_GUARDIAN_CHART_MODE"] = "STALE"
+            failed = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(failed.returncode, 0, failed.stderr)
+            failed_freshness = json.loads(freshness_path.read_text())
+            failed_pairs = list(failed_freshness["candidate_pairs"])
+            failed_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(failed_freshness))
+
+            hard_pair = DEFAULT_TRADER_PAIRS[10]
+            self.assertNotIn(hard_pair, failed_pairs)
+            snapshot_source.write_text(
+                json.dumps(
+                    {
+                        **base_snapshot,
+                        "orders": [
+                            {
+                                "order_id": "new-hard-during-retry",
+                                "pair": hard_pair,
+                                "state": "PENDING",
+                            }
+                        ],
+                    }
+                )
+            )
+            env["QR_FAKE_GUARDIAN_CHART_MODE"] = "FRESH"
+
+            recovered = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+
+            freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(freshness["effective_candidate_pair_limit"], 3)
+            self.assertEqual(freshness["hard_priority_candidate_pairs"], [hard_pair])
+            self.assertTrue(freshness["candidate_pair_limit_expanded"])
+            self.assertTrue(
+                freshness["candidate_pair_limit_expanded_for_hard_priority"]
+            )
+            self.assertEqual(
+                freshness["candidate_pair_limit_expansion_reasons"],
+                ["HARD_PRIORITY_SCOPE", "RETRY_SCOPE_RETENTION"],
+            )
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            retried_pairs = set(
+                pair_calls[-1][pair_calls[-1].index("--pairs") + 1].split(",")
+            )
+            self.assertEqual(retried_pairs, {*failed_pairs, hard_pair})
+
+    def test_position_guardian_absolute_cursor_covers_all_pairs_under_priority_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            priority_pair = DEFAULT_TRADER_PAIRS[-1]
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        pair: {"bid": 1.0, "ask": 1.0001}
+                        for pair in DEFAULT_TRADER_PAIRS
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            board_path = root / "data" / "active_opportunity_board.json"
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+
+            for cycle in range(20):
+                if cycle:
+                    freshness = json.loads(freshness_path.read_text())
+                    freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+                    freshness_path.write_text(json.dumps(freshness))
+                if cycle % 2:
+                    board_path.write_text(
+                        json.dumps(
+                            {
+                                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                                "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                                "top_lane": {
+                                    "pair": priority_pair,
+                                    "lane_id": f"priority-{cycle}",
+                                },
+                            }
+                        )
+                    )
+                else:
+                    board_path.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), 20)
+            observed = {
+                pair
+                for call in pair_calls
+                for pair in call[call.index("--pairs") + 1].split(",")
+            }
+            self.assertEqual(observed, set(DEFAULT_TRADER_PAIRS))
+            freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(
+                freshness["coverage_cursor_semantics"],
+                "NEXT_CONFIGURED_PAIR_INDEX",
+            )
+
+    def test_position_guardian_retry_keeps_failed_open_pair_after_position_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_snapshot = {
+                "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                "positions": [],
+                "orders": [],
+                "quotes": {
+                    pair: {"bid": 1.0, "ask": 1.0001}
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
+            }
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot=base_snapshot,
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            snapshot_source = Path(env["QR_FAKE_GUARDIAN_SNAPSHOT"])
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+
+            initial = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(initial.returncode, 0, initial.stderr)
+            initial_freshness = json.loads(freshness_path.read_text())
+            initial_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(initial_freshness))
+
+            formerly_open_pair = DEFAULT_TRADER_PAIRS[2]
+            snapshot_source.write_text(
+                json.dumps(
+                    {
+                        **base_snapshot,
+                        "positions": [
+                            {
+                                "pair": formerly_open_pair,
+                                "owner": "operator_manual",
+                            }
+                        ],
+                    }
+                )
+            )
+            env["QR_FAKE_GUARDIAN_CHART_MODE"] = "STALE"
+            failed = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(failed.returncode, 0, failed.stderr)
+            failed_freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(failed_freshness["status"], "STALE")
+            self.assertIn(formerly_open_pair, failed_freshness["monitor_pairs"])
+            failed_freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(failed_freshness))
+
+            snapshot_source.write_text(json.dumps(base_snapshot))
+            env["QR_FAKE_GUARDIAN_CHART_MODE"] = "FRESH"
+            recovered = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), 3)
+            failed_pairs = pair_calls[1][pair_calls[1].index("--pairs") + 1]
+            retried_pairs = pair_calls[2][pair_calls[2].index("--pairs") + 1]
+            self.assertEqual(retried_pairs, failed_pairs)
+            self.assertIn(formerly_open_pair, retried_pairs.split(","))
+            final_freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(final_freshness["coverage_cursor"], 5)
+
+    def test_position_guardian_zero_rotation_budget_still_keeps_all_hard_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [
+                        {"order_id": "pending-1", "pair": "AUD_CAD", "state": "PENDING"}
+                    ],
+                    "quotes": {
+                        "AUD_CAD": {"bid": 0.9, "ask": 0.9001},
+                        "AUD_JPY": {"bid": 100.0, "ask": 100.01},
+                    },
+                },
+                trigger_contract={
+                    "entries": [
+                        {"pair": "AUD_JPY", "lane_id": "hard-lane", "status": "LIVE_READY"}
+                    ]
+                },
+                candidate_limit=0,
+            )
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_call = next(call for call in calls if "pair-charts" in call)
+            self.assertEqual(
+                set(pair_call[pair_call.index("--pairs") + 1].split(",")),
+                {"AUD_CAD", "AUD_JPY"},
+            )
+            freshness = json.loads(
+                (root / "data" / "position_guardian_chart_freshness.json").read_text()
+            )
+            self.assertEqual(freshness["configured_candidate_pair_limit"], 0)
+            self.assertEqual(freshness["effective_candidate_pair_limit"], 2)
+            self.assertTrue(freshness["candidate_pair_limit_expanded_for_hard_priority"])
+            self.assertTrue(freshness["candidate_pair_limit_applied"])
+            self.assertFalse(freshness["coverage_cursor_advanced"])
+            self.assertFalse(freshness["coverage_cursor_wrapped"])
+
+    def test_position_guardian_zero_budget_without_hard_pairs_preserves_coverage_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            first = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+            initial = json.loads(freshness_path.read_text())
+            self.assertEqual(initial["coverage_cursor"], 2)
+            initial["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(initial))
+            env["QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS"] = "0"
+
+            paused = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(paused.returncode, 0, paused.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(sum("pair-charts" in call for call in calls), 1)
+            freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(freshness["status"], "NO_MONITOR_SCOPE")
+            self.assertEqual(freshness["coverage_cursor"], 2)
+            self.assertEqual(
+                freshness["coverage_cursor_semantics"],
+                "NEXT_CONFIGURED_PAIR_INDEX",
+            )
+            self.assertFalse(freshness["coverage_cursor_advanced"])
+            self.assertEqual(freshness["configured_candidate_pair_limit"], 0)
+
+    def test_position_guardian_empty_scope_resets_legacy_cursor_before_absolute_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            first = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+            legacy = json.loads(freshness_path.read_text())
+            for key in (
+                "coverage_cursor_semantics",
+                "active_scope_cursor",
+                "proposed_coverage_next_cursor",
+                "proposed_coverage_scanned_count",
+            ):
+                legacy.pop(key, None)
+            legacy["coverage_cursor"] = 13
+            legacy["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+            freshness_path.write_text(json.dumps(legacy))
+            env["QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS"] = "0"
+
+            empty = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(empty.returncode, 0, empty.stderr)
+            migrated = json.loads(freshness_path.read_text())
+            self.assertEqual(migrated["status"], "NO_MONITOR_SCOPE")
+            self.assertEqual(migrated["coverage_cursor"], 0)
+            self.assertEqual(
+                migrated["coverage_cursor_semantics"],
+                "NEXT_CONFIGURED_PAIR_INDEX",
+            )
+
+            env["QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS"] = "1"
+            resumed = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), 2)
+            self.assertEqual(
+                pair_calls[-1][pair_calls[-1].index("--pairs") + 1],
+                DEFAULT_TRADER_PAIRS[0],
+            )
+            final_freshness = json.loads(freshness_path.read_text())
+            self.assertEqual(final_freshness["coverage_cursor"], 1)
+
+    def test_position_guardian_rejects_candidate_limit_over_28_before_broker_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=29,
+            )
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("must be an integer in 0..28", result.stderr)
+            self.assertFalse(capture.exists())
+
+    def test_position_guardian_pins_hourly_board_and_non_eurusd_frontier_before_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        pair: {"bid": 1.0, "ask": 1.0001}
+                        for pair in ("AUD_CAD", "CAD_JPY", "CHF_JPY", "EUR_AUD")
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            (root / "data" / "active_opportunity_board.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                        "top_lane": {"pair": "CAD_JPY", "lane_id": "board-lane"},
+                    }
+                )
+            )
+            (root / "data" / "non_eurusd_live_grade_frontier.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NON_EURUSD_FRONTIER_FOUND",
+                        "next_evidence_lane": {"pair": "CHF_JPY", "lane_id": "frontier-lane"},
+                    }
+                )
+            )
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_call = next(call for call in calls if "pair-charts" in call)
+            self.assertEqual(pair_call[pair_call.index("--pairs") + 1], "CAD_JPY,CHF_JPY")
+            freshness = json.loads((root / "data" / "position_guardian_chart_freshness.json").read_text())
+            self.assertEqual(freshness["hourly_priority_candidate_pairs"], ["CAD_JPY", "CHF_JPY"])
+
+    def test_position_guardian_replaces_old_scope_with_configured_rotation_when_idle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             env, capture = _guardian_wrapper_env(
@@ -1137,11 +2064,19 @@ class LiveWrapperTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = [json.loads(line) for line in capture.read_text().splitlines()]
-            self.assertFalse(any("pair-charts" in call for call in calls))
+            pair_call = next(call for call in calls if "pair-charts" in call)
+            expected = list(DEFAULT_TRADER_PAIRS[:2])
+            self.assertEqual(
+                pair_call[pair_call.index("--pairs") + 1].split(","),
+                expected,
+            )
             self.assertEqual(sum("guardian-event-router" in call for call in calls), 1)
             charts = json.loads(stale_charts.read_text())
-            self.assertEqual(charts["guardian_monitor_pairs"], [])
-            self.assertEqual(charts["charts"], [])
+            self.assertEqual(charts["guardian_monitor_pairs"], expected)
+            self.assertEqual(
+                [item["pair"] for item in charts["charts"]],
+                expected,
+            )
 
     def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1460,11 +2395,15 @@ elif command == "pair-charts":
     timeframes = [item for item in str(value_after(args, "--timeframes", "")).split(",") if item]
     durations = {"M1": 60, "M5": 300, "M15": 900}
     now = datetime.now(timezone.utc)
+    chart_mode = str(os.environ.get("QR_FAKE_GUARDIAN_CHART_MODE") or "FRESH").upper()
+    if chart_mode not in {"FRESH", "PARTIAL", "STALE"}:
+        raise SystemExit(65)
     charts = []
     for pair in pairs:
         views = []
         for timeframe in timeframes:
-            started = now - timedelta(seconds=durations[timeframe])
+            age_multiplier = 4 if chart_mode == "STALE" else 1
+            started = now - timedelta(seconds=durations[timeframe] * age_multiplier)
             views.append(
                 {
                     "granularity": timeframe,
@@ -1482,14 +2421,21 @@ elif command == "pair-charts":
                 }
             )
         charts.append({"pair": pair, "views": views})
+    if chart_mode == "PARTIAL" and charts:
+        charts = charts[:-1]
+    pairs_failed = len(pairs) - len(charts)
     payload = {
         "generated_at_utc": now.isoformat(),
         "timeframes": timeframes,
         "pairs_requested": len(pairs),
-        "pairs_succeeded": len(pairs),
-        "pairs_failed": 0,
-        "partial": False,
-        "failures": [],
+        "pairs_succeeded": len(charts),
+        "pairs_failed": pairs_failed,
+        "partial": chart_mode == "PARTIAL",
+        "failures": (
+            [{"pair": pairs[-1], "error": "injected partial chart failure"}]
+            if pairs_failed
+            else []
+        ),
         "charts": charts,
     }
     output = Path(value_after(args, "--output"))

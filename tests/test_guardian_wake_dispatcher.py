@@ -1891,6 +1891,46 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertNotEqual(first["observation_id"], second["observation_id"])
             self.assertEqual(path.read_text(), first_text)
 
+    def test_technical_pair_scope_does_not_split_when_position_action_hint_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            candidate_event = _technical_tuning_event(
+                pair="CAD_CHF",
+                event_id="candidate-technical",
+            )
+            candidate_event.update(
+                {
+                    "action_hint": "NO_ACTION",
+                    "recommended_review_type": "TUNING_REVIEW",
+                    "dedupe_key": "CAD_CHF|technical|TECHNICAL_STATE_CHANGE|NO_ACTION",
+                }
+            )
+            open_position_event = {
+                **candidate_event,
+                "event_id": "open-position-technical",
+                "action_hint": "HOLD",
+                "recommended_review_type": "THESIS_REVIEW",
+                "dedupe_key": "CAD_CHF|technical|TECHNICAL_STATE_CHANGE|HOLD",
+            }
+
+            first = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=candidate_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("CAD_CHF")},
+                now=NOW,
+            )
+            second = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=open_position_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("CAD_CHF")},
+                now=NOW + timedelta(minutes=1),
+            )
+
+            payload = json.loads(path.read_text())
+            self.assertEqual(first["semantic_state_id"], second["semantic_state_id"])
+            self.assertEqual(second["status"], "UNCHANGED_IDEMPOTENT")
+            self.assertEqual(payload["pending_count"], 1)
+
     def test_major_figure_semantic_identity_ignores_ask_only_rollover_widening(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "guardian_tuning_work_order.json"
@@ -4862,7 +4902,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     first_size = text_size
                     first_depth = depth
                 else:
-                    # A flat queue grows at most linearly until its 20-entry
+                    # A flat queue grows at most linearly until its configured
                     # cap.  The historical recursive-envelope bug exceeds
                     # this bound within a few rewrites, before producing a
                     # dangerously large test artifact.
@@ -4970,6 +5010,193 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 sum(len(item.get("observations") or []) for item in payload["work_orders"]),
                 21,
             )
+
+    def test_revision_four_per_candle_technical_ids_migrate_to_one_pair_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+
+            def legacy_entry(index: int) -> dict:
+                event = _technical_tuning_event(
+                    pair="CAD_CHF",
+                    event_id=f"revision-four-candle-{index}",
+                    mid=0.5710 + index * 0.0001,
+                )
+                event["details"]["closed_candle_watermarks"] = {
+                    "M1": f"2026-06-30T03:{29 + index:02d}:00+00:00",
+                    "M5": "2026-06-30T03:25:00+00:00",
+                    "M15": "2026-06-30T03:15:00+00:00",
+                }
+                observation_id = dispatcher_module._event_material_fingerprint(event)
+                return {
+                    "generated_at_utc": (NOW + timedelta(minutes=index)).isoformat(),
+                    "work_order_id": f"legacy-revision-four-{index}",
+                    "status": "PENDING_HOURLY_AI_REVIEW",
+                    "event_fingerprint": observation_id,
+                    "semantic_state_id": f"old-watermark-bound-semantic-{index}",
+                    "observation_id": observation_id,
+                    "latest_observation_id": observation_id,
+                    "latest_reviewed_observation_id": observation_id,
+                    "selected_event": event,
+                    "selected_event_id": event["event_id"],
+                    "selected_event_dedupe_key": event["dedupe_key"],
+                    "material_reason_codes": event["wake_reason_codes"],
+                    "bot_tuning_review_validation": {"status": "VALID", "issues": []},
+                    "bot_tuning_review": _valid_tuning_review("CAD_CHF"),
+                    "live_permission_allowed": False,
+                    "no_direct_oanda": True,
+                    "preserve_blockers": True,
+                }
+
+            entries = [legacy_entry(0), legacy_entry(1)]
+            path.write_text(
+                json.dumps(
+                    {
+                        **entries[0],
+                        "schema_version": 2,
+                        "queue_schema_revision": dispatcher_module.TUNING_QUEUE_SCHEMA_REVISION,
+                        "work_orders": entries,
+                        "pending_count": 2,
+                        "terminal_history": [],
+                        "terminal_history_count": 0,
+                        "experiment_semantic_digest_history": [],
+                        "experiment_id_digest_history": [],
+                        "override_lifecycle_heads": [],
+                    }
+                )
+            )
+            incoming = _technical_tuning_event(
+                pair="CAD_CHF",
+                event_id="revision-four-candle-2",
+                mid=0.5712,
+            )
+            incoming["details"]["closed_candle_watermarks"] = {
+                "M1": "2026-06-30T03:31:00+00:00",
+                "M5": "2026-06-30T03:30:00+00:00",
+                "M15": "2026-06-30T03:15:00+00:00",
+            }
+
+            result = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=incoming,
+                receipt={"bot_tuning_review": _valid_tuning_review("CAD_CHF")},
+                now=NOW + timedelta(minutes=2),
+            )
+
+            payload = json.loads(path.read_text())
+            self.assertEqual(result["status"], "WORK_ORDER_OBSERVATION_APPENDED")
+            self.assertEqual(payload["pending_count"], 1)
+            self.assertEqual(len(payload["work_orders"]), 1)
+            work_order = payload["work_orders"][0]
+            self.assertEqual(
+                work_order["semantic_identity_version"],
+                dispatcher_module.TUNING_SEMANTIC_IDENTITY_VERSION,
+            )
+            self.assertEqual(work_order["observation_count"], 3)
+            self.assertEqual(work_order["selected_event_id"], incoming["event_id"])
+            self.assertEqual(
+                work_order["latest_observation_id"],
+                work_order["latest_reviewed_observation_id"],
+            )
+
+    def test_malformed_technical_semantic_identity_version_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            event = _technical_tuning_event(
+                pair="CAD_CHF",
+                event_id="malformed-semantic-version",
+            )
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=event,
+                receipt={"bot_tuning_review": _valid_tuning_review("CAD_CHF")},
+                now=NOW,
+            )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            payload = json.loads(path.read_text())
+            payload["work_orders"][0]["semantic_identity_version"] = "not-an-integer"
+            path.write_text(json.dumps(payload))
+            before = path.read_bytes()
+
+            loaded = dispatcher_module._load_tuning_work_order(path)
+            write_result = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="after-malformed-semantic-version",
+                ),
+                receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertIn("_read_error", loaded)
+            self.assertIn("semantic_identity_version", loaded["_read_error"])
+            self.assertEqual(write_result["status"], "WORK_ORDER_READ_FAILED")
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_migrated_pair_scope_never_presents_older_review_as_latest(self) -> None:
+        old_event = _technical_tuning_event(
+            pair="CAD_CHF",
+            event_id="reviewed-old-candle",
+            mid=0.5710,
+        )
+        new_event = _technical_tuning_event(
+            pair="CAD_CHF",
+            event_id="unreviewed-new-candle",
+            mid=0.5712,
+        )
+        old_id = dispatcher_module._event_material_fingerprint(old_event)
+        new_id = dispatcher_module._event_material_fingerprint(new_event)
+        reviewed = {
+            "generated_at_utc": NOW.isoformat(),
+            "work_order_id": "legacy-reviewed-old",
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "event_fingerprint": old_id,
+            "semantic_state_id": "old-candle-semantic-1",
+            "observation_id": old_id,
+            "latest_observation_id": old_id,
+            "latest_reviewed_observation_id": old_id,
+            "selected_event": old_event,
+            "bot_tuning_review_validation": {"status": "VALID", "issues": []},
+            "bot_tuning_review": _valid_tuning_review("CAD_CHF"),
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+        unreviewed = {
+            "generated_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+            "work_order_id": "legacy-unreviewed-new",
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "event_fingerprint": new_id,
+            "semantic_state_id": "old-candle-semantic-2",
+            "observation_id": new_id,
+            "latest_observation_id": new_id,
+            "selected_event": new_event,
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+        payload = {
+            "schema_version": 2,
+            "queue_schema_revision": dispatcher_module.TUNING_QUEUE_SCHEMA_REVISION,
+            "work_orders": [reviewed, unreviewed],
+            "pending_count": 2,
+            "terminal_history": [],
+            "terminal_history_count": 0,
+            "experiment_semantic_digest_history": [],
+            "experiment_id_digest_history": [],
+            "override_lifecycle_heads": [],
+        }
+
+        pending, _ = dispatcher_module._normalized_tuning_work_order_queue(payload)
+
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["latest_observation_id"], new_id)
+        self.assertNotIn("latest_reviewed_observation_id", pending[0])
+        self.assertNotIn("bot_tuning_review", pending[0])
+        self.assertEqual(
+            pending[0]["bot_tuning_review_validation"]["status"],
+            "MISSING",
+        )
 
     def test_legacy_lax_valid_review_is_revalidated_before_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

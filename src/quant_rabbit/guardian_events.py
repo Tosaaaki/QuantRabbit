@@ -50,6 +50,7 @@ SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
 GUARDIAN_ACTIONS = ("TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION")
 TUNING_ONLY_EVENT_TYPES = {"TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"}
+MAX_RETAINED_TECHNICAL_BASELINES = 64
 
 # Cadence contract, not market geometry: a repeated identical state should not
 # spend a discretionary wake again inside the normal trader cadence window.
@@ -522,6 +523,65 @@ def evaluate_guardian_escalation(
             "material_reference": material_reference,
             "acknowledged_event": material_acknowledged or (prior or {}).get("acknowledged_event"),
         }
+
+    # The fast guardian deliberately observes only a rotating subset of the
+    # 28-pair G8 universe on each M1 window.  Dropping an omitted pair's last
+    # technical baseline would make its next visit look like ``NEW_EVENT``
+    # even when the closed-candle watermark and derived state did not change.
+    # Retain at most one bounded baseline per pair and technical event type;
+    # this also preserves a stale-input baseline across rotation. Current
+    # events replace their own key normally, while non-technical conditions
+    # keep their existing current-cycle lifecycle. The cap also keeps a
+    # malformed or historically expanded state from growing without bound.
+    retained_technical_keys: set[tuple[str, str]] = set()
+    retained_count = 0
+    current_technical_types_by_pair: dict[str, set[str]] = {}
+    for current in next_events.values():
+        if not isinstance(current, dict):
+            continue
+        current_type = str(current.get("event_type") or "").upper()
+        current_pair = _pair(current.get("pair"))
+        if current_pair and current_type in TUNING_ONLY_EVENT_TYPES:
+            retained_technical_keys.add((current_pair, current_type))
+            current_technical_types_by_pair.setdefault(current_pair, set()).add(
+                current_type
+            )
+    ordered_previous = sorted(
+        previous_events.items(),
+        key=lambda item: (
+            _parse_utc((item[1] or {}).get("last_seen_at_utc"))
+            if isinstance(item[1], dict)
+            else None
+        )
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for dedupe_key, prior in ordered_previous:
+        if dedupe_key in next_events or not isinstance(prior, dict):
+            continue
+        event_type = str(prior.get("event_type") or "").upper()
+        if event_type not in TUNING_ONLY_EVENT_TYPES:
+            continue
+        pair = _pair(prior.get("pair"))
+        baseline_key = (pair or "", event_type)
+        if not pair or baseline_key in retained_technical_keys:
+            continue
+        if (
+            event_type == "TECHNICAL_INPUT_STALE"
+            and "TECHNICAL_STATE_CHANGE"
+            in current_technical_types_by_pair.get(pair, set())
+        ):
+            # This pair was actively observed with complete technical input,
+            # so the stale condition genuinely cleared. Do not confuse that
+            # lifecycle transition with a pair omitted by round-robin scope.
+            continue
+        if retained_count >= MAX_RETAINED_TECHNICAL_BASELINES:
+            continue
+        retained = dict(prior)
+        retained["baseline_retained_out_of_current_event_set"] = True
+        next_events[str(dedupe_key)] = retained
+        retained_technical_keys.add(baseline_key)
+        retained_count += 1
 
     escalation = {
         "generated_at_utc": now.isoformat(),

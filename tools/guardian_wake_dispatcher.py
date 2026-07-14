@@ -103,7 +103,14 @@ DEFAULT_USAGE_LIMIT_RETRY_SECONDS = 90 * 60
 DEFAULT_PENDING_DISPATCH_TTL_SECONDS = 2 * 60 * 60
 MAX_PENDING_DISPATCHES = 24
 MAX_PENDING_SUCCESSORS_PER_DEDUPE = 8
-MAX_PENDING_TUNING_WORK_ORDERS = 20
+# One durable technical-tuning scope per G8 pair already needs 28 slots before
+# lane-specific failed-acceptance work is counted.  The former cap of 20 made
+# the queue structurally unable to represent the configured market universe
+# and caused the dispatcher to retry WORK_ORDER_QUEUE_FULL forever.  Keep a
+# bounded headroom for exact-lane obligations without turning the queue into an
+# unbounded evidence store.
+MAX_PENDING_TUNING_WORK_ORDERS = 48
+TUNING_SEMANTIC_IDENTITY_VERSION = 2
 TUNING_REVIEW_BATCH_ITEM_FIELDS = frozenset(
     {"work_order_id", "expected_observation_id", "review"}
 )
@@ -1589,28 +1596,26 @@ def _event_semantic_state_id(event: dict[str, Any]) -> str:
     semantic: dict[str, Any] = {
         "event_type": event_type,
         "pair": str(event.get("pair") or "").upper(),
-        "direction": str(event.get("direction") or "").upper() or None,
-        "thesis": event.get("thesis"),
-        "action_hint": str(event.get("action_hint") or "").upper(),
-        "thesis_state": str(event.get("thesis_state") or "").upper(),
-        "dedupe_key": event.get("dedupe_key"),
     }
     if event_type == "TECHNICAL_STATE_CHANGE":
-        fingerprint = (
-            details.get("material_fingerprint")
-            if isinstance(details.get("material_fingerprint"), dict)
-            else {}
-        )
-        watermarks = (
-            details.get("closed_candle_watermarks")
-            if isinstance(details.get("closed_candle_watermarks"), dict)
-            else {}
-        )
-        semantic["technical_state"] = fingerprint
-        semantic["closed_candle_watermarks"] = {
-            str(key).upper(): value for key, value in sorted(watermarks.items())
+        # A work order is the durable tuning scope for one monitored pair/bot,
+        # not one closed candle or one transient direction.  Fingerprints,
+        # watermarks and direction changes are successive observations inside
+        # that scope and each receives its own GPT review.  Binding them into
+        # the semantic id leaked one permanent queue slot per state change.
+        semantic["technical_scope"] = {
+            "scope": "PAIR_BOT_TUNING",
         }
     elif event_type == "FAILED_ACCEPTANCE":
+        semantic.update(
+            {
+                "action_hint": str(event.get("action_hint") or "").upper(),
+                "dedupe_key": event.get("dedupe_key"),
+                "direction": str(event.get("direction") or "").upper() or None,
+                "thesis": event.get("thesis"),
+                "thesis_state": str(event.get("thesis_state") or "").upper(),
+            }
+        )
         lane_id = str(details.get("lane_id") or "").strip()
         status = str(details.get("status") or "").strip().upper()
         if lane_id or status:
@@ -1621,6 +1626,15 @@ def _event_semantic_state_id(event: dict[str, Any]) -> str:
             # quote in semantic identity churns one queue slot per tick.
             semantic["major_figure"] = _major_figure_identity(event.get("price_zone"))
     else:
+        semantic.update(
+            {
+                "action_hint": str(event.get("action_hint") or "").upper(),
+                "dedupe_key": event.get("dedupe_key"),
+                "direction": str(event.get("direction") or "").upper() or None,
+                "thesis": event.get("thesis"),
+                "thesis_state": str(event.get("thesis_state") or "").upper(),
+            }
+        )
         semantic["price_zone"] = event.get("price_zone")
         semantic["stable_details"] = {
             key: details.get(key)
@@ -1652,9 +1666,26 @@ def _major_figure_identity(value: Any) -> str | None:
 
 def _work_order_semantic_state_id(entry: dict[str, Any]) -> str:
     explicit = str(entry.get("semantic_state_id") or "").strip()
+    selected = entry.get("selected_event") if isinstance(entry.get("selected_event"), dict) else None
+    try:
+        semantic_identity_version = int(entry.get("semantic_identity_version") or 1)
+    except (TypeError, ValueError):
+        # A malformed pre-v2 marker must not crash normalization and strand the
+        # whole tuning queue. Recompute the technical pair scope as legacy;
+        # normalization rewrites the repaired row with the current version.
+        semantic_identity_version = 1
+    if (
+        selected is not None
+        and str(selected.get("event_type") or "").upper() == "TECHNICAL_STATE_CHANGE"
+        and not _tuning_work_order_entry_terminal(entry)
+        and semantic_identity_version < TUNING_SEMANTIC_IDENTITY_VERSION
+    ):
+        # Revision-4 queues written before semantic identity v2 stored the
+        # closed-candle watermark in the explicit id.  Recompute pending rows
+        # so normalization can merge those leaked per-candle obligations.
+        return _event_semantic_state_id(selected)
     if explicit:
         return explicit
-    selected = entry.get("selected_event") if isinstance(entry.get("selected_event"), dict) else None
     if selected is not None:
         return _event_semantic_state_id(selected)
     return str(entry.get("event_fingerprint") or entry.get("work_order_id") or "")
@@ -6356,6 +6387,7 @@ def _maybe_write_tuning_work_order_locked(
         # readers.  Queue idempotence uses the explicit semantic_state_id.
         "event_fingerprint": observation_id,
         "semantic_state_id": semantic_state_id,
+        "semantic_identity_version": TUNING_SEMANTIC_IDENTITY_VERSION,
         "observation_id": observation_id,
         "latest_observation_id": observation_id,
         "observation_count": 1,
@@ -6478,6 +6510,7 @@ _REVISIONED_TUNING_QUEUE_ENVELOPE_FIELDS = frozenset(
 _REVISIONED_TUNING_QUEUE_ENTRY_FIELDS = frozenset(
     {
         "semantic_state_id",
+        "semantic_identity_version",
         "observations",
         "observation_count",
         "observation_count_total",
@@ -6671,6 +6704,7 @@ def _normalize_pending_tuning_work_order(
     normalized = _strip_tuning_envelope(entry)
     observations = _tuning_observations_from_entry(normalized)
     normalized["semantic_state_id"] = semantic_state_id
+    normalized["semantic_identity_version"] = TUNING_SEMANTIC_IDENTITY_VERSION
     normalized["observations"] = observations
     normalized["observation_count"] = len(observations)
     normalized["observation_count_total"] = max(
@@ -6682,11 +6716,21 @@ def _normalize_pending_tuning_work_order(
     normalized["live_permission_allowed"] = False
     normalized["no_direct_oanda"] = True
     normalized["preserve_blockers"] = True
-    selected_event = (
+    latest_observation = observations[-1] if observations else {}
+    latest_selected_event = (
+        latest_observation.get("selected_event")
+        if isinstance(latest_observation.get("selected_event"), dict)
+        else None
+    )
+    selected_event = latest_selected_event or (
         normalized.get("selected_event")
         if isinstance(normalized.get("selected_event"), dict)
         else None
     )
+    if selected_event is not None:
+        normalized["selected_event"] = selected_event
+        normalized["selected_event_id"] = selected_event.get("event_id")
+        normalized["selected_event_dedupe_key"] = selected_event.get("dedupe_key")
     review_validation = _validate_bot_tuning_review(
         normalized.get("bot_tuning_review"),
         selected_event=selected_event,
@@ -6718,6 +6762,59 @@ def _merge_pending_tuning_work_orders(
     )
     if observations:
         merged["latest_observation_id"] = observations[-1]["observation_id"]
+        latest_selected_event = observations[-1].get("selected_event")
+        if isinstance(latest_selected_event, dict):
+            merged["selected_event"] = latest_selected_event
+            merged["selected_event_id"] = latest_selected_event.get("event_id")
+            merged["selected_event_dedupe_key"] = latest_selected_event.get("dedupe_key")
+
+        # A normalized merge may combine pre-v2 per-candle rows.  Carry only
+        # the structured review that is explicitly bound to the newest merged
+        # observation; otherwise the merged scope must remain visibly
+        # unreviewed instead of presenting an older review as current.
+        latest_observation_id = str(observations[-1]["observation_id"])
+        review_source = next(
+            (
+                candidate
+                for candidate in (primary, duplicate)
+                if str(candidate.get("latest_reviewed_observation_id") or "")
+                == latest_observation_id
+                and str(
+                    (
+                        candidate.get("bot_tuning_review_validation")
+                        if isinstance(candidate.get("bot_tuning_review_validation"), dict)
+                        else {}
+                    ).get("status")
+                    or ""
+                ).upper()
+                == "VALID"
+                and isinstance(candidate.get("bot_tuning_review"), dict)
+            ),
+            None,
+        )
+        if review_source is not None:
+            merged["latest_reviewed_observation_id"] = latest_observation_id
+            merged["bot_tuning_review_validation"] = review_source[
+                "bot_tuning_review_validation"
+            ]
+            merged["bot_tuning_review"] = review_source["bot_tuning_review"]
+            if review_source.get("structured_review_completed_at_utc"):
+                merged["structured_review_completed_at_utc"] = review_source[
+                    "structured_review_completed_at_utc"
+                ]
+        else:
+            merged.pop("latest_reviewed_observation_id", None)
+            merged.pop("bot_tuning_review", None)
+            merged["bot_tuning_review_validation"] = {
+                "status": "MISSING",
+                "issues": [
+                    {
+                        "code": "LATEST_OBSERVATION_REVIEW_REQUIRED",
+                        "message": "merged latest observation has no bound structured review",
+                    }
+                ],
+            }
+            merged.pop("structured_review_completed_at_utc", None)
     merged["material_reason_codes"] = sorted(
         {
             str(reason).strip().upper()
@@ -6739,7 +6836,8 @@ def _merge_pending_tuning_work_orders(
         else {}
     )
     if (
-        str(primary_validation.get("status") or "").upper() != "VALID"
+        not observations
+        and str(primary_validation.get("status") or "").upper() != "VALID"
         and str(duplicate_validation.get("status") or "").upper() == "VALID"
     ):
         merged["bot_tuning_review_validation"] = duplicate_validation
@@ -6747,6 +6845,7 @@ def _merge_pending_tuning_work_orders(
     merged["live_permission_allowed"] = False
     merged["no_direct_oanda"] = True
     merged["preserve_blockers"] = True
+    merged["semantic_identity_version"] = TUNING_SEMANTIC_IDENTITY_VERSION
     return merged
 
 
@@ -6827,8 +6926,23 @@ def _append_tuning_observation(
     updated["observations"] = observations
     updated["observation_count"] = len(observations)
     updated["observation_count_total"] = int(entry.get("observation_count_total") or len(observations) - 1) + 1
+    updated["selected_event"] = selected_event
+    updated["selected_event_id"] = selected_event.get("event_id")
+    updated["selected_event_dedupe_key"] = selected_event.get("dedupe_key")
+    updated["event_fingerprint"] = observation_id
+    updated["observation_id"] = observation_id
     updated["latest_observation_id"] = observation_id
     updated["last_observed_at_utc"] = observed_at.isoformat()
+    updated["material_reason_codes"] = sorted(
+        {
+            str(reason).strip().upper()
+            for reason in [
+                *(entry.get("material_reason_codes") or []),
+                *(selected_event.get("wake_reason_codes") or []),
+            ]
+            if str(reason).strip()
+        }
+    )
     prepared_contract = (
         updated.get("prepared_experiment_contract")
         if isinstance(updated.get("prepared_experiment_contract"), dict)
@@ -6868,7 +6982,36 @@ def _event_requires_tuning_observation_append(
     event_type = str(event.get("event_type") or "").upper()
     details = event.get("details") if isinstance(event.get("details"), dict) else {}
     if event_type == "TECHNICAL_STATE_CHANGE":
-        return "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE" in reasons
+        if "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE" in reasons:
+            return True
+        prior_observations = _tuning_observations_from_entry(existing_entry or {})
+        if not prior_observations:
+            return True
+        prior_event = (
+            prior_observations[-1].get("selected_event")
+            if isinstance(prior_observations[-1].get("selected_event"), dict)
+            else {}
+        )
+        prior_details = (
+            prior_event.get("details")
+            if isinstance(prior_event.get("details"), dict)
+            else {}
+        )
+        # Spread and artifact clocks are observation noise.  A changed closed-
+        # candle fingerprint/watermark or directional state is the material
+        # transition that needs a new review inside the same pair scope.
+        return any(
+            (
+                details.get("material_fingerprint")
+                != prior_details.get("material_fingerprint"),
+                details.get("closed_candle_watermarks")
+                != prior_details.get("closed_candle_watermarks"),
+                str(event.get("direction") or "").upper()
+                != str(prior_event.get("direction") or "").upper(),
+                str(event.get("thesis_state") or "").upper()
+                != str(prior_event.get("thesis_state") or "").upper(),
+            )
+        )
     if event_type == "FAILED_ACCEPTANCE":
         if str(details.get("lane_id") or "").strip() or str(details.get("status") or "").strip():
             return True
@@ -8064,6 +8207,16 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
         return None
 
     def entry_structure_error(item: dict[str, Any], label: str) -> str | None:
+        semantic_identity_version = item.get("semantic_identity_version")
+        if semantic_identity_version is not None and (
+            isinstance(semantic_identity_version, bool)
+            or not isinstance(semantic_identity_version, int)
+            or semantic_identity_version not in {1, TUNING_SEMANTIC_IDENTITY_VERSION}
+        ):
+            return (
+                f"{label}.semantic_identity_version must be exact supported "
+                f"integer 1 or {TUNING_SEMANTIC_IDENTITY_VERSION}"
+            )
         for key in ("observation_count", "observation_count_total", "reopened_count"):
             value = item.get(key)
             if value is not None and (
