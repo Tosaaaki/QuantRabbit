@@ -1868,6 +1868,7 @@ from quant_rabbit.paths import (
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_FLOW_SNAPSHOT,
+    DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -2272,6 +2273,7 @@ class GPTTraderBrain:
         news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
         news_health_path: Path = DEFAULT_NEWS_HEALTH,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+        guardian_action_receipt_path: Path = DEFAULT_GUARDIAN_ACTION_RECEIPT,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         active_trader_contract_path: Path = DEFAULT_ACTIVE_TRADER_CONTRACT,
@@ -2361,6 +2363,12 @@ class GPTTraderBrain:
             if qr_trader_run_watchdog_path != DEFAULT_QR_TRADER_RUN_WATCHDOG
             or output_path == DEFAULT_GPT_TRADER_DECISION
             else output_path.parent / DEFAULT_QR_TRADER_RUN_WATCHDOG.name
+        )
+        self.guardian_action_receipt_path = (
+            guardian_action_receipt_path
+            if guardian_action_receipt_path != DEFAULT_GUARDIAN_ACTION_RECEIPT
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_GUARDIAN_ACTION_RECEIPT.name
         )
         self.guardian_receipt_consumption_path = (
             guardian_receipt_consumption_path
@@ -2497,6 +2505,7 @@ class GPTTraderBrain:
             "trader_overrides": self.trader_overrides_path,
             "predictive_limits": self.predictive_limits_path,
             "qr_trader_run_watchdog": self.qr_trader_run_watchdog_path,
+            "guardian_action_receipt": self.guardian_action_receipt_path,
             "guardian_receipt_consumption": self.guardian_receipt_consumption_path,
             "guardian_receipt_operator_review": self.guardian_receipt_operator_review_path,
             "active_trader_contract": self.active_trader_contract_path,
@@ -4759,6 +4768,16 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                 "execution_cost_floor_sha256": {
                     "type": ["string", "null"]
                 },
+                "guardian_action_receipt_material_contract": {
+                    "type": "string"
+                },
+                "guardian_action_receipt_baseline_pairs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "guardian_action_receipt_scope_state_sha256": {
+                    "type": "string"
+                },
                 "authorized_size_multiple": {"type": "number"},
                 "authorized_units": {"type": "integer"},
                 "execution_fields_preserved": {"type": "boolean"},
@@ -5117,6 +5136,7 @@ def draft_trader_decision(
     news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
     news_health_path: Path = DEFAULT_NEWS_HEALTH,
     qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+    guardian_action_receipt_path: Path = DEFAULT_GUARDIAN_ACTION_RECEIPT,
     guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     guardian_receipt_consumption_report_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
@@ -5178,6 +5198,7 @@ def draft_trader_decision(
         news_items_path=news_items_path,
         news_health_path=news_health_path,
         qr_trader_run_watchdog_path=qr_trader_run_watchdog_path,
+        guardian_action_receipt_path=guardian_action_receipt_path,
         guardian_receipt_consumption_path=guardian_receipt_consumption_path,
         guardian_receipt_operator_review_path=guardian_receipt_operator_review_path,
         active_trader_contract_path=active_trader_contract_path,

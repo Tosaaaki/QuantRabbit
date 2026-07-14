@@ -4083,7 +4083,15 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
             reasons.append("UNKNOWN_GATEWAY_OUTSIDE_ORDER_STATE_CHANGE")
     if event.event_type == "MARGIN_PRESSURE" and (prior is None or not prior.get("margin_pressure")):
         reasons.append("MARGIN_RISK_THRESHOLD_CROSSED")
-    material_change = _event_price_zone_material_change(event, prior)
+    # Price-zone parsing is defined only for market-read and technical-state
+    # observations.  Safety events use descriptive state strings (for example
+    # ``margin_used/nav=...``); parsing their first decimal as an FX price
+    # turns ordinary risk-ratio drift into a false market displacement wake.
+    material_change = (
+        _event_price_zone_material_change(event, prior)
+        if event.event_type in MATERIAL_ACK_EVENT_TYPES
+        else {"changed": False, "material": False}
+    )
     if material_change["material"]:
         reasons.append("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE")
         if event.event_type == "FAILED_ACCEPTANCE":

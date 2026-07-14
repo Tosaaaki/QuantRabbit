@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -42,6 +43,7 @@ from quant_rabbit.trader_support_bot import (
     _near_ready_evidence_needed,
     _profit_capture_summary,
 )
+from tools import guardian_wake_dispatcher as guardian_dispatcher_module
 
 
 class TraderSupportBotTest(unittest.TestCase):
@@ -302,6 +304,69 @@ class TraderSupportBotTest(unittest.TestCase):
         )
         self.assertFalse(evidence["live_permission_allowed"])
 
+    def test_unsupported_forward_acquisition_contract_is_explicit_p1_status(self) -> None:
+        work_order = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-eurusd-unsupported",
+            "event_fingerprint": "EUR_USD|TECHNICAL_STATE_CHANGE|UNSUPPORTED",
+            "latest_observation_id": "obs-unsupported",
+            "latest_reviewed_observation_id": "obs-unsupported",
+            "bot_tuning_review_validation": {"status": "VALID", "issues": []},
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+            },
+            "bot_tuning_review": {
+                "affected_pairs": ["EUR_USD"],
+                "affected_bot_families": ["trend"],
+            },
+        }
+        acquisition = {
+            "status": "PARTIAL",
+            "counts": {
+                "supported": 1,
+                "ready": 1,
+                "waiting": 0,
+                "defect": 0,
+                "unsupported": 1,
+            },
+            "evidence_mode": "FORWARD_FIRST_N_CANONICAL_ENTRIES",
+            "work_orders": [],
+            "unsupported_work_orders": [
+                {
+                    "work_order_id": "guardian-tuning-eurusd-unsupported",
+                    "status": "UNSUPPORTED_REVIEW_CONTRACT",
+                }
+            ],
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=work_order,
+            guardian_tuning_acquisition=acquisition,
+        )
+
+        request = next(
+            item
+            for item in requests
+            if item["code"] == "REVIEW_GUARDIAN_MARKET_STATE_TUNING"
+        )
+        self.assertEqual(request["priority"], "P1")
+        self.assertEqual(
+            request["status"],
+            "FORWARD_ACQUISITION_CONTRACT_UNSUPPORTED",
+        )
+        self.assertEqual(
+            request["evidence_summary"]["acquisition_unsupported_count"],
+            1,
+        )
+
     def test_tuning_evidence_defaults_follow_temp_support_data_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -527,6 +592,242 @@ class TraderSupportBotTest(unittest.TestCase):
             if item["code"] == "REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"
         )
         self.assertIsNone(integrity["evidence_summary"]["current_unreviewed_count"])
+
+    def test_unhashable_revision_five_rejection_id_is_invalid_not_an_exception(self) -> None:
+        malformed = {
+            "schema_version": 2,
+            "queue_schema_revision": 5,
+            "pending_count": 0,
+            "terminal_history_count": 0,
+            "work_orders": [],
+            "terminal_history": [],
+            "admission_rejection_ledger": {
+                "schema_version": 1,
+                "path": "guardian_tuning_admission_rejections.json",
+                "sha256": "0" * 64,
+                "record_count": 1,
+                "rejection_ids": [{}],
+            },
+        }
+
+        validation = trader_support_bot_module._guardian_tuning_queue_validation(
+            malformed
+        )
+
+        self.assertEqual(validation["status"], "INVALID")
+        self.assertIn(
+            "revision-5 admission rejection commitment is invalid",
+            validation["issues"],
+        )
+
+    def test_invalid_tuning_queue_bytes_fail_visible_without_crashing_support(self) -> None:
+        corruptions = {
+            "malformed_json": b'{"schema_version":',
+            "oversized": b" "
+            * (guardian_dispatcher_module.MAX_TUNING_QUEUE_BYTES + 1),
+            "invalid_utf8": b"\xff\xfe\xfd",
+            "recursion_bomb": (
+                b'{"nested":'
+                + (b"[" * 2_048)
+                + b"0"
+                + (b"]" * 2_048)
+                + b"}"
+            ),
+        }
+        for label, raw_queue in corruptions.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)
+                files = _write_fixture(root, now=now, blocked=True)
+                queue_path = root / "data" / "guardian_tuning_work_order.json"
+                queue_path.write_bytes(raw_queue)
+                env = _guardian_env(root, active="1")
+
+                with mock.patch.dict(os.environ, env, clear=False):
+                    summary = TraderSupportBot(
+                        broker_snapshot_path=files["broker"],
+                        order_intents_path=files["intents"],
+                        target_state_path=files["target"],
+                        position_management_path=files["position_management"],
+                        position_guardian_management_path=files["guardian_management"],
+                        position_guardian_execution_path=files["guardian_execution"],
+                        position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                        self_improvement_audit_path=files["self_improvement"],
+                        profitability_acceptance_path=files["profitability"],
+                        execution_timing_audit_path=files["timing"],
+                        profit_capture_bot_path=files["profit_capture_bot"],
+                        guardian_tuning_work_order_path=queue_path,
+                        output_path=files["output"],
+                        report_path=files["report"],
+                        now_utc=now,
+                    ).run()
+
+                payload = json.loads(files["output"].read_text(encoding="utf-8"))
+                self.assertEqual(summary.status, STATUS_BLOCKED)
+                self.assertEqual(
+                    payload["metrics"]["guardian_tuning_queue_validation_status"],
+                    "INVALID",
+                )
+                self.assertEqual(
+                    payload["guardian_tuning_acquisition"]["status"],
+                    "QUEUE_INTEGRITY_INVALID",
+                )
+                self.assertIsNone(
+                    payload["metrics"]["guardian_tuning_pending_work_order_count"]
+                )
+                self.assertIsNone(
+                    payload["metrics"]["guardian_tuning_current_unreviewed_count"]
+                )
+                repair = next(
+                    item
+                    for item in payload["repair_requests"]
+                    if item["code"] == "REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"
+                )
+                self.assertEqual(repair["status"], "QUEUE_INTEGRITY_INVALID")
+                self.assertTrue(
+                    any(
+                        "authoritative queue validation failed" in issue
+                        for issue in payload["metrics"][
+                            "guardian_tuning_queue_validation_issues"
+                        ]
+                    )
+                )
+                self.assertEqual(queue_path.read_bytes(), raw_queue)
+
+    def test_authoritative_queue_invalid_input_exception_fails_visible(self) -> None:
+        with mock.patch.object(
+            guardian_dispatcher_module,
+            "_load_tuning_work_order",
+            side_effect=TypeError("unhashable invalid rejection id"),
+        ):
+            loaded = trader_support_bot_module._read_guardian_tuning_work_order(
+                Path("/tmp/guardian_tuning_work_order.json")
+            )
+
+        self.assertIn("_read_error", loaded)
+        self.assertIn("TypeError", loaded["_read_error"])
+
+    def test_revision_five_rejection_ledger_missing_or_tampered_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_path = root / "guardian_tuning_work_order.json"
+            ledger_path = root / "guardian_tuning_admission_rejections.json"
+            now = datetime(2026, 7, 14, tzinfo=timezone.utc)
+            event = {
+                "event_id": "support-rev5-technical",
+                "dedupe_key": "EUR_USD|technical|TECHNICAL_STATE_CHANGE|NO_ACTION",
+                "pair": "EUR_USD",
+                "direction": "",
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "severity": "P1",
+                "action_hint": "NO_ACTION",
+                "recommended_review_type": "TUNING_REVIEW",
+                "thesis": "closed-candle regime changed",
+                "thesis_state": "ALIVE",
+                "price_zone": "mid=1.1400",
+                "wake_reason_codes": ["REGIME_STATE_CHANGE"],
+                "details": {},
+            }
+            created = guardian_dispatcher_module._maybe_write_tuning_work_order(
+                path=queue_path,
+                selected_event=event,
+                receipt={},
+                now=now,
+            )
+            self.assertEqual(created["status"], "STRUCTURED_REVIEW_REQUIRED")
+            loaded = guardian_dispatcher_module._load_tuning_work_order(queue_path)
+            original = dict(loaded["work_orders"][0])
+            original["selected_event"] = {
+                **original["selected_event"],
+                "event_type": "MARGIN_PRESSURE",
+            }
+            persisted = guardian_dispatcher_module._persist_tuning_admission_rejections(
+                path=ledger_path,
+                entries=[original],
+                source_queue_sha256=loaded["_queue_source_sha256"],
+                source_queue_schema_revision=4,
+                now=now,
+            )
+            self.assertEqual(persisted["status"], "ADMISSION_REJECTIONS_WRITTEN")
+            payload = json.loads(queue_path.read_text())
+            payload["admission_rejection_ledger"] = (
+                guardian_dispatcher_module._tuning_admission_rejection_commitment_from_path(
+                    ledger_path
+                )
+            )
+            guardian_dispatcher_module._write_tuning_queue_json(
+                queue_path,
+                payload,
+                expected_source_sha256=loaded["_queue_source_sha256"],
+            )
+            payload = json.loads(queue_path.read_text())
+            raw_ledger = ledger_path.read_bytes()
+
+            valid = trader_support_bot_module._guardian_tuning_queue_validation(
+                payload,
+                queue_path=queue_path,
+            )
+            self.assertEqual(valid["status"], "VALID")
+
+            ledger_path.unlink()
+            missing = trader_support_bot_module._guardian_tuning_queue_validation(
+                payload,
+                queue_path=queue_path,
+            )
+            self.assertEqual(missing["status"], "INVALID")
+            self.assertTrue(
+                any("admission rejection ledger" in issue for issue in missing["issues"])
+            )
+
+            ledger_path.write_bytes(raw_ledger)
+            tampered_ledger = json.loads(ledger_path.read_text())
+            tampered_ledger["records"][0]["rejection_code"] = "TAMPERED"
+            ledger_path.write_text(json.dumps(tampered_ledger), encoding="utf-8")
+            tampered = trader_support_bot_module._guardian_tuning_queue_validation(
+                payload,
+                queue_path=queue_path,
+            )
+            self.assertEqual(tampered["status"], "INVALID")
+            self.assertTrue(
+                any("admission rejection ledger" in issue for issue in tampered["issues"])
+            )
+
+    def test_invalid_rejection_commitment_cannot_build_normal_tuning_request(self) -> None:
+        work_order = {
+            "status": "PENDING_HOURLY_AI_REVIEW",
+            "work_order_id": "guardian-tuning-untrusted",
+            "event_fingerprint": "untrusted-observation",
+            "latest_observation_id": "untrusted-observation",
+            "selected_event": {
+                "event_type": "TECHNICAL_STATE_CHANGE",
+                "pair": "EUR_USD",
+            },
+            "live_permission_allowed": False,
+            "no_direct_oanda": True,
+            "preserve_blockers": True,
+        }
+        validation = {
+            "status": "INVALID",
+            "issues": ["admission rejection ledger does not match queue commitment"],
+        }
+
+        requests = trader_support_bot_module._build_repair_requests(
+            guardian={},
+            profit_capture={},
+            entry={},
+            acceptance={},
+            guardian_tuning_work_order=work_order,
+            guardian_tuning_acquisition={"status": "QUEUE_INTEGRITY_INVALID"},
+            guardian_tuning_queue_validation=validation,
+        )
+
+        by_code = {item["code"]: item for item in requests}
+        self.assertIn("REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY", by_code)
+        self.assertNotIn("REVIEW_GUARDIAN_MARKET_STATE_TUNING", by_code)
+        self.assertEqual(
+            by_code["REPAIR_GUARDIAN_TUNING_QUEUE_INTEGRITY"]["status"],
+            "QUEUE_INTEGRITY_INVALID",
+        )
 
     def test_producer_shaped_tuning_work_order_derives_pair_family_and_material_reasons(self) -> None:
         work_order = {

@@ -3791,36 +3791,589 @@ class MarketReadOverlayTest(unittest.TestCase):
             ):
                 _apply(paths)
 
-    def test_watchdog_material_safety_change_stales_ai_review(self) -> None:
-        for mutation in ("status", "receipt_identity"):
+    def test_watchdog_material_health_change_stales_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            watchdog = json.loads(paths["watchdog"].read_text())
+            watchdog["status"] = "BROKEN"
+            watchdog["runtime_status"] = "BROKEN"
+            watchdog["issues"] = ["MISSED_TRADER_RUN"]
+            paths["watchdog"].write_text(json.dumps(watchdog))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_PACKET_STALE",
+            ):
+                _apply(paths)
+
+    def test_guardian_action_receipt_named_source_is_mandatory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            sources = _sources(paths)
+            sources.pop("guardian_action_receipt")
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline.pop("decision_provenance", None)
+            paths["baseline"].write_text(json.dumps(baseline))
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_SOURCE_CONTRACT_INVALID",
+            ):
+                prepare_market_read_baseline(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    evidence_sources=sources,
+                    now=NOW,
+                )
+
+            _reprepare(paths)
+            _write_overlay(paths)
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "MARKET_READ_EVIDENCE_SOURCE_CONTRACT_INVALID",
+            ):
+                apply_codex_market_read_overlay(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    overlay_path=paths["overlay"],
+                    output_path=paths["output"],
+                    evidence_sources=sources,
+                    now=NOW,
+                )
+
+    def test_watchdog_receipt_identity_catchup_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            watchdog = json.loads(paths["watchdog"].read_text())
+            watchdog["guardian_receipt"].update(
+                {
+                    "active": True,
+                    "dependency_before_next_run": True,
+                    "exists": True,
+                    "action": "REDUCE",
+                    "receipt_lifecycle": "ACTIVE",
+                    "receipt_status": "ACCEPTED",
+                }
+            )
+            watchdog["guardian_receipt"]["receipt_summaries"] = [
+                {
+                    "action": "REDUCE",
+                    "active": True,
+                    "canonical_present": True,
+                    "event_id": "new-event",
+                    "identity": "event|new-event|REDUCE",
+                    "high_urgency_action": True,
+                    "receipt_lifecycle": "ACTIVE",
+                    "receipt_status": "ACCEPTED",
+                }
+            ]
+            paths["watchdog"].write_text(json.dumps(watchdog))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_unrelated_routine_guardian_receipt_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            paths["guardian_action_receipt"].write_text(
+                json.dumps(
+                    _guardian_action_receipt(
+                        pair="EUR_CAD",
+                        action="HOLD",
+                        event_type="SPREAD_ANOMALY",
+                        severity="P1",
+                        event_id="other-pair-routine",
+                    )
+                )
+            )
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_guardian_scope_requires_selected_event_object(self) -> None:
+        for replacement in (None, "scalar"):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "guardian_action_receipt.json"
+                receipt = _guardian_action_receipt(pair="EUR_USD")
+                if replacement is None:
+                    receipt.pop("selected_event")
+                    expected_reason = "SELECTED_EVENT_MISSING"
+                else:
+                    receipt["selected_event"] = replacement
+                    expected_reason = "SELECTED_EVENT_INVALID"
+                path.write_text(json.dumps(receipt))
+
+                material = (
+                    market_read_overlay_module.guardian_action_receipt_scope_material(
+                        path,
+                        baseline_pairs=["EUR_USD"],
+                        as_of=NOW,
+                    )
+                )
+
+                self.assertEqual(material["parse_status"], "VALID")
+                self.assertTrue(material["global_safety"])
+                self.assertIn(expected_reason, material["global_reasons"])
+
+    def test_guardian_scope_enforces_runtime_clock_states_without_hashing_clocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_action_receipt.json"
+            receipt = _guardian_action_receipt(pair="EUR_USD")
+            path.write_text(json.dumps(receipt))
+            original = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            receipt["generated_at_utc"] = (NOW + timedelta(seconds=5)).isoformat()
+            receipt["expires_at_utc"] = (NOW + timedelta(hours=2)).isoformat()
+            path.write_text(json.dumps(receipt))
+            clock_only = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            self.assertEqual(canonical_json_sha256(original), canonical_json_sha256(clock_only))
+
+            receipt["generated_at_utc"] = (NOW + timedelta(seconds=6)).isoformat()
+            path.write_text(json.dumps(receipt))
+            future = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            self.assertTrue(future["global_safety"])
+            self.assertIn("GENERATED_AT_FUTURE", future["global_reasons"])
+
+            receipt["generated_at_utc"] = (NOW - timedelta(hours=2)).isoformat()
+            receipt["expires_at_utc"] = (NOW - timedelta(hours=1)).isoformat()
+            receipt["receipt_lifecycle"] = "CONSUMED"
+            receipt["consumed_by_trader"] = True
+            path.write_text(json.dumps(receipt))
+            consumed = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            self.assertFalse(consumed["global_safety"])
+            self.assertEqual(
+                consumed["time_state"]["expires_at_utc"],
+                "NOT_APPLICABLE_CONSUMED",
+            )
+
+    def test_production_packet_uses_guardian_read_clock_after_mid_build_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            baseline = json.loads(paths["baseline"].read_text())
+            baseline.pop("decision_provenance", None)
+            paths["baseline"].write_text(json.dumps(baseline))
+
+            original_projection = (
+                market_read_overlay_module.projection_calibration_evidence
+            )
+            rotated = False
+
+            def rotate_receipt_at_t_plus_10(*args, **kwargs):
+                nonlocal rotated
+                if not rotated:
+                    receipt = _guardian_action_receipt(
+                        pair="EUR_USD",
+                        action="NO_ACTION",
+                        event_id="mid-build-clock-rotation",
+                    )
+                    receipt["generated_at_utc"] = (
+                        NOW + timedelta(seconds=10)
+                    ).isoformat()
+                    receipt["expires_at_utc"] = (
+                        NOW + timedelta(hours=1)
+                    ).isoformat()
+                    paths["guardian_action_receipt"].write_text(
+                        json.dumps(receipt)
+                    )
+                    rotated = True
+                return original_projection(*args, **kwargs)
+
+            original_utc_now = market_read_overlay_module._utc_now
+            runtime_instants = iter(
+                (
+                    NOW,
+                    NOW + timedelta(seconds=10),
+                    NOW + timedelta(seconds=20),
+                    NOW + timedelta(seconds=30),
+                )
+            )
+
+            def observed_clock(value):
+                if value is not None:
+                    return original_utc_now(value)
+                return next(runtime_instants)
+
+            with patch.object(
+                market_read_overlay_module,
+                "_utc_now",
+                side_effect=observed_clock,
+            ), patch.object(
+                market_read_overlay_module,
+                "projection_calibration_evidence",
+                side_effect=rotate_receipt_at_t_plus_10,
+            ):
+                prepared = prepare_market_read_baseline(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    evidence_sources=_sources(paths),
+                    now=None,
+                )
+                packet = json.loads(paths["packet"].read_text())
+                guardian = packet["guardian_action_receipt_material"]
+                self.assertEqual(
+                    guardian["time_state"],
+                    {
+                        "generated_at_utc": "VALID",
+                        "expires_at_utc": "FRESH",
+                    },
+                )
+                self.assertFalse(guardian["global_safety"])
+
+                _write_overlay(paths, authored_at=NOW + timedelta(seconds=20))
+                applied = apply_codex_market_read_overlay(
+                    baseline_path=paths["baseline"],
+                    packet_path=paths["packet"],
+                    overlay_path=paths["overlay"],
+                    output_path=paths["output"],
+                    evidence_sources=_sources(paths),
+                    now=None,
+                )
+
+            self.assertEqual(applied.action, "TRADE")
+            self.assertEqual(
+                applied.evidence_packet_sha256,
+                prepared.evidence_packet_sha256,
+            )
+
+    def test_guardian_technical_observation_cannot_carry_entry_action(self) -> None:
+        for event_type in ("TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"):
+            with self.subTest(event_type=event_type), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "guardian_action_receipt.json"
+                receipt = _guardian_action_receipt(
+                    pair="EUR_USD",
+                    action="TRADE",
+                    event_type=event_type,
+                )
+                receipt["selected_event"]["direction"] = "LONG"
+                receipt["event"]["direction"] = "LONG"
+                receipt["receipt"]["side"] = "LONG"
+                path.write_text(json.dumps(receipt))
+
+                material = (
+                    market_read_overlay_module.guardian_action_receipt_scope_material(
+                        path,
+                        baseline_pairs=["EUR_USD"],
+                        as_of=NOW,
+                    )
+                )
+
+                self.assertTrue(material["global_safety"])
+                self.assertIn(
+                    "TECHNICAL_OBSERVATION_ACTION_FORBIDDEN:TRADE",
+                    material["global_reasons"],
+                )
+                self.assertIn(
+                    "TECHNICAL_OBSERVATION_ACTION_HINT_FORBIDDEN:TRADE",
+                    material["global_reasons"],
+                )
+
+    def test_guardian_entry_requires_canonical_mirrored_direction(self) -> None:
+        for direction in (None, "BUY", "SELL", "UP", "DOWN"):
+            with self.subTest(direction=direction), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "guardian_action_receipt.json"
+                receipt = _guardian_action_receipt(
+                    pair="EUR_USD",
+                    action="TRADE",
+                    event_type="FAILED_ACCEPTANCE",
+                )
+                receipt["selected_event"]["direction"] = direction
+                receipt["event"]["direction"] = direction
+                receipt["receipt"]["side"] = (
+                    "LONG" if direction in {"BUY", "UP"} else "SHORT"
+                )
+                path.write_text(json.dumps(receipt))
+
+                material = (
+                    market_read_overlay_module.guardian_action_receipt_scope_material(
+                        path,
+                        baseline_pairs=["EUR_USD"],
+                        as_of=NOW,
+                    )
+                )
+
+                self.assertTrue(material["global_safety"])
+                self.assertIn(
+                    "ENTRY_DIRECTION_CONTRACT_BROKEN",
+                    material["global_reasons"],
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_action_receipt.json"
+            receipt = _guardian_action_receipt(
+                pair="EUR_USD",
+                action="TRADE",
+                event_type="FAILED_ACCEPTANCE",
+            )
+            receipt["selected_event"]["direction"] = "LONG"
+            receipt["event"]["direction"] = "LONG"
+            receipt["receipt"]["side"] = "LONG"
+            path.write_text(json.dumps(receipt))
+
+            canonical = (
+                market_read_overlay_module.guardian_action_receipt_scope_material(
+                    path,
+                    baseline_pairs=["EUR_USD"],
+                    as_of=NOW,
+                )
+            )
+
+            self.assertFalse(canonical["global_safety"])
+
+    def test_guardian_scope_rejects_overflow_float_and_lone_surrogate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_action_receipt.json"
+            encoded = json.dumps(_guardian_action_receipt(pair="EUR_USD"))
+            path.write_text(encoded[:-1] + ',"overflow":1e9999}')
+            overflow = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            self.assertEqual(overflow["parse_status"], "INVALID")
+
+            receipt = _guardian_action_receipt(pair="EUR_USD")
+            receipt["untrusted_text"] = "\ud800"
+            path.write_text(json.dumps(receipt))
+            surrogate = market_read_overlay_module.guardian_action_receipt_scope_material(
+                path,
+                baseline_pairs=["EUR_USD"],
+                as_of=NOW,
+            )
+            self.assertEqual(surrogate["parse_status"], "INVALID")
+
+    def test_unrelated_guardian_contract_or_issue_change_stales_ai_review(self) -> None:
+        for mutation in (
+            "status",
+            "receipt_status",
+            "receipt_lifecycle",
+            "dispatcher_status",
+            "block_issue",
+            "unknown_event_type",
+            "unknown_action",
+            "nested_gateway",
+            "nested_no_direct",
+            "mirror_identity_missing",
+            "all_identity_missing",
+            "event_live_permission",
+        ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
                 paths = _prepared_paths(Path(tmp))
                 _write_overlay(paths)
-                watchdog = json.loads(paths["watchdog"].read_text())
+                receipt = _guardian_action_receipt()
                 if mutation == "status":
-                    watchdog["status"] = "BROKEN"
-                    watchdog["runtime_status"] = "BROKEN"
-                    watchdog["issues"] = ["MISSED_TRADER_RUN"]
-                else:
-                    watchdog["guardian_receipt"]["receipt_summaries"] = [
-                        {
-                            "action": "REDUCE",
-                            "active": True,
-                            "canonical_present": True,
-                            "event_id": "new-event",
-                            "identity": "event|new-event|REDUCE",
-                            "high_urgency_action": True,
-                            "receipt_lifecycle": "ACTIVE",
-                            "receipt_status": "ACCEPTED",
-                        }
+                    receipt["status"] = "REJECTED"
+                elif mutation == "receipt_status":
+                    receipt["receipt_status"] = "REJECTED"
+                elif mutation == "receipt_lifecycle":
+                    receipt["receipt_lifecycle"] = "EXPIRED"
+                elif mutation == "dispatcher_status":
+                    receipt["dispatcher_status"] = "FAILED"
+                elif mutation == "block_issue":
+                    receipt["issues"] = [
+                        {"code": "GUARDIAN_CONTRACT_BROKEN", "severity": "BLOCK"}
                     ]
-                paths["watchdog"].write_text(json.dumps(watchdog))
+                elif mutation == "unknown_event_type":
+                    receipt["selected_event"]["event_type"] = "FUTURE_UNKNOWN"
+                    receipt["event"]["event_type"] = "FUTURE_UNKNOWN"
+                elif mutation == "unknown_action":
+                    receipt["selected_event"]["action_hint"] = "UNKNOWN_ACTION"
+                    receipt["event"]["action_hint"] = "UNKNOWN_ACTION"
+                    receipt["receipt"]["action"] = "UNKNOWN_ACTION"
+                elif mutation == "nested_gateway":
+                    receipt["receipt"]["gateway_required"] = False
+                elif mutation == "nested_no_direct":
+                    receipt["receipt"]["no_direct_oanda"] = False
+                elif mutation == "mirror_identity_missing":
+                    receipt["event"].pop("event_type")
+                elif mutation == "all_identity_missing":
+                    for source in (
+                        receipt["selected_event"],
+                        receipt["event"],
+                        receipt["receipt"],
+                    ):
+                        source.pop("event_id", None)
+                        source.pop("dedupe_key", None)
+                    receipt.pop("selected_event_id")
+                    receipt.pop("selected_event_dedupe_key")
+                else:
+                    receipt["selected_event"]["details"][
+                        "live_permission_allowed"
+                    ] = True
+                paths["guardian_action_receipt"].write_text(json.dumps(receipt))
 
                 with self.assertRaisesRegex(
                     MarketReadOverlayError,
-                    "MARKET_READ_EVIDENCE_PACKET_STALE",
+                    "changed_material=source:guardian_action_receipt",
                 ):
                     _apply(paths)
+
+    def test_unrelated_consumed_guardian_receipt_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            receipt = _guardian_action_receipt()
+            receipt["receipt_lifecycle"] = "CONSUMED"
+            receipt["consumed_by_trader"] = True
+            receipt["consumed_at_utc"] = (NOW + timedelta(seconds=30)).isoformat()
+            paths["guardian_action_receipt"].write_text(json.dumps(receipt))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_selected_pair_consumed_guardian_receipt_stales_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            receipt = _guardian_action_receipt(
+                pair="EUR_USD",
+                event_id="selected-consumption",
+            )
+            paths["guardian_action_receipt"].write_text(json.dumps(receipt))
+            _reprepare(paths)
+            _write_overlay(paths)
+            receipt["receipt_lifecycle"] = "CONSUMED"
+            receipt["consumed_by_trader"] = True
+            receipt["consumed_at_utc"] = (NOW + timedelta(seconds=30)).isoformat()
+            paths["guardian_action_receipt"].write_text(json.dumps(receipt))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "changed_material=source:guardian_action_receipt",
+            ):
+                _apply(paths)
+
+    def test_selected_pair_guardian_receipt_stales_with_named_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            paths["guardian_action_receipt"].write_text(
+                json.dumps(
+                    _guardian_action_receipt(
+                        pair="EUR_USD",
+                        action="NO_ACTION",
+                        event_id="selected-pair-change",
+                    )
+                )
+            )
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "changed_material=source:guardian_action_receipt",
+            ):
+                _apply(paths)
+
+    def test_selected_pair_guardian_publication_clock_only_does_not_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            selected = _guardian_action_receipt(
+                pair="EUR_USD",
+                action="NO_ACTION",
+                event_id="selected-pair-clock",
+            )
+            paths["guardian_action_receipt"].write_text(json.dumps(selected))
+            _reprepare(paths)
+            _write_overlay(paths)
+            selected["generated_at_utc"] = (NOW + timedelta(seconds=5)).isoformat()
+            selected["expires_at_utc"] = (NOW + timedelta(hours=2)).isoformat()
+            paths["guardian_action_receipt"].write_text(json.dumps(selected))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_selected_pair_guardian_semantic_change_stales_same_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            selected = _guardian_action_receipt(
+                pair="EUR_USD",
+                action="NO_ACTION",
+                event_id="selected-pair-same-identity",
+            )
+            paths["guardian_action_receipt"].write_text(json.dumps(selected))
+            _reprepare(paths)
+            _write_overlay(paths)
+            selected["selected_event"]["details"]["material_fingerprint"][
+                "dominant_regime"
+            ] = "TREND"
+            paths["guardian_action_receipt"].write_text(json.dumps(selected))
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "changed_material=source:guardian_action_receipt",
+            ):
+                _apply(paths)
+
+    def test_global_guardian_margin_receipt_stales_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            paths["guardian_action_receipt"].write_text(
+                json.dumps(
+                    _guardian_action_receipt(
+                        pair="AUD_CAD",
+                        action="HOLD",
+                        event_type="MARGIN_PRESSURE",
+                        severity="P0",
+                        event_id="global-margin-change",
+                        thesis_state="EMERGENCY",
+                    )
+                )
+            )
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "changed_material=source:guardian_action_receipt",
+            ):
+                _apply(paths)
+
+    def test_guardian_rotation_during_packet_rebuild_is_not_missed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths)
+            original_projection = (
+                market_read_overlay_module.projection_calibration_evidence
+            )
+
+            def rotate_before_projection_returns(*args, **kwargs):
+                paths["guardian_action_receipt"].write_text(
+                    json.dumps(
+                        _guardian_action_receipt(
+                            pair="EUR_USD",
+                            action="NO_ACTION",
+                            event_id="mid-build-selected-change",
+                        )
+                    )
+                )
+                return original_projection(*args, **kwargs)
+
+            with patch.object(
+                market_read_overlay_module,
+                "projection_calibration_evidence",
+                side_effect=rotate_before_projection_returns,
+            ), self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "changed_material=source:guardian_action_receipt",
+            ):
+                _apply(paths)
 
     def test_stale_overlay_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4028,6 +4581,7 @@ def _prepared_paths(
         "intents": root / "order_intents.json",
         "predictions": predictions_path or root / "market_read_predictions.jsonl",
         "watchdog": root / "qr_trader_run_watchdog.json",
+        "guardian_action_receipt": root / "guardian_action_receipt.json",
         "execution_ledger": root / "execution_ledger.db",
         "pair_charts": root / "pair_charts.json",
     }
@@ -4172,6 +4726,9 @@ def _prepared_paths(
     if not paths["predictions"].exists():
         paths["predictions"].write_text("")
     paths["watchdog"].write_text(json.dumps(_watchdog()))
+    paths["guardian_action_receipt"].write_text(
+        json.dumps(_guardian_action_receipt())
+    )
     prepare_market_read_baseline(
         baseline_path=paths["baseline"],
         packet_path=paths["packet"],
@@ -4190,6 +4747,7 @@ def _sources(paths: dict[str, Path]) -> dict[str, Path]:
         "order_intents": paths["intents"],
         "market_read_predictions": paths["predictions"],
         "qr_trader_run_watchdog": paths["watchdog"],
+        "guardian_action_receipt": paths["guardian_action_receipt"],
         "execution_ledger": paths["execution_ledger"],
     }
 
@@ -4395,6 +4953,74 @@ def _reprepare(paths: dict[str, Path]) -> None:
         evidence_sources=_sources(paths),
         now=NOW,
     )
+
+
+def _guardian_action_receipt(
+    *,
+    pair: str = "AUD_CAD",
+    action: str = "NO_ACTION",
+    event_type: str = "TECHNICAL_STATE_CHANGE",
+    severity: str = "P2",
+    event_id: str = "guardian-event-1",
+    thesis_state: str = "WOUNDED",
+) -> dict:
+    dedupe_key = f"{pair}|fixture|{event_type}|{action}"
+    selected_event = {
+        "event_id": event_id,
+        "dedupe_key": dedupe_key,
+        "pair": pair,
+        "event_type": event_type,
+        "severity": severity,
+        "action_hint": action,
+        "direction": None,
+        "thesis_state": thesis_state,
+        "recommended_review_type": "TUNING_REVIEW",
+        "details": {
+            "material_fingerprint": {
+                "dominant_regime": "UNCLEAR",
+                "volatility_bucket": "NORMAL",
+            }
+        },
+    }
+    return {
+        "status": "ACCEPTED",
+        "source": "guardian_wake_dispatcher",
+        "model": "gpt-5.5",
+        "receipt_status": "ACCEPTED",
+        "receipt_lifecycle": "ACTIVE",
+        "consumed_by_trader": False,
+        "dispatcher_status": "RECEIPT_WRITTEN",
+        "generated_at_utc": NOW.isoformat(),
+        "expires_at_utc": (NOW + timedelta(hours=1)).isoformat(),
+        "selected_event_id": event_id,
+        "selected_event_dedupe_key": dedupe_key,
+        "gateway_required": True,
+        "no_direct_oanda": True,
+        "selected_event": selected_event,
+        "event": dict(selected_event),
+        "receipt": {
+            "action": action,
+            "event_id": event_id,
+            "dedupe_key": dedupe_key,
+            "pair": pair,
+            "side": "NONE",
+            "thesis_state": thesis_state,
+            "new_information": True,
+            "ownership": "SYSTEM",
+            "reason": "synthetic technical review",
+            "invalidation": "technical invalidation",
+            "harvest_trigger": "technical target",
+            "margin_state": "NORMAL",
+            "gateway_required": True,
+            "no_direct_oanda": True,
+        },
+        "execution_boundary": {
+            "gpt_wake_never_calls_oanda_directly": True,
+            "guardian_never_trades": True,
+            "only_live_order_gateway_may_send_cancel_close": True,
+        },
+        "issues": [],
+    }
 
 
 def _watchdog() -> dict:

@@ -16,9 +16,11 @@ from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
 from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
+    GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT,
     apply_codex_market_read_overlay,
     baseline_core_payload,
     canonical_json_sha256,
@@ -31,6 +33,7 @@ from quant_rabbit.month_scale_residual_gate import (
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
 )
 from quant_rabbit.gpt_trader import (
+    GPT_TRADER_SCHEMA,
     GPTTraderBrain,
     StaticTraderProvider,
     _draft_candidate_lane_ids,
@@ -691,6 +694,75 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("AI_MARKET_READ_REQUIRED", codes)
 
+    def test_rejects_missing_or_invalid_guardian_receipt_provenance_fields(self) -> None:
+        cases = (
+            ("guardian_action_receipt_material_contract", "missing", None),
+            (
+                "guardian_action_receipt_material_contract",
+                "invalid_value",
+                "WRONG_CONTRACT",
+            ),
+            ("guardian_action_receipt_baseline_pairs", "missing", None),
+            ("guardian_action_receipt_baseline_pairs", "invalid_type", "EUR_USD"),
+            (
+                "guardian_action_receipt_baseline_pairs",
+                "selected_pair_mismatch",
+                ["GBP_USD"],
+            ),
+            ("guardian_action_receipt_scope_state_sha256", "missing", None),
+            (
+                "guardian_action_receipt_scope_state_sha256",
+                "invalid_value",
+                "not-a-sha256",
+            ),
+        )
+        for field, mutation, invalid_value in cases:
+            with (
+                self.subTest(field=field, mutation=mutation),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                root = Path(tmp)
+                files = _fixtures(root)
+                decision = _trade_decision()
+                _stamp_codex_market_read(decision)
+                provenance = decision["decision_provenance"]
+                if mutation == "missing":
+                    provenance.pop(field)
+                else:
+                    provenance[field] = invalid_value
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                issues = payload["verification_issues"]
+                self.assertIn(
+                    "AI_MARKET_READ_PROVENANCE_INVALID",
+                    {issue["code"] for issue in issues},
+                )
+                self.assertTrue(
+                    any(field in issue["message"] for issue in issues),
+                    msg=issues,
+                )
+
+    def test_gpt_schema_allows_guardian_receipt_provenance_fields(self) -> None:
+        provenance_schema = GPT_TRADER_SCHEMA["properties"]["decision_provenance"]
+        self.assertFalse(provenance_schema["additionalProperties"])
+        properties = provenance_schema["properties"]
+        self.assertEqual(
+            properties["guardian_action_receipt_material_contract"],
+            {"type": "string"},
+        )
+        self.assertEqual(
+            properties["guardian_action_receipt_baseline_pairs"],
+            {"type": "array", "items": {"type": "string"}},
+        )
+        self.assertEqual(
+            properties["guardian_action_receipt_scope_state_sha256"],
+            {"type": "string"},
+        )
+
     def test_accepts_codex_market_read_veto_of_a_deterministic_trade(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -795,6 +867,10 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(
                 contract["evidence_source_paths"]["order_intents"],
                 str(files["intents"]),
+            )
+            self.assertEqual(
+                contract["evidence_source_paths"]["guardian_action_receipt"],
+                str(files["guardian_action_receipt"]),
             )
             self.assertFalse(contract["live_permission"])
             self.assertFalse(contract["may_grant_gateway_permission"])
@@ -4144,6 +4220,8 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["trader_overrides"]),
                         "--qr-trader-run-watchdog",
                         str(files["qr_trader_run_watchdog"]),
+                        "--guardian-action-receipt",
+                        str(files["guardian_action_receipt"]),
                         "--guardian-receipt-consumption",
                         str(files["guardian_receipt_consumption"]),
                         "--guardian-receipt-operator-review",
@@ -5887,6 +5965,7 @@ def _brain(
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
         qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+        guardian_action_receipt_path=files["guardian_action_receipt"],
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
         active_trader_contract_path=files["active_trader_contract"],
@@ -5982,6 +6061,7 @@ def _market_read_artifact_sources(
         "trader_overrides": files["trader_overrides"],
         "predictive_limits": files["predictive_limits"],
         "qr_trader_run_watchdog": files["qr_trader_run_watchdog"],
+        "guardian_action_receipt": files["guardian_action_receipt"],
         "guardian_receipt_consumption": files["guardian_receipt_consumption"],
         "guardian_receipt_operator_review": files["guardian_receipt_operator_review"],
         "active_trader_contract": files["active_trader_contract"],
@@ -6487,6 +6567,7 @@ def _draft(root: Path, files: dict[str, Path]):
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
         qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+        guardian_action_receipt_path=files["guardian_action_receipt"],
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         guardian_receipt_consumption_report_path=files["guardian_receipt_consumption_report"],
         guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
@@ -6590,6 +6671,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "news_items": root / "news_items.json",
         "news_health": root / "news_health.json",
         "qr_trader_run_watchdog": root / "qr_trader_run_watchdog.json",
+        "guardian_action_receipt": root / "guardian_action_receipt.json",
         "guardian_receipt_consumption": root / "guardian_receipt_consumption.json",
         "guardian_receipt_consumption_report": root / "guardian_receipt_consumption_report.md",
         "guardian_receipt_operator_review": root / "guardian_receipt_operator_review.json",
@@ -7639,6 +7721,14 @@ def _stamp_codex_market_read(
         ),
     }
     decision["capital_allocation"] = capital_allocation
+    guardian_baseline_pairs = _synthetic_guardian_baseline_pairs(
+        decision,
+        lane_ids=lane_ids,
+    )
+    guardian_scope_material = {
+        "parse_status": "MISSING",
+        "baseline_pairs": guardian_baseline_pairs,
+    }
     execution_sha = canonical_json_sha256(execution_envelope_payload(decision))
     decision["decision_provenance"] = {
         "schema_version": 2,
@@ -7663,12 +7753,55 @@ def _stamp_codex_market_read(
         "capital_allocation_board_sha256": "e" * 64,
         "capital_allocation_edge_basis": "EXACT_VEHICLE_ALL_EXIT_NET",
         "execution_cost_floor_sha256": "f" * 64,
+        "guardian_action_receipt_material_contract": (
+            GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+        ),
+        "guardian_action_receipt_baseline_pairs": guardian_baseline_pairs,
+        "guardian_action_receipt_scope_state_sha256": canonical_json_sha256(
+            guardian_scope_material
+        ),
         "authorized_size_multiple": capital_allocation["size_multiple"],
         "authorized_units": capital_allocation["selected_units"],
         "execution_fields_preserved": True,
         "risk_envelope_not_expanded": True,
         "live_permission_granted": False,
     }
+
+
+def _synthetic_guardian_baseline_pairs(
+    decision: dict,
+    *,
+    lane_ids: list[str],
+) -> list[str]:
+    pairs: set[str] = set()
+    for lane_id in lane_ids:
+        if not isinstance(lane_id, str):
+            continue
+        pairs.update(
+            token.strip().upper()
+            for token in lane_id.split(":")
+            if token.strip().upper() in DEFAULT_TRADER_PAIRS
+        )
+
+    market_read = decision.get("market_read_first")
+    market_read = market_read if isinstance(market_read, dict) else {}
+    naked = market_read.get("naked_read")
+    if isinstance(naked, dict):
+        pair = str(naked.get("cleanest_pair_expression") or "").strip().upper()
+        if pair in DEFAULT_TRADER_PAIRS:
+            pairs.add(pair)
+    for section_name in (
+        "next_30m_prediction",
+        "next_2h_prediction",
+        "best_trade_if_forced",
+    ):
+        section = market_read.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        pair = str(section.get("pair") or "").strip().upper()
+        if pair in DEFAULT_TRADER_PAIRS:
+            pairs.add(pair)
+    return sorted(pairs)
 
 
 def _market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dict:

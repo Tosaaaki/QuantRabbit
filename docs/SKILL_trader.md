@@ -505,10 +505,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
 # state, recomputes the stored allocation-board/body digests, reconstructs the
 # packet, and proves the final action transition, bounded sizing authorization,
 # and execution envelope, then
-# atomically publishes the verifier input. The frequently rewritten watchdog
-# uses `QR_TRADER_WATCHDOG_SAFETY_STATE_V1`: observation clocks, age counters,
-# and log/report timestamps may advance, but health/issues, automation/weekend
-# state, material guardian receipts, and the no-write boundary remain bound.
+# atomically publishes the verifier input. The canonical Guardian receipt is
+# bound directly with `QR_GUARDIAN_ACTION_RECEIPT_SCOPE_V1`: selected-pair and
+# global emergency/margin/routing changes invalidate the read, while another
+# pair's routine HOLD/NO_ACTION rotation does not. The frequently rewritten
+# watchdog uses `QR_TRADER_WATCHDOG_HEALTH_STATE_V2`: observation clocks, age
+# counters, delayed receipt identity/lifecycle summaries, and log/report
+# timestamps may advance, but service health/issues, automation/weekend state,
+# structured routing-health issues, and the no-write boundary remain bound.
 # Any rejection means refresh/re-author; never copy fields by hand around the
 # failed merge.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \

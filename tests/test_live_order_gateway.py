@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import patch
 
 import quant_rabbit.broker.execution as execution_module
@@ -24,6 +24,12 @@ from quant_rabbit.forecast_precision import (
     canonical_bidask_replay_precision_rule,
 )
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.market_read_overlay import (
+    GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT,
+    canonical_json_sha256,
+    guardian_action_receipt_scope_material,
+)
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.predictive_scout import predictive_scout_sizing_digest
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
@@ -370,6 +376,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
         tp: float | None = None,
         sl: float | None = None,
         mutate_price_bound_after_reservation: bool = False,
+        guardian_mutation_after_reservation: Callable[[Path], None] | None = None,
+        extra_reviewed_pair: str | None = None,
     ) -> tuple[Any, dict[str, Any], Path]:
         lane_id = "lane:EUR_USD:LONG"
         target_state, target_report, ledger_path, ledger_report = (
@@ -411,6 +419,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             verified_decision_path=_write_ordinary_verified_decision(
                 root,
                 lane_id=lane_id,
+                extra_reviewed_pair=extra_reviewed_pair,
             ),
             live_enabled=True,
         )
@@ -429,6 +438,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
                         "EUR_USD",
                         current + execution_module._price_tick("EUR_USD"),
                     )
+                )
+            if result.issue is None and guardian_mutation_after_reservation:
+                guardian_mutation_after_reservation(
+                    root / "guardian_action_receipt.json"
                 )
             return result
 
@@ -1333,6 +1346,390 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 self.assertEqual(
                     boundary["post_s5_account_fence"]["status"],
                     "PASSED",
+                )
+
+    def test_guardian_selected_pair_change_after_reservation_blocks_direct_and_batch(self) -> None:
+        for mutation in ("semantic", "lifecycle"):
+            for batch in (False, True):
+                with (
+                    self.subTest(mutation=mutation, batch=batch),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    root = Path(tmp)
+                    _write_synthetic_guardian_action_receipt(
+                        root,
+                        event_pair="EUR_USD",
+                    )
+
+                    def mutate(path: Path, *, mode: str = mutation) -> None:
+                        receipt = json.loads(path.read_text())
+                        if mode == "semantic":
+                            receipt["selected_event"]["details"][
+                                "material_fingerprint"
+                            ]["dominant_regime"] = "TREND"
+                        else:
+                            receipt["receipt_lifecycle"] = "CONSUMED"
+                            receipt["consumed_by_trader"] = True
+                        path.write_text(json.dumps(receipt) + "\n")
+
+                    client = ReconciliationExecutionClient()
+                    summary, order, ledger_path = self._run_real_numeric_gateway(
+                        root=root,
+                        client=client,
+                        batch=batch,
+                        guardian_mutation_after_reservation=mutate,
+                    )
+
+                    self.assertFalse(summary.sent)
+                    self.assertEqual(client.orders, [])
+                    codes = {issue["code"] for issue in order["risk_issues"]}
+                    self.assertIn(
+                        "FINAL_PRE_POST_GUARDIAN_RECEIPT_SCOPE_CHANGED",
+                        codes,
+                    )
+                    boundary = order["pre_post_reconciliation"][
+                        "final_post_reservation_boundary"
+                    ]
+                    recheck = boundary[
+                        "guardian_action_receipt_scope_recheck"
+                    ]
+                    self.assertEqual(recheck["status"], "BLOCKED")
+                    self.assertFalse(recheck["digest_matches"])
+                    self.assertEqual(
+                        order["ordinary_entry_claim"]["status"],
+                        "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                    )
+                    with closing(sqlite3.connect(ledger_path)) as conn:
+                        claim_status = conn.execute(
+                            "SELECT status FROM ordinary_live_entry_signal_claims"
+                        ).fetchone()[0]
+                    self.assertEqual(
+                        claim_status,
+                        "FINAL_BOUNDARY_BLOCKED_RESERVATION_RETAINED",
+                    )
+
+    def test_guardian_unrelated_routine_and_clock_rotation_allows_direct_and_batch(self) -> None:
+        def routine_rotation(path: Path) -> None:
+            now = datetime.now(timezone.utc)
+            _write_synthetic_guardian_action_receipt(
+                path.parent,
+                event_pair="AUD_CAD",
+                action="HOLD",
+                lifecycle="CONSUMED",
+                generated_at=now - timedelta(hours=2),
+                expires_at=now - timedelta(hours=1),
+            )
+
+        def future_expiry_clock_only(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["expires_at_utc"] = (
+                datetime.now(timezone.utc) + timedelta(hours=2)
+            ).isoformat()
+            path.write_text(json.dumps(receipt) + "\n")
+
+        for name, mutate in (
+            ("routine_rotation", routine_rotation),
+            ("future_expiry_clock_only", future_expiry_clock_only),
+        ):
+            for batch in (False, True):
+                with (
+                    self.subTest(name=name, batch=batch),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    client = ReconciliationExecutionClient()
+                    summary, order, _ = self._run_real_numeric_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                        guardian_mutation_after_reservation=mutate,
+                    )
+
+                    self.assertTrue(summary.sent)
+                    self.assertEqual(len(client.orders), 1)
+                    recheck = order["pre_post_reconciliation"][
+                        "final_post_reservation_boundary"
+                    ]["guardian_action_receipt_scope_recheck"]
+                    self.assertEqual(recheck["status"], "PASSED")
+                    self.assertTrue(recheck["digest_matches"])
+
+    def test_guardian_full_reviewed_nonexecution_pair_change_blocks_post(self) -> None:
+        for batch in (False, True):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _write_synthetic_guardian_action_receipt(
+                    root,
+                    event_pair="AUD_CAD",
+                )
+
+                def mutate(path: Path) -> None:
+                    receipt = json.loads(path.read_text())
+                    receipt["selected_event"]["details"][
+                        "material_fingerprint"
+                    ]["dominant_regime"] = "RANGE"
+                    path.write_text(json.dumps(receipt) + "\n")
+
+                client = ReconciliationExecutionClient()
+                summary, order, _ = self._run_real_numeric_gateway(
+                    root=root,
+                    client=client,
+                    batch=batch,
+                    extra_reviewed_pair="AUD_CAD",
+                    guardian_mutation_after_reservation=mutate,
+                )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                recheck = order["pre_post_reconciliation"][
+                    "final_post_reservation_boundary"
+                ]["guardian_action_receipt_scope_recheck"]
+                self.assertEqual(
+                    recheck["baseline_pairs"],
+                    ["AUD_CAD", "EUR_USD"],
+                )
+                self.assertFalse(recheck["digest_matches"])
+                self.assertIn(
+                    "FINAL_PRE_POST_GUARDIAN_RECEIPT_SCOPE_CHANGED",
+                    {issue["code"] for issue in order["risk_issues"]},
+                )
+
+    def test_guardian_global_or_unavailable_final_state_blocks_post(self) -> None:
+        def global_p0(path: Path) -> None:
+            _write_synthetic_guardian_action_receipt(
+                path.parent,
+                event_pair="AUD_CAD",
+                action="HOLD",
+                event_type="MARGIN_PRESSURE",
+                severity="P0",
+            )
+
+        def emergency(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            for key in ("selected_event", "event", "receipt"):
+                receipt[key]["thesis_state"] = "EMERGENCY"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def routing_broken(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["no_direct_oanda"] = False
+            receipt["receipt"]["no_direct_oanda"] = False
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def missing(path: Path) -> None:
+            path.unlink()
+
+        def malformed(path: Path) -> None:
+            path.write_text("{")
+
+        def oversized(path: Path) -> None:
+            path.write_text("x" * 1_000_001)
+
+        def expired(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            now = datetime.now(timezone.utc)
+            receipt["generated_at_utc"] = (now - timedelta(minutes=2)).isoformat()
+            receipt["expires_at_utc"] = (now - timedelta(minutes=1)).isoformat()
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def selected_event_missing(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt.pop("selected_event")
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def producer_source_changed(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["source"] = "untrusted_dispatcher"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def producer_model_changed(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["model"] = "untrusted-model"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def required_field_missing(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["receipt"].pop("reason")
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def invalidated_hidden_by_receipt(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["selected_event"]["thesis_state"] = "INVALIDATED"
+            receipt["event"]["thesis_state"] = "INVALIDATED"
+            receipt["receipt"]["thesis_state"] = "ALIVE"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def direction_mismatch(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["selected_event"]["direction"] = "LONG"
+            receipt["event"]["direction"] = "LONG"
+            receipt["receipt"]["side"] = "SHORT"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def entry_action_hint_mismatch(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["receipt"]["action"] = "TRADE"
+            receipt["selected_event"]["action_hint"] = "NO_ACTION"
+            receipt["event"]["action_hint"] = "NO_ACTION"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        def technical_observation_entry_action(path: Path) -> None:
+            receipt = json.loads(path.read_text())
+            receipt["receipt"]["action"] = "TRADE"
+            receipt["receipt"]["side"] = "LONG"
+            receipt["selected_event"]["action_hint"] = "TRADE"
+            receipt["selected_event"]["direction"] = "LONG"
+            receipt["event"]["action_hint"] = "TRADE"
+            receipt["event"]["direction"] = "LONG"
+            path.write_text(json.dumps(receipt) + "\n")
+
+        for name, mutate, expected_code in (
+            (
+                "global_p0",
+                global_p0,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "emergency",
+                emergency,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "routing_broken",
+                routing_broken,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "missing",
+                missing,
+                "FINAL_PRE_POST_GUARDIAN_RECEIPT_UNAVAILABLE_OR_INVALID",
+            ),
+            (
+                "malformed",
+                malformed,
+                "FINAL_PRE_POST_GUARDIAN_RECEIPT_UNAVAILABLE_OR_INVALID",
+            ),
+            (
+                "oversized",
+                oversized,
+                "FINAL_PRE_POST_GUARDIAN_RECEIPT_UNAVAILABLE_OR_INVALID",
+            ),
+            (
+                "expired",
+                expired,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "selected_event_missing",
+                selected_event_missing,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "producer_source_changed",
+                producer_source_changed,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "producer_model_changed",
+                producer_model_changed,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "required_field_missing",
+                required_field_missing,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "invalidated_hidden_by_receipt",
+                invalidated_hidden_by_receipt,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "direction_mismatch",
+                direction_mismatch,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "entry_action_hint_mismatch",
+                entry_action_hint_mismatch,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+            (
+                "technical_observation_entry_action",
+                technical_observation_entry_action,
+                "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+            ),
+        ):
+            for batch in (False, True) if name in {"global_p0", "missing"} else (False,):
+                with (
+                    self.subTest(name=name, batch=batch),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    client = ReconciliationExecutionClient()
+                    summary, order, _ = self._run_real_numeric_gateway(
+                        root=Path(tmp),
+                        client=client,
+                        batch=batch,
+                        guardian_mutation_after_reservation=mutate,
+                    )
+
+                    self.assertFalse(summary.sent)
+                    self.assertEqual(client.orders, [])
+                    codes = {issue["code"] for issue in order["risk_issues"]}
+                    self.assertIn(expected_code, codes)
+                    self.assertIn(
+                        "FINAL_PRE_POST_GUARDIAN_RECEIPT_SCOPE_CHANGED",
+                        codes,
+                    )
+
+    def test_guardian_provenance_missing_or_tampered_blocks_at_gateway_entry(self) -> None:
+        mutations = {
+            "missing_contract": lambda provenance: provenance.pop(
+                "guardian_action_receipt_material_contract"
+            ),
+            "wrong_pairs": lambda provenance: provenance.__setitem__(
+                "guardian_action_receipt_baseline_pairs", ["GBP_USD"]
+            ),
+            "bad_digest": lambda provenance: provenance.__setitem__(
+                "guardian_action_receipt_scope_state_sha256", "bad"
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "lane:EUR_USD:LONG"
+                verified = _write_ordinary_verified_decision(
+                    root,
+                    lane_id=lane_id,
+                )
+                payload = json.loads(verified.read_text())
+                mutate(payload["decision"]["decision_provenance"])
+                verified.write_text(json.dumps(payload) + "\n")
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=verified,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        lane_id=lane_id,
+                        metadata=_ordinary_claim_metadata(),
+                    ),
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                result = json.loads((root / "request.json").read_text())
+                self.assertIn(
+                    "GPT_GUARDIAN_ACTION_RECEIPT_PROVENANCE_INVALID_AT_GATEWAY_ENTRY",
+                    {issue["code"] for issue in result["risk_issues"]},
                 )
 
     def test_frozen_numeric_proof_rejects_forged_net_cost_identities(self) -> None:
@@ -9603,6 +10000,155 @@ def _insert_exact_stop_unresolved_reduction(ledger_path: Path) -> None:
         )
 
 
+def _guardian_reviewed_pairs(decision: dict[str, Any]) -> list[str]:
+    pairs: set[str] = set()
+    lane_ids = decision.get("selected_lane_ids")
+    if not isinstance(lane_ids, list):
+        lane_ids = []
+    selected_lane_id = decision.get("selected_lane_id")
+    if isinstance(selected_lane_id, str):
+        lane_ids = [*lane_ids, selected_lane_id]
+    for lane_id in lane_ids:
+        if not isinstance(lane_id, str):
+            continue
+        pairs.update(
+            token.strip().upper()
+            for token in lane_id.split(":")
+            if token.strip().upper() in DEFAULT_TRADER_PAIRS
+        )
+    market_read = decision.get("market_read_first")
+    if isinstance(market_read, dict):
+        for section_name in (
+            "next_30m_prediction",
+            "next_2h_prediction",
+            "best_trade_if_forced",
+        ):
+            section = market_read.get(section_name)
+            if isinstance(section, dict):
+                pair = str(section.get("pair") or "").strip().upper()
+                if pair in DEFAULT_TRADER_PAIRS:
+                    pairs.add(pair)
+        naked = market_read.get("naked_read")
+        if isinstance(naked, dict):
+            pair = str(
+                naked.get("cleanest_pair_expression") or ""
+            ).strip().upper()
+            if pair in DEFAULT_TRADER_PAIRS:
+                pairs.add(pair)
+    return sorted(pairs)
+
+
+def _write_synthetic_guardian_action_receipt(
+    root: Path,
+    *,
+    event_pair: str = "NZD_CHF",
+    action: str = "NO_ACTION",
+    event_type: str = "TECHNICAL_STATE_CHANGE",
+    severity: str = "P2",
+    lifecycle: str = "ACTIVE",
+    generated_at: datetime | None = None,
+    expires_at: datetime | None = None,
+) -> Path:
+    path = root / "guardian_action_receipt.json"
+    now = generated_at or datetime.now(timezone.utc)
+    expiry = expires_at or (now + timedelta(hours=1))
+    event_id = f"synthetic-{event_pair.lower()}-{action.lower()}"
+    dedupe_key = f"{event_pair}|synthetic|{event_type}|{action}"
+    selected_event = {
+        "event_id": event_id,
+        "dedupe_key": dedupe_key,
+        "pair": event_pair,
+        "event_type": event_type,
+        "severity": severity,
+        "action_hint": action,
+        "direction": None,
+        "thesis_state": "ALIVE",
+        "recommended_review_type": "TUNING_REVIEW",
+        "details": {
+            "material_fingerprint": {
+                "dominant_regime": "UNCLEAR",
+                "volatility_bucket": "NORMAL",
+            }
+        },
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ACCEPTED",
+                "source": "guardian_wake_dispatcher",
+                "model": "gpt-5.5",
+                "receipt_status": "ACCEPTED",
+                "receipt_lifecycle": lifecycle,
+                "consumed_by_trader": lifecycle == "CONSUMED",
+                "dispatcher_status": "RECEIPT_WRITTEN",
+                "generated_at_utc": now.isoformat(),
+                "expires_at_utc": expiry.isoformat(),
+                "selected_event_id": event_id,
+                "selected_event_dedupe_key": dedupe_key,
+                "gateway_required": True,
+                "no_direct_oanda": True,
+                "selected_event": selected_event,
+                "event": dict(selected_event),
+                "receipt": {
+                    "action": action,
+                    "event_id": event_id,
+                    "dedupe_key": dedupe_key,
+                    "pair": event_pair,
+                    "side": "NONE",
+                    "thesis_state": "ALIVE",
+                    "new_information": True,
+                    "ownership": "SYSTEM",
+                    "reason": "synthetic technical review",
+                    "invalidation": "technical invalidation",
+                    "harvest_trigger": "technical target",
+                    "margin_state": "NORMAL",
+                    "gateway_required": True,
+                    "no_direct_oanda": True,
+                },
+                "execution_boundary": {
+                    "gpt_wake_never_calls_oanda_directly": True,
+                    "guardian_never_trades": True,
+                    "only_live_order_gateway_may_send_cancel_close": True,
+                },
+                "issues": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _guardian_provenance(
+    root: Path,
+    *,
+    decision: dict[str, Any],
+    as_of: datetime,
+) -> dict[str, Any]:
+    path = root / "guardian_action_receipt.json"
+    if not path.exists():
+        _write_synthetic_guardian_action_receipt(
+            root,
+            generated_at=as_of - timedelta(seconds=1),
+            expires_at=as_of + timedelta(hours=1),
+        )
+    pairs = _guardian_reviewed_pairs(decision)
+    material = guardian_action_receipt_scope_material(
+        path,
+        baseline_pairs=pairs,
+        as_of=as_of,
+    )
+    return {
+        "guardian_action_receipt_material_contract": (
+            GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+        ),
+        "guardian_action_receipt_baseline_pairs": pairs,
+        "guardian_action_receipt_scope_state_sha256": canonical_json_sha256(
+            material
+        ),
+    }
+
+
 def _write_ordinary_verified_decision(
     root: Path,
     *,
@@ -9613,8 +10159,10 @@ def _write_ordinary_verified_decision(
     edge_basis: str = "EXACT_VEHICLE_ALL_EXIT_NET",
     execution_cost_floor: dict[str, Any] | None = None,
     suffix: str = "",
+    extra_reviewed_pair: str | None = None,
 ) -> Path:
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at_dt = datetime.now(timezone.utc)
+    generated_at = generated_at_dt.isoformat()
     path = root / f"gpt_verified_ordinary{('-' + suffix) if suffix else ''}.json"
     decision: dict[str, Any] = {
         "generated_at_utc": generated_at,
@@ -9628,6 +10176,11 @@ def _write_ordinary_verified_decision(
             }
         },
     }
+    if extra_reviewed_pair is not None:
+        decision["market_read_first"]["next_2h_prediction"] = {
+            "pair": extra_reviewed_pair,
+            "direction": direction,
+        }
     if action == "TRADE":
         allocation = {
             "decision": "ALLOCATE",
@@ -9659,6 +10212,11 @@ def _write_ordinary_verified_decision(
                     execution_cost_floor
                     or _synthetic_execution_cost_floor()
                 )["proof_sha256"]
+            ),
+            **_guardian_provenance(
+                root,
+                decision=decision,
+                as_of=generated_at_dt,
             ),
         }
     payload = {
@@ -9700,6 +10258,14 @@ def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
         ).encode("utf-8")
     ).hexdigest()
     payload["decision"]["capital_allocation"] = allocation
+    guardian_provenance = {
+        key: payload["decision"]["decision_provenance"][key]
+        for key in (
+            "guardian_action_receipt_material_contract",
+            "guardian_action_receipt_baseline_pairs",
+            "guardian_action_receipt_scope_state_sha256",
+        )
+    }
     payload["decision"]["decision_provenance"] = {
         "schema_version": 2,
         "author_kind": "CODEX_MARKET_READ",
@@ -9713,6 +10279,7 @@ def _write_lineaged_verified_decision(root: Path, *, lane_id: str) -> Path:
         "execution_cost_floor_sha256": (
             _synthetic_execution_cost_floor()["proof_sha256"]
         ),
+        **guardian_provenance,
     }
     payload["input_packet"] = {
         "broker_snapshot": {
@@ -10539,6 +11106,11 @@ def _write_predictive_scout_verified_decision(
 ) -> Path:
     name_suffix = f"-{suffix}" if suffix else ""
     path = root / f"gpt_verified_predictive_scout{name_suffix}.json"
+    receipt_generated_at = (
+        datetime.fromisoformat(generated_at_utc.replace("Z", "+00:00"))
+        if generated_at_utc
+        else datetime.now(timezone.utc)
+    )
     intents_payload = json.loads(intents_path.read_text())
     intent = intents_payload["results"][0]["intent"]
     metadata = intent["metadata"]
@@ -10609,10 +11181,14 @@ def _write_predictive_scout_verified_decision(
             "capital_allocation_board_sha256": "e" * 64,
             "authorized_size_multiple": 1.0,
             "authorized_units": selected_units,
+            **_guardian_provenance(
+                root,
+                decision=decision,
+                as_of=receipt_generated_at,
+            ),
         }
     payload = {
-        "generated_at_utc": generated_at_utc
-        or datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": receipt_generated_at.isoformat(),
         "status": "ACCEPTED",
         "decision": decision,
         "verification_issues": [],

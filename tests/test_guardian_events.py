@@ -1971,6 +1971,71 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE", escalation["wake_reason_codes"])
         self.assertIn("FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE", escalation["wake_reason_codes"])
 
+    def test_margin_ratio_drift_is_not_fx_price_displacement(self) -> None:
+        first_snapshot = _snapshot()
+        first_snapshot["account"].update(
+            {
+                "nav_jpy": 295832.6972,
+                "margin_used_jpy": 247934.84,
+                "margin_available_jpy": 48139.8041,
+            }
+        )
+        first_events = detect_guardian_events(
+            inputs={"snapshot": first_snapshot},
+            now=NOW,
+        )
+        first, state = evaluate_guardian_escalation(
+            events=first_events,
+            previous_state={},
+            now=NOW,
+        )
+        first_margin = [
+            event
+            for event in first["events_to_review"]
+            if event.get("event_type") == "MARGIN_PRESSURE"
+        ]
+        self.assertEqual(len(first_margin), 1)
+        self.assertIn(
+            "MARGIN_RISK_THRESHOLD_CROSSED",
+            first_margin[0]["wake_reason_codes"],
+        )
+
+        later = NOW + timedelta(minutes=5)
+        second_snapshot = _snapshot()
+        second_snapshot["fetched_at_utc"] = later.isoformat()
+        second_snapshot["account"].update(
+            {
+                "nav_jpy": 291704.3565,
+                "margin_used_jpy": 247870.52,
+                "margin_available_jpy": 44072.7198,
+            }
+        )
+        second_events = detect_guardian_events(
+            inputs={"snapshot": second_snapshot},
+            now=later,
+        )
+        second, _ = evaluate_guardian_escalation(
+            events=second_events,
+            previous_state=state,
+            now=later,
+        )
+
+        self.assertFalse(second["wake_gpt"])
+        suppressed_margin = [
+            event
+            for event in second["suppressed_events"]
+            if event.get("event_type") == "MARGIN_PRESSURE"
+        ]
+        self.assertEqual(len(suppressed_margin), 1)
+        self.assertEqual(
+            suppressed_margin[0]["suppressed_reason"],
+            "THROTTLED",
+        )
+        self.assertNotIn(
+            "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+            suppressed_margin[0].get("wake_reason_codes", []),
+        )
+
     def test_current_p0_unknown_exposure_wakes_once_and_same_truth_is_suppressed(self) -> None:
         snapshot = _snapshot(
             positions=[

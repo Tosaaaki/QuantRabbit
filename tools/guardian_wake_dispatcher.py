@@ -125,7 +125,8 @@ MAX_TUNING_ABORTED_EXPERIMENT_CONTRACTS = 24
 MAX_TUNING_EXPERIMENT_DIGEST_HISTORY = 10_000
 MAX_TUNING_EXPERIMENT_ID_DIGEST_HISTORY = 10_000
 MAX_TUNING_OVERRIDE_LIFECYCLE_HEADS = 100
-TUNING_QUEUE_SCHEMA_REVISION = 4
+TUNING_QUEUE_SCHEMA_REVISION = 5
+SUPPORTED_TUNING_QUEUE_SCHEMA_REVISIONS = frozenset({4, 5})
 # Queue state is a bounded coordination artifact, not an evidence store.  Four
 # MiB leaves ample room for every bounded work-order observation while stopping
 # a corrupt or hostile file before json.loads allocates an unbounded object.
@@ -147,6 +148,7 @@ _TUNING_HANDOFF_FAILURE_STATUSES = {
     "WORK_ORDER_READ_FAILED",
     "WORK_ORDER_CONCURRENT_UPDATE",
     "WORK_ORDER_WRITE_FAILED",
+    "WORK_ORDER_ADMISSION_REPAIR_FAILED",
     "WORK_ORDER_QUEUE_FULL",
     "STRUCTURED_REVIEW_REQUIRED",
 }
@@ -174,11 +176,9 @@ _TUNING_ACQUISITION_FIELDS = {
 }
 _TUNING_ACQUISITION_ACTION_KINDS = {
     "ADD_PREENTRY_SIGNAL_LOG",
-    "BUILD_BID_ASK_REPLAY",
-    "COLLECT_FORWARD_ENTRIES",
-    "REFRESH_CLOSED_CANDLES",
-    "RESOLVE_ATTRIBUTED_OUTCOMES",
 }
+_TUNING_ACQUISITION_FAMILIES = {"trend", "mean_reversion", "breakout"}
+_TUNING_ACQUISITION_SOURCE_REF = "data/entry_thesis_ledger.jsonl"
 _TUNING_VAGUE_ACQUISITION_TEXT = {
     "collect more",
     "collect more evidence",
@@ -337,6 +337,23 @@ _ACTIVE_EXPOSURE_EVENT_TYPES = {
     "CONTRACT_INVALIDATION_TRIGGER",
     "CONTRACT_EMERGENCY_TRIGGER",
 }
+
+# Only these event surfaces describe a bot/lane hypothesis that the hourly AI
+# can falsify.  Wake reasons are transport metadata and may be inherited by a
+# durable successor; they are not sufficient admission authority on their own.
+# In particular, portfolio safety events such as MARGIN_PRESSURE can carry a
+# LARGE_PRICE_DISPLACEMENT_STATE_CHANGE reason while prices move, but must
+# never consume a bot-tuning queue slot.
+_TUNING_HANDOFF_EVENT_TYPES = frozenset(
+    {
+        "TECHNICAL_STATE_CHANGE",
+        "FAILED_ACCEPTANCE",
+    }
+)
+MAX_TUNING_ADMISSION_REJECTIONS = 48
+MAX_TUNING_ADMISSION_REJECTION_BYTES = 4 * 1024 * 1024
+TUNING_ADMISSION_REJECTION_SCHEMA_VERSION = 1
+TUNING_ADMISSION_REJECTION_VALIDATOR = "guardian_tuning_queue_admission_validator_v1"
 
 
 @dataclass(frozen=True)
@@ -3742,6 +3759,7 @@ def enrich_tuning_work_order_review(
             experiment_digest_history=_tuning_experiment_digest_history(existing),
             experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
             override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+            admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
         )
         try:
             _write_tuning_queue_json(
@@ -3987,6 +4005,7 @@ def enrich_tuning_work_order_reviews_batch(
                 experiment_digest_history=_tuning_experiment_digest_history(existing),
                 experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
                 override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+                admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
             )
             try:
                 _write_tuning_queue_json(
@@ -4344,6 +4363,7 @@ def prepare_tuning_experiment_contract(
             experiment_digest_history=_tuning_experiment_digest_history(loaded),
             experiment_id_digest_history=_tuning_experiment_id_digest_history(loaded),
             override_lifecycle_heads=_tuning_override_lifecycle_heads(loaded),
+            admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(loaded),
         )
         try:
             _write_tuning_queue_json(
@@ -4564,6 +4584,7 @@ def abort_tuning_experiment_contract(
             experiment_digest_history=digest_history,
             experiment_id_digest_history=_tuning_experiment_id_digest_history(loaded),
             override_lifecycle_heads=_tuning_override_lifecycle_heads(loaded),
+            admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(loaded),
         )
         try:
             _write_tuning_queue_json(
@@ -5155,6 +5176,7 @@ def _transition_tuning_work_order_locked(
             experiment_id_digest,
         ],
         override_lifecycle_heads=override_heads,
+        admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
     )
     try:
         _write_tuning_queue_json(
@@ -5330,6 +5352,7 @@ def commit_tuning_override_monitor(
                 experiment_digest_history=_tuning_experiment_digest_history(existing),
                 experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
                 override_lifecycle_heads=updated_heads,
+                admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
             )
             try:
                 _write_tuning_queue_json(
@@ -6231,13 +6254,7 @@ def _maybe_write_tuning_work_order_locked(
     receipt: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    reasons = sorted(
-        {
-            str(item).strip().upper()
-            for item in selected_event.get("wake_reason_codes") or []
-            if _is_tuning_handoff_reason(str(item))
-        }
-    )
+    reasons = _tuning_handoff_reasons(selected_event)
     if not reasons:
         return {"status": "SKIPPED_NON_TUNING_EVENT"}
     observation_id = _event_material_fingerprint(selected_event)
@@ -6255,6 +6272,36 @@ def _maybe_write_tuning_work_order_locked(
             "error": existing.get("_read_error"),
             "retry_required": True,
         }
+    admission_repair = _repair_tuning_queue_admissions_locked(
+        path=path,
+        existing=existing,
+        now=now,
+    )
+    if admission_repair.get("status") == "ADMISSION_REPAIR_FAILED":
+        return {
+            "status": "WORK_ORDER_ADMISSION_REPAIR_FAILED",
+            "work_order_id": work_order_id,
+            "path": str(path),
+            "event_fingerprint": observation_id,
+            "semantic_state_id": semantic_state_id,
+            "observation_id": observation_id,
+            "admission_repair": admission_repair,
+            "retry_required": True,
+        }
+    if admission_repair.get("status") == "ADMISSION_REPAIR_WRITTEN":
+        existing = _load_tuning_work_order(path)
+        if existing.get("_read_error"):
+            return {
+                "status": "WORK_ORDER_READ_FAILED",
+                "work_order_id": work_order_id,
+                "path": str(path),
+                "event_fingerprint": observation_id,
+                "semantic_state_id": semantic_state_id,
+                "observation_id": observation_id,
+                "error": existing.get("_read_error"),
+                "admission_repair": admission_repair,
+                "retry_required": True,
+            }
     expected_source_sha256 = existing.get("_queue_source_sha256")
     pending_existing, terminal_history = _normalized_tuning_work_order_queue(existing)
     normalization_required = _tuning_queue_requires_normalization(
@@ -6382,6 +6429,7 @@ def _maybe_write_tuning_work_order_locked(
                 experiment_digest_history=digest_history,
                 experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
                 override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+                admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
             )
             try:
                 _write_tuning_queue_json(
@@ -6466,6 +6514,7 @@ def _maybe_write_tuning_work_order_locked(
                 experiment_digest_history=_tuning_experiment_digest_history(existing),
                 experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
                 override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+                admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
             )
             try:
                 _write_tuning_queue_json(
@@ -6576,6 +6625,7 @@ def _maybe_write_tuning_work_order_locked(
         experiment_digest_history=_tuning_experiment_digest_history(existing),
         experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
         override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+        admission_rejection_ledger=_tuning_admission_rejection_commitment_from_queue(existing),
     )
     try:
         _write_tuning_queue_json(
@@ -6627,6 +6677,7 @@ _REVISIONED_TUNING_QUEUE_ENVELOPE_FIELDS = frozenset(
         "experiment_semantic_digest_history",
         "experiment_id_digest_history",
         "override_lifecycle_heads",
+        "admission_rejection_ledger",
     }
 )
 _REVISIONED_TUNING_QUEUE_ENTRY_FIELDS = frozenset(
@@ -6655,7 +6706,7 @@ _REVISIONED_TUNING_QUEUE_ENTRY_FIELDS = frozenset(
 def _is_unversioned_legacy_tuning_queue(payload: dict[str, Any]) -> bool:
     """Recognize only the queue shape emitted before revision markers existed.
 
-    Revision 4 always writes both its envelope fields and per-entry semantic /
+    Revisioned queues always write their envelope fields and per-entry semantic /
     observation fields.  Merely deleting ``queue_schema_revision`` must not
     downgrade those bytes into the evidence-free legacy terminal contract.
     """
@@ -6676,8 +6727,14 @@ def _is_unversioned_legacy_tuning_queue(payload: dict[str, Any]) -> bool:
 
 def _normalized_tuning_work_order_queue(
     payload: dict[str, Any],
+    *,
+    raw_records: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    records = _flat_tuning_work_order_records(payload)
+    records = (
+        _flat_tuning_work_order_records(payload)
+        if raw_records is None
+        else raw_records
+    )
     pending_by_semantic: dict[str, dict[str, Any]] = {}
     pending_order: list[str] = []
     terminal: list[dict[str, Any]] = []
@@ -6711,6 +6768,544 @@ def _normalized_tuning_work_order_queue(
             terminal.append(_strip_tuning_envelope(item))
     pending = [pending_by_semantic[key] for key in pending_order]
     return pending, _dedupe_terminal_tuning_history(terminal)
+
+
+def repair_tuning_queue_admissions(
+    *,
+    path: Path,
+    now: datetime,
+) -> dict[str, Any]:
+    """Audit and remove queue rows that never met tuning admission scope.
+
+    The rejection ledger is written first under the queue's stable lock.  A
+    crash can therefore leave a harmless duplicate audit record, but can never
+    remove the pending row before its original bytes are content-addressed.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f"{path.name}.lock")
+    with lock_path.open("a+") as lock_handle:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "status": "ADMISSION_REPAIR_CONCURRENT_UPDATE",
+                "path": str(path),
+                "retry_required": True,
+            }
+        existing = _load_tuning_work_order(path)
+        if existing.get("_read_error"):
+            return {
+                "status": "ADMISSION_REPAIR_FAILED",
+                "path": str(path),
+                "error": existing.get("_read_error"),
+                "retry_required": True,
+            }
+        return _repair_tuning_queue_admissions_locked(
+            path=path,
+            existing=existing,
+            now=now,
+        )
+
+
+def _repair_tuning_queue_admissions_locked(
+    *,
+    path: Path,
+    existing: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    if existing.get("_missing"):
+        return {
+            "status": "ADMISSION_REPAIR_NOT_REQUIRED",
+            "path": str(path),
+            "rejected_count": 0,
+        }
+    # Admission is decided from the exact durable source rows before pending
+    # normalization.  Normalization deliberately sanitizes an invalid legacy
+    # bot_tuning_review, so auditing normalized rows would destroy the exact
+    # historical object whose rejection is being content-addressed.
+    raw_records = _raw_tuning_work_order_source_records(existing)
+    invalid: list[dict[str, Any]] = []
+    unclassifiable: list[dict[str, Any]] = []
+    excluded_identities: set[str] = set()
+    raw_pending_count = 0
+    for raw_item in raw_records:
+        status_item = raw_item
+        if (
+            _tuning_work_order_has_terminal_evidence(status_item)
+            and not _tuning_work_order_entry_terminal(status_item)
+        ):
+            status_item = _restore_incomplete_terminal_tuning_work_order(
+                status_item
+            )
+        if not _tuning_work_order_entry_pending(status_item):
+            continue
+        raw_pending_count += 1
+        if _tuning_queue_entry_is_non_admissible(status_item):
+            invalid.append(raw_item)
+            excluded_identities.add(_raw_tuning_work_order_identity(raw_item))
+            continue
+        if _tuning_queue_entry_admission_error(status_item) is not None:
+            unclassifiable.append(raw_item)
+            excluded_identities.add(_raw_tuning_work_order_identity(raw_item))
+            continue
+
+    # Only source rows that passed admission reach review normalization and
+    # semantic grouping.  The compatibility top mirror remains authoritative
+    # for a valid matching child, but it can never replace that child's exact
+    # original_entry in the rejection ledger.
+    admissible_records: list[dict[str, Any]] = []
+    for flattened_item in _flat_tuning_work_order_records(existing):
+        identity = _raw_tuning_work_order_identity(flattened_item)
+        if identity and identity in excluded_identities:
+            continue
+        status_item = flattened_item
+        if (
+            _tuning_work_order_has_terminal_evidence(status_item)
+            and not _tuning_work_order_entry_terminal(status_item)
+        ):
+            status_item = _restore_incomplete_terminal_tuning_work_order(
+                status_item
+            )
+        if _tuning_work_order_entry_pending(status_item):
+            # A divergent top mirror must not smuggle an invalid admission over
+            # a valid child.  It is provenance corruption, not a rejectable
+            # child row, so preserve the source queue and fail closed.
+            merged_error = _tuning_queue_entry_admission_error(status_item)
+            if merged_error is not None:
+                unclassifiable.append(flattened_item)
+                continue
+        admissible_records.append(flattened_item)
+
+    pending, terminal_history = _normalized_tuning_work_order_queue(
+        existing,
+        raw_records=admissible_records,
+    )
+    queue_revision = int(existing.get("queue_schema_revision") or 0)
+    ledger_path = _tuning_admission_rejection_path(path)
+    ledger_exists = ledger_path.exists()
+    if queue_revision >= 5 and (invalid or unclassifiable):
+        return {
+            "status": "ADMISSION_REPAIR_FAILED",
+            "path": str(path),
+            "reason": "REVISION_5_NON_ADMISSIBLE_PENDING_CORRUPTION",
+            "rejected_count": len(invalid),
+            "unclassifiable_count": len(unclassifiable),
+            "retry_required": True,
+        }
+    if queue_revision >= 5:
+        return {
+            "status": "ADMISSION_REPAIR_NOT_REQUIRED",
+            "path": str(path),
+            "rejected_count": 0,
+            "pending_count": len(pending),
+        }
+    if unclassifiable:
+        return {
+            "status": "ADMISSION_REPAIR_FAILED",
+            "path": str(path),
+            "reason": "PENDING_ADMISSION_PROVENANCE_MISSING",
+            "rejected_count": len(invalid),
+            "unclassifiable_count": len(unclassifiable),
+            "retry_required": True,
+        }
+    if not invalid and not ledger_exists:
+        return {
+            "status": "ADMISSION_REPAIR_NOT_REQUIRED",
+            "path": str(path),
+            "rejected_count": 0,
+            "pending_count": len(pending),
+        }
+    valid_pending = pending
+    source_sha256 = str(existing.get("_queue_source_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+        return {
+            "status": "ADMISSION_REPAIR_FAILED",
+            "path": str(path),
+            "reason": "SOURCE_QUEUE_DIGEST_MISSING",
+            "rejected_count": len(invalid),
+            "retry_required": True,
+        }
+    if invalid:
+        ledger_result = _persist_tuning_admission_rejections(
+            path=ledger_path,
+            entries=invalid,
+            source_queue_sha256=source_sha256,
+            source_queue_schema_revision=queue_revision,
+            now=now,
+        )
+        if ledger_result.get("status") not in {
+            "ADMISSION_REJECTIONS_WRITTEN",
+            "ADMISSION_REJECTIONS_ALREADY_RECORDED",
+        }:
+            return {
+                "status": "ADMISSION_REPAIR_FAILED",
+                "path": str(path),
+                "rejection_ledger": ledger_result,
+                "rejected_count": len(invalid),
+                "retry_required": True,
+            }
+    else:
+        ledger_result = {
+            "status": "ADMISSION_REJECTIONS_ALREADY_RECORDED",
+            "path": str(ledger_path),
+            "ledger_bound_only": True,
+        }
+    rejection_commitment = _tuning_admission_rejection_commitment_from_path(
+        ledger_path
+    )
+    if rejection_commitment.get("_read_error"):
+        return {
+            "status": "ADMISSION_REPAIR_FAILED",
+            "path": str(path),
+            "rejection_ledger": ledger_result,
+            "error": rejection_commitment.get("_read_error"),
+            "rejected_count": len(invalid),
+            "retry_required": True,
+        }
+    primary = (
+        valid_pending[0]
+        if valid_pending
+        else terminal_history[0]
+        if terminal_history
+        else None
+    )
+    payload = _tuning_queue_payload(
+        primary=primary,
+        pending_entries=valid_pending,
+        terminal_history=terminal_history,
+        experiment_digest_history=_tuning_experiment_digest_history(existing),
+        experiment_id_digest_history=_tuning_experiment_id_digest_history(existing),
+        override_lifecycle_heads=_tuning_override_lifecycle_heads(existing),
+        admission_rejection_ledger=rejection_commitment,
+    )
+    try:
+        _write_tuning_queue_json(
+            path,
+            payload,
+            expected_source_sha256=source_sha256,
+        )
+    except OSError as exc:
+        return {
+            "status": "ADMISSION_REPAIR_FAILED",
+            "path": str(path),
+            "error": f"{type(exc).__name__}: {exc}",
+            "rejection_ledger": ledger_result,
+            "rejected_count": len(invalid),
+            "retry_required": True,
+        }
+    return {
+        "status": "ADMISSION_REPAIR_WRITTEN",
+        "path": str(path),
+        "rejection_ledger_path": str(ledger_path),
+        "rejected_count": len(invalid),
+        "rejected_work_order_ids": [
+            str(item.get("work_order_id") or "") for item in invalid
+        ],
+        "pending_count_before": raw_pending_count,
+        "pending_count_after": len(valid_pending),
+        "terminal_history_count": len(terminal_history),
+        "source_queue_sha256": source_sha256,
+        "ledger_bound_only": not invalid,
+        "rejection_ledger": ledger_result,
+    }
+
+
+def _tuning_queue_entry_is_non_admissible(entry: dict[str, Any]) -> bool:
+    selected_event = (
+        entry.get("selected_event")
+        if isinstance(entry.get("selected_event"), dict)
+        else {}
+    )
+    event_type = str(selected_event.get("event_type") or "").strip().upper()
+    # Missing event provenance remains pending/fail-closed.  A known event is
+    # rejectable when either its surface or its material-reason authority fails
+    # the current admission contract.
+    return bool(
+        event_type
+        and (
+            event_type not in _TUNING_HANDOFF_EVENT_TYPES
+            or not _tuning_handoff_reasons(selected_event)
+        )
+    )
+
+
+def _tuning_queue_entry_admission_error(entry: dict[str, Any]) -> str | None:
+    selected_event = (
+        entry.get("selected_event")
+        if isinstance(entry.get("selected_event"), dict)
+        else {}
+    )
+    event_type = str(selected_event.get("event_type") or "").strip().upper()
+    if not event_type:
+        return "selected_event.event_type is missing"
+    if event_type not in _TUNING_HANDOFF_EVENT_TYPES:
+        return f"selected_event.event_type {event_type} is not tuning-admissible"
+    if not _tuning_handoff_reasons(selected_event):
+        return "selected_event has no material tuning reason"
+    return None
+
+
+def _tuning_admission_rejection_path(queue_path: Path) -> Path:
+    return queue_path.with_name("guardian_tuning_admission_rejections.json")
+
+
+def _empty_tuning_admission_rejection_commitment() -> dict[str, Any]:
+    return {
+        "schema_version": TUNING_ADMISSION_REJECTION_SCHEMA_VERSION,
+        "path": "guardian_tuning_admission_rejections.json",
+        "sha256": None,
+        "record_count": 0,
+        "rejection_ids": [],
+    }
+
+
+def _tuning_admission_rejection_commitment_from_queue(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    value = payload.get("admission_rejection_ledger")
+    if isinstance(value, dict):
+        return dict(value)
+    return _empty_tuning_admission_rejection_commitment()
+
+
+def _tuning_admission_rejection_commitment_from_path(
+    path: Path,
+) -> dict[str, Any]:
+    loaded = _load_tuning_admission_rejections(path)
+    if loaded.get("_read_error"):
+        return {"_read_error": loaded.get("_read_error")}
+    if loaded.get("_missing"):
+        return _empty_tuning_admission_rejection_commitment()
+    records = loaded.get("records") if isinstance(loaded.get("records"), list) else []
+    return {
+        "schema_version": TUNING_ADMISSION_REJECTION_SCHEMA_VERSION,
+        "path": path.name,
+        "sha256": loaded.get("_source_sha256"),
+        "record_count": len(records),
+        "rejection_ids": [str(item.get("rejection_id") or "") for item in records],
+    }
+
+
+def _tuning_admission_rejection_commitment_shape_error(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return "admission_rejection_ledger must be an object"
+    if set(value) != {
+        "schema_version",
+        "path",
+        "sha256",
+        "record_count",
+        "rejection_ids",
+    }:
+        return "admission_rejection_ledger fields are invalid"
+    if value.get("schema_version") != TUNING_ADMISSION_REJECTION_SCHEMA_VERSION:
+        return "admission_rejection_ledger schema_version is invalid"
+    if value.get("path") != "guardian_tuning_admission_rejections.json":
+        return "admission_rejection_ledger path must be the exact sibling ledger"
+    record_count = value.get("record_count")
+    rejection_ids = value.get("rejection_ids")
+    if (
+        isinstance(record_count, bool)
+        or not isinstance(record_count, int)
+        or record_count < 0
+        or record_count > MAX_TUNING_ADMISSION_REJECTIONS
+        or not isinstance(rejection_ids, list)
+        or len(rejection_ids) != record_count
+        or any(
+            not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item)
+            for item in rejection_ids
+        )
+    ):
+        return "admission_rejection_ledger count or rejection_ids are invalid"
+    # Hashability follows from the string validation above.  Performing set()
+    # first lets a hostile [{}] escape queue validation as TypeError.
+    if len(set(rejection_ids)) != len(rejection_ids):
+        return "admission_rejection_ledger count or rejection_ids are invalid"
+    sha256 = value.get("sha256")
+    if record_count == 0:
+        if sha256 is not None or rejection_ids:
+            return "empty admission_rejection_ledger must have null sha256 and no ids"
+    elif not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        return "non-empty admission_rejection_ledger sha256 is invalid"
+    return None
+
+
+def _tuning_admission_rejection_commitment_error(
+    queue_path: Path,
+    payload: dict[str, Any],
+) -> str | None:
+    if int(payload.get("queue_schema_revision") or 0) < 5:
+        return None
+    commitment = payload.get("admission_rejection_ledger")
+    shape_error = _tuning_admission_rejection_commitment_shape_error(commitment)
+    if shape_error is not None:
+        return shape_error
+    assert isinstance(commitment, dict)
+    ledger_path = queue_path.with_name(str(commitment["path"]))
+    loaded = _load_tuning_admission_rejections(ledger_path)
+    if int(commitment["record_count"]) == 0:
+        if not loaded.get("_missing"):
+            return "empty admission rejection commitment conflicts with sibling ledger"
+        return None
+    if loaded.get("_read_error"):
+        return "admission rejection ledger failed strict validation"
+    if loaded.get("_missing"):
+        return "admission rejection ledger is missing"
+    records = loaded.get("records") if isinstance(loaded.get("records"), list) else []
+    if str(loaded.get("_source_sha256") or "") != str(commitment.get("sha256") or ""):
+        return "admission rejection ledger sha256 does not match queue commitment"
+    if len(records) != int(commitment["record_count"]):
+        return "admission rejection ledger count does not match queue commitment"
+    ids = [str(item.get("rejection_id") or "") for item in records]
+    if ids != list(commitment["rejection_ids"]):
+        return "admission rejection ledger ids do not match queue commitment"
+    return None
+
+
+def _persist_tuning_admission_rejections(
+    *,
+    path: Path,
+    entries: list[dict[str, Any]],
+    source_queue_sha256: str,
+    source_queue_schema_revision: int,
+    now: datetime,
+) -> dict[str, Any]:
+    loaded = _load_tuning_admission_rejections(path)
+    if loaded.get("_read_error"):
+        return {
+            "status": "ADMISSION_REJECTION_LEDGER_INVALID",
+            "path": str(path),
+            "error": loaded.get("_read_error"),
+            "retry_required": True,
+        }
+    expected_source_sha256 = loaded.get("_source_sha256")
+    records = [
+        dict(item)
+        for item in loaded.get("records", [])
+        if isinstance(item, dict)
+    ]
+    by_id = {
+        str(item.get("rejection_id") or ""): item
+        for item in records
+        if str(item.get("rejection_id") or "")
+    }
+    added: list[str] = []
+    for entry in entries:
+        record = _tuning_admission_rejection_record(
+            entry,
+            source_queue_sha256=source_queue_sha256,
+            source_queue_schema_revision=source_queue_schema_revision,
+        )
+        rejection_id = str(record["rejection_id"])
+        prior = by_id.get(rejection_id)
+        if prior is not None:
+            if prior != record:
+                return {
+                    "status": "ADMISSION_REJECTION_LEDGER_CONFLICT",
+                    "path": str(path),
+                    "rejection_id": rejection_id,
+                    "retry_required": True,
+                }
+            continue
+        by_id[rejection_id] = record
+        records.append(record)
+        added.append(rejection_id)
+    if len(records) > MAX_TUNING_ADMISSION_REJECTIONS:
+        return {
+            "status": "ADMISSION_REJECTION_LEDGER_FULL",
+            "path": str(path),
+            "record_count": len(records),
+            "max_record_count": MAX_TUNING_ADMISSION_REJECTIONS,
+            "retry_required": True,
+        }
+    if not added:
+        return {
+            "status": "ADMISSION_REJECTIONS_ALREADY_RECORDED",
+            "path": str(path),
+            "record_count": len(records),
+            "source_sha256": expected_source_sha256,
+        }
+    payload = {
+        "schema_version": TUNING_ADMISSION_REJECTION_SCHEMA_VERSION,
+        "generated_at_utc": now.astimezone(timezone.utc).isoformat(),
+        "validator": TUNING_ADMISSION_REJECTION_VALIDATOR,
+        "max_record_count": MAX_TUNING_ADMISSION_REJECTIONS,
+        "record_count": len(records),
+        "records": records,
+    }
+    try:
+        _write_tuning_admission_rejections(
+            path,
+            payload,
+            expected_source_sha256=expected_source_sha256,
+        )
+    except OSError as exc:
+        return {
+            "status": "ADMISSION_REJECTION_LEDGER_WRITE_FAILED",
+            "path": str(path),
+            "error": f"{type(exc).__name__}: {exc}",
+            "retry_required": True,
+        }
+    return {
+        "status": "ADMISSION_REJECTIONS_WRITTEN",
+        "path": str(path),
+        "record_count": len(records),
+        "added_count": len(added),
+        "added_rejection_ids": added,
+    }
+
+
+def _tuning_admission_rejection_record(
+    entry: dict[str, Any],
+    *,
+    source_queue_sha256: str,
+    source_queue_schema_revision: int,
+) -> dict[str, Any]:
+    original = _strip_tuning_envelope(entry)
+    original_bytes = json.dumps(
+        original,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    original_sha256 = hashlib.sha256(original_bytes).hexdigest()
+    rejection_id = hashlib.sha256(
+        (
+            "guardian-tuning-admission-rejection-v1\0"
+            + source_queue_sha256
+            + "\0"
+            + original_sha256
+        ).encode("utf-8")
+    ).hexdigest()
+    selected_event = (
+        original.get("selected_event")
+        if isinstance(original.get("selected_event"), dict)
+        else {}
+    )
+    rejected_event_type = str(selected_event.get("event_type") or "").upper()
+    rejection_code = (
+        "MATERIAL_TUNING_REASON_MISSING"
+        if rejected_event_type in _TUNING_HANDOFF_EVENT_TYPES
+        else "EVENT_TYPE_NOT_TUNING_ADMISSIBLE"
+    )
+    return {
+        "schema_version": TUNING_ADMISSION_REJECTION_SCHEMA_VERSION,
+        "rejection_id": rejection_id,
+        "rejection_code": rejection_code,
+        "validator": TUNING_ADMISSION_REJECTION_VALIDATOR,
+        "source_queue_schema_revision": source_queue_schema_revision,
+        "source_queue_sha256": source_queue_sha256,
+        "original_entry_sha256": original_sha256,
+        "work_order_id": original.get("work_order_id"),
+        "semantic_state_id": original.get("semantic_state_id"),
+        "rejected_event_type": rejected_event_type,
+        "rejected_from_status": str(original.get("status") or "").upper(),
+        "live_permission_allowed": False,
+        "no_direct_oanda": True,
+        "preserve_blockers": True,
+        "original_entry": original,
+    }
 
 
 def _flat_tuning_work_order_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -6795,6 +7390,49 @@ def _flat_tuning_work_order_records(payload: dict[str, Any]) -> list[dict[str, A
     return entries
 
 
+def _raw_tuning_work_order_source_records(
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return exact queue-entry sources without compatibility-top overlay.
+
+    ``work_orders[]`` is the durable row collection.  The top-level entry is a
+    backward-compatible mirror and is included only when it has no matching
+    child.  This lets admission repair hash every rejected child exactly as it
+    was stored while the normal flattening path can still apply top authority
+    to rows that survive admission.
+    """
+
+    if not isinstance(payload, dict) or payload.get("_missing"):
+        return []
+    raw_entries = (
+        payload.get("work_orders")
+        if isinstance(payload.get("work_orders"), list)
+        else []
+    )
+    entries = [
+        _strip_tuning_envelope(item)
+        for item in raw_entries
+        if isinstance(item, dict)
+    ]
+    child_identities = {
+        _raw_tuning_work_order_identity(item)
+        for item in entries
+        if _raw_tuning_work_order_identity(item)
+    }
+    top = _strip_tuning_envelope(payload)
+    top_identity = _raw_tuning_work_order_identity(top)
+    if top_identity and top_identity not in child_identities:
+        entries.insert(0, top)
+    history = payload.get("terminal_history")
+    if isinstance(history, list):
+        entries.extend(
+            _strip_tuning_envelope(item)
+            for item in history
+            if isinstance(item, dict)
+        )
+    return entries
+
+
 def _strip_tuning_envelope(value: dict[str, Any]) -> dict[str, Any]:
     envelope_keys = {
         "schema_version",
@@ -6806,6 +7444,7 @@ def _strip_tuning_envelope(value: dict[str, Any]) -> dict[str, Any]:
         "experiment_semantic_digest_history",
         "experiment_id_digest_history",
         "override_lifecycle_heads",
+        "admission_rejection_ledger",
         "_path",
         "_queue_source_sha256",
         "_read_error",
@@ -7310,17 +7949,18 @@ def _tuning_override_lifecycle_heads(payload: dict[str, Any]) -> list[dict[str, 
 
 def _tuning_queue_payload(
     *,
-    primary: dict[str, Any],
+    primary: dict[str, Any] | None,
     pending_entries: list[dict[str, Any]],
     terminal_history: list[dict[str, Any]],
     experiment_digest_history: list[str] | None = None,
     experiment_id_digest_history: list[str] | None = None,
     override_lifecycle_heads: list[dict[str, Any]] | None = None,
+    admission_rejection_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     flat_pending = [_strip_tuning_envelope(item) for item in pending_entries]
     flat_history = [_strip_tuning_envelope(item) for item in terminal_history]
     return {
-        **_strip_tuning_envelope(primary),
+        **(_strip_tuning_envelope(primary) if isinstance(primary, dict) else {}),
         "schema_version": 2,
         "queue_schema_revision": TUNING_QUEUE_SCHEMA_REVISION,
         "work_orders": flat_pending,
@@ -7336,6 +7976,10 @@ def _tuning_queue_payload(
         "override_lifecycle_heads": [
             dict(item) for item in (override_lifecycle_heads or [])
         ],
+        "admission_rejection_ledger": dict(
+            admission_rejection_ledger
+            or _empty_tuning_admission_rejection_commitment()
+        ),
     }
 
 
@@ -7414,6 +8058,21 @@ def _is_tuning_handoff_reason(reason: str) -> bool:
         or "VOLATILITY" in code
         or "FAMILY" in code
         or "STRUCTURE" in code
+    )
+
+
+def _tuning_handoff_reasons(event: dict[str, Any]) -> list[str]:
+    """Return material reasons only for an admissible tuning event surface."""
+
+    event_type = str(event.get("event_type") or "").strip().upper()
+    if event_type not in _TUNING_HANDOFF_EVENT_TYPES:
+        return []
+    return sorted(
+        {
+            str(item).strip().upper()
+            for item in event.get("wake_reason_codes") or []
+            if _is_tuning_handoff_reason(str(item))
+        }
     )
 
 
@@ -7671,6 +8330,14 @@ def _validate_bot_tuning_review(
                 )
     if review_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE" and proposed_adjustments:
         issues.append("NO_CHANGE_INSUFFICIENT_EVIDENCE cannot carry proposed_adjustments")
+    if (
+        review_status == "NO_CHANGE_INSUFFICIENT_EVIDENCE"
+        and normalized_families
+        and normalized_families[0] not in _TUNING_ACQUISITION_FAMILIES
+    ):
+        issues.append(
+            "NO_CHANGE_INSUFFICIENT_EVIDENCE family is unsupported by the canonical acquisition reader"
+        )
     acquisition_value = value.get("evidence_acquisition")
     normalized_acquisition: dict[str, Any] | None = None
     if acquisition_value is not None:
@@ -7692,18 +8359,9 @@ def _validate_bot_tuning_review(
             ).strip()
             if action_kind not in _TUNING_ACQUISITION_ACTION_KINDS:
                 issues.append(f"{prefix} action_kind is not allowlisted")
-            source_parts = Path(source_ref).parts if source_ref else ()
-            if (
-                not source_ref
-                or source_ref.startswith("/")
-                or not source_parts
-                or source_parts[0] not in {"data", "logs"}
-                or ".." in source_parts
-                or len(source_ref) > 256
-                or re.fullmatch(r"[A-Za-z0-9_./:#-]+", source_ref) is None
-            ):
+            if source_ref != _TUNING_ACQUISITION_SOURCE_REF:
                 issues.append(
-                    f"{prefix} source_ref must be a bounded project-relative data/ or logs/ reference"
+                    f"{prefix} source_ref must use the canonical entry-thesis ledger"
                 )
             if (
                 isinstance(required_new_samples, bool)
@@ -8174,33 +8832,72 @@ class _TuningQueueConcurrentUpdateError(OSError):
     pass
 
 
-def _tuning_queue_json_shape_error(value: Any) -> str | None:
+def _reject_duplicate_json_object_pairs(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, child in pairs:
+        if key in value:
+            raise ValueError("JSON contains a duplicate object key")
+        value[key] = child
+    return value
+
+
+def _reject_nonfinite_json_constant(token: str) -> Any:
+    raise ValueError(f"JSON contains forbidden non-finite constant {token}")
+
+
+def _parse_finite_json_float(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError("JSON floating-point value overflowed to non-finite")
+    return value
+
+
+def _strict_json_loads_bytes(raw: bytes) -> Any:
+    return json.loads(
+        raw.decode("utf-8"),
+        object_pairs_hook=_reject_duplicate_json_object_pairs,
+        parse_constant=_reject_nonfinite_json_constant,
+        parse_float=_parse_finite_json_float,
+    )
+
+
+def _tuning_queue_json_shape_error(
+    value: Any,
+    *,
+    artifact_label: str = "tuning queue JSON",
+) -> str | None:
     stack: list[tuple[Any, int]] = [(value, 1)]
     while stack:
         item, depth = stack.pop()
         if depth > MAX_TUNING_QUEUE_JSON_DEPTH:
-            return "tuning queue JSON exceeds its nesting-depth bound"
+            return f"{artifact_label} exceeds its nesting-depth bound"
         if isinstance(item, str):
             if len(item) > MAX_TUNING_QUEUE_STRING_CHARS:
-                return "tuning queue JSON contains an oversized string"
+                return f"{artifact_label} contains an oversized string"
             try:
                 item.encode("utf-8")
             except UnicodeEncodeError:
-                return "tuning queue JSON contains a non-UTF-8 string"
+                return f"{artifact_label} contains a non-UTF-8 string"
             continue
+        if isinstance(item, float) and not math.isfinite(item):
+            return f"{artifact_label} contains a non-finite number"
         if isinstance(item, dict):
             for key, child in item.items():
                 if not isinstance(key, str):
-                    return "tuning queue JSON contains a non-string object key"
+                    return f"{artifact_label} contains a non-string object key"
                 if len(key) > MAX_TUNING_QUEUE_STRING_CHARS:
-                    return "tuning queue JSON contains an oversized object key"
+                    return f"{artifact_label} contains an oversized object key"
                 try:
                     key.encode("utf-8")
                 except UnicodeEncodeError:
-                    return "tuning queue JSON contains a non-UTF-8 object key"
+                    return f"{artifact_label} contains a non-UTF-8 object key"
                 stack.append((child, depth + 1))
         elif isinstance(item, list):
             stack.extend((child, depth + 1) for child in item)
+        elif item is not None and not isinstance(item, (bool, int, float)):
+            return f"{artifact_label} contains a non-JSON value"
     return None
 
 
@@ -8243,8 +8940,15 @@ def _load_tuning_work_order(path: Path) -> dict[str, Any]:
         }
     source_sha256 = hashlib.sha256(raw).hexdigest()
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+        payload = _strict_json_loads_bytes(raw)
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+        TypeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         return {
             "_path": str(path),
             "_read_error": f"{type(exc).__name__}: invalid tuning queue JSON",
@@ -8256,25 +8960,51 @@ def _load_tuning_work_order(path: Path) -> dict[str, Any]:
             "_read_error": "ValueError: tuning queue root must be a JSON object",
             "_queue_source_sha256": source_sha256,
         }
-    shape_error = _tuning_queue_json_shape_error(payload)
-    if shape_error is not None:
+    try:
+        shape_error = _tuning_queue_json_shape_error(payload)
+        if shape_error is not None:
+            return {
+                "_path": str(path),
+                "_read_error": f"ValueError: {shape_error}",
+                "_queue_source_sha256": source_sha256,
+            }
+        structure_error = _tuning_queue_structure_error(payload)
+        if structure_error is not None:
+            return {
+                "_path": str(path),
+                "_read_error": f"ValueError: {structure_error}",
+                "_queue_source_sha256": source_sha256,
+            }
+        admission_commitment_error = _tuning_admission_rejection_commitment_error(
+            path,
+            payload,
+        )
+        if admission_commitment_error is not None:
+            return {
+                "_path": str(path),
+                "_read_error": f"ValueError: {admission_commitment_error}",
+                "_queue_source_sha256": source_sha256,
+            }
+        terminal_evidence_error = _tuning_queue_terminal_evidence_error(
+            path,
+            payload,
+        )
+        if terminal_evidence_error is not None:
+            return {
+                "_path": str(path),
+                "_read_error": f"ValueError: {terminal_evidence_error}",
+                "_queue_source_sha256": source_sha256,
+            }
+    except (
+        UnicodeError,
+        ValueError,
+        TypeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         return {
             "_path": str(path),
-            "_read_error": f"ValueError: {shape_error}",
-            "_queue_source_sha256": source_sha256,
-        }
-    structure_error = _tuning_queue_structure_error(payload)
-    if structure_error is not None:
-        return {
-            "_path": str(path),
-            "_read_error": f"ValueError: {structure_error}",
-            "_queue_source_sha256": source_sha256,
-        }
-    terminal_evidence_error = _tuning_queue_terminal_evidence_error(path, payload)
-    if terminal_evidence_error is not None:
-        return {
-            "_path": str(path),
-            "_read_error": f"ValueError: {terminal_evidence_error}",
+            "_read_error": f"{type(exc).__name__}: invalid tuning queue structure",
             "_queue_source_sha256": source_sha256,
         }
     return {
@@ -8311,7 +9041,7 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
             "experiment_semantic_digest",
         ):
             if not isinstance(item.get(key), str) or not str(item.get(key) or "").strip():
-                return f"{label}.{key} is required for revision-4 terminal state"
+                return f"{label}.{key} is required for revisioned terminal state"
         if not isinstance(item.get("prepared_experiment_contract"), dict):
             return f"{label}.prepared_experiment_contract is required"
         history = payload.get("experiment_semantic_digest_history")
@@ -8402,19 +9132,22 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
         value = payload.get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
             return f"{key} must be a non-negative integer"
-    if queue_revision_present and raw_queue_revision != TUNING_QUEUE_SCHEMA_REVISION:
+    if (
+        queue_revision_present
+        and raw_queue_revision not in SUPPORTED_TUNING_QUEUE_SCHEMA_REVISIONS
+    ):
         return (
             "queue_schema_revision downgrade/unsupported revision is not writable; "
-            "only an unversioned legacy queue may migrate"
+            "only supported revisions or an unversioned legacy queue may migrate"
         )
     if not queue_revision_present and not _is_unversioned_legacy_tuning_queue(payload):
         return (
             "queue_schema_revision is missing from a revisioned queue; "
             "downgrade to the unversioned legacy contract is forbidden"
         )
-    if queue_revision == TUNING_QUEUE_SCHEMA_REVISION:
+    if queue_revision in SUPPORTED_TUNING_QUEUE_SCHEMA_REVISIONS:
         if payload.get("schema_version") != 2:
-            return "revision-4 queue requires schema_version=2"
+            return "revisioned queue requires schema_version=2"
         for required in (
             "work_orders",
             "pending_count",
@@ -8425,29 +9158,37 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
             "override_lifecycle_heads",
         ):
             if required not in payload:
-                return f"revision-4 queue is missing required envelope field {required}"
+                return f"revisioned queue is missing required envelope field {required}"
+        if queue_revision >= 5:
+            if "admission_rejection_ledger" not in payload:
+                return "revision-5 queue is missing admission_rejection_ledger"
+            commitment_error = _tuning_admission_rejection_commitment_shape_error(
+                payload.get("admission_rejection_ledger")
+            )
+            if commitment_error is not None:
+                return commitment_error
     digest_history = payload.get("experiment_semantic_digest_history")
     if digest_history is not None:
         if not isinstance(digest_history, list):
             return "experiment_semantic_digest_history must be a list"
         if len(digest_history) > MAX_TUNING_EXPERIMENT_DIGEST_HISTORY:
             return "experiment_semantic_digest_history exceeds its durable bound"
-        if len(set(digest_history)) != len(digest_history):
-            return "experiment_semantic_digest_history must be unique"
         for index, digest in enumerate(digest_history):
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 return f"experiment_semantic_digest_history[{index}] is invalid"
+        if len(set(digest_history)) != len(digest_history):
+            return "experiment_semantic_digest_history must be unique"
     experiment_id_history = payload.get("experiment_id_digest_history")
     if experiment_id_history is not None:
         if not isinstance(experiment_id_history, list):
             return "experiment_id_digest_history must be a list"
         if len(experiment_id_history) > MAX_TUNING_EXPERIMENT_ID_DIGEST_HISTORY:
             return "experiment_id_digest_history exceeds its durable bound"
-        if len(set(experiment_id_history)) != len(experiment_id_history):
-            return "experiment_id_digest_history must be unique"
         for index, digest in enumerate(experiment_id_history):
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 return f"experiment_id_digest_history[{index}] is invalid"
+        if len(set(experiment_id_history)) != len(experiment_id_history):
+            return "experiment_id_digest_history must be unique"
     override_heads = payload.get("override_lifecycle_heads")
     if override_heads is not None:
         if not isinstance(override_heads, list):
@@ -8561,6 +9302,13 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
                     and item.get("preserve_blockers") is True
                 ):
                     return f"{key}[{index}] is missing fail-closed pending boundaries"
+                if (
+                    queue_revision >= 5
+                    and status in {"PENDING_HOURLY_AI_REVIEW", "PENDING", "OPEN"}
+                ):
+                    admission_error = _tuning_queue_entry_admission_error(item)
+                    if admission_error is not None:
+                        return f"{key}[{index}] {admission_error}"
                 terminal_error = terminal_contract_error(item, f"{key}[{index}]")
                 if terminal_error is not None:
                     return terminal_error
@@ -8642,14 +9390,37 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
             and payload.get("preserve_blockers") is True
         ):
             return "top compatibility entry is missing fail-closed pending boundaries"
+        if (
+            queue_revision >= 5
+            and top_status in {"PENDING_HOURLY_AI_REVIEW", "PENDING", "OPEN"}
+        ):
+            admission_error = _tuning_queue_entry_admission_error(payload)
+            if admission_error is not None:
+                return f"top compatibility entry {admission_error}"
         terminal_error = terminal_contract_error(payload, "top compatibility entry")
         if terminal_error is not None:
             return terminal_error
     if not has_explicit_queue and not has_top_identity:
         return "existing tuning queue has neither an entry nor an explicit queue envelope"
-    if queue_revision == TUNING_QUEUE_SCHEMA_REVISION:
-        if not has_top_identity:
-            return "revision-4 queue is missing its top compatibility identity"
+    if queue_revision in SUPPORTED_TUNING_QUEUE_SCHEMA_REVISIONS:
+        empty_repaired_queue = bool(
+            queue_revision >= 5
+            and not payload.get("work_orders")
+            and not payload.get("terminal_history")
+            and isinstance(payload.get("admission_rejection_ledger"), dict)
+            and int(
+                payload.get("admission_rejection_ledger", {}).get(
+                    "record_count",
+                    0,
+                )
+                or 0
+            )
+            > 0
+        )
+        if not has_top_identity and not empty_repaired_queue:
+            return "revisioned queue is missing its top compatibility identity"
+        if empty_repaired_queue:
+            return None
         mirror_identities = {
             _raw_tuning_work_order_identity(item)
             for key in ("work_orders", "terminal_history")
@@ -8657,7 +9428,7 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
             if isinstance(item, dict)
         }
         if _raw_tuning_work_order_identity(payload) not in mirror_identities:
-            return "revision-4 top compatibility entry has no matching queue record"
+            return "revisioned top compatibility entry has no matching queue record"
     return None
 
 
@@ -8735,9 +9506,240 @@ def _read_text(path: Path) -> str:
         return ""
 
 
+def _load_tuning_admission_rejections(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size < 0 or size > MAX_TUNING_ADMISSION_REJECTION_BYTES:
+                return {
+                    "_read_error": (
+                        "ValueError: guardian tuning admission rejection ledger "
+                        "raw bytes exceed "
+                        f"{MAX_TUNING_ADMISSION_REJECTION_BYTES}"
+                    ),
+                    "_source_sha256": None,
+                }
+            raw = handle.read(MAX_TUNING_ADMISSION_REJECTION_BYTES + 1)
+    except FileNotFoundError:
+        return {
+            "_missing": True,
+            "_source_sha256": None,
+            "records": [],
+            "record_count": 0,
+        }
+    except OSError as exc:
+        return {"_read_error": f"{type(exc).__name__}: {exc}"}
+    if len(raw) > MAX_TUNING_ADMISSION_REJECTION_BYTES:
+        return {
+            "_read_error": (
+                "ValueError: guardian tuning admission rejection ledger raw bytes "
+                f"exceed {MAX_TUNING_ADMISSION_REJECTION_BYTES} while reading"
+            ),
+            "_source_sha256": None,
+        }
+    source_sha256 = hashlib.sha256(raw).hexdigest()
+    try:
+        payload = _strict_json_loads_bytes(raw)
+        shape_error = _tuning_queue_json_shape_error(
+            payload,
+            artifact_label="admission rejection ledger JSON",
+        )
+        if shape_error is not None:
+            return {
+                "_read_error": f"ValueError: {shape_error}",
+                "_source_sha256": source_sha256,
+            }
+        error = _tuning_admission_rejection_ledger_error(payload)
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+        TypeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
+        return {
+            "_read_error": (
+                f"{type(exc).__name__}: invalid guardian tuning admission "
+                "rejection ledger"
+            ),
+            "_source_sha256": source_sha256,
+        }
+    if error is not None:
+        return {
+            "_read_error": f"ValueError: {error}",
+            "_source_sha256": source_sha256,
+        }
+    return {**payload, "_source_sha256": source_sha256}
+
+
+def _tuning_admission_rejection_ledger_error(payload: Any) -> str | None:
+    shape_error = _tuning_queue_json_shape_error(
+        payload,
+        artifact_label="admission rejection ledger JSON",
+    )
+    if shape_error is not None:
+        return shape_error
+    if not isinstance(payload, dict):
+        return "admission rejection ledger must be an object"
+    expected_keys = {
+        "schema_version",
+        "generated_at_utc",
+        "validator",
+        "max_record_count",
+        "record_count",
+        "records",
+    }
+    if set(payload) != expected_keys:
+        return "admission rejection ledger fields are invalid"
+    if payload.get("schema_version") != TUNING_ADMISSION_REJECTION_SCHEMA_VERSION:
+        return "admission rejection ledger schema_version is invalid"
+    if payload.get("validator") != TUNING_ADMISSION_REJECTION_VALIDATOR:
+        return "admission rejection ledger validator is invalid"
+    if payload.get("max_record_count") != MAX_TUNING_ADMISSION_REJECTIONS:
+        return "admission rejection ledger max_record_count is invalid"
+    if _parse_utc(payload.get("generated_at_utc")) is None:
+        return "admission rejection ledger generated_at_utc is invalid"
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return "admission rejection ledger records must be a list"
+    if len(records) > MAX_TUNING_ADMISSION_REJECTIONS:
+        return "admission rejection ledger exceeds its durable bound"
+    record_count = payload.get("record_count")
+    if (
+        isinstance(record_count, bool)
+        or not isinstance(record_count, int)
+        or record_count != len(records)
+    ):
+        return "admission rejection ledger record_count is invalid"
+    seen: set[str] = set()
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            return f"admission rejection ledger records[{index}] must be an object"
+        original = record.get("original_entry")
+        source_sha256 = str(record.get("source_queue_sha256") or "")
+        source_revision = record.get("source_queue_schema_revision")
+        if (
+            not isinstance(original, dict)
+            or not re.fullmatch(r"[0-9a-f]{64}", source_sha256)
+            or isinstance(source_revision, bool)
+            or not isinstance(source_revision, int)
+            or source_revision < 0
+        ):
+            return f"admission rejection ledger records[{index}] provenance is invalid"
+        try:
+            expected = _tuning_admission_rejection_record(
+                original,
+                source_queue_sha256=source_sha256,
+                source_queue_schema_revision=source_revision,
+            )
+        except (
+            UnicodeEncodeError,
+            ValueError,
+            TypeError,
+            OverflowError,
+            RecursionError,
+        ):
+            return (
+                f"admission rejection ledger records[{index}] original entry "
+                "is not canonical JSON"
+            )
+        if record != expected:
+            return f"admission rejection ledger records[{index}] digest or fields mismatch"
+        rejection_id = str(record.get("rejection_id") or "")
+        if rejection_id in seen:
+            return f"admission rejection ledger records[{index}] duplicates rejection_id"
+        seen.add(rejection_id)
+        if not _tuning_queue_entry_is_non_admissible(original):
+            return f"admission rejection ledger records[{index}] event is tuning-admissible"
+        if not _tuning_work_order_entry_pending(original):
+            return f"admission rejection ledger records[{index}] original was not pending"
+    return None
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _write_tuning_admission_rejections(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    expected_source_sha256: Any,
+) -> None:
+    error = _tuning_admission_rejection_ledger_error(payload)
+    if error is not None:
+        raise OSError(f"refusing to write invalid admission rejection ledger: {error}")
+    serialized = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if len(serialized) > MAX_TUNING_ADMISSION_REJECTION_BYTES:
+        raise OSError(
+            "refusing to write admission rejection ledger above "
+            f"{MAX_TUNING_ADMISSION_REJECTION_BYTES} bytes"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.admission.tmp")
+    try:
+        with tmp.open("wb") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            with path.open("rb") as current_handle:
+                current_size = os.fstat(current_handle.fileno()).st_size
+                if (
+                    current_size < 0
+                    or current_size > MAX_TUNING_ADMISSION_REJECTION_BYTES
+                ):
+                    raise OSError(
+                        "admission rejection ledger exceeds its raw-byte bound "
+                        "before replace"
+                    )
+                current_raw = current_handle.read(
+                    MAX_TUNING_ADMISSION_REJECTION_BYTES + 1
+                )
+                if len(current_raw) > MAX_TUNING_ADMISSION_REJECTION_BYTES:
+                    raise OSError(
+                        "admission rejection ledger grew beyond its raw-byte "
+                        "bound before replace"
+                    )
+        except FileNotFoundError:
+            current_sha256 = None
+        except OSError as exc:
+            raise OSError(
+                f"cannot re-read admission rejection ledger before replace: {exc}"
+            ) from exc
+        else:
+            current_sha256 = hashlib.sha256(current_raw).hexdigest()
+        expected = (
+            str(expected_source_sha256)
+            if expected_source_sha256 is not None
+            else None
+        )
+        if current_sha256 != expected:
+            raise _TuningQueueConcurrentUpdateError(
+                "admission rejection ledger changed after read; reload and retry"
+            )
+        os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _write_tuning_queue_json(
@@ -8751,8 +9753,21 @@ def _write_tuning_queue_json(
     shape_error = _tuning_queue_json_shape_error(payload)
     if shape_error is not None:
         raise OSError(f"refusing to write invalid guardian tuning queue: {shape_error}")
+    structure_error = _tuning_queue_structure_error(payload)
+    if structure_error is not None:
+        raise OSError(f"refusing to write invalid guardian tuning queue: {structure_error}")
+    commitment_error = _tuning_admission_rejection_commitment_error(path, payload)
+    if commitment_error is not None:
+        raise OSError(f"refusing to write unbound admission rejection ledger: {commitment_error}")
     serialized = (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
     ).encode("utf-8")
     if len(serialized) > MAX_TUNING_QUEUE_BYTES:
         raise OSError(
@@ -8763,9 +9778,24 @@ def _write_tuning_queue_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tuning.tmp")
     try:
-        tmp.write_bytes(serialized)
+        with tmp.open("wb") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
         try:
-            current_raw = path.read_bytes()
+            with path.open("rb") as current_handle:
+                current_size = os.fstat(current_handle.fileno()).st_size
+                if current_size < 0 or current_size > MAX_TUNING_QUEUE_BYTES:
+                    raise OSError(
+                        "guardian tuning queue exceeds its raw-byte bound "
+                        "before replace"
+                    )
+                current_raw = current_handle.read(MAX_TUNING_QUEUE_BYTES + 1)
+                if len(current_raw) > MAX_TUNING_QUEUE_BYTES:
+                    raise OSError(
+                        "guardian tuning queue grew beyond its raw-byte bound "
+                        "before replace"
+                    )
         except FileNotFoundError:
             current_sha256 = None
         except OSError as exc:
@@ -8781,6 +9811,11 @@ def _write_tuning_queue_json(
         # this SHA comparison is deliberately the last operation before the
         # atomic replace to catch non-locking or legacy writers as well.
         os.replace(tmp, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         try:
             tmp.unlink()

@@ -121,6 +121,14 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         self.assertIn('"success_condition"', prompt)
         for action_kind in dispatcher_module._TUNING_ACQUISITION_ACTION_KINDS:
             self.assertIn(action_kind, prompt)
+        self.assertIn("data/entry_thesis_ledger.jsonl", prompt)
+        for retired_action_kind in (
+            "BUILD_BID_ASK_REPLAY",
+            "COLLECT_FORWARD_ENTRIES",
+            "REFRESH_CLOSED_CANDLES",
+            "RESOLVE_ATTRIBUTED_OUTCOMES",
+        ):
+            self.assertNotIn(retired_action_kind, prompt)
         self.assertIn('"live_permission_allowed": false', prompt)
 
     def test_prompt_no_change_tuning_review_matches_validator_contract(self) -> None:
@@ -128,7 +136,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         prompt_no_change_review = {
             "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
             "affected_pairs": ["EUR_USD"],
-            "affected_bot_families": ["forecast"],
+            "affected_bot_families": ["trend"],
             "hypothesis": (
                 "the current state change lacks enough pre-entry observations "
                 "to precommit a tighter forecast floor"
@@ -138,8 +146,8 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 "entry-time forecast confidence with canonical outcomes"
             ),
             "evidence_acquisition": {
-                "action_kind": "COLLECT_FORWARD_ENTRIES",
-                "source_ref": "data/forecast_history.jsonl",
+                "action_kind": "ADD_PREENTRY_SIGNAL_LOG",
+                "source_ref": "data/entry_thesis_ledger.jsonl",
                 "required_new_samples": 20,
                 "success_condition": (
                     "resolve the first 20 canonical attributed post-review entries"
@@ -1903,6 +1911,478 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(second["tuning_handoff"]["status"], "UNCHANGED_IDEMPOTENT")
             self.assertEqual(paths.tuning_work_order.read_text(), first_work_order_text)
 
+    def test_margin_pressure_cannot_inherit_a_bot_tuning_queue_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            margin_event = {
+                **_event(
+                    severity="P1",
+                    event_id="portfolio-margin-pressure",
+                    pair="PORTFOLIO",
+                    direction="",
+                    dedupe_key="PORTFOLIO|PORTFOLIO_MARGIN_CAPACITY|MARGIN_PRESSURE|HOLD",
+                ),
+                "event_type": "MARGIN_PRESSURE",
+                "action_hint": "HOLD",
+                "recommended_review_type": "RISK_REVIEW",
+                "thesis": "portfolio margin capacity",
+                "thesis_state": "WOUNDED",
+                "price_zone": "margin_used/nav=0.850; available/nav=0.151; cap=0.920",
+                # This material reason belongs to a price observation that
+                # woke the successor.  It must not turn the risk event into a
+                # bot/lane tuning obligation.
+                "wake_reason_codes": [
+                    "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
+                    "DURABLE_PENDING_SUCCESSOR",
+                ],
+                "details": {
+                    "nav_jpy": 291704.3565,
+                    "margin_used_jpy": 247870.52,
+                    "margin_available_jpy": 44072.7198,
+                    "max_margin_utilization_pct": 92.0,
+                },
+            }
+
+            result = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=margin_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("PORTFOLIO")},
+                now=NOW,
+            )
+
+            self.assertEqual(result["status"], "SKIPPED_NON_TUNING_EVENT")
+            self.assertFalse(path.exists())
+            self.assertEqual(dispatcher_module._tuning_handoff_reasons(margin_event), [])
+
+    def test_supported_tuning_event_surfaces_still_admit_material_reasons(self) -> None:
+        for event_type in (
+            "TECHNICAL_STATE_CHANGE",
+            "FAILED_ACCEPTANCE",
+        ):
+            with self.subTest(event_type=event_type):
+                event = {
+                    **_event(severity="P1"),
+                    "event_type": event_type,
+                    "wake_reason_codes": ["LARGE_PRICE_DISPLACEMENT_STATE_CHANGE"],
+                }
+                self.assertEqual(
+                    dispatcher_module._tuning_handoff_reasons(event),
+                    ["LARGE_PRICE_DISPLACEMENT_STATE_CHANGE"],
+                )
+
+    def test_revision_five_writer_rejects_nonadmissible_pending_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(pair="EUR_USD"),
+                receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                now=NOW,
+            )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            before = path.read_bytes()
+            source_sha256 = hashlib.sha256(before).hexdigest()
+            for surface in ("top", "child"):
+                with self.subTest(surface=surface):
+                    payload = json.loads(before)
+                    target = (
+                        payload
+                        if surface == "top"
+                        else payload["work_orders"][0]
+                    )
+                    target["selected_event"]["event_type"] = "MARGIN_PRESSURE"
+
+                    with self.assertRaisesRegex(OSError, "not tuning-admissible"):
+                        dispatcher_module._write_tuning_queue_json(
+                            path,
+                            payload,
+                            expected_source_sha256=source_sha256,
+                        )
+
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_legacy_non_tuning_admissions_are_audited_and_release_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            legacy_event_types = frozenset(
+                {
+                    *dispatcher_module._TUNING_HANDOFF_EVENT_TYPES,
+                    "MARGIN_PRESSURE",
+                    "CONTRACT_ADD_TRIGGER",
+                }
+            )
+            legacy_work_order_ids: set[str] = set()
+            with (
+                patch.object(
+                    dispatcher_module,
+                    "_TUNING_HANDOFF_EVENT_TYPES",
+                    legacy_event_types,
+                ),
+                patch.object(
+                    dispatcher_module,
+                    "TUNING_QUEUE_SCHEMA_REVISION",
+                    4,
+                ),
+            ):
+                baseline_event = _technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="baseline-technical",
+                )
+                baseline = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=baseline_event,
+                    receipt={
+                        "bot_tuning_review": _valid_tuning_review("EUR_USD")
+                    },
+                    now=NOW,
+                )
+                self.assertEqual(baseline["status"], "WORK_ORDER_WRITTEN")
+                for index in range(5):
+                    margin_event = {
+                        **_event(
+                            severity="P1",
+                            event_id=f"legacy-margin-{index}",
+                            pair="PORTFOLIO",
+                            direction="",
+                            dedupe_key=(
+                                "PORTFOLIO|PORTFOLIO_MARGIN_CAPACITY|"
+                                "MARGIN_PRESSURE|HOLD"
+                            ),
+                        ),
+                        "event_type": "MARGIN_PRESSURE",
+                        "action_hint": "HOLD",
+                        "recommended_review_type": "RISK_REVIEW",
+                        "thesis": "portfolio margin capacity",
+                        "thesis_state": "WOUNDED",
+                        "price_zone": f"margin_used/nav=0.84{index}",
+                        "wake_reason_codes": [
+                            "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE"
+                        ],
+                    }
+                    written = dispatcher_module._maybe_write_tuning_work_order(
+                        path=path,
+                        selected_event=margin_event,
+                        receipt={
+                            "bot_tuning_review": _valid_tuning_review("PORTFOLIO")
+                        },
+                        now=NOW + timedelta(seconds=index + 1),
+                    )
+                    self.assertEqual(written["status"], "WORK_ORDER_WRITTEN")
+                    legacy_work_order_ids.add(written["work_order_id"])
+
+                for index in range(3):
+                    contract_event = {
+                        **_event(
+                            severity="P1",
+                            event_id=f"legacy-contract-add-{index}",
+                            pair="EUR_USD",
+                            direction="LONG",
+                            dedupe_key=f"EUR_USD|range-rail-{index}|CONTRACT_ADD_TRIGGER|ADD",
+                        ),
+                        "event_type": "CONTRACT_ADD_TRIGGER",
+                        "action_hint": "ADD",
+                        "recommended_review_type": "ADD_REVIEW",
+                        "thesis": f"range rail recheck {index}",
+                        "price_zone": f"mid <= 1.140{index} fired",
+                        "wake_reason_codes": [
+                            "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE"
+                        ],
+                        "details": {
+                            "contract_trigger": {
+                                "kind": "range_rail_recheck",
+                                "lane_id": (
+                                    "failure_trader:EUR_USD:LONG:"
+                                    "BREAKOUT_FAILURE:LIMIT"
+                                ),
+                            }
+                        },
+                    }
+                    written = dispatcher_module._maybe_write_tuning_work_order(
+                        path=path,
+                        selected_event=contract_event,
+                        receipt={
+                            "bot_tuning_review": _valid_tuning_review("EUR_USD")
+                        },
+                        now=NOW + timedelta(seconds=10 + index),
+                    )
+                    self.assertEqual(written["status"], "WORK_ORDER_WRITTEN")
+                    legacy_work_order_ids.add(written["work_order_id"])
+
+            legacy_source = json.loads(path.read_text())
+            self.assertEqual(legacy_source["pending_count"], 9)
+            expected_rejected_originals = {
+                str(item.get("work_order_id")): (
+                    dispatcher_module._strip_tuning_envelope(item)
+                )
+                for item in legacy_source["work_orders"]
+                if dispatcher_module._tuning_queue_entry_is_non_admissible(item)
+            }
+            recovery_event = _technical_tuning_event(
+                pair="GBP_USD",
+                event_id="post-repair-technical",
+            )
+            recovered = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=recovery_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("GBP_USD")},
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(
+                recovered["status"],
+                "WORK_ORDER_WRITTEN",
+                recovered,
+            )
+            payload = json.loads(path.read_text())
+            self.assertEqual(
+                payload["queue_schema_revision"],
+                dispatcher_module.TUNING_QUEUE_SCHEMA_REVISION,
+            )
+            self.assertEqual(payload["pending_count"], 2)
+            self.assertEqual(payload["terminal_history_count"], 0)
+            ledger_path = dispatcher_module._tuning_admission_rejection_path(path)
+            ledger = json.loads(ledger_path.read_text())
+            self.assertEqual(ledger["record_count"], 8)
+            rejected = ledger["records"]
+            commitment = payload["admission_rejection_ledger"]
+            self.assertEqual(commitment["record_count"], 8)
+            self.assertEqual(
+                commitment["sha256"],
+                hashlib.sha256(ledger_path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                commitment["rejection_ids"],
+                [str(item["rejection_id"]) for item in rejected],
+            )
+            self.assertEqual(
+                {str(item.get("work_order_id")) for item in rejected},
+                legacy_work_order_ids,
+            )
+            self.assertEqual(
+                {
+                    str(item.get("work_order_id")): item["original_entry"]
+                    for item in rejected
+                },
+                expected_rejected_originals,
+            )
+            for item in rejected:
+                self.assertIn(
+                    item["rejected_event_type"],
+                    {"MARGIN_PRESSURE", "CONTRACT_ADD_TRIGGER"},
+                )
+                self.assertEqual(
+                    item["validator"],
+                    dispatcher_module.TUNING_ADMISSION_REJECTION_VALIDATOR,
+                )
+                self.assertNotIn("status", item)
+                self.assertNotIn("experiment_id", item)
+                self.assertNotIn("experiment_evidence_ref", item)
+                self.assertEqual(
+                    item["original_entry"]["selected_event"]["event_type"],
+                    item["rejected_event_type"],
+                )
+
+            loaded = dispatcher_module._load_tuning_work_order(path)
+            self.assertNotIn("_read_error", loaded)
+            loaded_ledger = dispatcher_module._load_tuning_admission_rejections(
+                ledger_path
+            )
+            self.assertNotIn("_read_error", loaded_ledger)
+            migrated_bytes = path.read_bytes()
+            ledger_bytes = ledger_path.read_bytes()
+            repeated = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=recovery_event,
+                receipt={"bot_tuning_review": _valid_tuning_review("GBP_USD")},
+                now=NOW + timedelta(minutes=2),
+            )
+            self.assertEqual(repeated["status"], "UNCHANGED_IDEMPOTENT")
+            self.assertEqual(path.read_bytes(), migrated_bytes)
+            self.assertEqual(ledger_path.read_bytes(), ledger_bytes)
+
+            ledger_path.unlink()
+            missing_ledger = dispatcher_module._load_tuning_work_order(path)
+            self.assertIn("_read_error", missing_ledger)
+            self.assertIn("ledger is missing", missing_ledger["_read_error"])
+
+            ledger_path.write_bytes(ledger_bytes)
+            tampered = json.loads(ledger_path.read_text())
+            tampered["records"][0]["rejection_code"] = "TAMPERED"
+            ledger_path.write_text(json.dumps(tampered))
+            tampered_ledger = dispatcher_module._load_tuning_work_order(path)
+            self.assertIn("_read_error", tampered_ledger)
+            self.assertIn(
+                "failed strict validation",
+                tampered_ledger["_read_error"],
+            )
+
+    def test_all_invalid_revision_four_queue_repairs_to_empty_revision_five(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            with patch.object(
+                dispatcher_module,
+                "TUNING_QUEUE_SCHEMA_REVISION",
+                4,
+            ):
+                created = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(pair="EUR_USD"),
+                    receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                    now=NOW,
+                )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            legacy = json.loads(path.read_text())
+            for entry in (legacy, legacy["work_orders"][0]):
+                entry["selected_event"]["wake_reason_codes"] = [
+                    "DURABLE_PENDING_SUCCESSOR"
+                ]
+            path.write_text(json.dumps(legacy))
+
+            repaired = dispatcher_module.repair_tuning_queue_admissions(
+                path=path,
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(repaired["status"], "ADMISSION_REPAIR_WRITTEN")
+            self.assertEqual(repaired["rejected_count"], 1)
+            payload = json.loads(path.read_text())
+            self.assertEqual(payload["queue_schema_revision"], 5)
+            self.assertEqual(payload["work_orders"], [])
+            self.assertEqual(payload["pending_count"], 0)
+            self.assertNotIn("work_order_id", payload)
+            self.assertNotIn(
+                "_read_error",
+                dispatcher_module._load_tuning_work_order(path),
+            )
+            ledger = json.loads(
+                dispatcher_module._tuning_admission_rejection_path(path).read_text()
+            )
+            self.assertEqual(ledger["record_count"], 1)
+            self.assertEqual(
+                ledger["records"][0]["rejection_code"],
+                "MATERIAL_TUNING_REASON_MISSING",
+            )
+
+    def test_admission_repair_preserves_exact_invalid_child_review_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            with patch.object(
+                dispatcher_module,
+                "TUNING_QUEUE_SCHEMA_REVISION",
+                4,
+            ):
+                created = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(pair="EUR_USD"),
+                    receipt={
+                        "bot_tuning_review": _valid_tuning_review("EUR_USD")
+                    },
+                    now=NOW,
+                )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            legacy = json.loads(path.read_text())
+            child = legacy["work_orders"][0]
+            for entry in (legacy, child):
+                entry["selected_event"]["event_type"] = "MARGIN_PRESSURE"
+
+            invalid_child_review = {
+                "review_status": "TEST_REQUIRED",
+                "affected_pairs": ["EUR_USD", "GBP_USD"],
+                "legacy_evidence_acquisition": {
+                    "action_kind": "COLLECT_FORWARD_ENTRIES",
+                    "source_ref": "logs/legacy-forward.jsonl",
+                    "nested": [
+                        {"keep": "every legacy field"},
+                        ["including", "nested", "values"],
+                    ],
+                },
+                "legacy_notes": "invalid review must remain verbatim",
+            }
+            child["bot_tuning_review"] = invalid_child_review
+            # The top compatibility mirror has the same identity but divergent
+            # content.  It must not overwrite the durable child source kept by
+            # the rejection ledger.
+            legacy["bot_tuning_review"] = {
+                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+                "top_mirror_only": True,
+            }
+            expected_original = dispatcher_module._strip_tuning_envelope(
+                json.loads(json.dumps(child))
+            )
+            path.write_text(json.dumps(legacy))
+
+            repaired = dispatcher_module.repair_tuning_queue_admissions(
+                path=path,
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(repaired["status"], "ADMISSION_REPAIR_WRITTEN")
+            ledger_path = dispatcher_module._tuning_admission_rejection_path(path)
+            ledger = json.loads(ledger_path.read_text())
+            self.assertEqual(ledger["record_count"], 1)
+            original = ledger["records"][0]["original_entry"]
+            self.assertEqual(original, expected_original)
+            self.assertEqual(original["bot_tuning_review"], invalid_child_review)
+            self.assertNotIn("top_mirror_only", original["bot_tuning_review"])
+            self.assertNotIn(
+                "_read_error",
+                dispatcher_module._load_tuning_admission_rejections(ledger_path),
+            )
+
+    def test_orphan_rejection_ledger_is_bound_before_revision_five_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            with patch.object(
+                dispatcher_module,
+                "TUNING_QUEUE_SCHEMA_REVISION",
+                4,
+            ):
+                created = dispatcher_module._maybe_write_tuning_work_order(
+                    path=path,
+                    selected_event=_technical_tuning_event(pair="EUR_USD"),
+                    receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                    now=NOW,
+                )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            loaded = dispatcher_module._load_tuning_work_order(path)
+            source_sha256 = loaded["_queue_source_sha256"]
+            invalid_original = dict(loaded["work_orders"][0])
+            invalid_original["selected_event"] = {
+                **invalid_original["selected_event"],
+                "event_type": "MARGIN_PRESSURE",
+            }
+            ledger_path = dispatcher_module._tuning_admission_rejection_path(path)
+            persisted = dispatcher_module._persist_tuning_admission_rejections(
+                path=ledger_path,
+                entries=[invalid_original],
+                source_queue_sha256=source_sha256,
+                source_queue_schema_revision=4,
+                now=NOW + timedelta(seconds=1),
+            )
+            self.assertEqual(persisted["status"], "ADMISSION_REJECTIONS_WRITTEN")
+            before = path.read_bytes()
+
+            repaired = dispatcher_module.repair_tuning_queue_admissions(
+                path=path,
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(repaired["status"], "ADMISSION_REPAIR_WRITTEN")
+            self.assertTrue(repaired["ledger_bound_only"])
+            self.assertEqual(repaired["rejected_count"], 0)
+            self.assertNotEqual(path.read_bytes(), before)
+            payload = json.loads(path.read_text())
+            self.assertEqual(payload["queue_schema_revision"], 5)
+            self.assertEqual(payload["pending_count"], 1)
+            self.assertEqual(
+                payload["admission_rejection_ledger"]["record_count"],
+                1,
+            )
+            self.assertNotIn(
+                "_read_error",
+                dispatcher_module._load_tuning_work_order(path),
+            )
+
     def test_tuning_queue_groups_same_closed_candle_semantics_across_observations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "guardian_tuning_work_order.json"
@@ -2494,11 +2974,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 )
                 self.assertEqual(result["status"], "VALID")
 
-        no_change = {
-            **_valid_tuning_review("EUR_USD"),
-            "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-            "proposed_adjustments": [],
-        }
+        no_change = _valid_no_change_tuning_review("EUR_USD")
         validated_no_change = dispatcher_module._validate_bot_tuning_review(
             no_change,
             selected_event=selected,
@@ -2659,11 +3135,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "guardian_tuning_work_order.json"
             event = _technical_tuning_event(pair="EUR_USD", event_id="review-upgrade")
-            no_change = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            no_change = _valid_no_change_tuning_review("EUR_USD")
             first = dispatcher_module._maybe_write_tuning_work_order(
                 path=path,
                 selected_event=event,
@@ -2731,11 +3203,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             )
             self.assertEqual(first["status"], "WORK_ORDER_WRITTEN")
 
-            no_change = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            no_change = _valid_no_change_tuning_review("EUR_USD")
             new_event = _technical_tuning_event(
                 pair="EUR_USD",
                 event_id="no-change-new-observation",
@@ -2775,11 +3243,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 now=NOW,
             )
             self.assertEqual(created["status"], "STRUCTURED_REVIEW_REQUIRED")
-            no_change = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            no_change = _valid_no_change_tuning_review("EUR_USD")
 
             unsafe = dispatcher_module.enrich_tuning_work_order_review(
                 path=path,
@@ -2920,11 +3384,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             review_path = root / "review.json"
             review_path.write_text(
                 json.dumps(
-                    {
-                        **_valid_tuning_review("EUR_USD"),
-                        "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                        "proposed_adjustments": [],
-                    }
+                    _valid_no_change_tuning_review("EUR_USD")
                 )
             )
             output = io.StringIO()
@@ -2989,11 +3449,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                             {
                                 "work_order_id": result["work_order_id"],
                                 "expected_observation_id": result["observation_id"],
-                                "review": {
-                                    **_valid_tuning_review(pair),
-                                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                                    "proposed_adjustments": [],
-                                },
+                                "review": _valid_no_change_tuning_review(pair),
                             }
                             for pair, result in created
                         ]
@@ -3064,16 +3520,8 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     now=NOW + timedelta(seconds=index),
                 )
                 created.append((pair, result))
-            valid_review = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
-            invalid_review = {
-                **_valid_tuning_review("USD_JPY"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            valid_review = _valid_no_change_tuning_review("EUR_USD")
+            invalid_review = _valid_no_change_tuning_review("USD_JPY")
             invalid_review.pop("evidence_acquisition")
             manifest_path = root / "manifest.json"
             manifest_path.write_text(
@@ -3136,11 +3584,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 receipt={},
                 now=NOW,
             )
-            review = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            review = _valid_no_change_tuning_review("EUR_USD")
             item = {
                 "work_order_id": created["work_order_id"],
                 "expected_observation_id": created["observation_id"],
@@ -3191,11 +3635,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     receipt={},
                     now=NOW + timedelta(seconds=index),
                 )
-                review = {
-                    **_valid_tuning_review(pair),
-                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                    "proposed_adjustments": [],
-                }
+                review = _valid_no_change_tuning_review(pair)
                 created.append((pair, result, review))
             first = dispatcher_module.enrich_tuning_work_order_review(
                 path=path,
@@ -3276,11 +3716,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     receipt={},
                     now=NOW + timedelta(seconds=index),
                 )
-                review = {
-                    **_valid_tuning_review(pair),
-                    "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                    "proposed_adjustments": [],
-                }
+                review = _valid_no_change_tuning_review(pair)
                 created.append((pair, result, review))
             manifest = {
                 "reviews": [
@@ -3353,11 +3789,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     {
                         "work_order_id": created["work_order_id"],
                         "expected_observation_id": created["observation_id"],
-                        "review": {
-                            **_valid_tuning_review(pair),
-                            "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                            "proposed_adjustments": [],
-                        },
+                        "review": _valid_no_change_tuning_review(pair),
                     }
                 )
             manifest_path.write_text(json.dumps({"reviews": reviews}))
@@ -3414,11 +3846,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 receipt={},
                 now=NOW,
             )
-            review = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            review = _valid_no_change_tuning_review("EUR_USD")
             before = path.read_bytes()
 
             with patch.object(
@@ -3465,11 +3893,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 receipt={},
                 now=NOW,
             )
-            review = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            review = _valid_no_change_tuning_review("EUR_USD")
             before = path.read_bytes()
             lock_path = path.with_name(f"{path.name}.lock")
 
@@ -4164,6 +4588,170 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 dispatcher_module._load_tuning_work_order(path)["_read_error"],
             )
 
+    def test_tuning_queue_strict_json_rejects_nonfinite_duplicates_and_bad_commitment_types(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_work_order.json"
+            created = dispatcher_module._maybe_write_tuning_work_order(
+                path=path,
+                selected_event=_technical_tuning_event(
+                    pair="EUR_USD",
+                    event_id="strict-json-queue",
+                ),
+                receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                now=NOW,
+            )
+            self.assertEqual(created["status"], "WORK_ORDER_WRITTEN")
+            valid_raw = path.read_bytes()
+            valid = json.loads(valid_raw)
+
+            malformed_documents = {
+                "nan": b'{"value":NaN}',
+                "positive_infinity": b'{"value":Infinity}',
+                "negative_infinity": b'{"value":-Infinity}',
+                "float_overflow": b'{"value":1e9999}',
+                "duplicate_key": b'{"value":1,"value":2}',
+                "lone_surrogate": b'{"value":"\\ud800"}',
+                "recursive_depth": (
+                    b'{"value":'
+                    + (b"[" * 2_000)
+                    + b"0"
+                    + (b"]" * 2_000)
+                    + b"}"
+                ),
+            }
+            for label, raw in malformed_documents.items():
+                with self.subTest(label=label):
+                    path.write_bytes(raw)
+                    loaded = dispatcher_module._load_tuning_work_order(path)
+                    self.assertIn("_read_error", loaded)
+
+            unhashable_commitment = json.loads(valid_raw)
+            unhashable_commitment["admission_rejection_ledger"].update(
+                {
+                    "sha256": "0" * 64,
+                    "record_count": 1,
+                    "rejection_ids": [{}],
+                }
+            )
+            path.write_text(json.dumps(unhashable_commitment))
+            loaded = dispatcher_module._load_tuning_work_order(path)
+            self.assertIn("_read_error", loaded)
+            self.assertIn("rejection_ids", loaded["_read_error"])
+
+            path.write_bytes(valid_raw)
+            nonfinite_payload = json.loads(valid_raw)
+            nonfinite_payload["work_orders"][0]["nonfinite"] = float("nan")
+            with self.assertRaisesRegex(OSError, "non-finite"):
+                dispatcher_module._write_tuning_queue_json(
+                    path,
+                    nonfinite_payload,
+                    expected_source_sha256=hashlib.sha256(valid_raw).hexdigest(),
+                )
+            self.assertEqual(path.read_bytes(), valid_raw)
+
+            oversized_current = b"x" * (
+                dispatcher_module.MAX_TUNING_QUEUE_BYTES + 1
+            )
+            path.write_bytes(oversized_current)
+            with self.assertRaisesRegex(OSError, "raw-byte bound"):
+                dispatcher_module._write_tuning_queue_json(
+                    path,
+                    valid,
+                    expected_source_sha256=hashlib.sha256(
+                        oversized_current
+                    ).hexdigest(),
+                )
+            self.assertEqual(path.stat().st_size, len(oversized_current))
+
+    def test_admission_rejection_ledger_strict_json_is_bounded_and_exception_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guardian_tuning_admission_rejections.json"
+            original = {
+                "work_order_id": "legacy-margin",
+                "event_fingerprint": "legacy-margin",
+                "status": "PENDING_HOURLY_AI_REVIEW",
+                "selected_event": {
+                    "event_id": "legacy-margin-event",
+                    "event_type": "MARGIN_PRESSURE",
+                    "pair": "PORTFOLIO",
+                    "wake_reason_codes": [
+                        "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE"
+                    ],
+                },
+                "live_permission_allowed": False,
+                "no_direct_oanda": True,
+                "preserve_blockers": True,
+            }
+            record = dispatcher_module._tuning_admission_rejection_record(
+                original,
+                source_queue_sha256="1" * 64,
+                source_queue_schema_revision=4,
+            )
+            valid = {
+                "schema_version": (
+                    dispatcher_module.TUNING_ADMISSION_REJECTION_SCHEMA_VERSION
+                ),
+                "generated_at_utc": NOW.isoformat(),
+                "validator": dispatcher_module.TUNING_ADMISSION_REJECTION_VALIDATOR,
+                "max_record_count": (
+                    dispatcher_module.MAX_TUNING_ADMISSION_REJECTIONS
+                ),
+                "record_count": 1,
+                "records": [record],
+            }
+            dispatcher_module._write_tuning_admission_rejections(
+                path,
+                valid,
+                expected_source_sha256=None,
+            )
+            valid_raw = path.read_bytes()
+            self.assertNotIn(
+                "_read_error",
+                dispatcher_module._load_tuning_admission_rejections(path),
+            )
+
+            malformed_documents = {
+                "oversized": (
+                    b"x"
+                    * (
+                        dispatcher_module.MAX_TUNING_ADMISSION_REJECTION_BYTES
+                        + 1
+                    )
+                ),
+                "nan": b'{"value":NaN}',
+                "infinity": b'{"value":Infinity}',
+                "float_overflow": b'{"value":1e9999}',
+                "duplicate_key": b'{"value":1,"value":2}',
+                "lone_surrogate": b'{"value":"\\ud800"}',
+                "recursive_depth": (
+                    b'{"value":'
+                    + (b"[" * 2_000)
+                    + b"0"
+                    + (b"]" * 2_000)
+                    + b"}"
+                ),
+            }
+            for label, raw in malformed_documents.items():
+                with self.subTest(label=label):
+                    path.write_bytes(raw)
+                    loaded = dispatcher_module._load_tuning_admission_rejections(
+                        path
+                    )
+                    self.assertIn("_read_error", loaded)
+
+            path.write_bytes(valid_raw)
+            nonfinite_payload = json.loads(valid_raw)
+            nonfinite_payload["records"][0]["original_entry"][
+                "nonfinite"
+            ] = float("inf")
+            with self.assertRaisesRegex(OSError, "non-finite"):
+                dispatcher_module._write_tuning_admission_rejections(
+                    path,
+                    nonfinite_payload,
+                    expected_source_sha256=hashlib.sha256(valid_raw).hexdigest(),
+                )
+            self.assertEqual(path.read_bytes(), valid_raw)
+
     def test_invalid_queue_counters_observations_and_terminal_history_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "guardian_tuning_work_order.json"
@@ -4810,11 +5398,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             root = Path(tmp)
             path = root / "data" / "guardian_tuning_work_order.json"
             evidence_ref = "data/guardian_tuning_evidence/not-run.json#sha256=" + ("0" * 64)
-            review = {
-                **_valid_tuning_review("EUR_USD"),
-                "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
-                "proposed_adjustments": [],
-            }
+            review = _valid_no_change_tuning_review("EUR_USD")
             event = _technical_tuning_event(pair="EUR_USD", event_id="needs-evidence")
             created = dispatcher_module._maybe_write_tuning_work_order(
                 path=path,
@@ -5139,7 +5723,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     {
                         **entries[0],
                         "schema_version": 2,
-                        "queue_schema_revision": dispatcher_module.TUNING_QUEUE_SCHEMA_REVISION,
+                        "queue_schema_revision": 4,
                         "work_orders": entries,
                         "pending_count": 2,
                         "terminal_history": [],
@@ -6214,8 +6798,8 @@ def _valid_tuning_review(
         "hypothesis": "the selected closed-candle state changed lane ranking",
         "falsifiable_experiment": "freeze the source packet and compare before/after lane scores",
         "evidence_acquisition": {
-            "action_kind": "COLLECT_FORWARD_ENTRIES",
-            "source_ref": "logs/forecast_history.jsonl",
+            "action_kind": "ADD_PREENTRY_SIGNAL_LOG",
+            "source_ref": "data/entry_thesis_ledger.jsonl",
             "required_new_samples": 20,
             "success_condition": (
                 "resolve the first 20 canonical attributed post-review entries "
@@ -6237,6 +6821,18 @@ def _valid_tuning_review(
         "no_direct_oanda": True,
         "preserve_blockers": True,
     }
+
+
+def _valid_no_change_tuning_review(pair: str) -> dict:
+    review = _valid_tuning_review(pair)
+    review.update(
+        {
+            "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+            "affected_bot_families": ["trend"],
+            "proposed_adjustments": [],
+        }
+    )
+    return review
 
 
 def _supported_tuning_parameter() -> tuple[str, str]:

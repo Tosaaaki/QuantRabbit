@@ -197,6 +197,10 @@ class _VerifiedDecisionReceiptFreeze:
     numeric_requirement_issue: dict[str, str] | None
     capital_allocation_edge_basis: str | None
     execution_cost_floor_sha256: str | None
+    guardian_provenance_issue: dict[str, str] | None = None
+    guardian_action_receipt_material_contract: str | None = None
+    guardian_action_receipt_baseline_pairs: tuple[str, ...] = ()
+    guardian_action_receipt_scope_state_sha256: str | None = None
 
 
 # Portfolio occupancy needs to scale with the campaign pace. Three active FX
@@ -293,7 +297,12 @@ class LiveOrderGateway:
         # This keeps direct/manual gateway invocation from bypassing the GPT
         # lane and capital-allocation decision.
         self.verified_decision_path = verified_decision_path
-        self.guardian_action_receipt_path = guardian_action_receipt_path
+        self.guardian_action_receipt_path = (
+            guardian_action_receipt_path
+            if guardian_action_receipt_path != DEFAULT_GUARDIAN_ACTION_RECEIPT
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_GUARDIAN_ACTION_RECEIPT.name
+        )
         self.qr_trader_run_watchdog_path = (
             qr_trader_run_watchdog_path
             if qr_trader_run_watchdog_path != DEFAULT_QR_TRADER_RUN_WATCHDOG
@@ -343,6 +352,9 @@ class LiveOrderGateway:
         )
         numeric_allocation_requirement_issue = (
             verified_decision_receipt_at_entry.numeric_requirement_issue
+        )
+        guardian_provenance_issue = (
+            verified_decision_receipt_at_entry.guardian_provenance_issue
         )
         intents_payload = json.loads(intents_path.read_text())
         selected = _select_intent(intents_payload, lane_id)
@@ -498,6 +510,8 @@ class LiveOrderGateway:
             gpt_verified_decision_issues.append(
                 numeric_allocation_requirement_issue
             )
+        if guardian_provenance_issue is not None:
+            gpt_verified_decision_issues.append(guardian_provenance_issue)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -727,6 +741,15 @@ class LiveOrderGateway:
                 ),
                 expected_execution_cost_floor_sha256=(
                     verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
+                expected_guardian_action_receipt_material_contract=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_material_contract
+                ),
+                expected_guardian_action_receipt_baseline_pairs=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_baseline_pairs
+                ),
+                expected_guardian_action_receipt_scope_state_sha256=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_scope_state_sha256
                 ),
                 expected_order_request_sha256=reservation_order_request_sha256,
                 order_request=order_request,
@@ -1238,6 +1261,9 @@ class LiveOrderGateway:
         numeric_allocation_requirement_issue = (
             verified_decision_receipt_at_entry.numeric_requirement_issue
         )
+        guardian_provenance_issue = (
+            verified_decision_receipt_at_entry.guardian_provenance_issue
+        )
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
@@ -1403,6 +1429,8 @@ class LiveOrderGateway:
             gpt_verified_decision_issues.append(
                 numeric_allocation_requirement_issue
             )
+        if guardian_provenance_issue is not None:
+            gpt_verified_decision_issues.append(guardian_provenance_issue)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -1630,6 +1658,15 @@ class LiveOrderGateway:
                 ),
                 expected_execution_cost_floor_sha256=(
                     verified_decision_receipt_at_entry.execution_cost_floor_sha256
+                ),
+                expected_guardian_action_receipt_material_contract=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_material_contract
+                ),
+                expected_guardian_action_receipt_baseline_pairs=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_baseline_pairs
+                ),
+                expected_guardian_action_receipt_scope_state_sha256=(
+                    verified_decision_receipt_at_entry.guardian_action_receipt_scope_state_sha256
                 ),
                 expected_order_request_sha256=reservation_order_request_sha256,
                 order_request=order_request,
@@ -2837,6 +2874,9 @@ class LiveOrderGateway:
         expected_order_request_sha256: str | None,
         order_request: dict[str, Any],
         ordinary_entry_claim: dict[str, Any],
+        expected_guardian_action_receipt_material_contract: str | None = None,
+        expected_guardian_action_receipt_baseline_pairs: tuple[str, ...] = (),
+        expected_guardian_action_receipt_scope_state_sha256: str | None = None,
     ) -> _FinalPrePostBoundaryResult:
         """Fence reservations from the broker POST with immutable current truth.
 
@@ -3939,6 +3979,120 @@ class LiveOrderGateway:
                     "send an order that is not bound to the consumed claim",
                 )
             )
+
+        # This is deliberately the final mutable-file read before the caller's
+        # broker POST. Rebuild the exact full Guardian scope that GPT reviewed;
+        # unrelated routine receipt rotation canonicalizes to the same state,
+        # while selected-pair meaning and every global safety break fail closed.
+        from quant_rabbit.market_read_overlay import (
+            GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT,
+            canonical_json_sha256,
+            guardian_action_receipt_scope_material,
+        )
+
+        guardian_pairs = tuple(
+            expected_guardian_action_receipt_baseline_pairs
+        )
+        guardian_expected_sha = str(
+            expected_guardian_action_receipt_scope_state_sha256 or ""
+        ).strip().lower()
+        guardian_provenance_valid = bool(
+            expected_guardian_action_receipt_material_contract
+            == GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+            and guardian_pairs
+            and guardian_pairs == tuple(sorted(set(guardian_pairs)))
+            and all(pair in DEFAULT_SPECS for pair in guardian_pairs)
+            and verified_intent.pair in guardian_pairs
+            and final_intent.pair in guardian_pairs
+            and re.fullmatch(r"[0-9a-f]{64}", guardian_expected_sha)
+            is not None
+        )
+        if not guardian_provenance_valid:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_GUARDIAN_RECEIPT_PROVENANCE_INVALID",
+                    "post-reservation Guardian fence requires the frozen material "
+                    "contract, reviewed pair scope containing the selected pair, "
+                    "and a canonical scope-state digest",
+                )
+            )
+
+        guardian_material: dict[str, Any]
+        guardian_recheck_error: str | None = None
+        try:
+            guardian_material = guardian_action_receipt_scope_material(
+                self.guardian_action_receipt_path,
+                baseline_pairs=guardian_pairs,
+                as_of=datetime.now(timezone.utc),
+            )
+            guardian_current_sha = canonical_json_sha256(guardian_material)
+        except Exception as exc:
+            # The helper is intentionally fail-closed, but a final catch keeps
+            # an unforeseen parser/filesystem error from skipping this fence.
+            guardian_recheck_error = f"{type(exc).__name__}: {exc}"
+            guardian_material = {
+                "parse_status": "UNREADABLE",
+                "baseline_pairs": list(guardian_pairs),
+            }
+            guardian_current_sha = None
+
+        guardian_parse_status = str(
+            guardian_material.get("parse_status") or "INVALID"
+        ).strip().upper()
+        guardian_global_safety = guardian_material.get("global_safety") is True
+        guardian_digest_matches = bool(
+            guardian_provenance_valid
+            and guardian_current_sha == guardian_expected_sha
+        )
+        guardian_recheck = {
+            "status": "PASSED",
+            "material_contract": (
+                expected_guardian_action_receipt_material_contract
+            ),
+            "baseline_pairs": list(guardian_pairs),
+            "parse_status": guardian_parse_status,
+            "scope": guardian_material.get("scope"),
+            "time_state": guardian_material.get("time_state"),
+            "global_safety": guardian_global_safety,
+            "global_reasons": list(
+                guardian_material.get("global_reasons") or []
+            ),
+            "expected_scope_state_sha256": guardian_expected_sha or None,
+            "current_scope_state_sha256": guardian_current_sha,
+            "digest_matches": guardian_digest_matches,
+            "raw_read_immediately_before_post": True,
+            "error": guardian_recheck_error,
+        }
+        if guardian_parse_status != "VALID":
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_GUARDIAN_RECEIPT_UNAVAILABLE_OR_INVALID",
+                    "canonical Guardian action receipt was missing, unreadable, "
+                    "oversized, or invalid at the final pre-POST boundary",
+                )
+            )
+        if guardian_global_safety:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_GUARDIAN_GLOBAL_SAFETY_BLOCK",
+                    "Guardian reported a portfolio/global safety condition or a "
+                    "broken routing/receipt contract immediately before POST",
+                )
+            )
+        if not guardian_digest_matches:
+            issues.append(
+                RiskIssue(
+                    "FINAL_PRE_POST_GUARDIAN_RECEIPT_SCOPE_CHANGED",
+                    "Guardian meaning in the GPT-reviewed pair scope changed after "
+                    "decision verification; rebuild the market read before POST",
+                )
+            )
+        if any(
+            issue.code.startswith("FINAL_PRE_POST_GUARDIAN_")
+            for issue in issues
+        ):
+            guardian_recheck["status"] = "BLOCKED"
+        evidence["guardian_action_receipt_scope_recheck"] = guardian_recheck
 
         blocking_codes = [
             issue.code for issue in issues if issue.severity == "BLOCK"
@@ -6313,12 +6467,87 @@ def _freeze_verified_decision_receipt(
     ).strip().lower()
     if re.fullmatch(r"[0-9a-f]{64}", cost_sha256) is None:
         cost_sha256 = None
+    from quant_rabbit.market_read_overlay import (
+        GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT,
+    )
+
+    guardian_contract = provenance.get(
+        "guardian_action_receipt_material_contract"
+    )
+    raw_guardian_pairs = provenance.get(
+        "guardian_action_receipt_baseline_pairs"
+    )
+    guardian_sha256 = str(
+        provenance.get("guardian_action_receipt_scope_state_sha256") or ""
+    ).strip().lower()
+    lane_ids: list[str] = []
+    raw_lane_ids = decision.get("selected_lane_ids")
+    if isinstance(raw_lane_ids, list):
+        lane_ids.extend(
+            item for item in raw_lane_ids if isinstance(item, str)
+        )
+    raw_lane_id = decision.get("selected_lane_id")
+    if isinstance(raw_lane_id, str) and raw_lane_id not in lane_ids:
+        lane_ids.append(raw_lane_id)
+    expected_guardian_pairs = tuple(
+        sorted(
+            {
+                token.strip().upper()
+                for lane_id in lane_ids
+                for token in lane_id.split(":")
+                if token.strip().upper() in DEFAULT_SPECS
+            }
+        )
+    )
+    guardian_pairs = (
+        tuple(raw_guardian_pairs)
+        if isinstance(raw_guardian_pairs, list)
+        and all(isinstance(pair, str) for pair in raw_guardian_pairs)
+        else ()
+    )
+    guardian_provenance_required = bool(
+        provenance.get("schema_version") == 2
+        and str(provenance.get("author_kind") or "").strip().upper()
+        == "CODEX_MARKET_READ"
+        and str(decision.get("action") or "").strip().upper() == "TRADE"
+    )
+    guardian_provenance_valid = bool(
+        guardian_contract == GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+        and guardian_pairs
+        and guardian_pairs == tuple(sorted(set(guardian_pairs)))
+        and all(pair in DEFAULT_SPECS for pair in guardian_pairs)
+        and set(expected_guardian_pairs).issubset(set(guardian_pairs))
+        and expected_guardian_pairs
+        and re.fullmatch(r"[0-9a-f]{64}", guardian_sha256) is not None
+    )
+    guardian_issue = None
+    if guardian_provenance_required and not guardian_provenance_valid:
+        guardian_issue = {
+            "severity": "BLOCK",
+            "code": "GPT_GUARDIAN_ACTION_RECEIPT_PROVENANCE_INVALID_AT_GATEWAY_ENTRY",
+            "message": (
+                "schema-v2 CODEX_MARKET_READ TRADE must freeze the exact Guardian "
+                "material contract, sorted execution pairs, and scope-state digest"
+            ),
+        }
     return _VerifiedDecisionReceiptFreeze(
-        receipt_sha256,
-        numeric_required,
-        None,
-        edge_basis,
-        cost_sha256,
+        sha256=receipt_sha256,
+        numeric_allocation_required=numeric_required,
+        numeric_requirement_issue=None,
+        capital_allocation_edge_basis=edge_basis,
+        execution_cost_floor_sha256=cost_sha256,
+        guardian_provenance_issue=guardian_issue,
+        guardian_action_receipt_material_contract=(
+            str(guardian_contract)
+            if guardian_provenance_valid
+            else None
+        ),
+        guardian_action_receipt_baseline_pairs=(
+            guardian_pairs if guardian_provenance_valid else ()
+        ),
+        guardian_action_receipt_scope_state_sha256=(
+            guardian_sha256 if guardian_provenance_valid else None
+        ),
     )
 
 

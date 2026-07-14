@@ -110,6 +110,28 @@ def _outcomes(entries: list[AttributedEntry]) -> list[RealizedOutcome]:
     return result
 
 
+def _context(
+    entry: AttributedEntry,
+    *,
+    signal_state: dict | None = None,
+) -> dict:
+    entry_at = datetime.fromisoformat(entry.broker_entry_ts_utc or entry.entry_ts_utc)
+    return {
+        "order_id": entry.order_id,
+        "lane_id": entry.canonical_lane_id,
+        "forecast_timestamp_utc": (entry_at - timedelta(seconds=1)).isoformat(),
+        "forecast_cycle_id": f"forecast-cycle-{entry.trade_id}",
+        "guardian_tuning_signal_state": (
+            signal_state
+            if signal_state is not None
+            else {
+                "m5_regime": "TREND",
+                "m5_trend_score": 0.8,
+            }
+        ),
+    }
+
+
 def _thesis(
     entry: AttributedEntry,
     *,
@@ -123,14 +145,7 @@ def _thesis(
         "context_evidence": (
             context
             if context is not None
-            else {
-                "order_id": entry.order_id,
-                "lane_id": entry.canonical_lane_id,
-                "guardian_tuning_signal_state": {
-                    "m5_regime": "TREND",
-                    "m5_trend_score": 0.8,
-                },
-            }
+            else _context(entry)
         ),
     }
 
@@ -237,14 +252,13 @@ class GuardianTuningAcquisitionProgressTest(unittest.TestCase):
             entries = _entries(20, lane=failure_lane)
             rows = []
             for index, entry in enumerate(entries):
-                context = {
-                    "order_id": entry.order_id,
-                    "lane_id": entry.canonical_lane_id,
-                    "guardian_tuning_signal_state": {
+                context = _context(
+                    entry,
+                    signal_state={
                         "failed_acceptance": True,
                         "acceptance_zone": 1.14,
                     },
-                }
+                )
                 if index == 0:
                     context.pop("order_id")
                 elif index == 1:
@@ -308,13 +322,10 @@ class GuardianTuningAcquisitionProgressTest(unittest.TestCase):
                 [
                     _thesis(
                         entries[0],
-                        context={
-                            "order_id": entries[0].order_id,
-                            "lane_id": entries[0].canonical_lane_id,
-                            "guardian_tuning_signal_state": {
-                                "desk": "trend_trader"
-                            },
-                        },
+                        context=_context(
+                            entries[0],
+                            signal_state={"desk": "trend_trader"},
+                        ),
                     )
                 ],
             )
@@ -347,6 +358,123 @@ class GuardianTuningAcquisitionProgressTest(unittest.TestCase):
                     "TREND_FAMILY_SIGNAL_MISSING",
                 },
             )
+
+    def test_forecast_lineage_requires_strict_pre_entry_time_and_bounded_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            ledger.touch()
+            thesis_path = root / "entry_thesis_ledger.jsonl"
+            entries = _entries(7)
+            rows = [_thesis(entry) for entry in entries]
+
+            rows[0]["context_evidence"].pop("forecast_timestamp_utc")
+            rows[1]["context_evidence"]["forecast_timestamp_utc"] = "not-rfc3339"
+            rows[2]["context_evidence"]["forecast_timestamp_utc"] = entries[
+                2
+            ].broker_entry_ts_utc
+            rows[3]["context_evidence"]["forecast_timestamp_utc"] = (
+                datetime.fromisoformat(entries[3].broker_entry_ts_utc)
+                + timedelta(seconds=1)
+            ).isoformat()
+            rows[4]["context_evidence"].pop("forecast_cycle_id")
+            rows[5]["context_evidence"]["forecast_cycle_id"] = "x" * 257
+            rows[6]["context_evidence"]["forecast_cycle_id"] = 7
+            _write_theses(thesis_path, rows)
+            work_order = _work_order()
+            work_order["bot_tuning_review"]["evidence_acquisition"][
+                "required_new_samples"
+            ] = len(entries)
+
+            with (
+                patch.object(
+                    acquisition,
+                    "read_attributed_system_entries",
+                    return_value=entries,
+                ),
+                patch.object(
+                    acquisition,
+                    "read_attributed_net_outcomes",
+                    return_value=_outcomes(entries),
+                ),
+            ):
+                payload = acquisition.build_guardian_tuning_acquisition_progress(
+                    [work_order],
+                    entry_thesis_path=thesis_path,
+                    ledger_path=ledger,
+                )
+
+            progress = payload["work_orders"][0]
+            self.assertEqual(progress["status"], "ACQUISITION_SOURCE_DEFECT")
+            self.assertEqual(progress["preentry_complete_count"], 0)
+            defects = {
+                item["trade_id"]: set(item["codes"])
+                for item in progress["signal_defects"]
+            }
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_TIMESTAMP_MISSING",
+                defects["trade-0"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_TIMESTAMP_INVALID",
+                defects["trade-1"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_NOT_PRE_ENTRY",
+                defects["trade-2"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_NOT_PRE_ENTRY",
+                defects["trade-3"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_CYCLE_ID_MISSING",
+                defects["trade-4"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_CYCLE_ID_INVALID",
+                defects["trade-5"],
+            )
+            self.assertIn(
+                "ENTRY_THESIS_FORECAST_CYCLE_ID_INVALID",
+                defects["trade-6"],
+            )
+
+    def test_nontuning_events_are_rejected_before_source_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            ledger.touch()
+            thesis_path = root / "entry_thesis_ledger.jsonl"
+            thesis_path.touch()
+
+            for event_type in ("MARGIN_PRESSURE", "CONTRACT_ADD_TRIGGER"):
+                with self.subTest(event_type=event_type):
+                    with (
+                        patch.object(
+                            acquisition,
+                            "read_attributed_system_entries",
+                        ) as entry_reader,
+                        patch.object(
+                            acquisition,
+                            "read_attributed_net_outcomes",
+                        ) as outcome_reader,
+                    ):
+                        payload = acquisition.build_guardian_tuning_acquisition_progress(
+                            [_work_order(event_type=event_type)],
+                            entry_thesis_path=thesis_path,
+                            ledger_path=ledger,
+                        )
+
+                    entry_reader.assert_not_called()
+                    outcome_reader.assert_not_called()
+                    self.assertEqual(payload["status"], "NO_SUPPORTED_ACQUISITION_WORK")
+                    self.assertEqual(payload["counts"]["supported"], 0)
+                    self.assertEqual(payload["counts"]["unsupported"], 1)
+                    self.assertEqual(
+                        payload["unsupported_work_orders"][0]["reason_code"],
+                        "EVENT_TYPE_NOT_TUNING_ADMISSIBLE",
+                    )
 
     def test_required_temp_paths_are_used_and_malformed_temp_source_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

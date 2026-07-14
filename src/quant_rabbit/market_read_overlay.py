@@ -8,9 +8,9 @@ import re
 import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from quant_rabbit.capture_economics import (
     EXACT_VEHICLE_ALLOCATION_SURFACE_CONTRACT,
@@ -127,7 +127,57 @@ MUTABLE_MARKET_READ_FIELDS = frozenset(
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 # Do not interpret the separator in ``1.0840-1.0860`` as a negative sign.
 NUMBER_RE = re.compile(r"(?<![\d.])[-+]?\d+(?:\.\d+)?")
-WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_SAFETY_STATE_V1"
+WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_HEALTH_STATE_V2"
+GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT = (
+    "QR_GUARDIAN_ACTION_RECEIPT_SCOPE_V1"
+)
+MAX_GUARDIAN_ACTION_RECEIPT_BYTES = 1_000_000
+GUARDIAN_HIGH_URGENCY_ACTIONS = frozenset(
+    {"REDUCE", "HARVEST", "CANCEL_PENDING"}
+)
+GUARDIAN_TECHNICAL_OBSERVATION_EVENT_TYPES = frozenset(
+    {"TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"}
+)
+GUARDIAN_GLOBAL_SAFETY_EVENT_TYPES = frozenset(
+    {
+        "MARGIN_PRESSURE",
+        "UNKNOWN_ORDER",
+        "CONTRACT_EMERGENCY_TRIGGER",
+        "WAKE_PARSE_FAILURE",
+        "UNEXPECTED_PROTECTION_MISSING",
+    }
+)
+GUARDIAN_KNOWN_EVENT_TYPES = frozenset(
+    {
+        "FAILED_ACCEPTANCE",
+        "ACCEPTANCE_BREAK",
+        "SESSION_EXPANSION",
+        "RANGE_RAIL_TOUCH",
+        "THEME_CONFIRMATION",
+        "SQUEEZE_RELEASE",
+        "HARVEST_ZONE",
+        "THESIS_INVALIDATION",
+        "MARGIN_PRESSURE",
+        "UNKNOWN_ORDER",
+        "STALE_PENDING",
+        "BROKER_SNAPSHOT_STALE",
+        "SPREAD_ANOMALY",
+        "UNEXPECTED_PROTECTION_MISSING",
+        "CONTRACT_HARVEST_TRIGGER",
+        "CONTRACT_ADD_TRIGGER",
+        "CONTRACT_NO_ADD_TRIGGER",
+        "CONTRACT_WOUNDED_TRIGGER",
+        "CONTRACT_INVALIDATION_TRIGGER",
+        "CONTRACT_EMERGENCY_TRIGGER",
+        "CONTRACT_STALE",
+        "WAKE_PARSE_FAILURE",
+        "EVENT_SUPPRESSED_WITH_PRICE_CHANGE",
+        "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
+        "WATCH_ONLY_NO_TRIGGER_CONTRACT",
+        "TECHNICAL_STATE_CHANGE",
+        "TECHNICAL_INPUT_STALE",
+    }
+)
 WATCHDOG_VOLATILE_MESSAGE_CODES = frozenset({"QR_TRADER_RUN_STALE"})
 FORECAST_REPLAY_SCORECARD_CONTRACT = "QR_FORECAST_REPLAY_SCORECARD_V3"
 PROJECTION_CALIBRATION_EVIDENCE_CONTRACT = (
@@ -700,6 +750,7 @@ def prepare_market_read_baseline(
         baseline_sha256=baseline_sha,
         evidence_sources=evidence_sources,
         prepared_at=prepared_at,
+        use_runtime_guardian_clock=now is None,
     )
     packet_sha = str(packet["evidence_packet_sha256"])
     stamped = dict(baseline)
@@ -820,15 +871,18 @@ def apply_codex_market_read_overlay(
         baseline_sha256=baseline_sha,
         evidence_sources=evidence_sources,
         prepared_at=current_time,
+        use_runtime_guardian_clock=now is None,
     )
     stored_packet_sha = str(packet.get("evidence_packet_sha256") or "")
     rebuilt_packet_sha = str(rebuilt["evidence_packet_sha256"])
-    _require_sha_match(
-        actual=rebuilt_packet_sha,
-        claimed=stored_packet_sha,
-        code="MARKET_READ_EVIDENCE_PACKET_STALE",
-        label="stored evidence packet",
-    )
+    if rebuilt_packet_sha != stored_packet_sha:
+        changed_material = _changed_evidence_packet_material(packet, rebuilt)
+        raise MarketReadOverlayError(
+            "MARKET_READ_EVIDENCE_PACKET_STALE",
+            "stored evidence packet no longer matches current evidence; "
+            f"changed_material={','.join(changed_material) or 'UNKNOWN'}; "
+            f"expected={rebuilt_packet_sha}; claimed={stored_packet_sha}",
+        )
     _require_sha_match(
         actual=rebuilt_packet_sha,
         claimed=overlay.get("evidence_packet_sha256"),
@@ -917,6 +971,7 @@ def apply_codex_market_read_overlay(
             continue
         stable_metadata = dict(raw_metadata)
         stable_metadata.pop("qr_trader_run_watchdog", None)
+        stable_metadata.pop("guardian_action_receipt", None)
         stable_metadata.pop("market_read_predictions", None)
         stable_metadata.pop("projection_ledger", None)
         body["source_metadata"] = stable_metadata
@@ -1152,6 +1207,17 @@ def apply_codex_market_read_overlay(
         if isinstance(rebuilt_selected_lane, Mapping)
         else None
     )
+    guardian_action_receipt_material = rebuilt.get(
+        "guardian_action_receipt_material"
+    )
+    guardian_action_receipt_baseline_pairs = (
+        list(guardian_action_receipt_material.get("baseline_pairs") or [])
+        if isinstance(guardian_action_receipt_material, Mapping)
+        else []
+    )
+    guardian_action_receipt_scope_state_sha256 = canonical_json_sha256(
+        guardian_action_receipt_material
+    )
     merged["decision_provenance"] = {
         "schema_version": MARKET_READ_OVERLAY_SCHEMA_VERSION,
         "author_kind": CODEX_MARKET_READ_AUTHOR,
@@ -1177,6 +1243,15 @@ def apply_codex_market_read_overlay(
         ),
         "capital_allocation_edge_basis": capital_allocation_edge_basis,
         "execution_cost_floor_sha256": execution_cost_floor_sha256,
+        "guardian_action_receipt_material_contract": (
+            GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+        ),
+        "guardian_action_receipt_baseline_pairs": (
+            guardian_action_receipt_baseline_pairs
+        ),
+        "guardian_action_receipt_scope_state_sha256": (
+            guardian_action_receipt_scope_state_sha256
+        ),
         "authorized_size_multiple": float(capital_allocation["size_multiple"]),
         "authorized_units": int(capital_allocation["selected_units"]),
         "execution_fields_preserved": True,
@@ -1727,9 +1802,50 @@ def validate_codex_market_read_provenance(
         "final_execution_envelope_sha256",
         "capital_allocation_sha256",
         "capital_allocation_board_sha256",
+        "guardian_action_receipt_scope_state_sha256",
     ):
         if not SHA256_RE.fullmatch(str(claimed.get(key) or "")):
             issues.append(("AI_MARKET_READ_PROVENANCE_INVALID", f"{key} must be a sha256 digest"))
+    if claimed.get("guardian_action_receipt_material_contract") != (
+        GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT
+    ):
+        issues.append(
+            (
+                "AI_MARKET_READ_PROVENANCE_INVALID",
+                "guardian_action_receipt_material_contract must be "
+                f"{GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT}",
+            )
+        )
+    raw_guardian_pairs = claimed.get("guardian_action_receipt_baseline_pairs")
+    raw_baseline_lane_ids = claimed.get("baseline_selected_lane_ids")
+    expected_guardian_pairs = list(
+        _guardian_receipt_baseline_pairs(
+            {
+                "selected_lane_ids": (
+                    raw_baseline_lane_ids
+                    if isinstance(raw_baseline_lane_ids, list)
+                    else []
+                )
+            }
+        )
+    )
+    guardian_pairs_valid = bool(
+        isinstance(raw_guardian_pairs, list)
+        and all(isinstance(pair, str) for pair in raw_guardian_pairs)
+        and raw_guardian_pairs
+        == sorted(set(raw_guardian_pairs))
+        and all(pair in DEFAULT_TRADER_PAIRS for pair in raw_guardian_pairs)
+        and set(expected_guardian_pairs).issubset(set(raw_guardian_pairs))
+    )
+    if not guardian_pairs_valid:
+        issues.append(
+            (
+                "AI_MARKET_READ_PROVENANCE_INVALID",
+                "guardian_action_receipt_baseline_pairs must be the sorted unique "
+                "reviewed pairs and include every execution pair derived from "
+                "baseline_selected_lane_ids",
+            )
+        )
     claimed_cost_floor_sha = claimed.get("execution_cost_floor_sha256")
     if action.upper() == "TRADE" and not SHA256_RE.fullmatch(
         str(claimed_cost_floor_sha or "")
@@ -2222,7 +2338,21 @@ def _build_evidence_packet(
     baseline_sha256: str,
     evidence_sources: Mapping[str, Path],
     prepared_at: datetime,
+    use_runtime_guardian_clock: bool = False,
 ) -> dict[str, Any]:
+    if "guardian_action_receipt" not in evidence_sources:
+        raise MarketReadOverlayError(
+            "MARKET_READ_EVIDENCE_SOURCE_CONTRACT_INVALID",
+            "guardian_action_receipt must be an explicitly named evidence source",
+        )
+    guardian_source_path = evidence_sources.get("guardian_action_receipt")
+    if not isinstance(guardian_source_path, (Path, str)) or not str(
+        guardian_source_path
+    ).strip():
+        raise MarketReadOverlayError(
+            "MARKET_READ_EVIDENCE_SOURCE_CONTRACT_INVALID",
+            "guardian_action_receipt evidence path must be a non-empty path",
+        )
     normalized_sources = {
         name: _normalize_source_path(path) for name, path in evidence_sources.items()
     }
@@ -2240,10 +2370,12 @@ def _build_evidence_packet(
                 "size_bytes": None,
                 "generated_at_utc": None,
             }
-        elif name == "projection_ledger":
+        elif name in {"projection_ledger", "guardian_action_receipt"}:
             # The 100MB+ append ledger is not a prompt artifact.  Bind the
             # selected semantic calibration evidence below instead of reading
-            # and hashing every raw row a second time.
+            # and hashing every raw row a second time.  The frequently rotated
+            # Guardian receipt is likewise bound through its scoped semantic
+            # payload, not through volatile publication bytes.
             sources[name] = _source_descriptor_without_hash(path)
         else:
             sources[name] = _source_descriptor(path)
@@ -2276,6 +2408,7 @@ def _build_evidence_packet(
         order_intents=order_intents,
     )
     material_sources: dict[str, dict[str, Any]] = {}
+    guardian_action_receipt_material: dict[str, Any] | None = None
     for name, item in sources.items():
         if name == "market_read_predictions":
             # GPTTraderBrain appends the just-verified prediction after the
@@ -2292,22 +2425,10 @@ def _build_evidence_packet(
                 "resolved_prediction_count": len(recent_predictions),
             }
             continue
-        if name == "qr_trader_run_watchdog":
-            # This frequent local observer rewrites observation clocks, a
-            # running age counter, and queried log excerpts even when its
-            # safety meaning is unchanged. Bind that meaning so an ordinary
-            # GPT review can finish, while material health/receipt changes
-            # still invalidate the packet.
-            watchdog_path = normalized_sources.get(name)
-            watchdog_material = _watchdog_material_payload(
-                Path(watchdog_path) if watchdog_path is not None else None
-            )
-            material_sources[name] = {
-                "path": item["path"],
-                "exists": item["exists"],
-                "material_contract": WATCHDOG_MATERIAL_CONTRACT,
-                "safety_state_sha256": canonical_json_sha256(watchdog_material),
-            }
+        if name in {"qr_trader_run_watchdog", "guardian_action_receipt"}:
+            # Both are intentionally sampled after every slower allocation and
+            # calibration surface below, immediately before packet material is
+            # finalized.
             continue
         if name == "execution_ledger":
             material_sources[name] = {
@@ -2380,6 +2501,50 @@ def _build_evidence_packet(
                 "evidence_sha256"
             ),
         }
+
+    # These two files rotate while the rest of a production packet is being
+    # hashed and its allocation/calibration surfaces are rebuilt.  Re-read
+    # their semantic state last so a 20-30 second reconstruction does not
+    # publish the early view of a receipt/watchdog that changed mid-build.
+    guardian_path = normalized_sources.get("guardian_action_receipt")
+    if guardian_path is not None:
+        # ``prepared_at`` is captured before the allocation/calibration work.
+        # In production the receipt may rotate while that work runs, so judge
+        # its clocks against the instant its final bytes are read.  Explicit
+        # test/replay clocks remain deterministic and keep using prepared_at.
+        guardian_as_of = None if use_runtime_guardian_clock else prepared_at
+        guardian_action_receipt_material = (
+            guardian_action_receipt_scope_material(
+                Path(guardian_path),
+                baseline=baseline,
+                as_of=guardian_as_of,
+            )
+        )
+        guardian_source = sources.get("guardian_action_receipt")
+        guardian_source = (
+            guardian_source if isinstance(guardian_source, Mapping) else {}
+        )
+        material_sources["guardian_action_receipt"] = {
+            "path": guardian_source.get("path") or str(guardian_path),
+            "exists": Path(guardian_path).is_file(),
+            "material_contract": GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT,
+            "scope_state_sha256": canonical_json_sha256(
+                guardian_action_receipt_material
+            ),
+        }
+    watchdog_path = normalized_sources.get("qr_trader_run_watchdog")
+    if watchdog_path is not None:
+        watchdog_material = _watchdog_material_payload(Path(watchdog_path))
+        watchdog_source = sources.get("qr_trader_run_watchdog")
+        watchdog_source = (
+            watchdog_source if isinstance(watchdog_source, Mapping) else {}
+        )
+        material_sources["qr_trader_run_watchdog"] = {
+            "path": watchdog_source.get("path") or str(watchdog_path),
+            "exists": Path(watchdog_path).is_file(),
+            "material_contract": WATCHDOG_MATERIAL_CONTRACT,
+            "safety_state_sha256": canonical_json_sha256(watchdog_material),
+        }
     material = {
         "schema_version": MARKET_READ_OVERLAY_SCHEMA_VERSION,
         "baseline_sha256": baseline_sha256,
@@ -2405,6 +2570,11 @@ def _build_evidence_packet(
         },
         "source_paths": {name: str(path) for name, path in sorted(normalized_sources.items())},
         "source_metadata": sources,
+        "guardian_action_receipt_material": (
+            guardian_action_receipt_material
+            if guardian_action_receipt_material is not None
+            else {"parse_status": "SOURCE_NOT_CONFIGURED"}
+        ),
         "quote_basis_by_pair": quote_basis_by_pair_from_broker_payload(broker),
         "prior_market_read_review": (
             overrides.get("market_read_review")
@@ -6051,7 +6221,632 @@ def _normalize_source_path(path: Path | str) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
 
+def guardian_action_receipt_scope_material(
+    path: Path | None,
+    *,
+    baseline: Mapping[str, Any] | None = None,
+    baseline_pairs: Iterable[str] | None = None,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Bind only the Guardian receipt meaning that can affect this read.
+
+    Guardian publishes one canonical receipt for the whole portfolio.  Routine
+    HOLD/NO_ACTION rotation for another pair must not discard an in-flight read,
+    while the selected pair, portfolio-risk actions, and broken execution
+    boundaries remain fail-closed material.
+    """
+
+    if baseline is not None and baseline_pairs is not None:
+        raise ValueError("baseline and baseline_pairs are mutually exclusive")
+    if baseline is None and baseline_pairs is None:
+        raise ValueError("baseline or baseline_pairs is required")
+    if baseline_pairs is None:
+        scoped_pairs = _guardian_receipt_baseline_pairs(baseline or {})
+    else:
+        scoped_pairs = tuple(
+            sorted(
+                {
+                    str(pair).strip().upper()
+                    for pair in baseline_pairs
+                    if isinstance(pair, str)
+                    and str(pair).strip().upper() in DEFAULT_TRADER_PAIRS
+                }
+            )
+        )
+    common = {
+        "baseline_pairs": list(scoped_pairs),
+    }
+    if path is None or not path.exists() or not path.is_file():
+        return {"parse_status": "MISSING", **common}
+    try:
+        size_bytes = int(path.stat().st_size)
+    except OSError:
+        return {"parse_status": "UNREADABLE", **common}
+    if size_bytes > MAX_GUARDIAN_ACTION_RECEIPT_BYTES:
+        return {
+            "parse_status": "OVERSIZED",
+            "size_bytes": size_bytes,
+            "max_size_bytes": MAX_GUARDIAN_ACTION_RECEIPT_BYTES,
+            **common,
+        }
+    raw_bytes: bytes | None = None
+    try:
+        with path.open("rb") as handle:
+            raw_bytes = handle.read(MAX_GUARDIAN_ACTION_RECEIPT_BYTES + 1)
+        if len(raw_bytes) > MAX_GUARDIAN_ACTION_RECEIPT_BYTES:
+            return {
+                "parse_status": "OVERSIZED",
+                "size_bytes": max(size_bytes, len(raw_bytes)),
+                "max_size_bytes": MAX_GUARDIAN_ACTION_RECEIPT_BYTES,
+                **common,
+            }
+        raw = json.loads(
+            raw_bytes.decode("utf-8"),
+            parse_constant=_reject_nonfinite_json_constant,
+            parse_float=_parse_finite_guardian_json_float,
+        )
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ):
+        raw_sha = (
+            hashlib.sha256(raw_bytes).hexdigest()
+            if raw_bytes is not None
+            else None
+        )
+        return {
+            "parse_status": "INVALID",
+            "raw_sha256": raw_sha,
+            **common,
+        }
+    if not isinstance(raw, Mapping):
+        return {
+            "parse_status": "INVALID",
+            "raw_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            **common,
+        }
+
+    # Strict decoding alone does not reject escaped lone surrogates, and the
+    # stdlib may otherwise materialize an overflow exponent as a non-finite
+    # float.  Prove the complete bounded object is canonical-JSON encodable
+    # before selecting a semantic subset from it.
+    try:
+        canonical_json_sha256(raw)
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError):
+        return {
+            "parse_status": "INVALID",
+            "raw_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            **common,
+        }
+
+    event_mirror = raw.get("event")
+    event_mirror = event_mirror if isinstance(event_mirror, Mapping) else {}
+    raw_selected_event = raw.get("selected_event")
+    selected_event = (
+        raw_selected_event if isinstance(raw_selected_event, Mapping) else {}
+    )
+    receipt = raw.get("receipt")
+    receipt = receipt if isinstance(receipt, Mapping) else {}
+    event_pair = str(
+        selected_event.get("pair") or receipt.get("pair") or ""
+    ).strip().upper()
+    event_type = str(selected_event.get("event_type") or "").strip().upper()
+    severity = str(selected_event.get("severity") or "").strip().upper()
+    action_hint = str(selected_event.get("action_hint") or "").strip().upper()
+    action = str(receipt.get("action") or "").strip().upper()
+    global_reasons: list[str] = []
+    producer_source = str(raw.get("source") or "").strip()
+    producer_model = str(raw.get("model") or "").strip()
+    if producer_source != "guardian_wake_dispatcher":
+        global_reasons.append(
+            f"PRODUCER_SOURCE_INVALID:{producer_source or 'MISSING'}"
+        )
+    if producer_model != "gpt-5.5":
+        global_reasons.append(
+            f"PRODUCER_MODEL_INVALID:{producer_model or 'MISSING'}"
+        )
+    if not event_mirror:
+        global_reasons.append("EVENT_MIRROR_MISSING")
+    if "selected_event" not in raw:
+        global_reasons.append("SELECTED_EVENT_MISSING")
+    elif not isinstance(raw_selected_event, Mapping):
+        global_reasons.append("SELECTED_EVENT_INVALID")
+    if not receipt:
+        global_reasons.append("RECEIPT_BODY_MISSING")
+    for field in (
+        "action",
+        "event_id",
+        "new_information",
+        "pair",
+        "side",
+        "thesis_state",
+        "reason",
+        "harvest_trigger",
+        "margin_state",
+        "gateway_required",
+        "no_direct_oanda",
+    ):
+        if field not in receipt:
+            global_reasons.append(f"RECEIPT_FIELD_MISSING:{field}")
+    if (
+        "invalidation" not in receipt
+        and "invalidation_evidence" not in receipt
+    ):
+        global_reasons.append("RECEIPT_FIELD_MISSING:invalidation")
+    if (
+        "ownership" not in receipt
+        and "manual_system_ownership" not in receipt
+    ):
+        global_reasons.append("RECEIPT_FIELD_MISSING:ownership")
+    if "new_information" in receipt and not isinstance(
+        receipt.get("new_information"), bool
+    ):
+        global_reasons.append("RECEIPT_FIELD_INVALID:new_information")
+    receipt_side = str(receipt.get("side") or "").strip().upper()
+    if receipt_side not in {"LONG", "SHORT", "NONE", "N/A"}:
+        global_reasons.append(
+            f"RECEIPT_FIELD_INVALID:side={receipt_side or 'MISSING'}"
+        )
+    receipt_ownership = str(
+        receipt.get("ownership")
+        or receipt.get("manual_system_ownership")
+        or ""
+    ).strip().upper()
+    if receipt_ownership not in {"SYSTEM", "OPERATOR_MANUAL", "UNKNOWN"}:
+        global_reasons.append(
+            "RECEIPT_FIELD_INVALID:ownership="
+            f"{receipt_ownership or 'MISSING'}"
+        )
+    for field, expected in (
+        ("status", "ACCEPTED"),
+        ("receipt_status", "ACCEPTED"),
+        ("dispatcher_status", "RECEIPT_WRITTEN"),
+    ):
+        actual = str(raw.get(field) or "").strip().upper()
+        if actual != expected:
+            global_reasons.append(f"RECEIPT_STATE_INVALID:{field}={actual or 'MISSING'}")
+    lifecycle = str(raw.get("receipt_lifecycle") or "").strip().upper()
+    if lifecycle not in {"ACTIVE", "CONSUMED"}:
+        global_reasons.append(
+            f"RECEIPT_STATE_INVALID:receipt_lifecycle={lifecycle or 'MISSING'}"
+        )
+    consumed_by_trader = raw.get("consumed_by_trader")
+    if (
+        not isinstance(consumed_by_trader, bool)
+        or (lifecycle == "ACTIVE" and consumed_by_trader is not False)
+        or (lifecycle == "CONSUMED" and consumed_by_trader is not True)
+    ):
+        global_reasons.append("RECEIPT_STATE_INVALID:consumed_by_trader")
+
+    # Read and validate the complete bounded receipt before sampling the
+    # production clock.  A receipt rotating during the slower packet build is
+    # therefore judged against the instant immediately after these exact bytes
+    # became the semantic input, never against the earlier build-start clock.
+    current_time = _utc_now(as_of)
+    generated_at = _strict_guardian_utc(raw.get("generated_at_utc"))
+    expires_at = _strict_guardian_utc(raw.get("expires_at_utc"))
+    if raw.get("generated_at_utc") in (None, ""):
+        generated_state = "MISSING"
+    elif generated_at is None:
+        generated_state = "MALFORMED"
+    elif generated_at > current_time + timedelta(seconds=5):
+        generated_state = "FUTURE"
+    else:
+        generated_state = "VALID"
+    if raw.get("expires_at_utc") in (None, ""):
+        expiry_state = "MISSING"
+    elif expires_at is None:
+        expiry_state = "MALFORMED"
+    elif generated_at is not None and expires_at <= generated_at:
+        expiry_state = "ORDER_INVALID"
+    elif expires_at > current_time:
+        expiry_state = "FRESH"
+    else:
+        expiry_state = "EXPIRED"
+    if lifecycle == "CONSUMED" and expiry_state in {"FRESH", "EXPIRED"}:
+        expiry_state = "NOT_APPLICABLE_CONSUMED"
+    time_state = {
+        "generated_at_utc": generated_state,
+        "expires_at_utc": expiry_state,
+    }
+    if generated_state != "VALID":
+        global_reasons.append(f"GENERATED_AT_{generated_state}")
+    if expiry_state in {"MISSING", "MALFORMED", "ORDER_INVALID"}:
+        global_reasons.append(f"EXPIRES_AT_{expiry_state}")
+    elif lifecycle == "ACTIVE" and expiry_state != "FRESH":
+        global_reasons.append(f"ACTIVE_RECEIPT_{expiry_state}")
+    if event_type not in GUARDIAN_KNOWN_EVENT_TYPES:
+        global_reasons.append(f"EVENT_TYPE_UNKNOWN:{event_type or 'MISSING'}")
+    if severity not in {"P0", "P1", "P2"}:
+        global_reasons.append(f"SEVERITY_UNKNOWN:{severity or 'MISSING'}")
+    if action_hint not in {
+        "TRADE",
+        "ADD",
+        "HOLD",
+        "HARVEST",
+        "REDUCE",
+        "CANCEL_PENDING",
+        "NO_ACTION",
+    }:
+        global_reasons.append(f"ACTION_HINT_UNKNOWN:{action_hint or 'MISSING'}")
+    if action not in {
+        "TRADE",
+        "ADD",
+        "HOLD",
+        "HARVEST",
+        "REDUCE",
+        "CANCEL_PENDING",
+        "NO_ACTION",
+    }:
+        global_reasons.append(f"RECEIPT_ACTION_UNKNOWN:{action or 'MISSING'}")
+    if event_type in GUARDIAN_TECHNICAL_OBSERVATION_EVENT_TYPES:
+        if action not in {"HOLD", "NO_ACTION"}:
+            global_reasons.append(
+                f"TECHNICAL_OBSERVATION_ACTION_FORBIDDEN:{action or 'MISSING'}"
+            )
+        if action_hint not in {"HOLD", "NO_ACTION"}:
+            global_reasons.append(
+                "TECHNICAL_OBSERVATION_ACTION_HINT_FORBIDDEN:"
+                f"{action_hint or 'MISSING'}"
+            )
+    selected_direction_raw = str(
+        selected_event.get("direction") or ""
+    ).strip().upper()
+    mirror_direction_raw = str(
+        event_mirror.get("direction") or ""
+    ).strip().upper()
+    selected_direction = _guardian_direction(selected_direction_raw)
+    mirror_direction = _guardian_direction(mirror_direction_raw)
+    receipt_direction = _guardian_direction(
+        receipt.get("side") or receipt.get("direction")
+    )
+    if selected_direction != mirror_direction:
+        global_reasons.append("EVENT_MIRROR_MISMATCH:direction")
+    if selected_direction_raw and selected_direction is None:
+        global_reasons.append(
+            f"EVENT_DIRECTION_INVALID:selected_event={selected_direction_raw}"
+        )
+    if mirror_direction_raw and mirror_direction is None:
+        global_reasons.append(
+            f"EVENT_DIRECTION_INVALID:event={mirror_direction_raw}"
+        )
+    if selected_direction is not None:
+        if receipt_direction != selected_direction:
+            global_reasons.append("RECEIPT_IDENTITY_BROKEN:direction")
+    elif receipt_side not in {"NONE", "N/A"}:
+        global_reasons.append("RECEIPT_IDENTITY_BROKEN:direction")
+    if action in {"TRADE", "ADD"}:
+        if action_hint not in {"TRADE", "ADD"}:
+            global_reasons.append("ENTRY_ACTION_HINT_CONTRACT_BROKEN")
+        if selected_direction_raw not in {"LONG", "SHORT"}:
+            global_reasons.append(
+                "ENTRY_DIRECTION_REQUIRED:selected_event"
+            )
+        if mirror_direction_raw not in {"LONG", "SHORT"}:
+            global_reasons.append("ENTRY_DIRECTION_REQUIRED:event")
+        if receipt_side not in {"LONG", "SHORT"}:
+            global_reasons.append("ENTRY_DIRECTION_REQUIRED:receipt")
+        if not (
+            selected_direction_raw
+            == mirror_direction_raw
+            == receipt_side
+            and receipt_side in {"LONG", "SHORT"}
+        ):
+            global_reasons.append("ENTRY_DIRECTION_CONTRACT_BROKEN")
+        if receipt.get("new_information") is not True:
+            global_reasons.append("ENTRY_NEW_INFORMATION_CONTRACT_BROKEN")
+    identity_fields = (
+        "event_id",
+        "dedupe_key",
+        "pair",
+        "event_type",
+        "severity",
+        "action_hint",
+    )
+    for field in identity_fields:
+        selected_value = selected_event.get(field)
+        mirror_value = event_mirror.get(field)
+        selected_text = str(selected_value or "").strip().upper()
+        mirror_text = str(mirror_value or "").strip().upper()
+        if not selected_text or not mirror_text:
+            global_reasons.append(f"EVENT_IDENTITY_MISSING:{field}")
+        elif selected_text != mirror_text:
+            global_reasons.append(f"EVENT_MIRROR_MISMATCH:{field}")
+    selected_event_id = str(selected_event.get("event_id") or "").strip()
+    selected_dedupe_key = str(selected_event.get("dedupe_key") or "").strip()
+    for field, expected in (
+        ("selected_event_id", selected_event_id),
+        ("selected_event_dedupe_key", selected_dedupe_key),
+    ):
+        claimed = str(raw.get(field) or "").strip()
+        if expected and claimed != expected:
+            global_reasons.append(f"IDENTITY_CONTRACT_BROKEN:{field}")
+    for field, expected in (
+        ("event_id", selected_event_id),
+        ("dedupe_key", selected_dedupe_key),
+    ):
+        claimed = str(receipt.get(field) or "").strip()
+        if expected and claimed != expected:
+            global_reasons.append(f"RECEIPT_IDENTITY_BROKEN:{field}")
+    receipt_pair = str(receipt.get("pair") or "").strip().upper()
+    if event_pair and receipt_pair != event_pair:
+        global_reasons.append("RECEIPT_IDENTITY_BROKEN:pair")
+    if receipt.get("gateway_required") is not True:
+        global_reasons.append("RECEIPT_GATEWAY_REQUIRED_CONTRACT_BROKEN")
+    if receipt.get("no_direct_oanda") is not True:
+        global_reasons.append("RECEIPT_NO_DIRECT_OANDA_CONTRACT_BROKEN")
+    if event_pair not in DEFAULT_TRADER_PAIRS:
+        global_reasons.append("PAIR_SCOPE_UNKNOWN")
+    if severity == "P0":
+        global_reasons.append("P0_EVENT")
+    if event_type in GUARDIAN_GLOBAL_SAFETY_EVENT_TYPES:
+        global_reasons.append(f"GLOBAL_EVENT:{event_type}")
+    if action in GUARDIAN_HIGH_URGENCY_ACTIONS:
+        global_reasons.append(f"HIGH_URGENCY_ACTION:{action}")
+    if action_hint in GUARDIAN_HIGH_URGENCY_ACTIONS:
+        global_reasons.append(f"HIGH_URGENCY_HINT:{action_hint}")
+    for source_name, source in (
+        ("selected_event", selected_event),
+        ("event", event_mirror),
+        ("receipt", receipt),
+    ):
+        source_thesis_state = str(
+            source.get("thesis_state") or ""
+        ).strip().upper()
+        if source_thesis_state not in {
+            "ALIVE",
+            "WOUNDED",
+            "INVALIDATED",
+            "EMERGENCY",
+            "UNKNOWN",
+        }:
+            global_reasons.append(
+                f"THESIS_STATE_INVALID:{source_name}="
+                f"{source_thesis_state or 'MISSING'}"
+            )
+        if source_thesis_state in {"INVALIDATED", "EMERGENCY"}:
+            global_reasons.append(
+                f"THESIS_STATE:{source_name}={source_thesis_state}"
+            )
+    selected_thesis_state = str(
+        selected_event.get("thesis_state") or ""
+    ).strip().upper()
+    mirror_thesis_state = str(
+        event_mirror.get("thesis_state") or ""
+    ).strip().upper()
+    if selected_thesis_state != mirror_thesis_state:
+        global_reasons.append("EVENT_MIRROR_MISMATCH:thesis_state")
+    if raw.get("gateway_required") is not True:
+        global_reasons.append("GATEWAY_REQUIRED_CONTRACT_BROKEN")
+    if raw.get("no_direct_oanda") is not True:
+        global_reasons.append("NO_DIRECT_OANDA_CONTRACT_BROKEN")
+    details = selected_event.get("details")
+    details = details if isinstance(details, Mapping) else {}
+    for field, expected in (
+        ("live_permission_allowed", False),
+        ("no_direct_oanda", True),
+        ("preserve_blockers", True),
+    ):
+        if field in details and details.get(field) is not expected:
+            global_reasons.append(f"EVENT_BOUNDARY_BROKEN:{field}")
+    tuning_review = receipt.get("bot_tuning_review")
+    tuning_review = tuning_review if isinstance(tuning_review, Mapping) else {}
+    for field, expected in (
+        ("live_permission_allowed", False),
+        ("no_direct_oanda", True),
+        ("preserve_blockers", True),
+    ):
+        if field in tuning_review and tuning_review.get(field) is not expected:
+            global_reasons.append(f"TUNING_BOUNDARY_BROKEN:{field}")
+    for source_name, source in (("root", raw), ("receipt", receipt)):
+        if source.get("normal_routing_allowed") is False:
+            global_reasons.append(f"ROUTING_PROHIBITED:{source_name}")
+    raw_issues = raw.get("issues")
+    if not isinstance(raw_issues, list):
+        global_reasons.append("ISSUES_CONTRACT_INVALID")
+        raw_issues = []
+    if raw_issues:
+        global_reasons.append("RECEIPT_ISSUES_PRESENT")
+    for issue in raw_issues:
+        if not isinstance(issue, Mapping):
+            continue
+        if issue.get("normal_routing_allowed") is False:
+            global_reasons.append("ROUTING_PROHIBITED:issue")
+        if str(issue.get("severity") or "").strip().upper() == "P0":
+            global_reasons.append("P0_RECEIPT_ISSUE")
+    execution_boundary = raw.get("execution_boundary")
+    execution_boundary = (
+        execution_boundary if isinstance(execution_boundary, Mapping) else {}
+    )
+    for field in (
+        "gpt_wake_never_calls_oanda_directly",
+        "guardian_never_trades",
+        "only_live_order_gateway_may_send_cancel_close",
+    ):
+        if execution_boundary.get(field) is not True:
+            global_reasons.append(f"EXECUTION_BOUNDARY_BROKEN:{field}")
+
+    global_reasons = sorted(set(global_reasons))
+    relevant_pair = event_pair in scoped_pairs
+    routine_other_pair = (
+        not relevant_pair
+        and not global_reasons
+        and action in {"HOLD", "NO_ACTION"}
+    )
+    if routine_other_pair:
+        return {
+            "parse_status": "VALID",
+            "scope": "IRRELEVANT_PAIR_ROUTINE",
+            "global_safety": False,
+            **common,
+        }
+    if not relevant_pair and not global_reasons:
+        global_reasons.append(f"OTHER_PAIR_NON_ROUTINE_ACTION:{action or 'UNKNOWN'}")
+
+    try:
+        selected_event_material = _guardian_receipt_semantic_copy(
+            selected_event
+        )
+        event_mirror_material = _guardian_receipt_semantic_copy(event_mirror)
+        receipt_material = _guardian_receipt_semantic_copy(receipt)
+        execution_boundary_material = _guardian_receipt_semantic_copy(
+            execution_boundary
+        )
+        issues_material = _guardian_receipt_semantic_copy(raw_issues)
+    except RecursionError:
+        return {
+            "parse_status": "INVALID",
+            "raw_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            "reason": "SEMANTIC_DEPTH_EXCEEDED",
+            **common,
+        }
+
+    return {
+        "parse_status": "VALID",
+        "scope": (
+            "GLOBAL_SAFETY"
+            if global_reasons
+            else "SELECTED_PAIR"
+        ),
+        "global_safety": bool(global_reasons),
+        "global_reasons": global_reasons,
+        "event_pair_relevant": relevant_pair,
+        "time_state": time_state,
+        **common,
+        "receipt_state": _mapping_fields(
+            raw,
+            (
+                "status",
+                "source",
+                "model",
+                "receipt_status",
+                "receipt_lifecycle",
+                "consumed_by_trader",
+                "dispatcher_status",
+                "gateway_required",
+                "no_direct_oanda",
+                "selected_event_id",
+                "selected_event_dedupe_key",
+                "superseded_by_event_id",
+            ),
+        ),
+        "selected_event": selected_event_material,
+        "event": event_mirror_material,
+        "receipt": receipt_material,
+        "execution_boundary": execution_boundary_material,
+        "issues": issues_material,
+    }
+
+
+def _guardian_receipt_baseline_pairs(
+    baseline: Mapping[str, Any],
+) -> tuple[str, ...]:
+    pairs: set[str] = set()
+    lane_ids: list[Any] = []
+    selected_lane_id = baseline.get("selected_lane_id")
+    if selected_lane_id is not None:
+        lane_ids.append(selected_lane_id)
+    selected_lane_ids = baseline.get("selected_lane_ids")
+    if isinstance(selected_lane_ids, list):
+        lane_ids.extend(selected_lane_ids)
+    for lane_id in lane_ids:
+        if not isinstance(lane_id, str):
+            continue
+        pairs.update(
+            token.strip().upper()
+            for token in lane_id.split(":")
+            if token.strip().upper() in DEFAULT_TRADER_PAIRS
+        )
+
+    market_read = baseline.get("market_read_first")
+    market_read = market_read if isinstance(market_read, Mapping) else {}
+    naked = market_read.get("naked_read")
+    if isinstance(naked, Mapping):
+        pair = str(naked.get("cleanest_pair_expression") or "").strip().upper()
+        if pair in DEFAULT_TRADER_PAIRS:
+            pairs.add(pair)
+    for section_name in (
+        "next_30m_prediction",
+        "next_2h_prediction",
+        "best_trade_if_forced",
+    ):
+        section = market_read.get(section_name)
+        if not isinstance(section, Mapping):
+            continue
+        pair = str(section.get("pair") or "").strip().upper()
+        if pair in DEFAULT_TRADER_PAIRS:
+            pairs.add(pair)
+    return tuple(sorted(pairs))
+
+
+def _reject_nonfinite_json_constant(value: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _parse_finite_guardian_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON float is forbidden: {value}")
+    return parsed
+
+
+def _strict_guardian_utc(value: Any) -> datetime | None:
+    """Parse an explicit timezone-aware UTC producer timestamp."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(None):
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _guardian_direction(value: Any) -> str | None:
+    normalized = str(value or "").strip().upper()
+    if normalized == "LONG":
+        return "LONG"
+    if normalized == "SHORT":
+        return "SHORT"
+    return None
+
+
+def _guardian_receipt_semantic_copy(value: Any) -> Any:
+    """Remove publication clocks while preserving technical/risk semantics."""
+
+    volatile_fields = {
+        "detected_at_utc",
+        "expires_at_utc",
+        "generated_at_utc",
+        "receipt_id",
+        "superseded_previous_receipt",
+    }
+    if isinstance(value, Mapping):
+        return {
+            str(key): _guardian_receipt_semantic_copy(field_value)
+            for key, field_value in value.items()
+            if str(key) not in volatile_fields
+        }
+    if isinstance(value, list):
+        return [_guardian_receipt_semantic_copy(item) for item in value]
+    return deepcopy(value)
+
+
 def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
+    """Return watchdog health, without duplicating canonical receipt identity.
+
+    Guardian action meaning is bound directly by
+    ``QR_GUARDIAN_ACTION_RECEIPT_SCOPE_V1``.  The watchdog may observe that
+    receipt several minutes later; copying event identity/action here made an
+    otherwise unchanged market read race two independently published views of
+    the same fact.
+    """
+
     if path is None or not path.exists() or not path.is_file():
         return {"parse_status": "MISSING"}
     try:
@@ -6070,83 +6865,11 @@ def _watchdog_material_payload(path: Path | None) -> dict[str, Any]:
     guardian = raw.get("guardian_receipt")
     guardian = guardian if isinstance(guardian, Mapping) else {}
 
-    current_receipts: list[dict[str, Any]] = []
-    summaries = guardian.get("receipt_summaries")
-    if isinstance(summaries, list):
-        for row in summaries:
-            if not isinstance(row, Mapping):
-                continue
-            if not any(
-                row.get(key) is True
-                for key in (
-                    "active",
-                    "canonical_present",
-                    "dependency_before_next_run",
-                )
-            ):
-                continue
-            current_receipts.append(
-                _mapping_fields(
-                    row,
-                    (
-                        "action",
-                        "active",
-                        "canonical_present",
-                        "consumed_by_trader",
-                        "dedupe_key",
-                        "dependency_before_next_run",
-                        "emergency_or_margin_risk",
-                        "event_id",
-                        "high_urgency_action",
-                        "identity",
-                        "normal_routing_allowed_by_acknowledgement",
-                        "receipt_lifecycle",
-                        "receipt_status",
-                        "terminal_lifecycle",
-                    ),
-                )
-            )
-    current_receipts.sort(
-        key=lambda item: (
-            str(item.get("identity") or ""),
-            str(item.get("event_id") or ""),
-            str(item.get("action") or ""),
-        )
-    )
-
-    guardian_material = _mapping_fields(
-        guardian,
-        (
-            "active",
-            "dependency_before_next_run",
-            "exists",
-        ),
-    )
+    guardian_material: dict[str, Any] = {}
     if "issues" in guardian:
-        guardian_material["issues"] = _watchdog_material_issues(
+        guardian_material["issues"] = _watchdog_guardian_health_issues(
             guardian.get("issues")
         )
-    guardian_is_current = bool(
-        guardian.get("active") is True
-        or guardian.get("exists") is True
-        or guardian.get("dependency_before_next_run") is True
-        or guardian.get("issues")
-    )
-    if guardian_is_current:
-        guardian_material.update(
-            _mapping_fields(
-                guardian,
-                (
-                    "action",
-                    "consumed_by_trader",
-                    "emergency_or_margin_risk",
-                    "high_urgency_action",
-                    "receipt_lifecycle",
-                    "receipt_status",
-                ),
-            )
-        )
-    guardian_material["current_receipts"] = current_receipts
 
     health = _mapping_fields(
         raw,
@@ -6250,6 +6973,39 @@ def _watchdog_material_issues(value: Any) -> Any:
             }
         )
     return material
+
+
+def _watchdog_guardian_health_issues(value: Any) -> Any:
+    """Keep routing health while dropping the duplicated receipt identity."""
+
+    material = _watchdog_material_issues(value)
+    if not isinstance(material, list):
+        return material
+    identity_fields = {
+        "message",
+        "receipt_identity",
+        "receipt_event_id",
+        "receipt_action",
+        "receipt_lifecycle",
+        "receipt_sources",
+        "receipt_source_paths",
+    }
+    result: list[Any] = []
+    for item in material:
+        if not isinstance(item, Mapping):
+            result.append(deepcopy(item))
+            continue
+        if not any(field in item for field in identity_fields - {"message"}):
+            result.append(deepcopy(item))
+            continue
+        result.append(
+            {
+                key: deepcopy(field_value)
+                for key, field_value in item.items()
+                if key not in identity_fields
+            }
+        )
+    return result
 
 
 def _mapping_fields(source: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -6369,6 +7125,35 @@ def _required_text(payload: Mapping[str, Any], key: str, code: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise MarketReadOverlayError(code, f"{key} must be a non-empty string")
     return value.strip()
+
+
+def _changed_evidence_packet_material(
+    stored: Mapping[str, Any],
+    rebuilt: Mapping[str, Any],
+) -> list[str]:
+    """Name the exact material surface that invalidated an in-flight read."""
+
+    changed: list[str] = []
+    stored_sources = (
+        stored.get("sources") if isinstance(stored.get("sources"), Mapping) else {}
+    )
+    rebuilt_sources = (
+        rebuilt.get("sources") if isinstance(rebuilt.get("sources"), Mapping) else {}
+    )
+    for name in sorted(set(stored_sources) | set(rebuilt_sources)):
+        if canonical_json_sha256(stored_sources.get(name)) != canonical_json_sha256(
+            rebuilt_sources.get(name)
+        ):
+            changed.append(f"source:{name}")
+    for field in (
+        "schema_version",
+        "baseline_sha256",
+        "capital_allocation_board_sha256",
+        "projection_calibration_evidence_sha256",
+    ):
+        if stored.get(field) != rebuilt.get(field):
+            changed.append(field)
+    return changed
 
 
 def _require_sha_match(*, actual: str, claimed: Any, code: str, label: str) -> None:

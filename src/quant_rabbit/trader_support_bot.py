@@ -427,7 +427,9 @@ class TraderSupportBot:
         guardian_receipt_operator_review = operator_review_status_summary(
             _read_json(self.guardian_receipt_operator_review_path)
         )
-        guardian_tuning_work_order = _read_json(self.guardian_tuning_work_order_path)
+        guardian_tuning_work_order = _read_guardian_tuning_work_order(
+            self.guardian_tuning_work_order_path
+        )
         active_trader_contract = _read_json(self.active_trader_contract_path)
         active_opportunity_board = _read_json(self.active_opportunity_board_path)
         non_eurusd_live_grade_frontier = _read_json(self.non_eurusd_live_grade_frontier_path)
@@ -584,6 +586,7 @@ class TraderSupportBot:
             runtime_disk=runtime_disk,
             guardian_tuning_work_order=guardian_tuning_work_order,
             guardian_tuning_acquisition=guardian_tuning_acquisition,
+            guardian_tuning_queue_validation=guardian_tuning_queue_validation,
         )
         guardian_tuning_request = next(
             (
@@ -946,6 +949,49 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _read_guardian_tuning_work_order(path: Path) -> dict[str, Any]:
+    """Read the tuning queue only through its bounded authoritative validator."""
+
+    try:
+        from tools import guardian_wake_dispatcher as dispatcher
+    except (ImportError, RuntimeError) as exc:
+        return {
+            "_path": str(path),
+            "_read_error": f"authoritative queue validator is unavailable: {exc}",
+            "_queue_source_sha256": None,
+        }
+    try:
+        loaded = dispatcher._load_tuning_work_order(path)
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError) as exc:
+        return {
+            "_path": str(path),
+            "_read_error": (
+                "authoritative queue validator raised an invalid-input error: "
+                f"{type(exc).__name__}"
+            ),
+            "_queue_source_sha256": None,
+        }
+    if loaded.get("_missing"):
+        return {"_missing": True, "_path": str(path)}
+    if loaded.get("_read_error"):
+        return {
+            "_path": str(path),
+            "_read_error": str(loaded.get("_read_error") or "unknown error"),
+            "_queue_source_sha256": loaded.get("_queue_source_sha256"),
+        }
+    return {
+        key: value
+        for key, value in loaded.items()
+        if key
+        not in {
+            "_path",
+            "_queue_source_sha256",
+            "_read_error",
+            "_missing",
+        }
+    }
+
+
 def _guardian_tuning_work_order_pending(payload: dict[str, Any] | None) -> bool:
     validation = _guardian_tuning_queue_validation(payload)
     return validation["status"] == "INVALID" or bool(
@@ -955,6 +1001,8 @@ def _guardian_tuning_work_order_pending(payload: dict[str, Any] | None) -> bool:
 
 def _guardian_tuning_queue_validation(
     payload: dict[str, Any] | None,
+    *,
+    queue_path: Path | None = None,
 ) -> dict[str, Any]:
     """Fail visible when a queue cannot safely be counted.
 
@@ -966,16 +1014,27 @@ def _guardian_tuning_queue_validation(
 
     if not isinstance(payload, dict) or payload.get("_missing"):
         return {"status": "MISSING", "issues": []}
+    if payload.get("_read_error"):
+        return {
+            "status": "INVALID",
+            "issues": [
+                "authoritative queue validation failed: "
+                + str(payload.get("_read_error") or "unknown error")
+            ],
+            "declared_pending_count": None,
+            "readable_entry_count": None,
+        }
     issues: list[str] = []
     revision_present = "queue_schema_revision" in payload
     raw_entries = payload.get("work_orders")
     if revision_present:
-        if payload.get("queue_schema_revision") != 4:
-            issues.append("queue_schema_revision must be 4")
+        queue_revision = payload.get("queue_schema_revision")
+        if queue_revision not in {4, 5}:
+            issues.append("queue_schema_revision must be supported revision 4 or 5")
         if payload.get("schema_version") != 2:
-            issues.append("revision-4 queue schema_version must be 2")
+            issues.append("revisioned queue schema_version must be 2")
         if not isinstance(raw_entries, list):
-            issues.append("revision-4 work_orders must be a list")
+            issues.append("revisioned work_orders must be a list")
             entries: list[Any] = []
         else:
             entries = raw_entries
@@ -988,7 +1047,7 @@ def _guardian_tuning_queue_validation(
             issues.append("pending_count does not match work_orders")
         terminal = payload.get("terminal_history")
         if not isinstance(terminal, list):
-            issues.append("revision-4 terminal_history must be a list")
+            issues.append("revisioned terminal_history must be a list")
             terminal = []
         declared_terminal = payload.get("terminal_history_count")
         if (
@@ -997,6 +1056,48 @@ def _guardian_tuning_queue_validation(
             or declared_terminal != len(terminal)
         ):
             issues.append("terminal_history_count does not match terminal_history")
+        if queue_revision == 5:
+            commitment = payload.get("admission_rejection_ledger")
+            if not isinstance(commitment, dict):
+                issues.append("revision-5 admission_rejection_ledger must be an object")
+            else:
+                expected_fields = {
+                    "schema_version",
+                    "path",
+                    "sha256",
+                    "record_count",
+                    "rejection_ids",
+                }
+                count = commitment.get("record_count")
+                ids = commitment.get("rejection_ids")
+                sha256 = commitment.get("sha256")
+                commitment_shape_valid = bool(
+                    set(commitment) == expected_fields
+                    and commitment.get("schema_version") == 1
+                    and commitment.get("path")
+                    == "guardian_tuning_admission_rejections.json"
+                    and isinstance(count, int)
+                    and not isinstance(count, bool)
+                    and 0 <= count <= 48
+                    and isinstance(ids, list)
+                    and len(ids) == count
+                    and all(
+                        isinstance(item, str)
+                        and re.fullmatch(r"[0-9a-f]{64}", item)
+                        for item in ids
+                    )
+                    and len(set(ids)) == len(ids)
+                    and (
+                        (count == 0 and sha256 is None)
+                        or (
+                            count > 0
+                            and isinstance(sha256, str)
+                            and re.fullmatch(r"[0-9a-f]{64}", sha256)
+                        )
+                    )
+                )
+                if not commitment_shape_valid:
+                    issues.append("revision-5 admission rejection commitment is invalid")
     else:
         entries = (
             [item for item in raw_entries if isinstance(item, dict)]
@@ -1026,6 +1127,41 @@ def _guardian_tuning_queue_validation(
             and entry.get("preserve_blockers") is True
         ):
             issues.append(f"work_orders[{index}] violates the read-only safety boundary")
+    if queue_path is not None:
+        try:
+            from tools import guardian_wake_dispatcher as dispatcher
+        except (ImportError, RuntimeError) as exc:
+            issues.append(f"authoritative queue validator is unavailable: {exc}")
+        else:
+            try:
+                strict = dispatcher._load_tuning_work_order(queue_path)
+            except (OSError, ValueError, TypeError, UnicodeError, RecursionError) as exc:
+                issues.append(
+                    "authoritative queue validation raised an invalid-input error: "
+                    f"{type(exc).__name__}"
+                )
+                strict = {"_read_error": type(exc).__name__}
+            if strict.get("_missing"):
+                issues.append("queue disappeared during authoritative validation")
+            elif strict.get("_read_error"):
+                issues.append(
+                    "authoritative queue validation failed: "
+                    + str(strict.get("_read_error") or "unknown error")
+                )
+            else:
+                strict_payload = {
+                    key: value
+                    for key, value in strict.items()
+                    if key
+                    not in {
+                        "_path",
+                        "_queue_source_sha256",
+                        "_read_error",
+                        "_missing",
+                    }
+                }
+                if strict_payload != payload:
+                    issues.append("queue changed during authoritative validation")
     return {
         "status": "INVALID" if issues else "VALID",
         "issues": issues,
@@ -6184,6 +6320,7 @@ def _build_repair_requests(
     runtime_disk: dict[str, Any] | None = None,
     guardian_tuning_work_order: dict[str, Any] | None = None,
     guardian_tuning_acquisition: dict[str, Any] | None = None,
+    guardian_tuning_queue_validation: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
@@ -6197,6 +6334,11 @@ def _build_repair_requests(
         if isinstance(guardian_tuning_acquisition, dict)
         else {}
     )
+    supplied_tuning_queue_validation = (
+        guardian_tuning_queue_validation
+        if isinstance(guardian_tuning_queue_validation, dict)
+        else None
+    )
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
     items = [item for item in raw_items if isinstance(item, dict)]
@@ -6209,8 +6351,8 @@ def _build_repair_requests(
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
 
-    tuning_queue_validation = _guardian_tuning_queue_validation(
-        guardian_tuning_work_order
+    tuning_queue_validation = supplied_tuning_queue_validation or (
+        _guardian_tuning_queue_validation(guardian_tuning_work_order)
     )
     if tuning_queue_validation["status"] == "INVALID":
         requests.append(
@@ -6237,7 +6379,7 @@ def _build_repair_requests(
                     "preserve_blockers": True,
                 },
                 clearance_conditions=[
-                    "Re-read the queue with the authoritative revision-4 lifecycle validator.",
+                    "Re-read the queue with the authoritative revisioned lifecycle validator.",
                     "Repair by an approved lifecycle migration or restore last-good bytes; never hand-edit the queue.",
                     "Report exact pending/reviewed counts only after revision, counters, identities, and safety boundaries validate.",
                 ],
@@ -6334,7 +6476,11 @@ def _build_repair_requests(
         acquisition_defect_count = acquisition_counts.get("defect", 0)
         acquisition_unsupported_count = acquisition_counts.get("unsupported", 0)
         tuning_request_status = (
-            "ACQUISITION_COMPLETE_REVIEW_REQUIRED"
+            "FORWARD_ACQUISITION_CONTRACT_UNSUPPORTED"
+            if isinstance(acquisition_unsupported_count, int)
+            and not isinstance(acquisition_unsupported_count, bool)
+            and acquisition_unsupported_count > 0
+            else "ACQUISITION_COMPLETE_REVIEW_REQUIRED"
             if isinstance(acquisition_ready_count, int) and acquisition_ready_count > 0
             else "FORWARD_ACQUISITION_SOURCE_DEFECT"
             if isinstance(acquisition_defect_count, int) and acquisition_defect_count > 0

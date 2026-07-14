@@ -24,6 +24,7 @@ from quant_rabbit.cli import (
     _broker_snapshot_refresh,
     _direct_autotrade_audit_sidecar_steps,
     _fresh_partial_close_forbidden_trade_reasons,
+    _market_read_evidence_sources,
     _post_autotrade_failure_sidecar_steps,
     _partial_close_receipt_actions,
     _pre_entry_projection_verification_if_required,
@@ -43,6 +44,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAPITAL_FLOWS,
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
 )
 from quant_rabbit.profitability_acceptance import (
@@ -61,6 +63,36 @@ _EQUITY_DERIVED_RISK_ARGS = (
     "--risk-equity-jpy",
     "200000",
 )
+
+
+class MarketReadGuardianReceiptCliTest(unittest.TestCase):
+    def test_all_market_read_commands_expose_guardian_action_receipt(self) -> None:
+        for command in (
+            "trader-draft-decision",
+            "trader-apply-market-read",
+            "gpt-trader-decision",
+        ):
+            with self.subTest(command=command):
+                stdout = io.StringIO()
+                with self.assertRaises(SystemExit) as raised, redirect_stdout(stdout):
+                    main([command, "--help"])
+                self.assertEqual(raised.exception.code, 0)
+                self.assertIn("--guardian-action-receipt", stdout.getvalue())
+
+    def test_guardian_action_receipt_is_a_named_evidence_source(self) -> None:
+        custom_path = Path("runtime/custom_guardian_action_receipt.json")
+        sources = _market_read_evidence_sources(
+            SimpleNamespace(guardian_action_receipt=custom_path)
+        )
+        self.assertEqual(sources, {"guardian_action_receipt": custom_path})
+        self.assertEqual(
+            _market_read_evidence_sources(
+                SimpleNamespace(
+                    guardian_action_receipt=DEFAULT_GUARDIAN_ACTION_RECEIPT
+                )
+            )["guardian_action_receipt"],
+            DEFAULT_GUARDIAN_ACTION_RECEIPT,
+        )
 
 
 def _write_bound_market_context_matrix(
@@ -4031,14 +4063,29 @@ class CliHelpTest(unittest.TestCase):
                 verification_issues=("NEWS_HEALTH_BLOCKS_TRADE",),
             )
             stdout = io.StringIO()
+            guardian_receipt = root / "custom_guardian_action_receipt.json"
 
             with mock.patch("quant_rabbit.cli.draft_trader_decision", return_value=summary) as draft, redirect_stdout(stdout):
-                code = main(["trader-draft-decision", "--output", str(output), "--report", str(report)])
+                code = main(
+                    [
+                        "trader-draft-decision",
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--guardian-action-receipt",
+                        str(guardian_receipt),
+                    ]
+                )
 
         self.assertEqual(code, 0)
         draft.assert_called_once()
         self.assertEqual(draft.call_args.kwargs["output_path"], output)
         self.assertEqual(draft.call_args.kwargs["report_path"], report)
+        self.assertEqual(
+            draft.call_args.kwargs["guardian_action_receipt_path"],
+            guardian_receipt,
+        )
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "DRAFT_REQUIRES_OPERATOR_REVIEW")
         self.assertFalse(payload["verification_allowed"])

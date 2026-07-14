@@ -275,6 +275,8 @@ def _review_contract(entry: dict[str, Any]) -> tuple[_ReviewContract | None, str
     if selected_pair and selected_pair != pair:
         return None, "SELECTED_EVENT_PAIR_MISMATCH"
     event_type = str(selected_event.get("event_type") or "").strip().upper()
+    if event_type not in {"TECHNICAL_STATE_CHANGE", "FAILED_ACCEPTANCE"}:
+        return None, "EVENT_TYPE_NOT_TUNING_ADMISSIBLE"
     details = selected_event.get("details")
     details = details if isinstance(details, dict) else {}
     raw_lane = selected_event.get("lane_id") or details.get("lane_id")
@@ -405,6 +407,30 @@ def _thesis_defects(
         entry.canonical_lane_id
     ):
         defects.append("ENTRY_THESIS_EXACT_LANE_MISMATCH")
+    forecast_timestamp = str(evidence.get("forecast_timestamp_utc") or "").strip()
+    raw_forecast_cycle_id = evidence.get("forecast_cycle_id")
+    if not forecast_timestamp:
+        defects.append("ENTRY_THESIS_FORECAST_TIMESTAMP_MISSING")
+    else:
+        try:
+            forecast_at = _instant_key(forecast_timestamp)
+            broker_entry_at = _instant_key(
+                entry.broker_entry_ts_utc or entry.entry_ts_utc
+            )
+        except ValueError:
+            defects.append("ENTRY_THESIS_FORECAST_TIMESTAMP_INVALID")
+        else:
+            if forecast_at >= broker_entry_at:
+                defects.append("ENTRY_THESIS_FORECAST_NOT_PRE_ENTRY")
+    if raw_forecast_cycle_id is None or (
+        isinstance(raw_forecast_cycle_id, str)
+        and not raw_forecast_cycle_id.strip()
+    ):
+        defects.append("ENTRY_THESIS_FORECAST_CYCLE_ID_MISSING")
+    elif not isinstance(raw_forecast_cycle_id, str) or len(
+        raw_forecast_cycle_id.strip()
+    ) > 256:
+        defects.append("ENTRY_THESIS_FORECAST_CYCLE_ID_INVALID")
     try:
         thesis_at = _instant_key(thesis.get("timestamp_utc"))
         entry_at = _instant_key(entry.broker_entry_ts_utc or entry.entry_ts_utc)

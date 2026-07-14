@@ -34,12 +34,12 @@ Required JSON object shape:
   "bot_tuning_review": {
     "review_status": "TEST_REQUIRED|NO_CHANGE_INSUFFICIENT_EVIDENCE",
     "affected_pairs": ["selected event pair only"],
-    "affected_bot_families": ["exactly one of trend|mean_reversion|breakout|forecast|execution"],
+    "affected_bot_families": ["exactly one allowlisted family; NO_CHANGE must use trend|mean_reversion|breakout"],
     "hypothesis": "one falsifiable explanation for the selected state change",
     "falsifiable_experiment": "one bounded replay or before/after test",
     "evidence_acquisition": {
-      "action_kind": "ADD_PREENTRY_SIGNAL_LOG|BUILD_BID_ASK_REPLAY|COLLECT_FORWARD_ENTRIES|REFRESH_CLOSED_CANDLES|RESOLVE_ATTRIBUTED_OUTCOMES",
-      "source_ref": "one project-relative data/ or logs/ source",
+      "action_kind": "ADD_PREENTRY_SIGNAL_LOG",
+      "source_ref": "data/entry_thesis_ledger.jsonl",
       "required_new_samples": 20,
       "success_condition": "one exact bounded non-executing success condition"
     },
@@ -50,12 +50,15 @@ Required JSON object shape:
   }
 }
 
-`bot_tuning_review` is required only when the selected event carries a tuning
-reason such as `TECHNICAL_STATE_CHANGE`, `REGIME_STATE_CHANGE`,
+`bot_tuning_review` is required only when the selected event type is
+`TECHNICAL_STATE_CHANGE` or `FAILED_ACCEPTANCE` and
+the selected event carries a tuning reason such as `TECHNICAL_STATE_CHANGE`, `REGIME_STATE_CHANGE`,
 `VOLATILITY_BUCKET_CHANGE`, `TECHNICAL_FAMILY_STATE_CHANGE`,
 `CLOSED_CANDLE_STRUCTURE_CHANGE`, `LARGE_PRICE_DISPLACEMENT_STATE_CHANGE`, or
 `FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE`.
-For all other events, omit `bot_tuning_review`.
+For all other events, including `MARGIN_PRESSURE` and every position-safety
+event, omit `bot_tuning_review` even when a durable successor inherited one of
+those reason strings.
 
 Hard boundaries:
 
@@ -93,12 +96,10 @@ Rules:
   family. `NO_CHANGE_INSUFFICIENT_EVIDENCE` must carry an empty list and stays
   pending until a later reviewed experiment is specified. It must also carry
   exactly one `evidence_acquisition` object. `action_kind` must be exactly one
-  of `ADD_PREENTRY_SIGNAL_LOG`, `BUILD_BID_ASK_REPLAY`,
-  `COLLECT_FORWARD_ENTRIES`, `REFRESH_CLOSED_CANDLES`, or
-  `RESOLVE_ATTRIBUTED_OUTCOMES`; `source_ref` must be a bounded
-  project-relative `data/` or `logs/` reference; `required_new_samples` must be
-  an integer from 1 through 1000; and `success_condition` must be exact,
-  bounded, and non-executing rather than vague wait/monitor prose.
+  value `ADD_PREENTRY_SIGNAL_LOG`; `source_ref` must be exactly
+  `data/entry_thesis_ledger.jsonl`; `required_new_samples` must be an integer
+  from 1 through 1000; and `success_condition` must be exact, bounded, and
+  non-executing rather than vague wait/monitor prose.
   Each adjustment contains exactly
   `pair`, `lane_id`, `bot_family`, `parameter`, `current_value`,
   `candidate_value`, and `rationale`; `pair` must be the selected pair,
@@ -145,19 +146,20 @@ If uncertain, return exactly this shape with the current event values filled in:
   "no_direct_oanda": true
 }
 
-If that uncertain event carries one of the tuning reasons listed above, add
+If that uncertain event is `TECHNICAL_STATE_CHANGE` or `FAILED_ACCEPTANCE` and
+carries one of the tuning reasons listed above, add
 this conditional object with the current event values filled in:
 
 {
   "bot_tuning_review": {
     "review_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
     "affected_pairs": ["selected event pair only"],
-    "affected_bot_families": ["exactly one of trend|mean_reversion|breakout|forecast|execution"],
+    "affected_bot_families": ["exactly one of trend|mean_reversion|breakout"],
     "hypothesis": "one falsifiable explanation for the selected state change",
     "falsifiable_experiment": "one bounded forward evidence test",
     "evidence_acquisition": {
-      "action_kind": "COLLECT_FORWARD_ENTRIES",
-      "source_ref": "data/forecast_history.jsonl",
+      "action_kind": "ADD_PREENTRY_SIGNAL_LOG",
+      "source_ref": "data/entry_thesis_ledger.jsonl",
       "required_new_samples": 20,
       "success_condition": "resolve the first 20 canonical attributed post-review entries"
     },

@@ -601,7 +601,10 @@ def _terminal_confirmation(
     if hashlib.sha256(raw).hexdigest() != strict_sha256:
         raise ValueError("terminal tuning queue changed during strict validation")
     payload = json.loads(raw.decode("utf-8"))
-    if not isinstance(payload, dict) or payload.get("queue_schema_revision") != 4:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("queue_schema_revision") not in {4, 5}
+    ):
         raise ValueError("terminal tuning queue revision is invalid")
     heads = payload.get("override_lifecycle_heads")
     matching_heads = [
@@ -786,7 +789,7 @@ def _queue_scope_has_commitment(
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("tuning queue commitment is invalid")
-    if payload.get("queue_schema_revision") != 4:
+    if payload.get("queue_schema_revision") not in {4, 5}:
         # Legacy queues predate durable override heads and therefore cannot
         # prove an accepted setting.  A head smuggled into an older revision is
         # corruption, not a commitment.
@@ -796,6 +799,11 @@ def _queue_scope_has_commitment(
     heads = payload.get("override_lifecycle_heads")
     if not isinstance(heads, list) or len(heads) > MAX_ACTIVE_OVERRIDES:
         raise ValueError("tuning queue lifecycle heads are invalid")
+    if not heads:
+        return False
+    strict_sha256 = _strict_queue_source_sha256(queue_path)
+    if hashlib.sha256(raw).hexdigest() != strict_sha256:
+        raise ValueError("tuning queue changed during strict validation")
     matching: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for head in heads:
@@ -869,7 +877,10 @@ def _read_override_lifecycle_head(
     if hashlib.sha256(raw).hexdigest() != strict_sha256:
         raise ValueError("tuning queue changed during strict validation")
     payload = json.loads(raw.decode("utf-8"))
-    if not isinstance(payload, dict) or payload.get("queue_schema_revision") != 4:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("queue_schema_revision") not in {4, 5}
+    ):
         raise ValueError("tuning queue commitment revision is invalid")
     heads = payload.get("override_lifecycle_heads")
     matches = [

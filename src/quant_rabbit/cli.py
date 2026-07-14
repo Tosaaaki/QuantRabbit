@@ -5643,6 +5643,11 @@ def main(argv: list[str] | None = None) -> int:
     p_draft.add_argument("--news-health", type=Path, default=DEFAULT_NEWS_HEALTH)
     p_draft.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
     p_draft.add_argument(
+        "--guardian-action-receipt",
+        type=Path,
+        default=DEFAULT_GUARDIAN_ACTION_RECEIPT,
+    )
+    p_draft.add_argument(
         "--guardian-receipt-consumption",
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
@@ -5760,6 +5765,11 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_QR_TRADER_RUN_WATCHDOG,
     )
     p_market_read.add_argument(
+        "--guardian-action-receipt",
+        type=Path,
+        default=DEFAULT_GUARDIAN_ACTION_RECEIPT,
+    )
+    p_market_read.add_argument(
         "--guardian-receipt-consumption",
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
@@ -5812,6 +5822,11 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_gpt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_gpt.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_gpt.add_argument(
+        "--guardian-action-receipt",
+        type=Path,
+        default=DEFAULT_GUARDIAN_ACTION_RECEIPT,
+    )
     p_gpt.add_argument(
         "--guardian-receipt-consumption",
         type=Path,
@@ -10372,6 +10387,7 @@ def main(argv: list[str] | None = None) -> int:
                 news_items_path=args.news_items,
                 news_health_path=args.news_health,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                guardian_action_receipt_path=args.guardian_action_receipt,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 guardian_receipt_consumption_report_path=args.guardian_receipt_consumption_report,
                 guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
@@ -10502,6 +10518,7 @@ def main(argv: list[str] | None = None) -> int:
                 market_context_matrix_path=args.market_context_matrix,
                 trader_overrides_path=args.trader_overrides,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                guardian_action_receipt_path=args.guardian_action_receipt,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 active_trader_contract_path=args.active_trader_contract,
@@ -10814,6 +10831,7 @@ def _market_read_evidence_sources(args: argparse.Namespace) -> dict[str, Path]:
         "trader_overrides": "trader_overrides",
         "predictive_limits": "predictive_limits",
         "qr_trader_run_watchdog": "qr_trader_run_watchdog",
+        "guardian_action_receipt": "guardian_action_receipt",
         "guardian_receipt_consumption": "guardian_receipt_consumption",
         "guardian_receipt_operator_review": "guardian_receipt_operator_review",
         "active_trader_contract": "active_trader_contract",
