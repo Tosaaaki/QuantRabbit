@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -20,6 +21,91 @@ from quant_rabbit.active_opportunity_board import (
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _write_current_tp_route_audit(
+    paths: dict[str, Path],
+    *,
+    now: datetime,
+    routes: dict[str, bool],
+) -> None:
+    intents = json.loads(paths["order_intents"].read_text())
+    candidates: list[dict[str, Any]] = []
+    approved_modes = {
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "TP_PROOF_COLLECTION_HARVEST",
+        "TP_PROVEN_HARVEST",
+    }
+    for result in intents.get("results", []):
+        lane_id = str(result.get("lane_id") or "")
+        if lane_id not in routes:
+            continue
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        metadata = (
+            intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        )
+        mode = metadata.get("positive_rotation_mode")
+        reachable = routes[lane_id]
+        if reachable and mode not in approved_modes:
+            raise AssertionError(f"reachable test route requires an approved mode: {lane_id}")
+        canonical = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        candidates.append(
+            {
+                "lane_id": lane_id,
+                "status": str(result.get("status") or ""),
+                "candidate_contract_valid": True,
+                "candidate_integrity_status": "UNIQUE",
+                "source_contract_sha256": hashlib.sha256(canonical).hexdigest(),
+                "tp_proof_acquisition_required": True,
+                "tp_proof_acquisition_route_reachable": reachable,
+                "tp_proof_acquisition_route_status": (
+                    "TP_PROOF_ACQUISITION_ROUTE_REACHABLE"
+                    if reachable
+                    else "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE"
+                ),
+                "tp_proof_acquisition_route_reason": (
+                    f"{mode} supplies an exact current test route"
+                    if reachable
+                    else "the exact current test route is not reachable"
+                ),
+                "positive_rotation_mode": mode if isinstance(mode, str) else None,
+            }
+        )
+    if len(candidates) != len(routes):
+        missing = sorted(set(routes) - {row["lane_id"] for row in candidates})
+        raise AssertionError(f"missing current intent route fixture(s): {missing}")
+    _write_json(
+        paths["self_improvement"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "findings": [
+                {
+                    "evidence": {
+                        "intent_artifact_freshness": {
+                            "fresh": True,
+                            "intents_artifact_stale": False,
+                            "timestamps_match": True,
+                            "chronology_valid": True,
+                            "intents_generated_at_utc": now.isoformat(),
+                            "diagnostics_intents_generated_at_utc": now.isoformat(),
+                            "coverage_generated_at_utc": now.isoformat(),
+                            "intents_age_seconds_at_coverage": 0.0,
+                            "intents_stale_after_seconds": 3600.0,
+                        },
+                        "live_readiness_blocker_families": {
+                            "nearest_all_non_live_ready_candidates": candidates,
+                        },
+                    }
+                }
+            ],
+        },
+    )
 
 
 def _write_execution_db(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -154,6 +240,75 @@ def _exact_tp_rows(
             }
         )
     return rows
+
+
+def _run_active_board(paths: dict[str, Path], *, now: datetime) -> dict[str, Any]:
+    ActiveOpportunityBoard(
+        active_trader_contract_path=paths["active_contract"],
+        trader_goal_loop_path=paths["goal_loop"],
+        payoff_shape_diagnosis_path=paths["payoff"],
+        harvest_live_grade_path=paths["harvest"],
+        proof_pack_queue_path=paths["proof"],
+        lane_candidate_board_path=paths["board"],
+        portfolio_4x_path_planner_path=paths["portfolio"],
+        live_order_request_path=paths["live_order"],
+        broker_snapshot_path=paths["broker"],
+        order_intents_path=paths["order_intents"],
+        self_improvement_audit_path=paths["self_improvement"],
+        capture_economics_path=paths["capture"],
+        verification_ledger_path=paths["verification"],
+        execution_ledger_db_path=paths["execution_db"],
+        strategy_profile_path=paths["strategy"],
+        guardian_receipt_consumption_path=paths["guardian_consumption"],
+        guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+        replay_artifact_paths=[],
+        output_path=paths["output"],
+        report_path=paths["report"],
+        now_utc=now,
+    ).run()
+    return json.loads(paths["output"].read_text())
+
+
+def _write_empty_board_sources(paths: dict[str, Path], *, now: datetime) -> None:
+    _write_json(
+        paths["proof"],
+        {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []},
+    )
+    _write_json(
+        paths["portfolio"],
+        {"candidate_rankings": [], "summary": {"can_create_live_permission": False}},
+    )
+    _write_json(
+        paths["board"],
+        {"closest_candidate_to_proof_pack": {}, "live_side_effects": []},
+    )
+    _write_json(
+        paths["payoff"],
+        {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []},
+    )
+    _write_json(
+        paths["harvest"],
+        {
+            "ranked_harvest_candidates": [],
+            "live_side_effects": [],
+            "live_permission_allowed": False,
+        },
+    )
+    _write_json(
+        paths["capture"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "NEGATIVE_EXPECTANCY",
+            "min_sample_for_verdict": 20,
+            "segment_repair_priorities": {
+                "scoped_tp_proof_min_exit_trades": 20,
+                "items": [],
+            },
+            "by_pair_side_method_exit_reason": {},
+            "by_pair_side_exit_reason": {},
+            "live_side_effects": [],
+        },
+    )
 
 
 class ActiveOpportunityBoardTest(unittest.TestCase):
@@ -1011,7 +1166,13 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             payload = json.loads(paths["output"].read_text())
 
         self.assertEqual(payload["top_lane"]["lane_id"], lane_id)
-        self.assertEqual(payload["top_lane"]["blockers"], ["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"])
+        self.assertEqual(
+            payload["top_lane"]["blockers"],
+            [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+            ],
+        )
         self.assertNotIn("lane_blockers", payload["top_lane"]["blockers"])
         self.assertNotIn("read_only_learning", payload["top_lane"]["blockers"])
 
@@ -1025,6 +1186,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 "capture_take_profit_scope_key": "USD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                 "tp_target_intent": "HARVEST",
+                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
             }
             _write_json(
                 paths["order_intents"],
@@ -1049,6 +1211,11 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                         ),
                     ],
                 },
+            )
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={"range_trader:USD_CAD:LONG:RANGE_ROTATION": True},
             )
             _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
             _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
@@ -1139,6 +1306,7 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                 "capture_take_profit_scope_key": "USD_CAD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                 "tp_target_intent": "HARVEST",
+                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
             }
             _write_json(
                 paths["order_intents"],
@@ -1155,6 +1323,11 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                         )
                     ],
                 },
+            )
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={"failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT": True},
             )
             _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
             _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
@@ -1218,6 +1391,365 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR", top["blockers"])
         self.assertIn("Collect exact local TAKE_PROFIT_ORDER proof", top["next_action"])
         self.assertFalse(payload["live_permission_allowed"])
+
+    def test_unreachable_tp_proof_route_is_no_trade_and_reachable_lane_is_reranked_top(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        # RANGE_ROTATION uses LIMIT as its base lane id; STOP/MARKET add a suffix.
+        unreachable_lane_id = "range_trader:EUR_JPY:LONG:RANGE_ROTATION"
+        reachable_lane_id = "range_trader:USD_CAD:LONG:RANGE_ROTATION"
+        unlisted_lane_id = "trend_trader:GBP_JPY:LONG:TREND_CONTINUATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            metadata = {
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            reachable_metadata = {
+                **metadata,
+                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+            }
+            rr_and_chase_blockers = [
+                "RANGE_COUNTERTREND_RR_TOO_LOW",
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                "EXHAUSTION_RANGE_CHASE",
+            ]
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        _intent_row(
+                            unreachable_lane_id,
+                            "EUR_JPY",
+                            "LONG",
+                            "LIMIT",
+                            blockers=rr_and_chase_blockers,
+                            metadata=metadata,
+                        ),
+                        _intent_row(
+                            reachable_lane_id,
+                            "USD_CAD",
+                            "LONG",
+                            "LIMIT",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            metadata=reachable_metadata,
+                        ),
+                        _intent_row(
+                            unlisted_lane_id,
+                            "GBP_JPY",
+                            "LONG",
+                            "STOP-ENTRY",
+                            blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                            metadata=metadata,
+                        ),
+                    ],
+                },
+            )
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={unreachable_lane_id: False, reachable_lane_id: True},
+            )
+            _write_json(
+                paths["proof"],
+                {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []},
+            )
+            _write_json(
+                paths["portfolio"],
+                {"candidate_rankings": [], "summary": {"can_create_live_permission": False}},
+            )
+            _write_json(paths["board"], {"closest_candidate_to_proof_pack": {}, "live_side_effects": []})
+            _write_json(paths["payoff"], {"harvest_candidates": [], "no_trade_shapes": [], "live_side_effects": []})
+            _write_json(
+                paths["harvest"],
+                {
+                    "ranked_harvest_candidates": [],
+                    "live_side_effects": [],
+                    "live_permission_allowed": False,
+                },
+            )
+            _write_json(
+                paths["capture"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NEGATIVE_EXPECTANCY",
+                    "min_sample_for_verdict": 20,
+                    "segment_repair_priorities": {
+                        "scoped_tp_proof_min_exit_trades": 20,
+                        "items": [],
+                    },
+                    "by_pair_side_method_exit_reason": {},
+                    "by_pair_side_exit_reason": {},
+                    "live_side_effects": [],
+                },
+            )
+            _write_execution_db(
+                paths["execution_db"],
+                _exact_tp_rows(
+                    lane_id=unreachable_lane_id,
+                    pair="EUR_JPY",
+                    side="LONG",
+                    entry_reason="LIMIT_ORDER",
+                    count=1,
+                    pl_jpy=655.2,
+                    start_ts="2026-07-08T00:00:00+00:00",
+                )
+                + _exact_tp_rows(
+                    lane_id=reachable_lane_id,
+                    pair="USD_CAD",
+                    side="LONG",
+                    entry_reason="LIMIT_ORDER",
+                    count=1,
+                    pl_jpy=658.9,
+                    start_ts="2026-07-08T02:00:00+00:00",
+                )
+                + _exact_tp_rows(
+                    lane_id=unlisted_lane_id,
+                    pair="GBP_JPY",
+                    side="LONG",
+                    entry_reason="STOP_ORDER",
+                    count=1,
+                    pl_jpy=900.0,
+                    start_ts="2026-07-08T04:00:00+00:00",
+                ),
+            )
+
+            ActiveOpportunityBoard(
+                active_trader_contract_path=paths["active_contract"],
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                order_intents_path=paths["order_intents"],
+                self_improvement_audit_path=paths["self_improvement"],
+                capture_economics_path=paths["capture"],
+                verification_ledger_path=paths["verification"],
+                execution_ledger_db_path=paths["execution_db"],
+                strategy_profile_path=paths["strategy"],
+                guardian_receipt_consumption_path=paths["guardian_consumption"],
+                guardian_receipt_operator_review_path=paths["guardian_operator_review"],
+                replay_artifact_paths=[],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        self.assertEqual(payload["top_lane"]["lane_id"], reachable_lane_id)
+        self.assertEqual(payload["top_lane"]["status"], "EVIDENCE_ACQUISITION")
+        self.assertTrue(payload["top_lane"]["tp_proof_acquisition_route_reachable"])
+        unreachable = next(
+            row for row in payload["ranked_active_lanes"] if row["lane_id"] == unreachable_lane_id
+        )
+        self.assertEqual(unreachable["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertFalse(unreachable["tp_proof_acquisition_route_reachable"])
+        self.assertEqual(
+            unreachable["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+        )
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", unreachable["blockers"])
+        for blocker in rr_and_chase_blockers:
+            self.assertIn(blocker, unreachable["blockers"])
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", unreachable["next_action"])
+        self.assertIn("rerank another lane", unreachable["next_action"])
+        unlisted = next(
+            row for row in payload["ranked_active_lanes"] if row["lane_id"] == unlisted_lane_id
+        )
+        self.assertEqual(unlisted["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertFalse(unlisted["tp_proof_acquisition_route_reachable"])
+        self.assertEqual(
+            unlisted["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+        )
+        self.assertIn("positive_rotation_mode", unlisted["tp_proof_acquisition_route_reason"])
+        self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 1)
+        self.assertGreaterEqual(payload["coverage_summary"]["no_trade_count"], 1)
+        self.assertEqual(
+            payload["artifact_index"]["artifacts"]["self_improvement_audit"]["status"],
+            "present",
+        )
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_live_ready_tp_modes_are_preserved_but_audit_only_mode_fails_closed(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        live_modes = {
+            "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT": "TP_PROVEN_HARVEST",
+            "failure_trader:CAD_JPY:LONG:BREAKOUT_FAILURE:LIMIT": (
+                "TP_PROOF_COLLECTION_HARVEST"
+            ),
+            "failure_trader:GBP_JPY:LONG:BREAKOUT_FAILURE:LIMIT": (
+                "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            rows = []
+            for lane_id, mode in live_modes.items():
+                pair = lane_id.split(":")[1]
+                row = _intent_row(
+                    lane_id,
+                    pair,
+                    "LONG",
+                    "LIMIT",
+                    metadata={"positive_rotation_mode": mode},
+                )
+                row["status"] = "LIVE_READY"
+                row["risk_allowed"] = True
+                rows.append(row)
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": rows},
+            )
+            audit_only_lane = "failure_trader:GBP_JPY:LONG:BREAKOUT_FAILURE:LIMIT"
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={audit_only_lane: False},
+            )
+            forged_audit = json.loads(paths["self_improvement"].read_text())
+            forged_candidate = forged_audit["findings"][0]["evidence"][
+                "live_readiness_blocker_families"
+            ]["nearest_all_non_live_ready_candidates"][0]
+            forged_candidate["tp_proof_acquisition_route_reachable"] = True
+            forged_candidate["tp_proof_acquisition_route_status"] = (
+                "TP_PROOF_ACQUISITION_ROUTE_REACHABLE"
+            )
+            _write_json(paths["self_improvement"], forged_audit)
+            _write_empty_board_sources(paths, now=now)
+            _write_execution_db(paths["execution_db"], [])
+
+            payload = _run_active_board(paths, now=now)
+
+        by_lane = {row["lane_id"]: row for row in payload["ranked_active_lanes"]}
+        for lane_id in list(live_modes)[:2]:
+            self.assertEqual(by_lane[lane_id]["status"], "LIVE_READY")
+            self.assertNotIn("tp_proof_acquisition_route_status", by_lane[lane_id])
+        audit_only = by_lane[audit_only_lane]
+        self.assertEqual(audit_only["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(
+            audit_only["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+        )
+        self.assertIn(
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+            audit_only["blockers"],
+        )
+        self.assertFalse(payload["live_permission_allowed"])
+
+    def test_tp_route_clearance_requires_current_digest_contract_and_freshness(self) -> None:
+        now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
+        lane_pairs = {
+            "range_trader:USD_CAD:LONG:RANGE_ROTATION": "USD_CAD",
+            "range_trader:CAD_JPY:LONG:RANGE_ROTATION": "CAD_JPY",
+            "range_trader:GBP_JPY:LONG:RANGE_ROTATION": "GBP_JPY",
+            "range_trader:AUD_CAD:LONG:RANGE_ROTATION": "AUD_CAD",
+        }
+        exact_lane, digest_lane, mode_lane, duplicate_lane = lane_pairs
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            rows = [
+                _intent_row(
+                    lane_id,
+                    pair,
+                    "LONG",
+                    "LIMIT",
+                    blockers=["NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"],
+                    metadata={
+                        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST"
+                    },
+                )
+                for lane_id, pair in lane_pairs.items()
+            ]
+            _write_json(
+                paths["order_intents"],
+                {"generated_at_utc": now.isoformat(), "results": rows},
+            )
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={lane_id: True for lane_id in lane_pairs},
+            )
+            audit = json.loads(paths["self_improvement"].read_text())
+            candidates = audit["findings"][0]["evidence"][
+                "live_readiness_blocker_families"
+            ]["nearest_all_non_live_ready_candidates"]
+            by_candidate = {row["lane_id"]: row for row in candidates}
+            candidates.append(json.loads(json.dumps(by_candidate[exact_lane])))
+            valid_digest_candidate = json.loads(json.dumps(by_candidate[digest_lane]))
+            by_candidate[digest_lane]["source_contract_sha256"] = "0" * 64
+            candidates.append(valid_digest_candidate)
+            by_candidate[mode_lane]["positive_rotation_mode"] = "TP_PROVEN_HARVEST"
+            _write_json(paths["self_improvement"], audit)
+
+            malformed_duplicate = json.loads(
+                json.dumps(next(row for row in rows if row["lane_id"] == duplicate_lane))
+            )
+            malformed_duplicate["intent"]["metadata"]["malformed_marker"] = float("nan")
+            _write_json(
+                paths["order_intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": rows + [malformed_duplicate],
+                },
+            )
+            _write_empty_board_sources(paths, now=now)
+            execution_rows: list[dict[str, Any]] = []
+            for index, (lane_id, pair) in enumerate(lane_pairs.items()):
+                execution_rows.extend(
+                    _exact_tp_rows(
+                        lane_id=lane_id,
+                        pair=pair,
+                        side="LONG",
+                        entry_reason="LIMIT_ORDER",
+                        count=1,
+                        pl_jpy=500.0 + index,
+                        start_ts=f"2026-07-0{index + 1}T00:00:00+00:00",
+                    )
+                )
+            _write_execution_db(paths["execution_db"], execution_rows)
+
+            current_payload = _run_active_board(paths, now=now)
+            stale_payload = _run_active_board(
+                paths,
+                now=now + timedelta(seconds=3601),
+            )
+
+        current_by_lane = {
+            row["lane_id"]: row for row in current_payload["ranked_active_lanes"]
+        }
+        self.assertEqual(current_by_lane[exact_lane]["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(
+            current_by_lane[exact_lane]["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_REACHABLE",
+        )
+        self.assertNotIn(
+            "TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED",
+            current_by_lane[exact_lane]["blockers"],
+        )
+        for lane_id in (digest_lane, mode_lane, duplicate_lane):
+            self.assertEqual(current_by_lane[lane_id]["status"], "NO_TRADE_WITH_CAUSE")
+            self.assertEqual(
+                current_by_lane[lane_id]["tp_proof_acquisition_route_status"],
+                "TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED",
+            )
+        stale_exact = next(
+            row
+            for row in stale_payload["ranked_active_lanes"]
+            if row["lane_id"] == exact_lane
+        )
+        self.assertEqual(stale_exact["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertEqual(
+            stale_exact["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED",
+        )
+        self.assertFalse(current_payload["live_permission_allowed"])
+        self.assertFalse(stale_payload["live_permission_allowed"])
 
     def test_broad_method_tp_proof_does_not_make_limit_vehicle_floor_met(self) -> None:
         now = datetime(2026, 7, 8, 11, 45, tzinfo=timezone.utc)
@@ -1321,7 +1853,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertEqual(lane["local_tp_proof"]["capture_take_profit_trades"], 0)
         self.assertEqual(lane["local_tp_proof"]["broad_capture_take_profit_trades"], 20)
         self.assertTrue(lane["local_tp_proof"]["broad_capture_take_profit_not_used_as_exact_vehicle_proof"])
-        self.assertIn("exact local TAKE_PROFIT_ORDER proof", lane["next_action"])
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", lane["next_action"])
+        self.assertIn("rerank another lane", lane["next_action"])
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_exact_vehicle_tp_proof_uses_fill_order_type_when_lane_id_has_no_vehicle(self) -> None:
@@ -1673,7 +2206,17 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
         self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", top["blockers"])
         self.assertIn("After review clears", top["next_action"])
         self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", top["next_action"])
-        self.assertEqual(payload["coverage_summary"]["operator_review_required_count"], 2)
+        self.assertEqual(payload["coverage_summary"]["operator_review_required_count"], 1)
+        zero_proof_lane = next(
+            row
+            for row in payload["ranked_active_lanes"]
+            if row["lane_id"] == "range_trader:USD_JPY:SHORT:RANGE_ROTATION:LIMIT"
+        )
+        self.assertEqual(zero_proof_lane["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertIn(
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+            zero_proof_lane["blockers"],
+        )
         self.assertFalse(payload["live_permission_allowed"])
 
     def test_zero_local_tp_proof_is_no_trade_not_evidence_acquisition(self) -> None:
@@ -1744,7 +2287,8 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
             "PAIR_SIDE_METHOD_VEHICLE",
         )
         self.assertEqual(top["local_tp_proof"]["capture_take_profit_trades"], 0)
-        self.assertIn("0/20", top["next_action"])
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", top["next_action"])
+        self.assertIn("rerank another lane", top["next_action"])
         self.assertEqual(payload["coverage_summary"]["evidence_acquisition_count"], 0)
         self.assertEqual(payload["status"], "BOARD_BUILT_NO_TRADE_WITH_CAUSE")
         self.assertFalse(payload["live_permission_allowed"])
@@ -2616,9 +3160,17 @@ class ActiveOpportunityBoardTest(unittest.TestCase):
                                 "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
                                 "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
                             ],
+                            metadata={
+                                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST"
+                            },
                         ),
                     ],
                 },
+            )
+            _write_current_tp_route_audit(
+                paths,
+                now=now,
+                routes={historic_lane: True},
             )
             _write_json(paths["proof"], {"summary": {"queue_count": 0}, "queue": [], "rejected_candidates": []})
             _write_json(paths["portfolio"], {"candidate_rankings": [], "summary": {"can_create_live_permission": False}})
@@ -3404,6 +3956,7 @@ def _write_base_artifacts(root: Path, *, now: datetime, scout_only: bool = False
         "live_order": root / "data" / "live_order_request.json",
         "broker": root / "data" / "broker_snapshot.json",
         "order_intents": root / "data" / "order_intents.json",
+        "self_improvement": root / "data" / "self_improvement_audit.json",
         "capture": root / "data" / "capture_economics.json",
         "verification": root / "data" / "verification_ledger.json",
         "execution_db": root / "data" / "execution_ledger.db",

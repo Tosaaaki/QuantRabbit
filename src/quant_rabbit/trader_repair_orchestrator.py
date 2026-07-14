@@ -24,6 +24,8 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
+    FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES,
+    FRONTIER_PROOF_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
@@ -60,6 +62,7 @@ NON_ACTIONABLE_REPAIR_STATUSES = {
     "HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
     "RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
+    FRONTIER_PROOF_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
@@ -3937,12 +3940,33 @@ def _automation_status(
 ) -> str:
     if requires_explicit_operator_approval:
         return AUTOMATION_OPERATOR_APPROVAL
+    if _request_waits_for_proof_evidence(request):
+        return AUTOMATION_LIVE_EVIDENCE_WINDOW
     status = str(request.get("status") or "").upper()
     if status in NON_ACTIONABLE_REPAIR_STATUSES:
         return AUTOMATION_LIVE_EVIDENCE_WINDOW
     if status in CODEX_ACTIONABLE_REPAIR_STATUSES or status.startswith("READY_FOR_CODE"):
         return AUTOMATION_READY
     return AUTOMATION_EVIDENCE
+
+
+def _request_waits_for_proof_evidence(request: dict[str, Any]) -> bool:
+    if str(request.get("code") or "") != "REPAIR_FRONTIER_LANE_BLOCKER":
+        return False
+    evidence = (
+        request.get("evidence_summary")
+        if isinstance(request.get("evidence_summary"), dict)
+        else {}
+    )
+    blocker_codes = {
+        str(evidence.get("code") or ""),
+        *(
+            str(item)
+            for item in request.get("source_findings", [])
+            if isinstance(item, str)
+        ),
+    }
+    return bool(blocker_codes & FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES)
 
 
 def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:

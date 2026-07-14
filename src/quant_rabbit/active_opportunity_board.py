@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.capture_economics import read_exact_vehicle_take_profit_metrics
+from quant_rabbit.coverage import COVERAGE_INTENTS_STALE_AFTER_SECONDS
 from quant_rabbit.paths import (
     DEFAULT_ACTIVE_OPPORTUNITY_BOARD,
     DEFAULT_ACTIVE_OPPORTUNITY_BOARD_REPORT,
@@ -25,6 +27,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAYOFF_SHAPE_DIAGNOSIS,
     DEFAULT_PORTFOLIO_4X_PATH_PLANNER,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
     DEFAULT_VERIFICATION_LEDGER,
@@ -120,6 +123,18 @@ ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_BLOCKER = "ENTRY_DROUGHT_PAIR_SIDE_FALLBACK_REQ
 LOCAL_TP_PROOF_ZERO_TRADES_BLOCKER = "LOCAL_TP_PROOF_ZERO_TRADES"
 LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR_BLOCKER = "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR"
 BROAD_TP_PROOF_NOT_EXACT_VEHICLE_BLOCKER = "BROAD_TP_PROOF_NOT_EXACT_VEHICLE"
+TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER = "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE"
+TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER = "TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED"
+TP_PROOF_ACQUISITION_REQUIRED_BLOCKER_CODES = {
+    TP_PROVEN_ROTATION_BLOCKER,
+    "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+}
+TP_PROOF_ACQUISITION_APPROVED_MODES = {
+    "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+    "TP_PROOF_COLLECTION_HARVEST",
+    "TP_PROVEN_HARVEST",
+}
+TP_PROOF_ACQUISITION_AUDIT_ONLY_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 TP_PROVEN_HARVEST_REPAIR_TARGET = "TP_PROVEN_HARVEST_BLOCKER_REPAIR_REQUIRED"
 STALE_PROOF_QUEUE_ABSENCE_BLOCKERS = ("NOT_IN_PROOF_QUEUE", "PROOF_QUEUE_EMPTY_NO_LIVE_PERMISSION")
 TP_PROOF_COLLECTION_MIN_TRADES = 5
@@ -158,6 +173,7 @@ class ActiveOpportunityBoard:
         live_order_request_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         broker_snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         order_intents_path: Path = DEFAULT_ORDER_INTENTS,
+        self_improvement_audit_path: Path | None = None,
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
@@ -180,6 +196,11 @@ class ActiveOpportunityBoard:
             "live_order_request": live_order_request_path,
             "broker_snapshot": broker_snapshot_path,
             "order_intents": order_intents_path,
+            "self_improvement_audit": (
+                self_improvement_audit_path
+                if self_improvement_audit_path is not None
+                else order_intents_path.parent / DEFAULT_SELF_IMPROVEMENT_AUDIT.name
+            ),
             "capture_economics": capture_economics_path,
             "verification_ledger": verification_ledger_path,
             "strategy_profile": strategy_profile_path,
@@ -236,6 +257,12 @@ class ActiveOpportunityBoard:
             now_utc=self.now_utc,
         )
         _attach_packaged_pair_side_bidask_negative_evidence(lanes)
+        _attach_self_improvement_tp_proof_routes(
+            lanes,
+            artifacts["self_improvement_audit"],
+            order_intents=artifacts["order_intents"],
+            now_utc=self.now_utc,
+        )
 
         execution_ledger_summary = _execution_ledger_summary(self.execution_ledger_db_path)
         guardian_routing_clear = _guardian_routing_clear(
@@ -349,6 +376,286 @@ def _load_json_artifact(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _attach_self_improvement_tp_proof_routes(
+    lanes: dict[str, dict[str, Any]],
+    artifact: dict[str, Any],
+    *,
+    order_intents: dict[str, Any],
+    now_utc: datetime,
+) -> None:
+    """Bind current self-improvement TP-proof route reachability to board lanes."""
+
+    rows_by_lane_id: dict[str, list[dict[str, Any]]] = {}
+    current_contracts_by_lane_id = _current_order_intent_route_contracts(order_intents)
+    findings = artifact.get("findings") if isinstance(artifact.get("findings"), list) else []
+    intent_generated_at = _parse_utc(order_intents.get("generated_at_utc"))
+    audit_generated_at = _parse_utc(artifact.get("generated_at_utc"))
+    audit_covers_current_intents = False
+    if (
+        artifact.get("_artifact_status") != "present"
+        or intent_generated_at is None
+        or audit_generated_at is None
+    ):
+        return
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        freshness = (
+            evidence.get("intent_artifact_freshness")
+            if isinstance(evidence.get("intent_artifact_freshness"), dict)
+            else {}
+        )
+        audited_intent_generated_at = _parse_utc(freshness.get("intents_generated_at_utc"))
+        diagnostics_intent_generated_at = _parse_utc(
+            freshness.get("diagnostics_intents_generated_at_utc")
+        )
+        coverage_generated_at = _parse_utc(freshness.get("coverage_generated_at_utc"))
+        age_at_coverage = freshness.get("intents_age_seconds_at_coverage")
+        stale_after_seconds = freshness.get("intents_stale_after_seconds")
+        numeric_freshness_valid = bool(
+            age_at_coverage.__class__ in {int, float}
+            and math.isfinite(float(age_at_coverage))
+            and 0.0 <= float(age_at_coverage) <= COVERAGE_INTENTS_STALE_AFTER_SECONDS
+            and stale_after_seconds.__class__ in {int, float}
+            and math.isfinite(float(stale_after_seconds))
+            and float(stale_after_seconds) == COVERAGE_INTENTS_STALE_AFTER_SECONDS
+        )
+        current_age_seconds = (now_utc - intent_generated_at).total_seconds()
+        if not (
+            freshness.get("fresh") is True
+            and freshness.get("intents_artifact_stale") is False
+            and freshness.get("timestamps_match") is True
+            and freshness.get("chronology_valid") is True
+            and audited_intent_generated_at == intent_generated_at
+            and diagnostics_intent_generated_at == intent_generated_at
+            and coverage_generated_at is not None
+            and intent_generated_at <= coverage_generated_at <= audit_generated_at <= now_utc
+            and numeric_freshness_valid
+            and 0.0 <= current_age_seconds <= COVERAGE_INTENTS_STALE_AFTER_SECONDS
+        ):
+            continue
+        audit_covers_current_intents = True
+        families = (
+            evidence.get("live_readiness_blocker_families")
+            if isinstance(evidence.get("live_readiness_blocker_families"), dict)
+            else {}
+        )
+        candidate_rows: list[dict[str, Any]] = []
+        for key in (
+            "nearest_all_non_live_ready_actionable_candidate",
+            "nearest_live_ready_actionable_candidate",
+        ):
+            row = families.get(key)
+            if isinstance(row, dict):
+                candidate_rows.append(row)
+        for key in (
+            "nearest_all_non_live_ready_candidates",
+            "nearest_live_ready_candidates",
+        ):
+            rows = families.get(key)
+            if isinstance(rows, list):
+                candidate_rows.extend(row for row in rows if isinstance(row, dict))
+        for row in candidate_rows:
+            lane_id = _first_str(row.get("lane_id"))
+            if lane_id:
+                rows_by_lane_id.setdefault(lane_id, []).append(row)
+
+    if not audit_covers_current_intents:
+        return
+
+    for lane_id, lane in lanes.items():
+        rows = rows_by_lane_id.get(lane_id, [])
+        current_contracts = current_contracts_by_lane_id.get(lane_id, [])
+        if not rows or not all(
+            _self_improvement_route_row_matches_current_contract(
+                row,
+                current_contracts,
+            )
+            for row in rows
+        ):
+            continue
+        unreachable_rows = [row for row in rows if _tp_proof_acquisition_route_unreachable(row)]
+        reachable_rows = [
+            row
+            for row in rows
+            if row.get("tp_proof_acquisition_route_reachable") is True
+            and str(row.get("tp_proof_acquisition_route_status") or "")
+            != TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+        ]
+        selected = unreachable_rows[0] if unreachable_rows else (reachable_rows[0] if reachable_rows else None)
+        if selected is None:
+            continue
+        unreachable = bool(unreachable_rows)
+        lane["blockers"] = [
+            code
+            for code in _string_list(lane.get("blockers"))
+            if code
+            not in {
+                TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER,
+                TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER,
+            }
+        ]
+        lane["tp_proof_acquisition_required"] = any(
+            row.get("tp_proof_acquisition_required") is True for row in rows
+        )
+        lane["tp_proof_acquisition_route_reachable"] = not unreachable
+        lane["tp_proof_acquisition_route_status"] = (
+            TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+            if unreachable
+            else "TP_PROOF_ACQUISITION_ROUTE_REACHABLE"
+        )
+        lane["tp_proof_acquisition_route_reason"] = selected.get(
+            "tp_proof_acquisition_route_reason"
+        )
+        lane["positive_rotation_mode"] = selected.get("positive_rotation_mode")
+        lane["source_refs"] = _unique(
+            _string_list(lane.get("source_refs")) + ["data/self_improvement_audit.json"]
+        )
+        if unreachable:
+            lane["blockers"] = _unique(
+                _string_list(lane.get("blockers"))
+                + [TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER]
+            )
+
+
+def _current_order_intent_route_contracts(
+    order_intents: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    contracts: dict[str, list[dict[str, Any]]] = {}
+    for row in _list(order_intents.get("results")):
+        intent = row.get("intent") if isinstance(row.get("intent"), dict) else {}
+        parsed = _parse_lane_id(str(row.get("lane_id") or ""))
+        pair = _first_str(intent.get("pair"), row.get("pair"), parsed.get("pair"), "UNKNOWN")
+        direction = _first_str(
+            intent.get("side"),
+            intent.get("direction"),
+            row.get("side"),
+            parsed.get("direction"),
+            "UNKNOWN",
+        )
+        strategy = _first_str(
+            intent.get("method"),
+            intent.get("strategy_family"),
+            row.get("method"),
+            parsed.get("strategy_family"),
+            "UNKNOWN",
+        )
+        vehicle = _normalize_vehicle(
+            _first_str(
+                intent.get("order_type"),
+                row.get("order_type"),
+                parsed.get("vehicle"),
+                "UNKNOWN",
+            )
+        )
+        lane_id = str(
+            row.get("lane_id")
+            or _synthetic_lane_id("intent", pair, direction, strategy, vehicle)
+        )
+        required, mode = _order_intent_tp_proof_route_requirement(row, intent)
+        contracts.setdefault(lane_id, []).append(
+            {
+                "source_contract_sha256": _order_intent_result_contract_sha256(row),
+                "status": str(row.get("status") or "").upper(),
+                "tp_proof_acquisition_required": required,
+                "positive_rotation_mode": mode,
+            }
+        )
+    return contracts
+
+
+def _order_intent_result_contract_sha256(result: dict[str, Any]) -> str | None:
+    try:
+        canonical = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _self_improvement_route_row_matches_current_contract(
+    candidate: dict[str, Any],
+    current_contracts: list[dict[str, Any]],
+) -> bool:
+    if candidate.get("candidate_contract_valid") is not True:
+        return False
+    valid_contracts = [
+        contract
+        for contract in current_contracts
+        if isinstance(contract.get("source_contract_sha256"), str)
+        and len(str(contract["source_contract_sha256"])) == 64
+    ]
+    if not current_contracts or len(valid_contracts) != len(current_contracts):
+        return False
+    current_digests = {
+        str(contract["source_contract_sha256"]) for contract in valid_contracts
+    }
+    if len(current_digests) != 1:
+        return False
+    source_digest = candidate.get("source_contract_sha256")
+    if (
+        source_digest.__class__ is not str
+        or len(source_digest) != 64
+        or any(character not in "0123456789abcdef" for character in source_digest)
+        or source_digest not in current_digests
+    ):
+        return False
+    current = next(
+        contract
+        for contract in valid_contracts
+        if contract["source_contract_sha256"] == source_digest
+    )
+    if current["positive_rotation_mode"] == TP_PROOF_ACQUISITION_AUDIT_ONLY_MODE:
+        return False
+    if str(candidate.get("status") or "").upper() != current["status"]:
+        return False
+    if candidate.get("tp_proof_acquisition_required") is not current[
+        "tp_proof_acquisition_required"
+    ]:
+        return False
+    if candidate.get("positive_rotation_mode") != current["positive_rotation_mode"]:
+        return False
+
+    required = current["tp_proof_acquisition_required"] is True
+    reachable = candidate.get("tp_proof_acquisition_route_reachable")
+    route_status = str(candidate.get("tp_proof_acquisition_route_status") or "")
+    if not required:
+        return bool(
+            reachable is None
+            and route_status == "TP_PROOF_ACQUISITION_ROUTE_NOT_REQUIRED"
+        )
+    return bool(
+        (reachable is True and route_status == "TP_PROOF_ACQUISITION_ROUTE_REACHABLE")
+        or (
+            reachable is False
+            and route_status == TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+        )
+    )
+
+
+def _tp_proof_acquisition_route_unreachable(value: dict[str, Any]) -> bool:
+    required = value.get("tp_proof_acquisition_required") is True
+    status = str(value.get("tp_proof_acquisition_route_status") or "")
+    explicitly_blocked = bool(
+        value.get("tp_proof_acquisition_route_reachable") is False
+        or status
+        in {
+            TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER,
+            TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER,
+        }
+    )
+    return bool(
+        explicitly_blocked
+        or (required and value.get("tp_proof_acquisition_route_reachable") is not True)
+    )
+
+
 def _artifact_index(
     artifacts: dict[str, dict[str, Any]],
     replay_artifacts: dict[str, dict[str, Any]],
@@ -413,7 +720,72 @@ def _add_order_intent_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str
         lane["strategy_issue_codes"].extend(strategy_issue_codes)
         lane["risk_issue_codes"].extend(risk_issue_codes)
         _attach_local_tp_proof_context(lane, intent)
+        _attach_order_intent_tp_proof_route_requirement(lane, row, intent)
         _attach_bidask_negative_evidence(lane, intent, intent_blockers)
+
+
+def _attach_order_intent_tp_proof_route_requirement(
+    lane: dict[str, Any],
+    row: dict[str, Any],
+    intent: dict[str, Any],
+) -> None:
+    """Fail closed when a proof-collection lane has no current route validation."""
+
+    required, mode = _order_intent_tp_proof_route_requirement(row, intent)
+    if not required:
+        return
+
+    lane["tp_proof_acquisition_required"] = True
+    lane["positive_rotation_mode"] = mode
+    if mode in TP_PROOF_ACQUISITION_APPROVED_MODES:
+        route_status = TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER
+        route_reason = (
+            "approved positive_rotation_mode still requires a fresh exact-lane self-improvement "
+            "route validation before evidence acquisition can be selected"
+        )
+        route_reachable = None
+    else:
+        route_status = TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+        route_reason = (
+            "OANDA campaign firepower is audit-only and cannot create local TP proof"
+            if mode == TP_PROOF_ACQUISITION_AUDIT_ONLY_MODE
+            else "positive_rotation_mode is not an approved acquisition mode"
+        )
+        route_reachable = False
+    lane["tp_proof_acquisition_route_reachable"] = route_reachable
+    lane["tp_proof_acquisition_route_status"] = route_status
+    lane["tp_proof_acquisition_route_reason"] = route_reason
+    lane["blockers"] = _unique(_string_list(lane.get("blockers")) + [route_status])
+
+
+def _order_intent_tp_proof_route_requirement(
+    row: dict[str, Any],
+    intent: dict[str, Any],
+) -> tuple[bool, str | None]:
+    metadata = _metadata(intent)
+    raw_mode = metadata.get("positive_rotation_mode")
+    mode = raw_mode if raw_mode.__class__ is str else None
+    blocker_codes = {
+        *_string_list(row.get("live_blocker_codes")),
+        *_issue_codes(row.get("risk_issues")),
+        *_issue_codes(row.get("strategy_issues")),
+        *_issue_codes(row.get("live_strategy_issues")),
+    }
+    if mode == TP_PROOF_ACQUISITION_AUDIT_ONLY_MODE:
+        return True, mode
+    live_ready_without_blockers = bool(
+        str(row.get("status") or "").upper() == "LIVE_READY"
+        and row.get("risk_allowed") is True
+        and not blocker_codes
+    )
+    if live_ready_without_blockers:
+        return False, mode
+    required = bool(
+        blocker_codes & TP_PROOF_ACQUISITION_REQUIRED_BLOCKER_CODES
+        or mode in TP_PROOF_ACQUISITION_APPROVED_MODES
+        or mode == TP_PROOF_ACQUISITION_AUDIT_ONLY_MODE
+    )
+    return required, mode
 
 
 def _add_proof_queue_lanes(lanes: dict[str, dict[str, Any]], artifact: dict[str, Any]) -> None:
@@ -1749,6 +2121,8 @@ def _classify_lane(lane: dict[str, Any]) -> str:
     blockers = lane.get("blockers") or []
     has_negative = _has_marker(blockers, NEGATIVE_BLOCKER_MARKERS)
     has_evidence = _has_evidence_path(lane)
+    if _tp_proof_acquisition_route_unreachable(lane):
+        return "NO_TRADE_WITH_CAUSE"
     if lane.get("order_intent_status") == "LIVE_READY" and lane.get("risk_allowed") and not blockers:
         return "LIVE_READY"
     if _has_marker(blockers, FAILED_EXACT_REPLAY_MARKERS):
@@ -2095,6 +2469,18 @@ def _lane_next_action(lane: dict[str, Any]) -> str:
     status = lane.get("status")
     lane_key = _lane_key(lane)
     blockers = _string_list(lane.get("blockers"))
+    if _tp_proof_acquisition_route_unreachable(lane):
+        reason = str(lane.get("tp_proof_acquisition_route_reason") or "").strip()
+        route_status = str(
+            lane.get("tp_proof_acquisition_route_status")
+            or TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+        )
+        reason_suffix = f" Reason: {reason}." if reason else ""
+        return (
+            f"No trade for {lane_key}; current route evidence marks the TP-proof acquisition route "
+            f"as {route_status}.{reason_suffix} Wait for a materially "
+            "new reachable route or rerank another lane; do not request receipts the current gates cannot create."
+        )
     if _has_marker(lane.get("blockers") or [], FAILED_EXACT_REPLAY_MARKERS):
         return (
             f"No trade for {lane_key}; consume the failed exact replay as not SCOUT-ready, "
@@ -2204,6 +2590,18 @@ def _public_lane(lane: dict[str, Any]) -> dict[str, Any]:
         public["bidask_negative_evidence"] = lane["bidask_negative_evidence"]
     if isinstance(lane.get("local_tp_proof"), dict):
         public["local_tp_proof"] = lane["local_tp_proof"]
+    if "tp_proof_acquisition_route_reachable" in lane:
+        public["tp_proof_acquisition_required"] = lane.get("tp_proof_acquisition_required") is True
+        public["tp_proof_acquisition_route_reachable"] = (
+            lane.get("tp_proof_acquisition_route_reachable") is True
+        )
+        public["tp_proof_acquisition_route_status"] = str(
+            lane.get("tp_proof_acquisition_route_status") or "UNKNOWN"
+        )
+        public["tp_proof_acquisition_route_reason"] = str(
+            lane.get("tp_proof_acquisition_route_reason") or ""
+        )
+        public["positive_rotation_mode"] = lane.get("positive_rotation_mode")
     if lane.get("edge_improvement_candidate") is True:
         public["edge_improvement_candidate"] = True
         public["edge_improvement_target"] = str(lane.get("edge_improvement_target") or "")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -24,6 +23,7 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
+    FRONTIER_PROOF_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
@@ -4364,6 +4364,212 @@ class TraderSupportBotTest(unittest.TestCase):
 
             self.assertEqual(request["status"], FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS)
             self.assertEqual(request["source_findings"], ["FORECAST_NOT_EXECUTABLE_FOR_LIVE"])
+
+    def test_statistical_proof_frontier_blockers_wait_for_material_evidence(self) -> None:
+        blocker_codes = (
+            "ACTIVE_DAY_FLOOR_NOT_MET",
+            "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+            "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+            "S5_ACTIVE_DAY_FLOOR_NOT_MET",
+            "S5_SAMPLE_COUNT_FLOOR_NOT_MET",
+            "SAMPLE_COUNT_FLOOR_NOT_MET",
+            "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
+        )
+
+        for code in blocker_codes:
+            with self.subTest(code=code):
+                requests = trader_support_bot_module.repair_requests_from_support_payload(
+                    {
+                        "entry_readiness": {
+                            "repair_frontier_remaining_blockers": [
+                                {
+                                    "code": code,
+                                    "count": 1,
+                                    "reward_jpy": 42.917,
+                                    "example_lane_ids": [
+                                        "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                )
+                request = next(
+                    item for item in requests if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+                )
+
+                self.assertEqual(request["status"], FRONTIER_PROOF_EVIDENCE_WAIT_STATUS)
+                self.assertEqual(request["source_findings"], [code])
+                self.assertIn("code changes cannot synthesize", request["problem"])
+                self.assertIn("same fake repair loop", request["why_now"])
+                self.assertIn(
+                    "unchanged rerun is not progress",
+                    " ".join(request["clearance_conditions"]),
+                )
+                self.assertTrue(
+                    request["evidence_summary"]["proof_evidence_wait"][
+                        "requires_material_input_change"
+                    ]
+                )
+                self.assertEqual(request["suggested_files"], [])
+                action = trader_support_bot_module._frontier_remaining_blocker_operator_action(
+                    {"code": code, "count": 1},
+                    {},
+                )
+                self.assertIn("active_opportunity_board.md", action["command"])
+                self.assertNotIn("trader-repair-orchestrator", action["command"])
+                self.assertIn("normal hourly cycle", action["reason"])
+
+    def test_proof_wait_does_not_hide_a_distinct_actionable_frontier_blocker(self) -> None:
+        proof_blockers = sorted(
+            trader_support_bot_module.FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES
+        )[:13]
+        blockers = trader_support_bot_module._repair_frontier_remaining_blockers(
+            [
+                {
+                    "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION:LIMIT",
+                    "reward_jpy": 10.0,
+                    "remaining_blocker_codes_after_guardian_and_repair_exemption": proof_blockers,
+                },
+                {
+                    "lane_id": "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                    "reward_jpy": 1000.0,
+                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                        "UNHANDLED_EXECUTION_MAPPING_BUG"
+                    ],
+                },
+            ]
+        )
+        requests = trader_support_bot_module.repair_requests_from_support_payload(
+            {"entry_readiness": {"repair_frontier_remaining_blockers": blockers}}
+        )
+        request = next(
+            item for item in requests if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+        )
+
+        self.assertEqual(blockers[0]["code"], "UNHANDLED_EXECUTION_MAPPING_BUG")
+        self.assertEqual(len(blockers), 12)
+        self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
+        self.assertEqual(request["source_findings"], ["UNHANDLED_EXECUTION_MAPPING_BUG"])
+
+    def test_stop_scout_contract_is_protective_only_while_failed_replay_is_consumed(self) -> None:
+        blocked = {
+            "code": "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+            "co_blocker_codes": [
+                "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+                "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
+            ],
+        }
+        design_ready = {
+            "code": "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+            "co_blocker_codes": [],
+        }
+
+        self.assertNotIn(
+            "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+            trader_support_bot_module.FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES,
+        )
+        self.assertTrue(
+            trader_support_bot_module._frontier_blocker_is_protective_guardrail(blocked)
+        )
+        self.assertFalse(
+            trader_support_bot_module._frontier_blocker_is_protective_guardrail(design_ready)
+        )
+        self.assertGreater(
+            trader_support_bot_module._frontier_blocker_sort_key(blocked)[0],
+            trader_support_bot_module._frontier_blocker_sort_key(design_ready)[0],
+        )
+
+    def test_stop_scout_protective_context_survives_co_blocker_display_truncation(self) -> None:
+        proof_blockers = [
+            "ACTIVE_DAY_FLOOR_NOT_MET",
+            "BIDASK_REPLAY_MISSING_FOR_EXACT_VEHICLE",
+            "BROAD_TP_PROOF_NOT_EXACT_VEHICLE",
+            "EXACT_LIMIT_VEHICLE_SAMPLE_MIXED",
+            "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+            "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
+        ]
+        rows = trader_support_bot_module._repair_frontier_remaining_blockers(
+            [
+                {
+                    "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                    "reward_jpy": 42.917,
+                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                        *proof_blockers,
+                        "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+                        "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+                        "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
+                    ],
+                }
+            ]
+        )
+        stop_contract = next(
+            row
+            for row in rows
+            if row["code"] == "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY"
+        )
+
+        self.assertNotIn(
+            "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+            stop_contract["co_blocker_codes"],
+        )
+        self.assertTrue(stop_contract["stop_scout_contract_prerequisite_blocked"])
+        self.assertEqual(
+            stop_contract["stop_scout_contract_protective_occurrence_count"],
+            1,
+        )
+        self.assertEqual(
+            stop_contract["stop_scout_contract_actionable_occurrence_count"],
+            0,
+        )
+        self.assertTrue(
+            trader_support_bot_module._frontier_blocker_is_protective_guardrail(
+                stop_contract
+            )
+        )
+        self.assertNotEqual(rows[0]["code"], "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY")
+
+    def test_stop_scout_actionable_occurrence_is_not_hidden_by_protective_sibling(self) -> None:
+        rows = trader_support_bot_module._repair_frontier_remaining_blockers(
+            [
+                {
+                    "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                    "reward_jpy": 42.917,
+                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                        "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY",
+                        "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+                    ],
+                },
+                {
+                    "lane_id": "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                    "reward_jpy": 50.0,
+                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                        "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY"
+                    ],
+                },
+            ]
+        )
+        stop_contract = next(
+            row
+            for row in rows
+            if row["code"] == "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY"
+        )
+
+        self.assertEqual(
+            stop_contract["stop_scout_contract_protective_occurrence_count"],
+            1,
+        )
+        self.assertEqual(
+            stop_contract["stop_scout_contract_actionable_occurrence_count"],
+            1,
+        )
+        self.assertFalse(stop_contract["stop_scout_contract_prerequisite_blocked"])
+        self.assertFalse(
+            trader_support_bot_module._frontier_blocker_is_protective_guardrail(
+                stop_contract
+            )
+        )
+        self.assertEqual(rows[0]["code"], "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY")
 
     def test_unclear_forecast_frontier_same_side_limit_mismatch_stays_actionable(self) -> None:
         now = datetime(2026, 6, 23, 23, 56, tzinfo=timezone.utc)

@@ -113,6 +113,7 @@ OANDA_HISTORY_FILENAME_RE = re.compile(
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
 FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
+FRONTIER_PROOF_EVIDENCE_WAIT_STATUS = "FRONTIER_WAITING_FOR_PROOF_EVIDENCE"
 ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS = "ORDER_INTENTS_ARTIFACT_REFRESH_REQUIRED"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS = "FRONTIER_STRATEGY_PROFILE_WAITING_FOR_NEW_EVIDENCE"
@@ -139,6 +140,31 @@ FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES = {
     "MARGIN_TOO_THIN_FOR_MIN_LOT",
     "LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT",
 }
+FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES = {
+    "ACTIVE_DAY_FLOOR_NOT_MET",
+    "BIDASK_REPLAY_MISSING_FOR_EXACT_VEHICLE",
+    "BROAD_TP_PROOF_NOT_EXACT_VEHICLE",
+    "EXACT_LIMIT_VEHICLE_SAMPLE_MIXED",
+    "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+    "FRESH_GPT_VERIFIER_TRADE_RECEIPT_MISSING",
+    "LIMIT_SAMPLE_FLOOR_NOT_MET_BY_LIMIT_ONLY",
+    "LIVE_ORDER_GATEWAY_PREFLIGHT_MISSING",
+    "LOCAL_LIMIT_SAMPLE_COVERAGE_EXHAUSTED",
+    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+    "NO_FRESH_GATEWAY_PERMISSION",
+    "NO_LIVE_READY_PORTFOLIO",
+    "PROOF_QUEUE_MEMBER_BUT_NOT_PROOF_READY",
+    "RISK_ENGINE_PASS_MISSING",
+    "S5_ACTIVE_DAY_FLOOR_NOT_MET",
+    "S5_SAMPLE_COUNT_FLOOR_NOT_MET",
+    "S5_TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+    "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+    "SAMPLE_COUNT_FLOOR_NOT_MET",
+    "SPREAD_SLIPPAGE_PROOF_MISSING",
+    "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+    "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
+    "STRATEGY_PROFILE_ORDER_BLOCKED_COUNT",
+}
 FRONTIER_GUARDRAIL_BLOCKER_CODES = {
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
     "LOSS_ASYMMETRY_GUARD_EXCEEDED",
@@ -146,10 +172,19 @@ FRONTIER_GUARDRAIL_BLOCKER_CODES = {
     "EXHAUSTION_RANGE_CHASE",
     "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
     "BREAKOUT_FAILURE_MARKET_NOT_RETESTED",
+    "M15_RECOVERY_FORECAST_BINDING_INVALID",
+    "M15_RECOVERY_LANE_BINDING_INVALID",
+    "M15_RECOVERY_LIVE_SHAPE_INVALID",
+    "M15_RECOVERY_NON_TP_HARVEST_BLOCKED",
     "PATTERN_REVERSAL_CHASE",
     "RANGE_ROTATION_BROADER_LOCATION_CHASE",
     "RANGE_MARKET_NOT_AT_RAIL",
     "TREND_MARKET_NOT_OPERATING_TREND",
+}
+STOP_SCOUT_CONTRACT_PREREQUISITE_BLOCKER_CODES = {
+    "S5_TP_PATH_DOES_NOT_RECONSTRUCT_OBSERVED_TP_FILLS",
+    "STOP_S5_TRIGGER_OR_TP_PATH_REPLAY_FAILED",
+    "STOP_SAMPLE_COUNT_THIN_FOR_LIVE_GRADE",
 }
 MONTH_SCALE_RESIDUAL_BLOCKER_CODES = {
     "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
@@ -3947,6 +3982,8 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
     co_blockers_by_code: dict[str, Counter[str]] = defaultdict(Counter)
     forecast_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
     matrix_status_by_code: dict[str, Counter[str]] = defaultdict(Counter)
+    stop_scout_contract_protective_occurrence_count = 0
+    stop_scout_contract_actionable_occurrence_count = 0
     for item in repair_frontier:
         lane_id = str(item.get("lane_id") or "")
         reward = _float(item.get("reward_jpy"))
@@ -3956,6 +3993,12 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
             for code in item.get("remaining_blocker_codes_after_guardian_and_repair_exemption") or []
             if str(code).strip()
         ]
+        remaining_set = set(remaining)
+        if "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY" in remaining_set:
+            if remaining_set & STOP_SCOUT_CONTRACT_PREREQUISITE_BLOCKER_CODES:
+                stop_scout_contract_protective_occurrence_count += 1
+            else:
+                stop_scout_contract_actionable_occurrence_count += 1
         for code in sorted(set(remaining)):
             counts[code] += 1
             reward_by_code[code] += reward
@@ -3981,7 +4024,7 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
                     }
                 )
     rows = []
-    for code, count in counts.most_common(12):
+    for code, count in counts.most_common():
         row = {
             "code": code,
             "count": count,
@@ -4001,9 +4044,20 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
         ]
         if co_blockers:
             row["co_blocker_codes"] = co_blockers
+        if code == "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY":
+            row["stop_scout_contract_protective_occurrence_count"] = (
+                stop_scout_contract_protective_occurrence_count
+            )
+            row["stop_scout_contract_actionable_occurrence_count"] = (
+                stop_scout_contract_actionable_occurrence_count
+            )
+            row["stop_scout_contract_prerequisite_blocked"] = bool(
+                stop_scout_contract_protective_occurrence_count > 0
+                and stop_scout_contract_actionable_occurrence_count == 0
+            )
         rows.append(row)
     rows.sort(key=_frontier_blocker_sort_key)
-    return rows
+    return rows[:12]
 
 
 def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, str]:
@@ -4014,11 +4068,13 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
         causal_rank = 0
     elif _frontier_blocker_waits_for_strategy_profile_evidence(row):
         causal_rank = 0
+    elif _frontier_blocker_waits_for_proof_evidence(row):
+        causal_rank = 3
     elif _frontier_blocker_waits_for_margin_capacity(row):
         causal_rank = 1
     elif code == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
         causal_rank = 1
-    elif code in FRONTIER_GUARDRAIL_BLOCKER_CODES:
+    elif _frontier_blocker_is_protective_guardrail(row):
         causal_rank = 4
     else:
         causal_rank = 2
@@ -4031,7 +4087,22 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
 
 
 def _frontier_blocker_is_protective_guardrail(row: dict[str, Any]) -> bool:
-    return str(row.get("code") or "") in FRONTIER_GUARDRAIL_BLOCKER_CODES
+    code = str(row.get("code") or "")
+    if code in FRONTIER_GUARDRAIL_BLOCKER_CODES:
+        return True
+    if code != "STOP_TRIGGER_INVALIDATION_NOT_SCOUT_READY":
+        return False
+    if "stop_scout_contract_actionable_occurrence_count" in row:
+        return row.get("stop_scout_contract_prerequisite_blocked") is True
+    co_blockers = {
+        str(item)
+        for item in row.get("co_blocker_codes", [])
+        if isinstance(item, str)
+    }
+    return bool(
+        co_blockers
+        & STOP_SCOUT_CONTRACT_PREREQUISITE_BLOCKER_CODES
+    )
 
 
 def _frontier_blocker_waits_for_strategy_profile_evidence(row: dict[str, Any]) -> bool:
@@ -4052,6 +4123,10 @@ def _frontier_blocker_waits_for_quote_refresh(row: dict[str, Any]) -> bool:
 
 def _frontier_blocker_waits_for_margin_capacity(row: dict[str, Any]) -> bool:
     return str(row.get("code") or "") in FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES
+
+
+def _frontier_blocker_waits_for_proof_evidence(row: dict[str, Any]) -> bool:
+    return str(row.get("code") or "") in FRONTIER_PROOF_EVIDENCE_BLOCKER_CODES
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -6070,6 +6145,16 @@ def _frontier_remaining_blocker_operator_action(
                 + "Rebuild intents after new strategy/profile evidence; do not relax BLOCK_UNTIL_NEW_EVIDENCE."
             ),
         }
+    if _frontier_blocker_waits_for_proof_evidence(top):
+        return {
+            "command": "sed -n '1,200p' docs/active_opportunity_board.md",
+            "reason": (
+                prefix
+                + "The named proof input watermark has not changed. Inspect the already-ranked replacement "
+                "lanes while the normal hourly cycle collects new evidence; do not rerun the repair orchestrator "
+                "or lower proof gates on unchanged inputs."
+            ),
+        }
     if _frontier_blocker_waits_for_margin_capacity(top):
         return {
             "command": (
@@ -7441,10 +7526,21 @@ def _build_repair_requests(
         waits_for_quote_refresh = _frontier_blocker_waits_for_quote_refresh(top)
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
         waits_for_strategy_profile_evidence = _frontier_blocker_waits_for_strategy_profile_evidence(top)
+        waits_for_proof_evidence = _frontier_blocker_waits_for_proof_evidence(top)
         waits_for_margin_capacity = _frontier_blocker_waits_for_margin_capacity(top)
         protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
         frontier_evidence_summary = top
         source_findings = [code]
+        frontier_suggested_files = [
+            "src/quant_rabbit/strategy/intent_generator.py",
+            "scripts/oanda_history_replay_validate.py",
+            "tests/test_intent_generator.py",
+            "tests/test_trader_support_bot.py",
+        ]
+        frontier_required_tests = [
+            "Regression: the original invalid blocker shape remains blocked.",
+            "Positive path: a current valid repair-frontier lane is allowed or explicitly downgraded with an escape condition.",
+        ]
         if waits_for_artifact_refresh:
             frontier_status = ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS
             frontier_problem = (
@@ -7527,6 +7623,41 @@ def _build_repair_requests(
                 "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
             ]
+        elif waits_for_proof_evidence:
+            frontier_status = FRONTIER_PROOF_EVIDENCE_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are blocked by an exact-vehicle proof input such as sample/day "
+                "coverage, spread replay, a verifier receipt, or gateway/risk preflight; code changes "
+                "cannot synthesize those independent observations."
+            )
+            frontier_why_now = (
+                "Rerunning unchanged reports or editing entry gates leaves the proof watermark unchanged "
+                "and sends the trader back through the same fake repair loop."
+            )
+            frontier_clearance = [
+                f"{code} clears only after the named proof input changes through new independent exact-vehicle outcomes, active days, materially new bid/ask history, or normal gateway/risk validation, followed by the standard read-only proof refresh.",
+                "Continue evaluating other current pairs and vehicles while this lane collects proof; do not force the blocked lane or lower its sample, day, execution-cost, or risk floors.",
+                "Run the verification chain only after a proof input watermark changes; an unchanged rerun is not progress.",
+            ]
+            frontier_verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+            ]
+            frontier_evidence_summary = {
+                **top,
+                "proof_evidence_wait": {
+                    "requires_material_input_change": True,
+                    "same_input_rerun_is_progress": False,
+                    "code_or_gate_change_can_clear": False,
+                },
+            }
+            frontier_suggested_files = []
+            frontier_required_tests = [
+                "Statistical proof-floor blockers remain non-actionable until their evidence watermark changes.",
+                "Other valid current pairs and vehicles remain eligible for normal evaluation while the blocked lane waits.",
+            ]
         elif waits_for_margin_capacity:
             frontier_status = FRONTIER_MARGIN_CAPACITY_WAIT_STATUS
             frontier_problem = (
@@ -7592,16 +7723,8 @@ def _build_repair_requests(
                 evidence_summary=frontier_evidence_summary,
                 clearance_conditions=frontier_clearance,
                 verification_commands=frontier_verification_commands,
-                suggested_files=[
-                    "src/quant_rabbit/strategy/intent_generator.py",
-                    "scripts/oanda_history_replay_validate.py",
-                    "tests/test_intent_generator.py",
-                    "tests/test_trader_support_bot.py",
-                ],
-                required_tests=[
-                    "Regression: the original invalid blocker shape remains blocked.",
-                    "Positive path: a current valid repair-frontier lane is allowed or explicitly downgraded with an escape condition.",
-                ],
+                suggested_files=frontier_suggested_files,
+                required_tests=frontier_required_tests,
             )
         )
 

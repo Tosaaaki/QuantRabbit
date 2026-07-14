@@ -3170,6 +3170,123 @@ class ActiveTraderContractTest(unittest.TestCase):
         self.assertIn("EDGE_IMPROVEMENT_EXPERIMENT", payload["next_trade_enabling_action"])
         self.assertNotIn("(LIMIT, NO_TRADE_WITH_CAUSE)", payload["next_trade_enabling_action"])
 
+    def test_unreachable_tp_proof_route_is_not_actionable_evidence_in_contract(self) -> None:
+        now = datetime(2026, 7, 8, 17, 30, tzinfo=timezone.utc)
+        lane_id = "range_trader:EUR_JPY:LONG:RANGE_ROTATION"
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _write_base_artifacts(Path(tmp), now=now)
+            board_top = {
+                "lane_id": lane_id,
+                "pair": "EUR_JPY",
+                "direction": "LONG",
+                "strategy_family": "RANGE_ROTATION",
+                "vehicle": "LIMIT",
+                "status": "EVIDENCE_ACQUISITION",
+                "tp_proof_acquisition_required": True,
+                "tp_proof_acquisition_route_reachable": False,
+                "tp_proof_acquisition_route_status": "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+                "tp_proof_acquisition_route_reason": (
+                    "positive_rotation_mode is not approved for this RR/chase shape"
+                ),
+                "positive_rotation_mode": None,
+                "next_action": "Collect exact local TAKE_PROFIT_ORDER proof from the stale board.",
+                "blockers": [
+                    "RANGE_COUNTERTREND_RR_TOO_LOW",
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                    "EXHAUSTION_RANGE_CHASE",
+                    "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                ]
+                + [f"STALE_FILLER_{index}" for index in range(30)],
+            }
+            _write_json(
+                paths["active_board"],
+                {
+                    "schema_version": "active_opportunity_board_v1",
+                    "generated_at_utc": now.isoformat(),
+                    "status": "BOARD_BUILT_ACTIVE_PATH_AVAILABLE_READ_ONLY",
+                    "read_only": True,
+                    "live_permission_allowed": False,
+                    "live_side_effects": [],
+                    "coverage_summary": {
+                        "total_lanes": 1,
+                        "live_ready_count": 0,
+                        "harvest_ready_count": 0,
+                        "scout_ready_count": 0,
+                        "evidence_acquisition_count": 1,
+                        "operator_review_required_count": 0,
+                        "no_trade_count": 0,
+                        "pairs_scanned": ["EUR_JPY"],
+                        "vehicles_scanned": ["LIMIT"],
+                    },
+                    "top_lane": board_top,
+                    "ranked_active_lanes": [board_top],
+                    "next_active_path": (
+                        "EVIDENCE_ACQUISITION: stale route-unaware board classification."
+                    ),
+                },
+            )
+
+            ActiveTraderContract(
+                trader_goal_loop_path=paths["goal_loop"],
+                payoff_shape_diagnosis_path=paths["payoff"],
+                harvest_live_grade_path=paths["harvest"],
+                scout_plan_path=paths["scout"],
+                proof_pack_queue_path=paths["proof"],
+                lane_candidate_board_path=paths["board"],
+                portfolio_4x_path_planner_path=paths["portfolio"],
+                live_order_request_path=paths["live_order"],
+                broker_snapshot_path=paths["broker"],
+                daily_target_state_path=paths["daily"],
+                proof_floor_update_path=paths["proof_floor"],
+                limit_s5_bidask_replay_path=paths["replay"],
+                limit_sample_mining_path=paths["mining"],
+                active_opportunity_board_path=paths["active_board"],
+                non_eurusd_live_grade_frontier_path=paths["frontier"],
+                entry_frequency_recovery_path=paths["entry_recovery"],
+                forecast_pattern_refresh_path=paths["forecast_pattern"],
+                range_rail_geometry_repair_path=paths["range_rail"],
+                guardian_events_path=paths["guardian_events"],
+                output_path=paths["output"],
+                report_path=paths["report"],
+                now_utc=now,
+            ).run()
+            payload = json.loads(paths["output"].read_text())
+
+        board_state = payload["current_state"]["active_opportunity_board"]
+        top_lane = board_state["top_lane"]
+        blocker_codes = {row["code"] for row in payload["remaining_blockers"]}
+        self.assertEqual(top_lane["status"], "NO_TRADE_WITH_CAUSE")
+        self.assertFalse(top_lane["tp_proof_acquisition_route_reachable"])
+        self.assertIn("rerank another lane", top_lane["next_action"])
+        self.assertNotIn(
+            "Collect exact local TAKE_PROFIT_ORDER proof",
+            top_lane["next_action"],
+        )
+        self.assertEqual(
+            top_lane["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+        )
+        self.assertEqual(board_state["evidence_acquisition_count"], 0)
+        self.assertEqual(payload["selected_active_path"], "NO_TRADE_WITH_CAUSE")
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", blocker_codes)
+        for blocker in (
+            "RANGE_COUNTERTREND_RR_TOO_LOW",
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            "EXHAUSTION_RANGE_CHASE",
+        ):
+            self.assertIn(blocker, blocker_codes)
+        self.assertIn("rerank another lane", payload["next_trade_enabling_action"])
+        self.assertIn("current gates cannot create", payload["next_trade_enabling_action"])
+        self.assertNotIn(
+            "Collect exact local TAKE_PROFIT_ORDER proof",
+            payload["next_trade_enabling_action"],
+        )
+        self.assertIn("rerank another lane", payload["next_prompt"])
+        self.assertIn("Do not request receipts", payload["next_prompt"])
+        self.assertNotIn("Collect exact local TAKE_PROFIT_ORDER proof", payload["next_prompt"])
+        self.assertFalse(payload["live_permission_allowed"])
+
 
 def _write_base_artifacts(root: Path, *, now: datetime) -> dict[str, Path]:
     paths = {

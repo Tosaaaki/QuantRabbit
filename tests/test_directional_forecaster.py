@@ -1473,17 +1473,39 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
-            emitted_at = datetime.now(timezone.utc)
-            history_at = emitted_at + timedelta(seconds=10)
-            self.assertTrue(
-                record_forecast(
-                    forecast,
-                    data_root=data_root,
-                    cycle_id="contradiction-cycle",
-                    now=history_at,
-                    shadow_emitted_at_utc=emitted_at,
-                )
+            # The shadow ledger intentionally uses the unique minimal RFC3339
+            # representation accepted by its 1-9 digit nanosecond contract.
+            # A Python datetime whose microsecond ends in zero therefore seals
+            # as five fractional digits (``.02343Z``), which Python 3.10's
+            # ``datetime.fromisoformat`` cannot parse even though it is valid
+            # RFC3339.  Keep both clocks deterministic and assert the ledger's
+            # canonical bytes directly so this integration check does not
+            # depend on either wall-clock precision or that parser limitation.
+            emitted_at = datetime(
+                2026,
+                7,
+                15,
+                0,
+                0,
+                30,
+                23_430,
+                tzinfo=timezone.utc,
             )
+            history_at = emitted_at + timedelta(seconds=10)
+            with patch(
+                "quant_rabbit.strategy.regime_family_contradiction_shadow."
+                "_ledger_recorded_at_utc",
+                return_value=emitted_at + timedelta(seconds=1),
+            ):
+                self.assertTrue(
+                    record_forecast(
+                        forecast,
+                        data_root=data_root,
+                        cycle_id="contradiction-cycle",
+                        now=history_at,
+                        shadow_emitted_at_utc=emitted_at,
+                    )
+                )
             history_row = json.loads(
                 (data_root / "forecast_history.jsonl").read_text()
             )
@@ -1499,13 +1521,8 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
             ]
             self.assertEqual(len(shadow_events), 1)
             self.assertEqual(
-                datetime.fromisoformat(
-                    shadow_events[0]["payload"]["emitted_at_utc"].replace(
-                        "Z",
-                        "+00:00",
-                    )
-                ),
-                emitted_at,
+                shadow_events[0]["payload"]["emitted_at_utc"],
+                "2026-07-15T00:00:30.02343Z",
             )
             self.assertFalse((data_root / "projection_ledger.jsonl").exists())
 

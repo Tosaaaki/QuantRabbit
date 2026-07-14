@@ -33,6 +33,7 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
+    FRONTIER_PROOF_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
@@ -3718,6 +3719,93 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 "REPAIR_FRONTIER_LANE_BLOCKER",
                 payload["queue_summary"]["waiting_request_codes"],
             )
+
+    def test_proof_sample_frontier_wait_is_not_codex_implementation_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status=FRONTIER_PROOF_EVIDENCE_WAIT_STATUS,
+                        evidence_summary={
+                            "code": "ACTIVE_DAY_FLOOR_NOT_MET",
+                            "proof_evidence_wait": {
+                                "requires_material_input_change": True,
+                                "same_input_rerun_is_progress": False,
+                                "code_or_gate_change_can_clear": False,
+                            },
+                            "example_lane_ids": [
+                                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+                            ],
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="active-day proof floor",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            frontier = payload["queue"][0]
+            self.assertEqual(frontier["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertIn(
+                "REPAIR_FRONTIER_LANE_BLOCKER",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+
+    def test_stale_actionable_status_cannot_promote_proof_sample_frontier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                        source_findings=["ACTIVE_DAY_FLOOR_NOT_MET"],
+                        evidence_summary={
+                            "code": "ACTIVE_DAY_FLOOR_NOT_MET",
+                            "example_lane_ids": [
+                                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+                            ],
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="active-day proof floor",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            self.assertEqual(
+                payload["queue"][0]["automation_status"],
+                "WAITING_FOR_LIVE_EVIDENCE_WINDOW",
+            )
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
 
     def test_margin_capacity_frontier_wait_is_not_codex_implementation_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

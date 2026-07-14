@@ -57,6 +57,8 @@ FAILED_EXACT_REPLAY_MARKERS = (
 )
 BIDASK_REPLAY_EVIDENCE_REFRESH_BLOCKER = "BIDASK_REPLAY_EVIDENCE_REFRESH_REQUIRED"
 TP_PROVEN_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER = "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE"
+TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER = "TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED"
 NEGATIVE_BLOCKER_MARKERS = (
     "NEGATIVE_EXPECTANCY",
     "REPLAY_NEGATIVE",
@@ -782,6 +784,15 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
     top_lane = artifact.get("top_lane") if isinstance(artifact.get("top_lane"), dict) else {}
     guardian_routing_clear = global_safety.get("guardian_receipt_normal_routing_allowed") is True
     lanes = artifact.get("ranked_active_lanes") if isinstance(artifact.get("ranked_active_lanes"), list) else []
+    top_lane_summary = _contract_lane_summary(
+        top_lane,
+        guardian_routing_clear=guardian_routing_clear,
+    )
+    status_counts = _normalized_active_board_status_counts(
+        summary,
+        lanes,
+        top_lane=top_lane,
+    )
     stale_source_reasons = artifact.get("stale_source_reasons") if isinstance(artifact.get("stale_source_reasons"), list) else []
     stale_source_blocker_codes = _unique(
         _codes_from_blockers(stale_source_reasons)
@@ -826,15 +837,15 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
         "status": artifact.get("status"),
         "generated_at_utc": artifact.get("generated_at_utc"),
         "total_lanes": _first_int(summary.get("total_lanes"), len(lanes)),
-        "live_ready_count": _first_int(summary.get("live_ready_count"), 0),
-        "harvest_ready_count": _first_int(summary.get("harvest_ready_count"), 0),
-        "scout_ready_count": _first_int(summary.get("scout_ready_count"), 0),
-        "evidence_acquisition_count": _first_int(summary.get("evidence_acquisition_count"), 0),
-        "operator_review_required_count": _first_int(summary.get("operator_review_required_count"), 0),
+        "live_ready_count": status_counts["LIVE_READY"],
+        "harvest_ready_count": status_counts["HARVEST_READY"],
+        "scout_ready_count": status_counts["SCOUT_READY"],
+        "evidence_acquisition_count": status_counts["EVIDENCE_ACQUISITION"],
+        "operator_review_required_count": status_counts["OPERATOR_REVIEW_REQUIRED"],
         "pairs_scanned_count": len(_string_list(summary.get("pairs_scanned"))),
         "vehicles_scanned": _string_list(summary.get("vehicles_scanned")),
         "next_active_path": artifact.get("next_active_path"),
-        "top_lane": _contract_lane_summary(top_lane, guardian_routing_clear=guardian_routing_clear),
+        "top_lane": top_lane_summary,
         "stale_source_blocker_codes": stale_source_blocker_codes,
         "guardian_receipt_normal_routing_allowed": guardian_routing_clear,
         "failed_exact_replay_consumed_count": len(consumed),
@@ -849,6 +860,39 @@ def _active_opportunity_board_contract_state(artifact: dict[str, Any]) -> dict[s
         ),
         "live_permission_allowed": False,
     }
+
+
+def _normalized_active_board_status_counts(
+    summary: dict[str, Any],
+    lanes: list[Any],
+    *,
+    top_lane: dict[str, Any],
+) -> dict[str, int]:
+    summary_keys = {
+        "LIVE_READY": "live_ready_count",
+        "HARVEST_READY": "harvest_ready_count",
+        "SCOUT_READY": "scout_ready_count",
+        "EVIDENCE_ACQUISITION": "evidence_acquisition_count",
+        "OPERATOR_REVIEW_REQUIRED": "operator_review_required_count",
+        "NO_TRADE_WITH_CAUSE": "no_trade_count",
+    }
+    counts = {
+        status: _first_int(summary.get(summary_key), 0)
+        for status, summary_key in summary_keys.items()
+    }
+    total_lanes = _first_int(summary.get("total_lanes"), len(lanes))
+    complete_ranked_lanes = total_lanes > 0 and len(lanes) == total_lanes
+    route_rows = lanes if complete_ranked_lanes else [top_lane]
+    for lane in route_rows:
+        if not isinstance(lane, dict) or not _tp_proof_acquisition_route_unreachable(lane):
+            continue
+        raw_status = str(lane.get("status") or "")
+        if raw_status == "NO_TRADE_WITH_CAUSE":
+            continue
+        if raw_status in counts:
+            counts[raw_status] = max(0, counts[raw_status] - 1)
+        counts["NO_TRADE_WITH_CAUSE"] += 1
+    return counts
 
 
 def _non_eurusd_frontier_contract_state(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -1123,6 +1167,9 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
         if stale_guardian_codes:
             blockers = [code for code in blockers if code not in stale_guardian_codes]
             stale_source_blockers = _unique(stale_source_blockers + stale_guardian_codes)
+    route_unreachable = _tp_proof_acquisition_route_unreachable(lane)
+    if route_unreachable:
+        blockers = _unique([_tp_proof_acquisition_route_blocker(lane)] + blockers)
     return {
         "lane_id": lane.get("lane_id"),
         "pair": lane.get("pair"),
@@ -1140,12 +1187,23 @@ def _contract_lane_summary(lane: dict[str, Any], *, guardian_routing_clear: bool
         "guardian_status": lane.get("guardian_status"),
         "operator_review_status": lane.get("operator_review_status"),
         "expected_edge_jpy": lane.get("expected_edge_jpy"),
-        "next_action": lane.get("next_action"),
+        "next_action": (
+            _tp_proof_acquisition_route_rerank_action(lane)
+            if route_unreachable
+            else lane.get("next_action")
+        ),
         "local_tp_proof": (
             lane.get("local_tp_proof")
             if isinstance(lane.get("local_tp_proof"), dict)
             else {}
         ),
+        "tp_proof_acquisition_required": lane.get("tp_proof_acquisition_required") is True,
+        "tp_proof_acquisition_route_reachable": lane.get(
+            "tp_proof_acquisition_route_reachable"
+        ),
+        "tp_proof_acquisition_route_status": lane.get("tp_proof_acquisition_route_status"),
+        "tp_proof_acquisition_route_reason": lane.get("tp_proof_acquisition_route_reason"),
+        "positive_rotation_mode": lane.get("positive_rotation_mode"),
         "blockers": blockers[:24],
         "stale_source_blockers": stale_source_blockers[:12],
         "edge_improvement_candidate": lane.get("edge_improvement_candidate") is True,
@@ -1183,6 +1241,11 @@ def _normalized_board_lane_status(
     edge_improvement_candidate: bool = False,
 ) -> str:
     raw = str(status or "NO_TRADE_WITH_CAUSE")
+    if {
+        TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER,
+        TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER,
+    }.intersection(blockers):
+        return "NO_TRADE_WITH_CAUSE"
     if any(any(marker in blocker for marker in FAILED_EXACT_REPLAY_MARKERS) for blocker in blockers):
         return "NO_TRADE_WITH_CAUSE"
     if any(any(marker in blocker for marker in GUARDIAN_RECEIPT_OPERATOR_REVIEW_MARKERS) for blocker in blockers):
@@ -1202,6 +1265,49 @@ def _normalized_board_lane_status(
     if any(any(marker in blocker for marker in OPERATOR_REVIEW_MARKERS) for blocker in blockers):
         return "OPERATOR_REVIEW_REQUIRED"
     return raw
+
+
+def _tp_proof_acquisition_route_unreachable(value: dict[str, Any]) -> bool:
+    status = str(value.get("tp_proof_acquisition_route_status") or "")
+    explicitly_blocked = bool(
+        value.get("tp_proof_acquisition_route_reachable") is False
+    ) or bool(
+        status
+        in {
+            TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER,
+            TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER,
+        }
+    )
+    return bool(
+        explicitly_blocked
+        or (
+            value.get("tp_proof_acquisition_required") is True
+            and value.get("tp_proof_acquisition_route_reachable") is not True
+        )
+    )
+
+
+def _tp_proof_acquisition_route_blocker(value: dict[str, Any]) -> str:
+    status = str(value.get("tp_proof_acquisition_route_status") or "")
+    if status in {
+        TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER,
+        TP_PROOF_ACQUISITION_ROUTE_UNVERIFIED_BLOCKER,
+    }:
+        return status
+    return TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE_BLOCKER
+
+
+def _tp_proof_acquisition_route_rerank_action(value: dict[str, Any]) -> str:
+    lane_id = str(value.get("lane_id") or "current board lane")
+    route_blocker = _tp_proof_acquisition_route_blocker(value)
+    reason = str(value.get("tp_proof_acquisition_route_reason") or "").strip()
+    reason_suffix = f" Reason: {reason}." if reason else ""
+    return (
+        f"No trade for {lane_id}; {route_blocker} means the current gates cannot create "
+        f"the requested TP-proof receipts.{reason_suffix} Wait for a materially new exact "
+        "reachable route or rerank another lane while preserving RR, chase, profitability, "
+        "risk, verifier, and gateway blockers."
+    )
 
 
 def _active_deployment_gap(
@@ -2194,6 +2300,10 @@ def _next_trade_enabling_action(
     guardian_events = guardian_events or {}
     board_top = active_opportunity_board.get("top_lane")
     board_top = board_top if isinstance(board_top, dict) else {}
+    if selected_active_path == "NO_TRADE_WITH_CAUSE" and _tp_proof_acquisition_route_unreachable(
+        board_top
+    ):
+        return _tp_proof_acquisition_route_rerank_action(board_top)
     if selected_active_path == "EVIDENCE_ACQUISITION":
         frontier_lane = _frontier_evidence_lane(non_eurusd_frontier)
         if (
@@ -2498,6 +2608,14 @@ def _next_prompt(
         if isinstance((active_opportunity_board or {}).get("top_lane"), dict)
         else {}
     )
+    if selected_active_path == "NO_TRADE_WITH_CAUSE" and _tp_proof_acquisition_route_unreachable(
+        board_top
+    ):
+        next_action = _tp_proof_acquisition_route_rerank_action(board_top)
+        return (
+            f"{next_action} Keep blockers visible: {blocker_codes}. "
+            "Do not request receipts the current gates cannot create, relax RR/chase gates, or infer live permission."
+        )
     frontier_suffix = _frontier_supplement_prompt(
         board_top,
         non_eurusd_frontier or {},
